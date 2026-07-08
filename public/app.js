@@ -9,10 +9,13 @@ const sendBtn = $("#send-btn");
 
 const openaiStatus = $("#openai-status");
 const whatsappStatus = $("#whatsapp-status");
+const metaStatus = $("#meta-status");
 const openaiDetail = $("#openai-detail");
 const whatsappDetail = $("#whatsapp-detail");
+const metaDetail = $("#meta-detail");
 const cardOpenai = $("#card-openai");
 const cardWhatsapp = $("#card-whatsapp");
+const cardMeta = $("#card-meta");
 
 const modalOverlay = $("#modal-overlay");
 const connectBtn = $("#connect-btn");
@@ -40,23 +43,47 @@ const saveBusinessBtn = $("#save-business");
 const businessFeedback = $("#business-feedback");
 const viewTeam = $("#view-team");
 const viewWorkspace = $("#view-workspace");
+const viewAds = $("#view-ads");
 const backTeamBtn = $("#back-team-btn");
 const agentWhatsapp = $("#agent-whatsapp");
+const agentMeta = $("#agent-meta");
 const agentWaDot = $("#agent-wa-dot");
 const agentWaLabel = $("#agent-wa-label");
+const agentMetaDot = $("#agent-meta-dot");
+const agentMetaLabel = $("#agent-meta-label");
 const appTitle = $("#app-title");
 const appSubtitle = $("#app-subtitle");
 const statusPills = $("#status-pills");
 
+const metaTokenInput = $("#meta-token");
+const metaAdAccountInput = $("#meta-ad-account");
+const metaPageIdInput = $("#meta-page-id");
+const metaWaNumberInput = $("#meta-wa-number");
+const saveMetaBtn = $("#save-meta");
+const testMetaBtn = $("#test-meta");
+const metaFeedback = $("#meta-feedback");
+const adsMessagesEl = $("#ads-messages");
+const adsFormEl = $("#ads-chat-form");
+const adsInputEl = $("#ads-message-input");
+const adsSendBtn = $("#ads-send-btn");
+const adsReportEl = $("#ads-report");
+const adsCampaignsListEl = $("#ads-campaigns-list");
+const refreshAdsReportBtn = $("#refresh-ads-report");
+
 let sending = false;
+let adsSending = false;
 let currentView = "team";
 let workspaceReady = false;
+let adsWorkspaceReady = false;
+let adsReportPreset = "today";
 let lastIncomingId = 0;
 let lastWhatsAppId = 0;
 let lastAgentMsgId = 0;
+let lastAdsAgentMsgId = 0;
 const seenIncomingIds = new Set();
 const seenWhatsAppIds = new Set();
 const seenAgentMsgIds = new Set();
+const seenAdsAgentMsgIds = new Set();
 
 const STATUS_LABELS = {
   nouveau: "Nouveau",
@@ -89,7 +116,8 @@ function scrollToBottom(force = false) {
   }
 }
 
-function appendMessage({ role, content, created_at, isError = false, isWhatsapp = false, isWhatsappOut = false, sender = "", forceScroll = false }) {
+function appendMessageTo(container, { role, content, created_at, isError = false, isWhatsapp = false, isWhatsappOut = false, sender = "", forceScroll = false }) {
+  if (!container) return;
   const div = document.createElement("div");
   if (isWhatsappOut) {
     div.className = "msg whatsapp-out";
@@ -114,24 +142,45 @@ function appendMessage({ role, content, created_at, isError = false, isWhatsapp 
     <div class="body"></div>
   `;
   div.querySelector(".body").textContent = content;
-  messagesEl.appendChild(div);
-  scrollToBottom(forceScroll || role === "user");
+  container.appendChild(div);
+  const near =
+    forceScroll ||
+    role === "user" ||
+    container.scrollHeight - container.scrollTop - container.clientHeight <= 80;
+  if (near) container.scrollTop = container.scrollHeight;
 }
 
-function showTyping(on) {
-  let el = $("#typing-indicator");
+function appendMessage(opts) {
+  appendMessageTo(messagesEl, opts);
+}
+
+function appendAdsMessage(opts) {
+  appendMessageTo(adsMessagesEl, opts);
+}
+
+function showTypingIn(container, on, id = "typing-indicator") {
+  if (!container) return;
+  let el = container.querySelector(`#${id}`);
   if (on) {
     if (!el) {
       el = document.createElement("div");
-      el.id = "typing-indicator";
+      el.id = id;
       el.className = "typing";
       el.innerHTML = `L'agent réfléchit <span class="typing-dots"><span></span><span></span><span></span></span>`;
-      messagesEl.appendChild(el);
+      container.appendChild(el);
     }
   } else if (el) {
     el.remove();
   }
-  scrollToBottom();
+  container.scrollTop = container.scrollHeight;
+}
+
+function showTyping(on) {
+  showTypingIn(messagesEl, on, "typing-indicator");
+}
+
+function showAdsTyping(on) {
+  showTypingIn(adsMessagesEl, on, "ads-typing-indicator");
 }
 
 function setStatusPill(el, state) {
@@ -149,10 +198,18 @@ function setAgentWaStatus(state, label) {
   if (agentWaLabel) agentWaLabel.textContent = label;
 }
 
+function setAgentMetaStatus(state, label) {
+  if (agentMetaDot) {
+    agentMetaDot.className = "agent-dot " + (state === "connected" ? "on" : state === "pending" ? "wait" : "off");
+  }
+  if (agentMetaLabel) agentMetaLabel.textContent = label;
+}
+
 function showTeamView() {
   currentView = "team";
   viewTeam?.classList.remove("hidden");
   viewWorkspace?.classList.add("hidden");
+  viewAds?.classList.add("hidden");
   backTeamBtn?.classList.add("hidden");
   clearBtn?.classList.add("hidden");
   if (appTitle) appTitle.textContent = "Agent Team";
@@ -163,6 +220,7 @@ function showTeamView() {
 async function showWhatsAppWorkspace() {
   currentView = "whatsapp";
   viewTeam?.classList.add("hidden");
+  viewAds?.classList.add("hidden");
   viewWorkspace?.classList.remove("hidden");
   backTeamBtn?.classList.remove("hidden");
   clearBtn?.classList.remove("hidden");
@@ -176,6 +234,27 @@ async function showWhatsAppWorkspace() {
   }
 
   inputEl?.focus();
+}
+
+async function showAdsWorkspace() {
+  currentView = "ads";
+  viewTeam?.classList.add("hidden");
+  viewWorkspace?.classList.add("hidden");
+  viewAds?.classList.remove("hidden");
+  backTeamBtn?.classList.remove("hidden");
+  clearBtn?.classList.remove("hidden");
+  if (appTitle) appTitle.textContent = "Publicité Meta";
+  if (appSubtitle) appSubtitle.textContent = "Campagnes FB/IG → WhatsApp & rapports";
+  document.title = "Meta Ads · Agent Team";
+
+  if (!adsWorkspaceReady) {
+    adsWorkspaceReady = true;
+    await bootstrapAdsWorkspace();
+  } else {
+    await loadAdsReport();
+  }
+
+  adsInputEl?.focus();
 }
 
 async function loadContacts() {
@@ -245,6 +324,84 @@ async function loadDailyBilan() {
     vals[3].textContent = String(b.uniqueContacts ?? 0);
   } catch {
     dailyBilanEl.innerHTML = '<p class="contacts-empty">Bilan indisponible.</p>';
+  }
+}
+
+function formatMoney(n, currency) {
+  const num = Number(n) || 0;
+  const formatted = num.toLocaleString("fr-FR", { maximumFractionDigits: 2 });
+  return currency ? `${formatted} ${currency}` : formatted;
+}
+
+async function loadAdsReport() {
+  if (!adsReportEl) return;
+  try {
+    const res = await fetch(`/api/ads/report?preset=${encodeURIComponent(adsReportPreset)}`);
+    const data = await res.json();
+    if (!res.ok) {
+      adsReportEl.innerHTML = `<p class="contacts-empty">${data.error || "Rapport indisponible."}</p>`;
+      if (adsCampaignsListEl) {
+        adsCampaignsListEl.innerHTML = '<p class="contacts-empty">Connectez Meta Ads.</p>';
+      }
+      return;
+    }
+
+    if (data.configured === false) {
+      adsReportEl.innerHTML = `<p class="contacts-empty">${data.message || "Connectez Meta Ads pour voir les KPIs."}</p>`;
+      if (adsCampaignsListEl) {
+        adsCampaignsListEl.innerHTML = '<p class="contacts-empty">Aucune campagne.</p>';
+      }
+      return;
+    }
+
+    const r = data.report || {};
+    adsReportEl.innerHTML = `
+      <div class="bilan-row"><span>Dépense</span><strong></strong></div>
+      <div class="bilan-row"><span>Impressions</span><strong></strong></div>
+      <div class="bilan-row"><span>Clics</span><strong></strong></div>
+      <div class="bilan-row"><span>Conversations</span><strong></strong></div>
+      <div class="bilan-row"><span>CPC</span><strong></strong></div>
+    `;
+    const vals = adsReportEl.querySelectorAll("strong");
+    vals[0].textContent = formatMoney(r.spend, r.currency);
+    vals[1].textContent = String(r.impressions ?? 0);
+    vals[2].textContent = String(r.clicks ?? 0);
+    vals[3].textContent = String(r.messages ?? 0);
+    vals[4].textContent =
+      r.cpc != null ? formatMoney(r.cpc, r.currency) : "—";
+
+    const campaigns = data.campaigns ?? [];
+    if (!adsCampaignsListEl) return;
+    if (!campaigns.length) {
+      adsCampaignsListEl.innerHTML = '<p class="contacts-empty">Aucune campagne.</p>';
+      return;
+    }
+
+    adsCampaignsListEl.innerHTML = "";
+    for (const c of campaigns) {
+      const item = document.createElement("div");
+      const st = (c.effective_status || c.status || "").toUpperCase();
+      item.className = `contact-item ${st === "ACTIVE" ? "interesse" : st === "PAUSED" ? "" : "stop"}`;
+      item.innerHTML = `
+        <div class="contact-top">
+          <span class="contact-name"></span>
+          <span class="contact-status"></span>
+        </div>
+        <div class="contact-meta"></div>
+      `;
+      item.querySelector(".contact-name").textContent = c.name || c.id;
+      item.querySelector(".contact-status").textContent = st || "—";
+      item.querySelector(".contact-meta").textContent = c.id;
+      item.addEventListener("click", () => {
+        if (!adsInputEl) return;
+        adsInputEl.value = `Montre le statut et propose de ${st === "ACTIVE" ? "mettre en pause" : "lancer"} la campagne ${c.id}`;
+        autoResizeAds();
+        adsInputEl.focus();
+      });
+      adsCampaignsListEl.appendChild(item);
+    }
+  } catch {
+    adsReportEl.innerHTML = '<p class="contacts-empty">Rapport indisponible.</p>';
   }
 }
 
@@ -384,6 +541,24 @@ async function refreshStatus() {
       setAgentWaStatus("error", "À configurer");
     }
 
+    // Meta Ads
+    if (health.metaAds?.connected) {
+      setStatusPill(metaStatus, "connected");
+      if (metaDetail) metaDetail.textContent = health.metaAds.message || "Connecté";
+      if (cardMeta) setConnectionCard(cardMeta, "connected");
+      setAgentMetaStatus("connected", "Connecté · prêt");
+    } else if (settings?.metaAds?.configured) {
+      setStatusPill(metaStatus, "pending");
+      if (metaDetail) metaDetail.textContent = health.metaAds?.message || "Configuré — vérifier le token";
+      if (cardMeta) setConnectionCard(cardMeta, "error");
+      setAgentMetaStatus("pending", "À vérifier");
+    } else {
+      setStatusPill(metaStatus, "error");
+      if (metaDetail) metaDetail.textContent = "Non connecté";
+      if (cardMeta) setConnectionCard(cardMeta, "error");
+      setAgentMetaStatus("error", "À configurer");
+    }
+
     if (autoReplyToggle && typeof settings?.autoReply === "boolean") {
       autoReplyToggle.checked = settings.autoReply;
     } else if (autoReplyToggle && typeof health.autoReply === "boolean") {
@@ -404,15 +579,30 @@ async function refreshStatus() {
       if (businessOfferInput) businessOfferInput.value = settings.business.offer || "";
       if (businessPriceInput) businessPriceInput.value = settings.business.price || "";
     }
+    if (settings?.metaAds) {
+      if (metaAdAccountInput && settings.metaAds.adAccountId) {
+        metaAdAccountInput.value = settings.metaAds.adAccountId;
+      }
+      if (metaPageIdInput && settings.metaAds.pageId) {
+        metaPageIdInput.value = settings.metaAds.pageId;
+      }
+      if (metaWaNumberInput) {
+        metaWaNumberInput.value = settings.metaAds.whatsappNumber || "";
+      }
+    }
 
     await loadContacts();
     if (currentView === "whatsapp") await loadDailyBilan();
+    if (currentView === "ads") await loadAdsReport();
   } catch {
     setStatusPill(openaiStatus, "error");
     setStatusPill(whatsappStatus, "error");
+    setStatusPill(metaStatus, "error");
     if (openaiDetail) openaiDetail.textContent = "Serveur hors ligne";
     if (whatsappDetail) whatsappDetail.textContent = "Serveur hors ligne";
+    if (metaDetail) metaDetail.textContent = "Serveur hors ligne";
     setAgentWaStatus("error", "Serveur hors ligne");
+    setAgentMetaStatus("error", "Serveur hors ligne");
   }
 }
 
@@ -474,6 +664,104 @@ async function sendMessage(text) {
     sendBtn.disabled = false;
     inputEl.focus();
   }
+}
+
+async function sendAdsMessage(text) {
+  if (adsSending || !text.trim()) return;
+  adsSending = true;
+  if (adsSendBtn) adsSendBtn.disabled = true;
+
+  appendAdsMessage({ role: "user", content: text, created_at: new Date().toISOString(), forceScroll: true });
+  adsInputEl.value = "";
+  autoResizeAds();
+  showAdsTyping(true);
+
+  try {
+    const res = await fetch("/api/ads/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: text }),
+    });
+    const data = await res.json();
+    showAdsTyping(false);
+
+    if (data.id) {
+      seenAdsAgentMsgIds.add(data.id);
+      lastAdsAgentMsgId = Math.max(lastAdsAgentMsgId, data.id);
+    }
+
+    appendAdsMessage({
+      role: "assistant",
+      content: data.reply || data.error || "Erreur serveur",
+      created_at: data.created_at || new Date().toISOString(),
+      isError: Boolean(data.error) || String(data.reply || "").startsWith("❌"),
+      forceScroll: true,
+    });
+    void loadAdsReport();
+  } catch (err) {
+    showAdsTyping(false);
+    appendAdsMessage({
+      role: "assistant",
+      content: `❌ Impossible de joindre le serveur : ${err.message}`,
+      created_at: new Date().toISOString(),
+      isError: true,
+    });
+  } finally {
+    adsSending = false;
+    if (adsSendBtn) adsSendBtn.disabled = false;
+    adsInputEl?.focus();
+  }
+}
+
+async function pollAdsAgentHistory() {
+  if (adsSending) return;
+  try {
+    const res = await fetch(`/api/ads/history/since?since=${lastAdsAgentMsgId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    for (const m of data.messages ?? []) {
+      if (seenAdsAgentMsgIds.has(m.id)) continue;
+      seenAdsAgentMsgIds.add(m.id);
+      lastAdsAgentMsgId = Math.max(lastAdsAgentMsgId, m.id);
+      appendAdsMessage({
+        role: m.role,
+        content: m.content,
+        created_at: m.created_at,
+        isError: m.content.startsWith("❌"),
+      });
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
+async function loadAdsHistory() {
+  const res = await fetch("/api/ads/history");
+  if (!res.ok) throw new Error("Impossible de charger l'historique Meta Ads");
+  const data = await res.json();
+  adsMessagesEl.innerHTML = "";
+
+  if (!data.messages.length) {
+    appendAdsMessage({
+      role: "assistant",
+      content:
+        "Bonjour ! Je gère vos publicités Meta (Facebook / Instagram) vers WhatsApp.\n\n1. Connexions → Meta Ads (token, Ad Account, Page, n° WhatsApp).\n2. Demandez un brouillon de campagne, je crée en pause, puis vous validez le lancement.\n3. Les rapports (dépense, clics, conversations) sont dans le panneau de gauche.",
+      created_at: new Date().toISOString(),
+    });
+    return;
+  }
+
+  for (const m of data.messages) {
+    seenAdsAgentMsgIds.add(m.id);
+    lastAdsAgentMsgId = Math.max(lastAdsAgentMsgId, m.id);
+    appendAdsMessage({
+      role: m.role,
+      content: m.content,
+      created_at: m.created_at,
+      isError: m.content.startsWith("❌"),
+    });
+  }
+  if (adsMessagesEl) adsMessagesEl.scrollTop = adsMessagesEl.scrollHeight;
 }
 
 /* ── Modal ── */
@@ -621,6 +909,84 @@ refreshBilanBtn?.addEventListener("click", () => {
   void loadDailyBilan();
 });
 
+async function saveMetaAds() {
+  const accessToken = metaTokenInput?.value?.trim() || "";
+  const adAccountId = metaAdAccountInput?.value?.trim() || "";
+  const pageId = metaPageIdInput?.value?.trim() || "";
+  const whatsappNumber = metaWaNumberInput?.value?.trim() || "";
+
+  if (!accessToken || !adAccountId || !pageId) {
+    setFeedback(metaFeedback, "Token, Ad Account ID et Page ID sont requis.", "err");
+    return null;
+  }
+
+  const res = await fetch("/api/settings/meta", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ accessToken, adAccountId, pageId, whatsappNumber }),
+  });
+  return { res, data: await res.json() };
+}
+
+saveMetaBtn?.addEventListener("click", async () => {
+  saveMetaBtn.disabled = true;
+  setFeedback(metaFeedback, "Connexion Meta…");
+  try {
+    const result = await saveMetaAds();
+    if (!result) return;
+    const { res, data } = result;
+    if (!res.ok) {
+      setFeedback(metaFeedback, data.error || data.message || "Erreur", "err");
+    } else if (data.connected || data.ok) {
+      setFeedback(metaFeedback, "✅ " + (data.message || "Meta Ads connecté"), "ok");
+      if (metaTokenInput) metaTokenInput.value = "";
+      await refreshStatus();
+      if (currentView === "ads") await loadAdsReport();
+    } else {
+      setFeedback(metaFeedback, "⚠️ " + (data.message || "Configuré mais non validé"), "err");
+      await refreshStatus();
+    }
+  } catch (err) {
+    setFeedback(metaFeedback, err.message, "err");
+  } finally {
+    saveMetaBtn.disabled = false;
+  }
+});
+
+testMetaBtn?.addEventListener("click", async () => {
+  testMetaBtn.disabled = true;
+  setFeedback(metaFeedback, "Test Meta…");
+  try {
+    if (metaTokenInput?.value?.trim() && metaAdAccountInput?.value?.trim() && metaPageIdInput?.value?.trim()) {
+      await saveMetaAds();
+    }
+    const res = await fetch("/api/settings/meta/test", { method: "POST" });
+    const data = await res.json();
+    if (data.connected) {
+      setFeedback(metaFeedback, "✅ " + data.message, "ok");
+    } else {
+      setFeedback(metaFeedback, "⚠️ " + (data.message || "Échec"), "err");
+    }
+    await refreshStatus();
+  } catch (err) {
+    setFeedback(metaFeedback, err.message, "err");
+  } finally {
+    testMetaBtn.disabled = false;
+  }
+});
+
+refreshAdsReportBtn?.addEventListener("click", () => {
+  void loadAdsReport();
+});
+
+$$("[data-ads-preset]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    adsReportPreset = btn.dataset.adsPreset || "today";
+    $$("[data-ads-preset]").forEach((b) => b.classList.toggle("active", b === btn));
+    void loadAdsReport();
+  });
+});
+
 /* ── Events ── */
 connectBtn.addEventListener("click", () => openModal("openai"));
 modalClose.addEventListener("click", closeModal);
@@ -630,6 +996,10 @@ modalOverlay.addEventListener("click", (e) => {
 
 agentWhatsapp?.addEventListener("click", () => {
   showWhatsAppWorkspace();
+});
+
+agentMeta?.addEventListener("click", () => {
+  showAdsWorkspace();
 });
 
 backTeamBtn?.addEventListener("click", () => {
@@ -654,15 +1024,28 @@ autoReplyToggle?.addEventListener("change", async () => {
 
 clearBtn.addEventListener("click", async () => {
   if (!confirm("Effacer toute la conversation ?")) return;
-  await fetch("/api/history", { method: "DELETE" });
-  await loadHistory();
+  if (currentView === "ads") {
+    await fetch("/api/ads/history", { method: "DELETE" });
+    await loadAdsHistory();
+  } else {
+    await fetch("/api/history", { method: "DELETE" });
+    await loadHistory();
+  }
 });
 
 $$(".hints li").forEach((li) => {
   li.addEventListener("click", () => {
-    inputEl.value = li.textContent.replace(/^«|»$/g, "").trim();
-    autoResize();
-    inputEl.focus();
+    const text = li.textContent.replace(/^«|»$/g, "").trim();
+    if (li.closest(".ads-hints")) {
+      if (!adsInputEl) return;
+      adsInputEl.value = text;
+      autoResizeAds();
+      adsInputEl.focus();
+    } else {
+      inputEl.value = text;
+      autoResize();
+      inputEl.focus();
+    }
   });
 });
 
@@ -680,16 +1063,36 @@ inputEl.addEventListener("keydown", (e) => {
 
 inputEl.addEventListener("input", autoResize);
 
+adsFormEl?.addEventListener("submit", (e) => {
+  e.preventDefault();
+  sendAdsMessage(adsInputEl.value);
+});
+
+adsInputEl?.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    adsFormEl?.requestSubmit();
+  }
+});
+
+adsInputEl?.addEventListener("input", autoResizeAds);
+
 function autoResize() {
   inputEl.style.height = "auto";
   inputEl.style.height = Math.min(inputEl.scrollHeight, 160) + "px";
+}
+
+function autoResizeAds() {
+  if (!adsInputEl) return;
+  adsInputEl.style.height = "auto";
+  adsInputEl.style.height = Math.min(adsInputEl.scrollHeight, 160) + "px";
 }
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (!modalOverlay.classList.contains("hidden")) {
       closeModal();
-    } else if (currentView === "whatsapp") {
+    } else if (currentView === "whatsapp" || currentView === "ads") {
       showTeamView();
     }
   }
@@ -723,6 +1126,19 @@ async function bootstrapWorkspace() {
   await loadDailyBilan();
 }
 
+async function bootstrapAdsWorkspace() {
+  try {
+    await loadAdsHistory();
+  } catch {
+    appendAdsMessage({
+      role: "assistant",
+      content: "Interface Meta Ads prête. Configurez Connexions → Meta Ads pour commencer.",
+      created_at: new Date().toISOString(),
+    });
+  }
+  await loadAdsReport();
+}
+
 /* ── Init ── */
 async function init() {
   showTeamView();
@@ -739,11 +1155,17 @@ async function init() {
       pollWhatsApp();
       pollAgentHistory();
     }
+    if (currentView === "ads") {
+      pollAdsAgentHistory();
+    }
   }, 3000);
   setInterval(() => {
     if (currentView === "whatsapp") {
       loadContacts();
       loadDailyBilan();
+    }
+    if (currentView === "ads") {
+      loadAdsReport();
     }
   }, 8000);
 }

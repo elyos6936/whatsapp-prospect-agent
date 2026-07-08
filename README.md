@@ -1,6 +1,6 @@
 # WhatsApp Agent / Agent Team
 
-Application locale multi-agents. **WhatsApp** est le premier membre validé de l'équipe.
+Application locale multi-agents. **WhatsApp** et **Publicité Meta** sont les membres actifs de l'équipe.
 
 ## Démarrage rapide
 
@@ -12,15 +12,16 @@ npm run dev
 
 Ouvrez **http://localhost:3000**
 
-1. L'écran **Équipe** affiche WhatsApp (validé) + des emplacements libres
-2. Cliquez sur la carte **WhatsApp** pour ouvrir le workspace chat
-3. Configurez OpenAI + Green-API via **Connexions**
+1. L'écran **Équipe** affiche **WhatsApp** + **Publicité Meta**
+2. Cliquez sur une carte pour ouvrir son workspace
+3. Configurez OpenAI, Green-API et Meta Ads via **Connexions**
 
 ## Configuration (via l'interface)
 
 1. Cliquez sur **Connexions**
 2. Onglet **OpenAI** : collez votre clé `sk-...`
-3. Onglet **Green-API** : renseignez Instance ID, Token et URL → **Connecter WhatsApp**
+3. Onglet **Green-API** : Instance ID, Token, URL → **Connecter WhatsApp**
+4. Onglet **Meta Ads** : Access Token, Ad Account ID (`act_…`), Page ID, n° WhatsApp Business → **Connecter Meta Ads**
 
 Les identifiants sont stockés localement dans `data/agent.db`.
 
@@ -31,11 +32,44 @@ OPENAI_API_KEY=sk-...
 GREEN_API_ID_INSTANCE=
 GREEN_API_TOKEN=
 GREEN_API_BASE_URL=https://api.green-api.com
+META_ACCESS_TOKEN=
+META_AD_ACCOUNT_ID=act_
+META_PAGE_ID=
+META_WHATSAPP_NUMBER=+229XXXXXXXX
+META_GRAPH_VERSION=v21.0
 PORT=3000
 OPENAI_MODEL=gpt-4o
 ```
 
-## Exemples d'instructions
+## Agent Publicité Meta (2e compétence)
+
+Campagnes **Click-to-WhatsApp** (Facebook / Instagram) + rapports dans l'interface.
+
+### Prérequis Meta
+1. Compte [Meta Business](https://business.facebook.com) avec un **compte publicitaire** actif
+2. Une **Page Facebook** liée, WhatsApp Business lié à la Page
+3. Une app sur [developers.facebook.com](https://developers.facebook.com) avec Marketing API
+4. Token long-lived avec permissions : `ads_management`, `ads_read`, `business_management` (et accès au compte pub / page)
+5. Récupérer : Access Token, Ad Account ID (`act_123…`), Page ID, numéro WhatsApp
+
+### Flux sécurisé
+1. Demandez un brouillon (« Crée une campagne WhatsApp budget 10 / jour au Bénin : … »)
+2. L'agent affiche le brouillon → vous validez
+3. Création réelle sur Meta en **PAUSED**
+4. « Lance / active » → statut **ACTIVE**
+5. « Mets en pause » → **PAUSED**
+
+### Rapports
+Dans le workspace Meta (panneau gauche) : dépense, impressions, clics, conversations, liste des campagnes  
+API : `GET /api/ads/report?preset=today|last_7d|last_30d`
+
+### Exemples
+- « Vérifie ma connexion Meta »
+- « Liste mes campagnes »
+- « Rapport des 7 derniers jours »
+- « Mets en pause la campagne 120… »
+
+## Exemples d'instructions WhatsApp
 
 - « Liste mes groupes WhatsApp »
 - « Envoie un message à +229XXXXXXXX : Bonjour… »

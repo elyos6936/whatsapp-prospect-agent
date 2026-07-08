@@ -41,6 +41,13 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
   );
 
+  CREATE TABLE IF NOT EXISTS ads_agent_conversation (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+    content TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+  );
+
   CREATE TABLE IF NOT EXISTS contacts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     phone TEXT NOT NULL UNIQUE,
@@ -211,6 +218,10 @@ export interface AppSettings {
   business_owner_name: string;
   business_offer: string;
   business_price: string;
+  meta_access_token: string;
+  meta_ad_account_id: string;
+  meta_page_id: string;
+  meta_whatsapp_number: string;
 }
 
 function getSetting(key: string): string {
@@ -231,6 +242,10 @@ export function getAppSettings(): AppSettings {
     business_owner_name: getSetting("business_owner_name") || "",
     business_offer: getSetting("business_offer") || "",
     business_price: getSetting("business_price") || "",
+    meta_access_token: getSetting("meta_access_token") || config.envMetaAccessToken,
+    meta_ad_account_id: getSetting("meta_ad_account_id") || config.envMetaAdAccountId,
+    meta_page_id: getSetting("meta_page_id") || config.envMetaPageId,
+    meta_whatsapp_number: getSetting("meta_whatsapp_number") || config.envMetaWhatsappNumber,
   };
 }
 
@@ -259,6 +274,63 @@ export function saveBusinessProfile(input: {
   if (input.ownerName !== undefined) setSetting("business_owner_name", input.ownerName.trim());
   if (input.offer !== undefined) setSetting("business_offer", input.offer.trim());
   if (input.price !== undefined) setSetting("business_price", input.price.trim());
+}
+
+export function saveMetaAdsSettings(input: {
+  accessToken: string;
+  adAccountId: string;
+  pageId: string;
+  whatsappNumber?: string;
+}): void {
+  setSetting("meta_access_token", input.accessToken.trim());
+  let adAccountId = input.adAccountId.trim();
+  if (adAccountId && !adAccountId.startsWith("act_")) {
+    adAccountId = `act_${adAccountId.replace(/^act_/, "")}`;
+  }
+  setSetting("meta_ad_account_id", adAccountId);
+  setSetting("meta_page_id", input.pageId.trim());
+  if (input.whatsappNumber !== undefined) {
+    setSetting("meta_whatsapp_number", input.whatsappNumber.trim());
+  }
+}
+
+export function saveAdsAgentMessage(role: AgentRole, content: string): AgentMessage {
+  const result = db
+    .prepare("INSERT INTO ads_agent_conversation (role, content) VALUES (?, ?)")
+    .run(role, content);
+
+  return db
+    .prepare("SELECT id, role, content, created_at FROM ads_agent_conversation WHERE id = ?")
+    .get(result.lastInsertRowid) as unknown as AgentMessage;
+}
+
+export function getRecentAdsAgentMessages(limit = 50): AgentMessage[] {
+  const rows = db
+    .prepare(
+      `SELECT id, role, content, created_at
+       FROM ads_agent_conversation
+       ORDER BY id DESC
+       LIMIT ?`
+    )
+    .all(limit) as unknown as AgentMessage[];
+
+  return rows.reverse();
+}
+
+export function getAdsAgentMessagesSince(sinceId = 0, limit = 50): AgentMessage[] {
+  return db
+    .prepare(
+      `SELECT id, role, content, created_at
+       FROM ads_agent_conversation
+       WHERE id > ?
+       ORDER BY id ASC
+       LIMIT ?`
+    )
+    .all(sinceId, limit) as unknown as AgentMessage[];
+}
+
+export function clearAdsAgentConversation(): void {
+  db.prepare("DELETE FROM ads_agent_conversation").run();
 }
 
 export function maskSecret(value: string, visible = 4): string {

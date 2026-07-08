@@ -31,6 +31,10 @@
             <span class="dot"></span>
             <span>WhatsApp</span>
           </div>
+          <div class="status-pill" id="meta-status">
+            <span class="dot"></span>
+            <span>Meta Ads</span>
+          </div>
         </div>
 
         <div class="topbar-right">
@@ -47,7 +51,7 @@
       <div class="view view-team" id="view-team">
         <div class="team-hero">
           <h2>Votre équipe</h2>
-          <p>Chaque agent est une fonctionnalité validée. WhatsApp est opérationnel — les prochains membres arrivent ici.</p>
+          <p>Chaque agent est une compétence de l’équipe. WhatsApp et Publicité Meta sont disponibles.</p>
         </div>
 
         <div class="team-grid" id="team-grid">
@@ -69,15 +73,23 @@
             </div>
           </button>
 
-          <!-- Emplacements futurs -->
-          <div class="agent-card agent-slot" aria-disabled="true">
-            <div class="agent-avatar slot-avatar">2</div>
-            <div class="agent-info">
-              <strong>Bientôt</strong>
-              <span>Deuxième agent de l’équipe</span>
+          <!-- Agent 2 : Meta Ads -->
+          <button type="button" class="agent-card agent-live" id="agent-meta" data-agent="meta">
+            <div class="agent-badge">V1</div>
+            <div class="agent-avatar meta-avatar" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
+                <path d="M12 2.04c-5.5 0-10 4.49-10 10.02 0 5 3.66 9.15 8.44 9.9v-7H7.9v-2.9h2.54V9.85c0-2.52 1.49-3.91 3.78-3.91 1.09 0 2.24.2 2.24.2v2.47h-1.26c-1.24 0-1.63.78-1.63 1.57v1.88h2.78l-.45 2.9h-2.33v7a10 10 0 008.44-9.9c0-5.53-4.5-10.02-10-10.02z"/>
+              </svg>
             </div>
-            <div class="agent-status-row muted">Emplacement libre</div>
-          </div>
+            <div class="agent-info">
+              <strong>Publicité Meta</strong>
+              <span>Campagnes FB/IG → WhatsApp & rapports</span>
+            </div>
+            <div class="agent-status-row">
+              <span class="agent-dot" id="agent-meta-dot"></span>
+              <span id="agent-meta-label">Chargement…</span>
+            </div>
+          </button>
 
           <div class="agent-card agent-slot" aria-disabled="true">
             <div class="agent-avatar slot-avatar">3</div>
@@ -181,6 +193,79 @@
           </main>
         </div>
       </div>
+
+      <!-- ── Vue Workspace Meta Ads ── -->
+      <div class="view view-workspace hidden" id="view-ads">
+        <div class="main-layout">
+          <aside class="panel panel-left">
+            <section class="panel-block">
+              <h2>Compte Meta</h2>
+              <div class="connection-card" id="card-meta">
+                <div class="connection-icon meta">M</div>
+                <div class="connection-info">
+                  <strong>Meta Ads</strong>
+                  <span id="meta-detail">Non connecté</span>
+                </div>
+              </div>
+              <p class="toggle-hint">Connexions → onglet Meta Ads (token, compte, page).</p>
+            </section>
+
+            <section class="panel-block">
+              <h2>Rapport pubs</h2>
+              <div class="bilan-tabs">
+                <button type="button" class="bilan-tab active" data-ads-preset="today">Aujourd'hui</button>
+                <button type="button" class="bilan-tab" data-ads-preset="last_7d">7 jours</button>
+                <button type="button" class="bilan-tab" data-ads-preset="last_30d">30 jours</button>
+              </div>
+              <div id="ads-report" class="bilan-box">
+                <p class="contacts-empty">Connectez Meta Ads pour voir les KPIs.</p>
+              </div>
+              <button type="button" class="btn btn-secondary btn-block" id="refresh-ads-report">Actualiser le rapport</button>
+            </section>
+
+            <section class="panel-block panel-contacts">
+              <h2>Campagnes</h2>
+              <div id="ads-campaigns-list" class="contacts-list">
+                <p class="contacts-empty">Aucune campagne chargée.</p>
+              </div>
+            </section>
+
+            <section class="panel-block">
+              <h2>Exemples d'instructions</h2>
+              <ul class="hints ads-hints">
+                <li>« Vérifie ma connexion Meta »</li>
+                <li>« Liste mes campagnes »</li>
+                <li>« Crée une campagne WhatsApp budget 10 USD / jour au Bénin : … »</li>
+                <li>« Lance la campagne … »</li>
+                <li>« Mets en pause la campagne … »</li>
+                <li>« Rapport des 7 derniers jours »</li>
+              </ul>
+            </section>
+          </aside>
+
+          <main class="chat-panel">
+            <div id="ads-messages" class="messages" aria-live="polite"></div>
+
+            <form id="ads-chat-form" class="composer">
+              <div class="composer-inner">
+                <textarea
+                  id="ads-message-input"
+                  rows="1"
+                  placeholder="Donnez une instruction à l'agent Publicité Meta…"
+                  autocomplete="off"
+                  required
+                ></textarea>
+                <button type="submit" class="btn btn-send" id="ads-send-btn" aria-label="Envoyer">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                  </svg>
+                </button>
+              </div>
+              <p class="composer-hint">Création toujours en pause d’abord · confirmation avant activation</p>
+            </form>
+          </main>
+        </div>
+      </div>
     </div>
 
     <!-- Modal Connexions -->
@@ -194,6 +279,7 @@
         <div class="modal-tabs">
           <button type="button" class="tab active" data-tab="openai">OpenAI</button>
           <button type="button" class="tab" data-tab="greenapi">Green-API (WhatsApp)</button>
+          <button type="button" class="tab" data-tab="meta">Meta Ads</button>
           <button type="button" class="tab" data-tab="business">Profil</button>
         </div>
 
@@ -233,6 +319,34 @@
               <button type="button" class="btn btn-primary" id="save-greenapi">Connecter WhatsApp</button>
             </div>
             <p class="form-feedback" id="green-feedback"></p>
+          </section>
+
+          <section class="tab-panel" id="tab-meta">
+            <p class="tab-desc">
+              Token d'accès Marketing API + IDs du compte publicitaire et de la Page Facebook.
+              Permissions : <code>ads_management</code>, <code>ads_read</code>, <code>business_management</code>.
+            </p>
+            <label class="field">
+              <span>Access Token</span>
+              <input type="password" id="meta-token" placeholder="EAAB..." autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Ad Account ID</span>
+              <input type="text" id="meta-ad-account" placeholder="act_123456789" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Page ID</span>
+              <input type="text" id="meta-page-id" placeholder="ID de la Page Facebook" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Numéro WhatsApp Business (Click-to-WA)</span>
+              <input type="text" id="meta-wa-number" placeholder="+229XXXXXXXX" autocomplete="off" />
+            </label>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" id="test-meta">Tester</button>
+              <button type="button" class="btn btn-primary" id="save-meta">Connecter Meta Ads</button>
+            </div>
+            <p class="form-feedback" id="meta-feedback"></p>
           </section>
 
           <section class="tab-panel" id="tab-business">

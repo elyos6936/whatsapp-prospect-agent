@@ -193,6 +193,11 @@ body {
   color: #04140a;
 }
 
+.meta-avatar {
+  background: linear-gradient(135deg, #1877f2, #0a4da6);
+  color: #e8f1ff;
+}
+
 .slot-avatar {
   background: var(--bg-elevated);
   border: 1px dashed var(--border-light);
@@ -417,6 +422,11 @@ body {
   color: var(--accent);
 }
 
+.connection-icon.meta {
+  background: rgba(24, 119, 242, 0.18);
+  color: #4da3ff;
+}
+
 .connection-info {
   display: flex;
   flex-direction: column;
@@ -475,6 +485,29 @@ body {
   margin-top: 0.5rem;
   font-size: 0.72rem;
   color: var(--text-dim);
+}
+
+.bilan-tabs {
+  display: flex;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.bilan-tab {
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+  border-radius: 999px;
+  padding: 0.25rem 0.65rem;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.bilan-tab.active {
+  border-color: #4da3ff;
+  color: #cfe4ff;
+  background: rgba(24, 119, 242, 0.18);
 }
 
 .bilan-box {
