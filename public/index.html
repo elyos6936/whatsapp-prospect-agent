@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agent Team</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" class="btn btn-ghost hidden" id="back-team-btn" title="Retour à l'équipe">
+            ← Équipe
+          </button>
+          <div class="logo">
+            <span class="logo-icon">AT</span>
+            <div>
+              <h1 id="app-title">Agent Team</h1>
+              <p id="app-subtitle">Votre équipe d’agents IA</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="topbar-center" id="status-pills">
+          <div class="status-pill" id="openai-status">
+            <span class="dot"></span>
+            <span>OpenAI</span>
+          </div>
+          <div class="status-pill" id="whatsapp-status">
+            <span class="dot"></span>
+            <span>WhatsApp</span>
+          </div>
+        </div>
+
+        <div class="topbar-right">
+          <button type="button" class="btn btn-ghost hidden" id="clear-btn" title="Effacer la conversation">
+            Effacer
+          </button>
+          <button type="button" class="btn btn-primary" id="connect-btn">
+            Connexions
+          </button>
+        </div>
+      </header>
+
+      <!-- ── Vue Équipe ── -->
+      <div class="view view-team" id="view-team">
+        <div class="team-hero">
+          <h2>Votre équipe</h2>
+          <p>Chaque agent est une fonctionnalité validée. WhatsApp est opérationnel — les prochains membres arrivent ici.</p>
+        </div>
+
+        <div class="team-grid" id="team-grid">
+          <!-- Agent 1 : WhatsApp (validé) -->
+          <button type="button" class="agent-card agent-live" id="agent-whatsapp" data-agent="whatsapp">
+            <div class="agent-badge">Validé</div>
+            <div class="agent-avatar whatsapp-avatar" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
+              </svg>
+            </div>
+            <div class="agent-info">
+              <strong>WhatsApp</strong>
+              <span>Expert prospection, groupes & messages programmés</span>
+            </div>
+            <div class="agent-status-row">
+              <span class="agent-dot" id="agent-wa-dot"></span>
+              <span id="agent-wa-label">Chargement…</span>
+            </div>
+          </button>
+
+          <!-- Emplacements futurs -->
+          <div class="agent-card agent-slot" aria-disabled="true">
+            <div class="agent-avatar slot-avatar">2</div>
+            <div class="agent-info">
+              <strong>Bientôt</strong>
+              <span>Deuxième agent de l’équipe</span>
+            </div>
+            <div class="agent-status-row muted">Emplacement libre</div>
+          </div>
+
+          <div class="agent-card agent-slot" aria-disabled="true">
+            <div class="agent-avatar slot-avatar">3</div>
+            <div class="agent-info">
+              <strong>Bientôt</strong>
+              <span>Troisième agent de l’équipe</span>
+            </div>
+            <div class="agent-status-row muted">Emplacement libre</div>
+          </div>
+
+          <div class="agent-card agent-slot agent-add" aria-disabled="true">
+            <div class="agent-avatar add-avatar">+</div>
+            <div class="agent-info">
+              <strong>Ajouter</strong>
+              <span>Nouvelles fonctionnalités à venir</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ── Vue Workspace WhatsApp ── -->
+      <div class="view view-workspace hidden" id="view-workspace">
+        <div class="main-layout">
+          <aside class="panel panel-left">
+            <section class="panel-block">
+              <h2>État des connexions</h2>
+              <div class="connection-card" id="card-openai">
+                <div class="connection-icon openai">AI</div>
+                <div class="connection-info">
+                  <strong>OpenAI</strong>
+                  <span id="openai-detail">Non configuré</span>
+                </div>
+              </div>
+              <div class="connection-card" id="card-whatsapp">
+                <div class="connection-icon whatsapp">WA</div>
+                <div class="connection-info">
+                  <strong>Green-API</strong>
+                  <span id="whatsapp-detail">Non connecté</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel-block">
+              <h2>Réponses automatiques</h2>
+              <label class="toggle-row">
+                <input type="checkbox" id="auto-reply-toggle" checked />
+                <span>Répondre aux messages WhatsApp entrants</span>
+              </label>
+              <p class="toggle-hint">Global ON + auto_reply du contact. Quota : <span id="outbound-quota">0/30</span> aujourd'hui.</p>
+            </section>
+
+            <section class="panel-block">
+              <h2>Bilan du jour</h2>
+              <div id="daily-bilan" class="bilan-box">
+                <p class="contacts-empty">Chargement…</p>
+              </div>
+              <button type="button" class="btn btn-secondary btn-block" id="refresh-bilan">Actualiser le bilan</button>
+              <p class="toggle-hint">Données SQLite · fichier <code>data/agent.db</code></p>
+            </section>
+
+            <section class="panel-block panel-contacts">
+              <h2>Contacts</h2>
+              <div id="contacts-list" class="contacts-list">
+                <p class="contacts-empty">Aucun contact enregistré.</p>
+              </div>
+            </section>
+
+            <section class="panel-block">
+              <h2>Exemples d'instructions</h2>
+              <ul class="hints">
+                <li>« Liste mes contacts »</li>
+                <li>« Enregistre +229… , boutique mode, statut intéressé »</li>
+                <li>« Arrête toute réponse auto avec +229… »</li>
+                <li>« Bloque +229… » / « Passe ce numéro en STOP »</li>
+                <li>« Qu'est-ce que +229… a répondu ? »</li>
+                <li>« Envoie un message de prospection à +229… »</li>
+              </ul>
+            </section>
+          </aside>
+
+          <main class="chat-panel">
+            <div id="messages" class="messages" aria-live="polite"></div>
+
+            <form id="chat-form" class="composer">
+              <div class="composer-inner">
+                <textarea
+                  id="message-input"
+                  rows="1"
+                  placeholder="Donnez une instruction à l'agent WhatsApp…"
+                  autocomplete="off"
+                  required
+                ></textarea>
+                <button type="submit" class="btn btn-send" id="send-btn" aria-label="Envoyer">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+                  </svg>
+                </button>
+              </div>
+              <p class="composer-hint">Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</p>
+            </form>
+          </main>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Connexions -->
+    <div class="modal-overlay hidden" id="modal-overlay">
+      <div class="modal" role="dialog" aria-labelledby="modal-title">
+        <header class="modal-header">
+          <h2 id="modal-title">Connexions</h2>
+          <button type="button" class="btn-icon" id="modal-close" aria-label="Fermer">&times;</button>
+        </header>
+
+        <div class="modal-tabs">
+          <button type="button" class="tab active" data-tab="openai">OpenAI</button>
+          <button type="button" class="tab" data-tab="greenapi">Green-API (WhatsApp)</button>
+          <button type="button" class="tab" data-tab="business">Profil</button>
+        </div>
+
+        <div class="modal-body">
+          <section class="tab-panel active" id="tab-openai">
+            <p class="tab-desc">
+              Votre clé API OpenAI alimente le chat et l'exécution des actions WhatsApp.
+            </p>
+            <label class="field">
+              <span>Clé API OpenAI</span>
+              <input type="password" id="openai-key" placeholder="sk-..." autocomplete="off" />
+            </label>
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary" id="save-openai">Enregistrer OpenAI</button>
+            </div>
+            <p class="form-feedback" id="openai-feedback"></p>
+          </section>
+
+          <section class="tab-panel" id="tab-greenapi">
+            <p class="tab-desc">
+              Identifiants de votre instance Green-API pour piloter WhatsApp.
+            </p>
+            <label class="field">
+              <span>ID Instance</span>
+              <input type="text" id="green-id" placeholder="1100123456" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Token API</span>
+              <input type="password" id="green-token" placeholder="Votre token Green-API" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>URL de base</span>
+              <input type="url" id="green-url" value="https://7107.api.greenapi.com" />
+            </label>
+            <div class="form-actions">
+              <button type="button" class="btn btn-secondary" id="test-greenapi">Tester</button>
+              <button type="button" class="btn btn-primary" id="save-greenapi">Connecter WhatsApp</button>
+            </div>
+            <p class="form-feedback" id="green-feedback"></p>
+          </section>
+
+          <section class="tab-panel" id="tab-business">
+            <p class="tab-desc">
+              Ces infos alimentent les réponses auto aux prospects (évite « [ton prénom] »). Stockées dans SQLite.
+            </p>
+            <label class="field">
+              <span>Votre prénom / nom</span>
+              <input type="text" id="business-name" placeholder="Ex. Awa" autocomplete="off" />
+            </label>
+            <label class="field">
+              <span>Offre / formation</span>
+              <textarea id="business-offer" rows="3" placeholder="Ex. Formation prospection WhatsApp en 7 jours"></textarea>
+            </label>
+            <label class="field">
+              <span>Tarif (FCFA)</span>
+              <input type="text" id="business-price" placeholder="Ex. 25 000 FCFA" autocomplete="off" />
+            </label>
+            <div class="form-actions">
+              <button type="button" class="btn btn-primary" id="save-business">Enregistrer le profil</button>
+            </div>
+            <p class="form-feedback" id="business-feedback"></p>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
