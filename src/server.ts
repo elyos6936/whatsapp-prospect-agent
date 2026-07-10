@@ -1,48 +1,42 @@
-import Fastify from "fastify";
+﻿import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import {
   clearAgentConversation,
-  clearAdsAgentConversation,
   countOutboundToday,
   DAILY_OUTBOUND_LIMIT,
   getAppSettings,
   getAgentMessagesSince,
-  getAdsAgentMessagesSince,
   getContactThread,
   getDailyBilan,
   getIncomingMessagesSince,
   getRecentAgentMessages,
-  getRecentAdsAgentMessages,
   getWhatsAppMessagesSince,
   isAutoReplyEnabled,
   listContacts,
   maskSecret,
   saveAgentMessage,
-  saveAdsAgentMessage,
   saveBusinessProfile,
   saveContact,
+  saveEvolutionSettings,
   saveGreenApiSettings,
-  saveMetaAdsSettings,
   saveOpenAiKey,
   setAutoReplyEnabled,
   CONTACT_STATUSES,
   type ContactStatus,
 } from "./db.js";
 import { chatWithAgent } from "./agent.js";
-import { chatWithAdsAgent } from "./ads-agent.js";
-import { chatIdToDisplay, testGreenApiConnection } from "./greenapi.js";
-import {
-  getAdsInsights,
-  listCampaigns,
-  setCampaignStatus,
-  testMetaAdsConnection,
-  type InsightsPreset,
-} from "./meta-ads.js";
-import { startNotificationPoller } from "./notifications.js";
+import { chatIdToDisplay, diagnoseEvolutionApi, testGreenApiConnection, setEvolutionWebhook } from "./evolutionapi.js";
+import { startNotificationPoller, getWhatsappPollHealth, handleEvolutionWebhook } from "./notifications.js";
 import { startScheduler } from "./scheduler.js";
+import { registerGreenApiRoutes } from "./greenapi-routes.js";
+import { registerAutomationRoutes } from "./automation-routes.js";
+import { registerFeatureRoutes } from "./feature-routes.js";
+import { startAutomationEngine } from "./automation-engine.js";
+import { processSendQueue } from "./send-queue.js";
+import { processDueSequences } from "./sequences.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -62,9 +56,18 @@ app.get("/api/health", async () => {
   const settings = getAppSettings();
   const hasOpenAi = Boolean(settings.openai_api_key);
   let whatsapp = { connected: false, state: "not_configured", message: "Non configuré" };
-  let metaAds = { connected: false, message: "Non configuré" };
 
-  if (settings.green_api_id_instance && settings.green_api_token) {
+  if (settings.evolution_api_key && settings.evolution_instance_name) {
+    try {
+      whatsapp = await testGreenApiConnection();
+    } catch (err) {
+      whatsapp = {
+        connected: false,
+        state: "error",
+        message: err instanceof Error ? err.message : "Erreur Evolution API",
+      };
+    }
+  } else if (settings.green_api_id_instance && settings.green_api_token) {
     try {
       whatsapp = await testGreenApiConnection();
     } catch (err) {
@@ -76,23 +79,12 @@ app.get("/api/health", async () => {
     }
   }
 
-  if (settings.meta_access_token && settings.meta_ad_account_id && settings.meta_page_id) {
-    try {
-      metaAds = await testMetaAdsConnection();
-    } catch (err) {
-      metaAds = {
-        connected: false,
-        message: err instanceof Error ? err.message : "Erreur Meta Ads",
-      };
-    }
-  }
-
   return {
     ok: true,
     model: config.openaiModel,
     openai: { configured: hasOpenAi },
     whatsapp,
-    metaAds,
+    whatsappPoll: getWhatsappPollHealth(),
     autoReply: isAutoReplyEnabled(),
     outbound: {
       today: countOutboundToday(),
@@ -108,6 +100,12 @@ app.get("/api/settings", async () => {
       configured: Boolean(s.openai_api_key),
       maskedKey: s.openai_api_key ? maskSecret(s.openai_api_key) : "",
     },
+    evolution: {
+      configured: Boolean(s.evolution_api_key && s.evolution_instance_name),
+      instanceName: s.evolution_instance_name,
+      maskedKey: s.evolution_api_key ? maskSecret(s.evolution_api_key) : "",
+      baseUrl: s.evolution_api_base_url || config.defaultEvolutionBaseUrl,
+    },
     greenApi: {
       configured: Boolean(s.green_api_id_instance && s.green_api_token),
       idInstance: s.green_api_id_instance,
@@ -118,13 +116,6 @@ app.get("/api/settings", async () => {
       ownerName: s.business_owner_name,
       offer: s.business_offer,
       price: s.business_price,
-    },
-    metaAds: {
-      configured: Boolean(s.meta_access_token && s.meta_ad_account_id && s.meta_page_id),
-      adAccountId: s.meta_ad_account_id,
-      pageId: s.meta_page_id,
-      whatsappNumber: s.meta_whatsapp_number,
-      maskedToken: s.meta_access_token ? maskSecret(s.meta_access_token) : "",
     },
     autoReply: isAutoReplyEnabled(),
   };
@@ -223,155 +214,70 @@ app.post("/api/settings/greenapi/test", async (_request, reply) => {
 });
 
 app.post<{
-  Body: {
-    accessToken?: string;
-    adAccountId?: string;
-    pageId?: string;
-    whatsappNumber?: string;
-  };
-}>("/api/settings/meta", async (request, reply) => {
-  const accessToken = request.body?.accessToken?.trim();
-  const adAccountId = request.body?.adAccountId?.trim();
-  const pageId = request.body?.pageId?.trim();
-  const whatsappNumber = request.body?.whatsappNumber?.trim() || "";
+  Body: { baseUrl?: string; apiKey?: string; instanceName?: string; webhookUrl?: string };
+}>("/api/settings/evolution", async (request, reply) => {
+  const baseUrl = request.body?.baseUrl?.trim() || config.defaultEvolutionBaseUrl;
+  const apiKey = request.body?.apiKey?.trim();
+  const instanceName = request.body?.instanceName?.trim();
 
-  if (!accessToken || !adAccountId || !pageId) {
-    return reply.status(400).send({
-      error: "Token, Ad Account ID et Page ID Meta sont requis.",
-    });
+  if (!apiKey || !instanceName) {
+    return reply.status(400).send({ error: "Clé API et nom d'instance Evolution sont requis." });
   }
 
-  saveMetaAdsSettings({ accessToken, adAccountId, pageId, whatsappNumber });
+  saveEvolutionSettings({ baseUrl, apiKey, instanceName });
 
   try {
-    const result = await testMetaAdsConnection();
+    const result = await testGreenApiConnection();
+    if (request.body?.webhookUrl?.trim()) {
+      await setEvolutionWebhook(request.body.webhookUrl.trim());
+    }
     return { ok: result.connected, ...result };
   } catch (err) {
     return reply.status(502).send({
       ok: false,
-      error: err instanceof Error ? err.message : "Impossible de joindre Meta",
+      error: err instanceof Error ? err.message : "Impossible de joindre Evolution API",
     });
   }
 });
 
-app.post("/api/settings/meta/test", async (_request, reply) => {
+app.post("/api/settings/evolution/test", async (_request, reply) => {
   try {
-    return await testMetaAdsConnection();
+    return await testGreenApiConnection();
   } catch (err) {
     return reply.status(502).send({
       connected: false,
-      message: err instanceof Error ? err.message : "Erreur Meta Ads",
+      state: "error",
+      message: err instanceof Error ? err.message : "Erreur Evolution API",
     });
   }
 });
 
-app.get("/api/ads/report", async (request, reply) => {
-  const presetRaw = String((request.query as { preset?: string }).preset || "today");
-  const preset: InsightsPreset =
-    presetRaw === "last_7d" || presetRaw === "last_30d" ? presetRaw : "today";
-
-  const settings = getAppSettings();
-  if (!settings.meta_access_token || !settings.meta_ad_account_id || !settings.meta_page_id) {
-    return {
-      configured: false,
-      report: {
-        spend: 0,
-        impressions: 0,
-        clicks: 0,
-        messages: 0,
-        cpc: null,
-        preset,
-      },
-      campaigns: [],
-      message: "Meta Ads non configuré. Ouvrez Connexions → Meta Ads.",
-    };
-  }
-
+app.get("/api/evolution/diagnose", async (_request, reply) => {
   try {
-    const report = await getAdsInsights(preset);
-    let campaigns: Awaited<ReturnType<typeof listCampaigns>> = [];
-    try {
-      campaigns = await listCampaigns(20);
-    } catch {
-      campaigns = [];
-    }
-    return { configured: true, report, campaigns };
+    return await diagnoseEvolutionApi();
   } catch (err) {
     return reply.status(502).send({
-      configured: true,
-      error: err instanceof Error ? err.message : "Impossible de charger le rapport Meta",
+      error: err instanceof Error ? err.message : "Diagnostic Evolution impossible",
     });
   }
 });
 
-app.get("/api/ads/campaigns", async (_request, reply) => {
-  try {
-    const campaigns = await listCampaigns(30);
-    return { count: campaigns.length, campaigns };
-  } catch (err) {
-    return reply.status(502).send({
-      error: err instanceof Error ? err.message : "Impossible de lister les campagnes",
-    });
-  }
+app.get("/api/evolution/webhook-info", async (request) => {
+  const host = request.headers["x-forwarded-host"] || request.headers.host;
+  const proto = request.headers["x-forwarded-proto"] || "http";
+  const base = host ? `${proto}://${host}` : null;
+  return {
+    endpoint: "/api/evolution/webhook",
+    localUrl: base ? `${base}/api/evolution/webhook` : null,
+    hint:
+      "En local, lancez « npm run tunnel » puis utilisez https://VOTRE-TUNNEL.trycloudflare.com/api/evolution/webhook dans Connexions → Evolution API.",
+    events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+  };
 });
 
-app.post<{
-  Body: { campaignId?: string; status?: string };
-}>("/api/ads/campaigns/status", async (request, reply) => {
-  const campaignId = request.body?.campaignId?.trim();
-  const status = String(request.body?.status || "").toUpperCase();
-  if (!campaignId) {
-    return reply.status(400).send({ error: "campaignId requis." });
-  }
-  if (status !== "ACTIVE" && status !== "PAUSED") {
-    return reply.status(400).send({ error: "status doit être ACTIVE ou PAUSED." });
-  }
-  try {
-    const result = await setCampaignStatus(campaignId, status as "ACTIVE" | "PAUSED");
-    return { ok: true, ...result };
-  } catch (err) {
-    return reply.status(502).send({
-      error: err instanceof Error ? err.message : "Échec changement de statut",
-    });
-  }
-});
-
-app.get("/api/ads/history", async () => ({
-  messages: getRecentAdsAgentMessages(100),
-}));
-
-app.get("/api/ads/history/since", async (request) => {
-  const since = Number((request.query as { since?: string }).since) || 0;
-  return { messages: getAdsAgentMessagesSince(since) };
-});
-
-app.delete("/api/ads/history", async () => {
-  clearAdsAgentConversation();
-  return { ok: true };
-});
-
-app.post<{ Body: { message?: string } }>("/api/ads/chat", async (request, reply) => {
-  const message = request.body?.message?.trim();
-  if (!message) {
-    return reply.status(400).send({ error: "Le champ « message » est requis." });
-  }
-
-  saveAdsAgentMessage("user", message);
-
-  try {
-    const assistantReply = await chatWithAdsAgent(message);
-    const saved = saveAdsAgentMessage("assistant", assistantReply);
-    return { id: saved.id, reply: saved.content, created_at: saved.created_at };
-  } catch (err) {
-    const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
-    const saved = saveAdsAgentMessage("assistant", `❌ ${errorText}`);
-    return {
-      id: saved.id,
-      reply: saved.content,
-      created_at: saved.created_at,
-      error: true,
-    };
-  }
+app.post("/api/evolution/webhook", async (request) => {
+  const processed = handleEvolutionWebhook(request.body);
+  return { ok: true, processed };
 });
 
 app.get("/api/history", async () => ({
@@ -385,7 +291,8 @@ app.get("/api/incoming", async (request) => {
 
 app.get("/api/whatsapp", async (request) => {
   const since = Number((request.query as { since?: string }).since) || 0;
-  return { messages: getWhatsAppMessagesSince(since) };
+  const limit = since === 0 ? 500 : 100;
+  return { messages: getWhatsAppMessagesSince(since, limit) };
 });
 
 app.get("/api/history/since", async (request) => {
@@ -487,12 +394,21 @@ app.post<{ Body: { message?: string } }>("/api/chat", async (request, reply) => 
   }
 });
 
+await registerGreenApiRoutes(app);
+await registerAutomationRoutes(app);
+await registerFeatureRoutes(app);
+
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   console.log(`\n🚀 WhatsApp Agent : http://localhost:${config.port}`);
   console.log(`   Ouvrez l'app → Connexions → configurez OpenAI + Green-API\n`);
   startNotificationPoller(3000);
   startScheduler(5000);
+  startAutomationEngine(15000);
+  setInterval(() => {
+    void processSendQueue(2);
+    void processDueSequences();
+  }, 8000);
 } catch (err) {
   app.log.error(err);
   process.exit(1);

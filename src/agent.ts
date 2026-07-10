@@ -36,13 +36,18 @@ function formatOpenAiError(err: unknown): string {
   return String(err);
 }
 
-export async function chatWithAgent(_userMessage: string): Promise<string> {
+export async function chatWithAgent(userMessage: string): Promise<string> {
   const client = getOpenAiClient();
   const history = getRecentAgentMessages(50);
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
     ...toOpenAiMessages(history),
   ];
+
+  const last = history[history.length - 1];
+  if (!last || last.role !== "user" || last.content !== userMessage) {
+    messages.push({ role: "user", content: userMessage });
+  }
 
   let rounds = 0;
 

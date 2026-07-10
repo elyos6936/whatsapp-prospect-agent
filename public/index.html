@@ -10,14 +10,14 @@
     <div class="app-shell">
       <header class="topbar">
         <div class="topbar-left">
-          <button type="button" class="btn btn-ghost hidden" id="back-team-btn" title="Retour à l'équipe">
-            ← Équipe
+          <button type="button" class="btn btn-ghost hidden" id="back-team-btn" title="Retour Ã  l'Ã©quipe">
+            â† Ã‰quipe
           </button>
           <div class="logo">
             <span class="logo-icon">AT</span>
             <div>
               <h1 id="app-title">Agent Team</h1>
-              <p id="app-subtitle">Votre équipe d’agents IA</p>
+              <p id="app-subtitle">Votre Ã©quipe dâ€™agents IA</p>
             </div>
           </div>
         </div>
@@ -31,10 +31,6 @@
             <span class="dot"></span>
             <span>WhatsApp</span>
           </div>
-          <div class="status-pill" id="meta-status">
-            <span class="dot"></span>
-            <span>Meta Ads</span>
-          </div>
         </div>
 
         <div class="topbar-right">
@@ -47,17 +43,17 @@
         </div>
       </header>
 
-      <!-- ── Vue Équipe ── -->
+      <!-- â”€â”€ Vue Ã‰quipe â”€â”€ -->
       <div class="view view-team" id="view-team">
         <div class="team-hero">
-          <h2>Votre équipe</h2>
-          <p>Chaque agent est une compétence de l’équipe. WhatsApp et Publicité Meta sont disponibles.</p>
+          <h2>Votre Ã©quipe</h2>
+          <p>Agent WhatsApp — prospection, groupes, automatisations et console Green-API.</p>
         </div>
 
         <div class="team-grid" id="team-grid">
-          <!-- Agent 1 : WhatsApp (validé) -->
+          <!-- Agent 1 : WhatsApp (validÃ©) -->
           <button type="button" class="agent-card agent-live" id="agent-whatsapp" data-agent="whatsapp">
-            <div class="agent-badge">Validé</div>
+            <div class="agent-badge">ValidÃ©</div>
             <div class="agent-avatar whatsapp-avatar" aria-hidden="true">
               <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
                 <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.435 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .16 5.335.157 11.892c0 2.096.547 4.142 1.588 5.945L.057 24l6.305-1.654a11.882 11.882 0 005.683 1.448h.005c6.554 0 11.89-5.335 11.893-11.893a11.821 11.821 0 00-3.48-8.413z"/>
@@ -65,107 +61,86 @@
             </div>
             <div class="agent-info">
               <strong>WhatsApp</strong>
-              <span>Expert prospection, groupes & messages programmés</span>
+              <span>Expert prospection, groupes & messages programmÃ©s</span>
             </div>
             <div class="agent-status-row">
               <span class="agent-dot" id="agent-wa-dot"></span>
-              <span id="agent-wa-label">Chargement…</span>
+              <span id="agent-wa-label">Chargementâ€¦</span>
             </div>
           </button>
 
-          <!-- Agent 2 : Meta Ads -->
-          <button type="button" class="agent-card agent-live" id="agent-meta" data-agent="meta">
-            <div class="agent-badge">V1</div>
-            <div class="agent-avatar meta-avatar" aria-hidden="true">
-              <svg viewBox="0 0 24 24" width="36" height="36" fill="currentColor">
-                <path d="M12 2.04c-5.5 0-10 4.49-10 10.02 0 5 3.66 9.15 8.44 9.9v-7H7.9v-2.9h2.54V9.85c0-2.52 1.49-3.91 3.78-3.91 1.09 0 2.24.2 2.24.2v2.47h-1.26c-1.24 0-1.63.78-1.63 1.57v1.88h2.78l-.45 2.9h-2.33v7a10 10 0 008.44-9.9c0-5.53-4.5-10.02-10-10.02z"/>
-              </svg>
-            </div>
-            <div class="agent-info">
-              <strong>Publicité Meta</strong>
-              <span>Campagnes FB/IG → WhatsApp & rapports</span>
-            </div>
-            <div class="agent-status-row">
-              <span class="agent-dot" id="agent-meta-dot"></span>
-              <span id="agent-meta-label">Chargement…</span>
-            </div>
-          </button>
-
-          <div class="agent-card agent-slot" aria-disabled="true">
-            <div class="agent-avatar slot-avatar">3</div>
-            <div class="agent-info">
-              <strong>Bientôt</strong>
-              <span>Troisième agent de l’équipe</span>
-            </div>
-            <div class="agent-status-row muted">Emplacement libre</div>
-          </div>
-
-          <div class="agent-card agent-slot agent-add" aria-disabled="true">
-            <div class="agent-avatar add-avatar">+</div>
-            <div class="agent-info">
-              <strong>Ajouter</strong>
-              <span>Nouvelles fonctionnalités à venir</span>
-            </div>
-          </div>
         </div>
       </div>
 
-      <!-- ── Vue Workspace WhatsApp ── -->
+      <!-- â”€â”€ Vue Workspace WhatsApp â”€â”€ -->
       <div class="view view-workspace hidden" id="view-workspace">
-        <div class="main-layout">
+        <div class="wa-mode-bar">
+          <button type="button" class="wa-mode-btn active" data-wa-mode="agent">Agent IA</button>
+          <button type="button" class="wa-mode-btn" data-wa-mode="console">Console Green-API</button>
+          <button type="button" class="wa-mode-btn" data-wa-mode="automation">Automatisation</button>
+        </div>
+
+        <div class="wa-agent-layout main-layout" id="wa-agent-layout">
           <aside class="panel panel-left">
             <section class="panel-block">
-              <h2>État des connexions</h2>
+              <h2>Ã‰tat des connexions</h2>
               <div class="connection-card" id="card-openai">
                 <div class="connection-icon openai">AI</div>
                 <div class="connection-info">
                   <strong>OpenAI</strong>
-                  <span id="openai-detail">Non configuré</span>
+                  <span id="openai-detail">Non configurÃ©</span>
                 </div>
               </div>
               <div class="connection-card" id="card-whatsapp">
                 <div class="connection-icon whatsapp">WA</div>
                 <div class="connection-info">
                   <strong>Green-API</strong>
-                  <span id="whatsapp-detail">Non connecté</span>
+                  <span id="whatsapp-detail">Non connectÃ©</span>
                 </div>
               </div>
             </section>
 
             <section class="panel-block">
-              <h2>Réponses automatiques</h2>
+              <h2>RÃ©ponses automatiques</h2>
               <label class="toggle-row">
                 <input type="checkbox" id="auto-reply-toggle" checked />
-                <span>Répondre aux messages WhatsApp entrants</span>
+                <span>RÃ©pondre aux messages WhatsApp entrants</span>
               </label>
               <p class="toggle-hint">Global ON + auto_reply du contact. Quota : <span id="outbound-quota">0/30</span> aujourd'hui.</p>
+              <p class="toggle-hint toggle-warn hidden" id="auto-reply-warn">âš ï¸ RÃ©ponses auto dÃ©sactivÃ©es â€” les messages entrants s'affichent mais l'agent ne rÃ©pond pas.</p>
             </section>
 
             <section class="panel-block">
               <h2>Bilan du jour</h2>
               <div id="daily-bilan" class="bilan-box">
-                <p class="contacts-empty">Chargement…</p>
+                <p class="contacts-empty">Chargementâ€¦</p>
               </div>
               <button type="button" class="btn btn-secondary btn-block" id="refresh-bilan">Actualiser le bilan</button>
-              <p class="toggle-hint">Données SQLite · fichier <code>data/agent.db</code></p>
+              <p class="toggle-hint">DonnÃ©es SQLite Â· fichier <code>data/agent.db</code></p>
             </section>
 
             <section class="panel-block panel-contacts">
               <h2>Contacts</h2>
               <div id="contacts-list" class="contacts-list">
-                <p class="contacts-empty">Aucun contact enregistré.</p>
+                <p class="contacts-empty">Aucun contact enregistrÃ©.</p>
               </div>
+            </section>
+
+            <section class="panel-block">
+              <h2>Console Green-API</h2>
+              <p class="toggle-hint">Utilisez le bouton <strong>Console Green-API</strong> en haut pour : inbox, chats, statuts, envoi direct et toutes les méthodes API.</p>
             </section>
 
             <section class="panel-block">
               <h2>Exemples d'instructions</h2>
               <ul class="hints">
-                <li>« Liste mes contacts »</li>
-                <li>« Enregistre +229… , boutique mode, statut intéressé »</li>
-                <li>« Arrête toute réponse auto avec +229… »</li>
-                <li>« Bloque +229… » / « Passe ce numéro en STOP »</li>
-                <li>« Qu'est-ce que +229… a répondu ? »</li>
-                <li>« Envoie un message de prospection à +229… »</li>
+                <li>« Poste le statut WhatsApp : Dieu est grand »</li>
+                <li>Â« Liste mes contacts Â»</li>
+                <li>Â« Enregistre +229â€¦ , boutique mode, statut intÃ©ressÃ© Â»</li>
+                <li>Â« ArrÃªte toute rÃ©ponse auto avec +229â€¦ Â»</li>
+                <li>Â« Bloque +229â€¦ Â» / Â« Passe ce numÃ©ro en STOP Â»</li>
+                <li>Â« Qu'est-ce que +229â€¦ a rÃ©pondu ? Â»</li>
+                <li>Â« Envoie un message de prospection Ã  +229â€¦ Â»</li>
               </ul>
             </section>
           </aside>
@@ -178,7 +153,7 @@
                 <textarea
                   id="message-input"
                   rows="1"
-                  placeholder="Donnez une instruction à l'agent WhatsApp…"
+                  placeholder="Donnez une instruction Ã  l'agent WhatsAppâ€¦"
                   autocomplete="off"
                   required
                 ></textarea>
@@ -188,84 +163,102 @@
                   </svg>
                 </button>
               </div>
-              <p class="composer-hint">Entrée pour envoyer · Maj+Entrée pour une nouvelle ligne</p>
+              <p class="composer-hint">EntrÃ©e pour envoyer Â· Maj+EntrÃ©e pour une nouvelle ligne</p>
             </form>
           </main>
         </div>
-      </div>
 
-      <!-- ── Vue Workspace Meta Ads ── -->
-      <div class="view view-workspace hidden" id="view-ads">
-        <div class="main-layout">
-          <aside class="panel panel-left">
-            <section class="panel-block">
-              <h2>Compte Meta</h2>
-              <div class="connection-card" id="card-meta">
-                <div class="connection-icon meta">M</div>
-                <div class="connection-info">
-                  <strong>Meta Ads</strong>
-                  <span id="meta-detail">Non connecté</span>
-                </div>
-              </div>
-              <p class="toggle-hint">Connexions → onglet Meta Ads (token, compte, page).</p>
+        <div class="wa-console-layout hidden" id="wa-console-layout">
+          <nav class="gapi-tabs" id="gapi-tabs">
+            <button type="button" class="gapi-tab active" data-gapi-tab="overview">Accueil</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="inbox">Boîte de réception</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="chats">Chats</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="contacts">Contacts</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="groups">Groupes</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="statuses">Statuts</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="send">Envoyer</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="instance">Instance</button>
+            <button type="button" class="gapi-tab" data-gapi-tab="api">API complète</button>
+          </nav>
+          <div class="gapi-content">
+            <section class="gapi-panel active" id="gapi-panel-overview">
+              <div class="gapi-toolbar"><h2>Vue d'ensemble WhatsApp</h2><button type="button" class="btn btn-secondary btn-sm" id="gapi-refresh-dashboard">Actualiser</button></div>
+              <div id="gapi-dashboard" class="gapi-dashboard"><p class="contacts-empty">Chargement…</p></div>
             </section>
-
-            <section class="panel-block">
-              <h2>Rapport pubs</h2>
-              <div class="bilan-tabs">
-                <button type="button" class="bilan-tab active" data-ads-preset="today">Aujourd'hui</button>
-                <button type="button" class="bilan-tab" data-ads-preset="last_7d">7 jours</button>
-                <button type="button" class="bilan-tab" data-ads-preset="last_30d">30 jours</button>
-              </div>
-              <div id="ads-report" class="bilan-box">
-                <p class="contacts-empty">Connectez Meta Ads pour voir les KPIs.</p>
-              </div>
-              <button type="button" class="btn btn-secondary btn-block" id="refresh-ads-report">Actualiser le rapport</button>
+            <section class="gapi-panel hidden" id="gapi-panel-inbox">
+              <div class="gapi-toolbar"><h2>Messages reçus</h2><div class="gapi-toolbar-actions">
+                <button type="button" class="btn btn-secondary btn-sm gapi-inbox-src active" data-inbox-src="local">Base locale</button>
+                <button type="button" class="btn btn-secondary btn-sm gapi-inbox-src" data-inbox-src="green">Green-API live</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="gapi-inbox-today">Aujourd'hui</button>
+                <button type="button" class="btn btn-secondary btn-sm" id="gapi-inbox-refresh">Actualiser</button>
+              </div></div>
+              <div id="gapi-inbox-list" class="gapi-list"></div>
             </section>
-
-            <section class="panel-block panel-contacts">
-              <h2>Campagnes</h2>
-              <div id="ads-campaigns-list" class="contacts-list">
-                <p class="contacts-empty">Aucune campagne chargée.</p>
+            <section class="gapi-panel hidden" id="gapi-panel-chats">
+              <div class="gapi-toolbar"><h2>Liste des chats</h2><button type="button" class="btn btn-secondary btn-sm" id="gapi-chats-refresh">Actualiser</button></div>
+              <div class="gapi-split"><div id="gapi-chats-list" class="gapi-list gapi-list-side"></div><div id="gapi-chat-detail" class="gapi-detail"><p class="contacts-empty">Sélectionnez un chat.</p></div></div>
+            </section>
+            <section class="gapi-panel hidden" id="gapi-panel-contacts">
+              <div class="gapi-toolbar"><h2>Contacts WhatsApp</h2><button type="button" class="btn btn-secondary btn-sm" id="gapi-contacts-refresh">Actualiser</button></div>
+              <div id="gapi-contacts-list" class="gapi-list"></div>
+            </section>
+            <section class="gapi-panel hidden" id="gapi-panel-groups">
+              <div class="gapi-toolbar"><h2>Groupes WhatsApp</h2><button type="button" class="btn btn-secondary btn-sm" id="gapi-groups-refresh">Actualiser</button></div>
+              <div class="gapi-split"><div id="gapi-groups-list" class="gapi-list gapi-list-side"></div><div id="gapi-group-detail" class="gapi-detail"><p class="contacts-empty">Sélectionnez un groupe.</p></div></div>
+            </section>
+            <section class="gapi-panel hidden" id="gapi-panel-statuses">
+              <div class="gapi-toolbar"><h2>Statuts WhatsApp</h2></div>
+              <div class="gapi-status-grid">
+                <div class="gapi-card"><h3>Publier un statut texte</h3><label class="field"><span>Message</span><textarea id="gapi-status-text" rows="3"></textarea></label><label class="field"><span>Couleur</span><input type="text" id="gapi-status-color" value="#228B22" /></label><button type="button" class="btn btn-primary" id="gapi-status-send">Publier</button><p class="form-feedback" id="gapi-status-feedback"></p></div>
+                <div class="gapi-card"><h3>Historique statuts</h3><div class="gapi-toolbar-actions"><button type="button" class="btn btn-secondary btn-sm" id="gapi-status-in">Reçus (24h)</button><button type="button" class="btn btn-secondary btn-sm" id="gapi-status-out">Publiés (24h)</button></div><pre id="gapi-status-history" class="gapi-json-preview">Cliquez pour charger…</pre></div>
               </div>
             </section>
-
-            <section class="panel-block">
-              <h2>Exemples d'instructions</h2>
-              <ul class="hints ads-hints">
-                <li>« Vérifie ma connexion Meta »</li>
-                <li>« Liste mes campagnes »</li>
-                <li>« Crée une campagne WhatsApp budget 10 USD / jour au Bénin : … »</li>
-                <li>« Lance la campagne … »</li>
-                <li>« Mets en pause la campagne … »</li>
-                <li>« Rapport des 7 derniers jours »</li>
-              </ul>
+            <section class="gapi-panel hidden" id="gapi-panel-send">
+              <div class="gapi-toolbar"><h2>Envoyer un message</h2></div>
+              <div class="gapi-card gapi-send-form"><label class="field"><span>Chat ID ou numéro</span><input type="text" id="gapi-send-chatid" placeholder="229XXXXXXXX@c.us" /></label><label class="field"><span>Message</span><textarea id="gapi-send-message" rows="4"></textarea></label><button type="button" class="btn btn-primary" id="gapi-send-btn">Envoyer</button><p class="form-feedback" id="gapi-send-feedback"></p></div>
             </section>
-          </aside>
+            <section class="gapi-panel hidden" id="gapi-panel-instance">
+              <div class="gapi-toolbar"><h2>Instance Green-API</h2><div class="gapi-toolbar-actions"><button type="button" class="btn btn-secondary btn-sm" id="gapi-load-settings">Paramètres</button><button type="button" class="btn btn-secondary btn-sm" id="gapi-load-qr">QR code</button><button type="button" class="btn btn-secondary btn-sm" id="gapi-reboot">Redémarrer</button></div></div>
+              <div id="gapi-instance-output" class="gapi-instance-output"><p class="contacts-empty">Chargez les paramètres ou le QR.</p></div>
+            </section>
+            <section class="gapi-panel hidden" id="gapi-panel-api">
+              <div class="gapi-toolbar"><h2>Console API Green-API</h2></div>
+              <div class="gapi-api-console"><label class="field"><span>Catégorie</span><select id="gapi-api-category"></select></label><label class="field"><span>Méthode</span><select id="gapi-api-method"></select></label><p class="toggle-hint" id="gapi-api-desc"></p><label class="field"><span>Query JSON</span><textarea id="gapi-api-query" rows="2" spellcheck="false">{}</textarea></label><label class="field"><span>Body JSON</span><textarea id="gapi-api-body" rows="8" spellcheck="false">{}</textarea></label><label class="field"><span>pathSuffix</span><input type="text" id="gapi-api-suffix" placeholder="receiptId" /></label><button type="button" class="btn btn-primary" id="gapi-api-run">Exécuter</button><pre id="gapi-api-result" class="gapi-json-preview">Résultat…</pre></div>
+            </section>
+          </div>
+        </div>
 
-          <main class="chat-panel">
-            <div id="ads-messages" class="messages" aria-live="polite"></div>
-
-            <form id="ads-chat-form" class="composer">
-              <div class="composer-inner">
-                <textarea
-                  id="ads-message-input"
-                  rows="1"
-                  placeholder="Donnez une instruction à l'agent Publicité Meta…"
-                  autocomplete="off"
-                  required
-                ></textarea>
-                <button type="submit" class="btn btn-send" id="ads-send-btn" aria-label="Envoyer">
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
-                  </svg>
-                </button>
-              </div>
-              <p class="composer-hint">Création toujours en pause d’abord · confirmation avant activation</p>
-            </form>
-          </main>
+        <div class="wa-automation-layout hidden" id="wa-automation-layout">
+          <div class="auto-toolbar">
+            <div>
+              <h2>Automatisations</h2>
+              <p class="toggle-hint">Campagnes, ROI, handoffs et file d'envoi intelligente.</p>
+            </div>
+            <div class="auto-toolbar-actions">
+              <button type="button" class="btn btn-secondary btn-sm auto-tab-btn active" data-auto-tab="list">Campagnes</button>
+              <button type="button" class="btn btn-secondary btn-sm auto-tab-btn" data-auto-tab="roi">ROI</button>
+              <button type="button" class="btn btn-secondary btn-sm auto-tab-btn" data-auto-tab="handoffs">Handoffs</button>
+              <button type="button" class="btn btn-secondary btn-sm" id="auto-refresh-btn">Actualiser</button>
+            </div>
+          </div>
+          <div id="auto-panel-list">
+            <div id="auto-list" class="auto-list">
+              <p class="contacts-empty">Chargement…</p>
+            </div>
+            <div id="auto-detail" class="auto-detail hidden">
+              <button type="button" class="btn btn-ghost btn-sm" id="auto-back-btn">← Retour à la liste</button>
+              <div id="auto-detail-content"></div>
+            </div>
+          </div>
+          <div id="auto-panel-roi" class="hidden">
+            <div id="auto-roi-content" class="auto-roi-content"><p class="contacts-empty">Chargement…</p></div>
+          </div>
+          <div id="auto-panel-handoffs" class="hidden">
+            <div id="auto-handoffs-content"><p class="contacts-empty">Chargement…</p></div>
+          </div>
         </div>
       </div>
+
     </div>
 
     <!-- Modal Connexions -->
@@ -278,18 +271,17 @@
 
         <div class="modal-tabs">
           <button type="button" class="tab active" data-tab="openai">OpenAI</button>
-          <button type="button" class="tab" data-tab="greenapi">Green-API (WhatsApp)</button>
-          <button type="button" class="tab" data-tab="meta">Meta Ads</button>
+          <button type="button" class="tab" data-tab="evolution">Evolution API</button>
           <button type="button" class="tab" data-tab="business">Profil</button>
         </div>
 
         <div class="modal-body">
           <section class="tab-panel active" id="tab-openai">
             <p class="tab-desc">
-              Votre clé API OpenAI alimente le chat et l'exécution des actions WhatsApp.
+              Votre clÃ© API OpenAI alimente le chat et l'exÃ©cution des actions WhatsApp.
             </p>
             <label class="field">
-              <span>Clé API OpenAI</span>
+              <span>ClÃ© API OpenAI</span>
               <input type="password" id="openai-key" placeholder="sk-..." autocomplete="off" />
             </label>
             <div class="form-actions">
@@ -298,63 +290,45 @@
             <p class="form-feedback" id="openai-feedback"></p>
           </section>
 
-          <section class="tab-panel" id="tab-greenapi">
+          <section class="tab-panel" id="tab-evolution">
             <p class="tab-desc">
-              Identifiants de votre instance Green-API pour piloter WhatsApp.
+              Connexion à votre serveur Evolution API (Hostinger ou VPS).
+              <a href="https://docs.evolutionfoundation.com.br/" target="_blank" rel="noopener">Documentation</a>
             </p>
             <label class="field">
-              <span>ID Instance</span>
-              <input type="text" id="green-id" placeholder="1100123456" autocomplete="off" />
+              <span>URL du serveur</span>
+              <input type="url" id="evo-url" placeholder="https://votre-serveur.com" autocomplete="off" />
             </label>
             <label class="field">
-              <span>Token API</span>
-              <input type="password" id="green-token" placeholder="Votre token Green-API" autocomplete="off" />
+              <span>Clé API (apikey)</span>
+              <input type="password" id="evo-key" placeholder="Votre clé Evolution API" autocomplete="off" />
             </label>
             <label class="field">
-              <span>URL de base</span>
-              <input type="url" id="green-url" value="https://7107.api.greenapi.com" />
+              <span>Nom de l'instance</span>
+              <input type="text" id="evo-instance" placeholder="mon-instance" autocomplete="off" />
             </label>
-            <div class="form-actions">
-              <button type="button" class="btn btn-secondary" id="test-greenapi">Tester</button>
-              <button type="button" class="btn btn-primary" id="save-greenapi">Connecter WhatsApp</button>
-            </div>
-            <p class="form-feedback" id="green-feedback"></p>
-          </section>
-
-          <section class="tab-panel" id="tab-meta">
-            <p class="tab-desc">
-              Token d'accès Marketing API + IDs du compte publicitaire et de la Page Facebook.
-              Permissions : <code>ads_management</code>, <code>ads_read</code>, <code>business_management</code>.
+            <label class="field">
+              <span>URL Webhook (optionnel)</span>
+              <input type="url" id="evo-webhook" placeholder="https://xxxx.trycloudflare.com/api/evolution/webhook" autocomplete="off" />
+            </label>
+            <p class="toggle-hint" style="margin-top:-0.5rem">
+              Sans déploiement : lancez <code>npm run tunnel</code> dans un 2ᵉ terminal, copiez l'URL <code>https://….trycloudflare.com</code>,
+              puis collez ici <strong>/api/evolution/webhook</strong> à la fin. Exemple :
+              <code>https://mon-tunnel.trycloudflare.com/api/evolution/webhook</code>
             </p>
-            <label class="field">
-              <span>Access Token</span>
-              <input type="password" id="meta-token" placeholder="EAAB..." autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Ad Account ID</span>
-              <input type="text" id="meta-ad-account" placeholder="act_123456789" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Page ID</span>
-              <input type="text" id="meta-page-id" placeholder="ID de la Page Facebook" autocomplete="off" />
-            </label>
-            <label class="field">
-              <span>Numéro WhatsApp Business (Click-to-WA)</span>
-              <input type="text" id="meta-wa-number" placeholder="+229XXXXXXXX" autocomplete="off" />
-            </label>
             <div class="form-actions">
-              <button type="button" class="btn btn-secondary" id="test-meta">Tester</button>
-              <button type="button" class="btn btn-primary" id="save-meta">Connecter Meta Ads</button>
+              <button type="button" class="btn btn-secondary" id="test-evolution">Tester</button>
+              <button type="button" class="btn btn-primary" id="save-evolution">Connecter WhatsApp</button>
             </div>
-            <p class="form-feedback" id="meta-feedback"></p>
+            <p class="form-feedback" id="evo-feedback"></p>
           </section>
 
           <section class="tab-panel" id="tab-business">
             <p class="tab-desc">
-              Ces infos alimentent les réponses auto aux prospects (évite « [ton prénom] »). Stockées dans SQLite.
+              Ces infos alimentent les rÃ©ponses auto aux prospects (Ã©vite Â« [ton prÃ©nom] Â»). StockÃ©es dans SQLite.
             </p>
             <label class="field">
-              <span>Votre prénom / nom</span>
+              <span>Votre prÃ©nom / nom</span>
               <input type="text" id="business-name" placeholder="Ex. Awa" autocomplete="off" />
             </label>
             <label class="field">
@@ -375,5 +349,7 @@
     </div>
 
     <script src="/app.js"></script>
+    <script src="/greenapi-console.js"></script>
+    <script src="/automations.js"></script>
   </body>
 </html>

@@ -3,25 +3,35 @@ import {
   getGreenApiCredentials,
   getChatHistory,
   getGroupMembers,
+  getLastIncomingMessages,
   findGroupByNameOrId,
   listPersonalContacts,
+  listWhatsAppChats,
   listWhatsAppGroups,
+  markChatRead,
   messageGroupMembers,
   normalizePhoneToChatId,
   sendWhatsAppMessage,
+  sendWhatsAppTextStatus,
   testGreenApiConnection,
   chatIdToDisplay,
+  chatIdToNumber,
+  requireGreenApiAuthorized,
 } from "./greenapi.js";
 import {
   CONTACT_STATUSES,
   blockContact,
   cancelScheduledMessage,
   countOutboundToday,
+  createAutomation,
+  createGroupReplyRule,
   DAILY_OUTBOUND_LIMIT,
+  getAutomationDetail,
   getAppSettings,
   getContact,
   getContactThread,
   getDailyBilan,
+  listAutomations,
   listContacts,
   listIncomingMessages,
   listScheduledMessages,
@@ -30,9 +40,13 @@ import {
   saveContact,
   scheduleMessage,
   setContactAutoReply,
+  updateAutomationStatus,
+  type AutomationStatus,
+  type AutomationType,
   type ContactStatus,
   unblockContact,
 } from "./db.js";
+import { bootstrapGroupProspectTargets } from "./automation-engine.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -403,9 +417,223 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "send_whatsapp_status",
+      description:
+        "Publie un STATUT WhatsApp (story) texte via Green-API sendTextStatus. Utiliser quand l'utilisateur demande de poster/publier un statut WhatsApp.",
+      parameters: {
+        type: "object",
+        properties: {
+          message: { type: "string", description: "Texte du statut (max 500 caractères)" },
+          background_color: {
+            type: "string",
+            description: "Couleur fond hex (défaut #228B22, éviter blanc)",
+          },
+        },
+        required: ["message"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_whatsapp_chats",
+      description:
+        "Liste les chats WhatsApp de l'instance (getChats Green-API), triés par activité récente.",
+      parameters: {
+        type: "object",
+        properties: {
+          count: { type: "number", description: "Nombre de chats (défaut 50, max 200)" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mark_chat_read",
+      description: "Marque un chat ou un message comme lu (readChat Green-API).",
+      parameters: {
+        type: "object",
+        properties: {
+          chat_id: { type: "string", description: "chatId (@c.us ou @g.us) ou numéro +229…" },
+          id_message: {
+            type: "string",
+            description: "ID message entrant précis (optionnel — sinon tout le chat)",
+          },
+        },
+        required: ["chat_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_green_incoming_messages",
+      description:
+        "Derniers messages entrants sur l'instance Green-API (lastIncomingMessages), hors base locale.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "get_business_profile",
       description: "Lit le profil business actuel (nom, offre, tarif) stocké en SQLite.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_automation",
+      description:
+        "Crée une automatisation WhatsApp active (visible sur la page Automatisation). Utiliser quand l'utilisateur décrit un workflow récurrent : prospecter un groupe, vendre un produit sur mots-clés, etc. L'automatisation démarre immédiatement.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nom court de l'automatisation" },
+          type: {
+            type: "string",
+            enum: ["group_prospect", "keyword_sales", "custom_followup"],
+            description:
+              "group_prospect = DM chaque membre d'un groupe ; keyword_sales = répondre/vendre quand un mot-clé est détecté ; custom_followup = suivi personnalisé",
+          },
+          summary: { type: "string", description: "Résumé en une phrase pour l'utilisateur" },
+          group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom)" },
+          initial_message: { type: "string", description: "Premier message pour group_prospect" },
+          max_members: { type: "number", description: "Limite de membres (défaut 30)" },
+          enable_auto_reply: {
+            type: "boolean",
+            description: "Activer les réponses auto après le premier message (défaut true)",
+          },
+          conversation_guide: {
+            type: "string",
+            description: "Instructions pour guider les échanges automatiques",
+          },
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "Mots-clés déclencheurs pour keyword_sales (ex. commander, produit, prix)",
+          },
+          product_name: { type: "string", description: "Nom du produit à vendre" },
+          price: { type: "string", description: "Prix en FCFA" },
+          sales_script: { type: "string", description: "Script / argumentaire de vente" },
+          budget_fcfa: { type: "number", description: "Budget estimé en FCFA (optionnel)" },
+          personalize_messages: {
+            type: "boolean",
+            description: "Personnaliser chaque message avec l'IA selon le nom du membre (group_prospect)",
+          },
+          ab_variants: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                message: { type: "string" },
+              },
+            },
+            description: "Variantes A/B pour tester plusieurs accroches",
+          },
+          sequence_steps: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                delayDays: { type: "number" },
+                message: { type: "string" },
+                condition: { type: "string", enum: ["no_reply", "always"] },
+              },
+            },
+            description: "Relances multi-étapes après le premier message",
+          },
+          media_url: { type: "string", description: "URL image/document/audio à envoyer" },
+          media_type: { type: "string", enum: ["image", "document", "audio"] },
+        },
+        required: ["name", "type"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_automations",
+      description: "Liste toutes les automatisations WhatsApp (actives, en pause, terminées).",
+      parameters: {
+        type: "object",
+        properties: {
+          status: {
+            type: "string",
+            enum: ["active", "paused", "completed", "failed"],
+            description: "Filtrer par statut (optionnel)",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_automation_report",
+      description: "Rapport détaillé d'une automatisation : stats, cibles, logs récents.",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: { type: "number", description: "ID de l'automatisation" },
+        },
+        required: ["automation_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_automation_status",
+      description: "Active, met en pause ou arrête une automatisation.",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: { type: "number" },
+          status: {
+            type: "string",
+            enum: ["active", "paused", "completed"],
+            description: "active = reprendre, paused = suspendre, completed = terminer",
+          },
+        },
+        required: ["automation_id", "status"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "create_group_rule",
+      description:
+        "Crée une règle de réponse automatique dans un groupe WhatsApp. L'IA répond publiquement quand un message contient un mot-clé.",
+      parameters: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom)" },
+          keywords: {
+            type: "array",
+            items: { type: "string" },
+            description: "Mots-clés déclencheurs (ex. prix, commander, info)",
+          },
+          reply_guide: {
+            type: "string",
+            description: "Instructions pour la réponse IA dans le groupe",
+          },
+          automation_id: { type: "number", description: "Lier à une automatisation existante (optionnel)" },
+        },
+        required: ["group_id", "keywords", "reply_guide"],
+        additionalProperties: false,
+      },
     },
   },
 ];
@@ -425,6 +653,11 @@ const LOCAL_TOOLS = new Set([
   "get_contact_conversation",
   "save_business_profile",
   "get_business_profile",
+  "create_automation",
+  "list_automations",
+  "get_automation_report",
+  "set_automation_status",
+  "create_group_rule",
 ]);
 
 async function resolveRecipient(recipient: string): Promise<string> {
@@ -432,8 +665,10 @@ async function resolveRecipient(recipient: string): Promise<string> {
   if (!trimmed) throw new Error("Destinataire vide.");
 
   // Déjà un chatId valide
-  if (trimmed.endsWith("@c.us") || trimmed.endsWith("@g.us") || trimmed.endsWith("@lid")) {
-    return trimmed;
+  if (trimmed.endsWith("@c.us") || trimmed.endsWith("@g.us") || trimmed.endsWith("@lid") || trimmed.endsWith("@s.whatsapp.net")) {
+    return trimmed.endsWith("@s.whatsapp.net")
+      ? `${chatIdToNumber(trimmed)}@c.us`
+      : trimmed;
   }
 
   // Numéro de téléphone
@@ -647,32 +882,115 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     case "send_whatsapp_message": {
       const recipient = String(args.recipient ?? "");
       const message = String(args.message ?? "");
-      const chatId = await resolveRecipient(recipient);
+      try {
+        const chatId = await resolveRecipient(recipient);
 
-      if (chatId.endsWith("@c.us")) {
-        const existing = getContact(chatId);
-        if (existing?.status === "stop") {
-          return JSON.stringify({
-            error: `Ce contact est en STOP. Aucun message ne sera envoyé. Demandez à l'utilisateur de le débloquer si vraiment nécessaire.`,
-          });
+        if (chatId.endsWith("@c.us")) {
+          const existing = getContact(chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({
+              error: `Ce contact est en STOP. Aucun message ne sera envoyé. Demandez à l'utilisateur de le débloquer si vraiment nécessaire.`,
+            });
+          }
         }
-      }
 
-      const result = await sendWhatsAppMessage(chatId, message);
-      const isGroup = chatId.endsWith("@g.us");
+        const result = await sendWhatsAppMessage(chatId, message);
+        if (chatId.endsWith("@c.us")) {
+          try {
+            setContactAutoReply(chatId, true);
+            saveContact({
+              phone: chatId,
+              status: "en_conversation",
+              autoReply: true,
+            });
+          } catch {
+            /* best effort */
+          }
+        }
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          isGroup,
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          outboundToday: countOutboundToday(),
+          outboundLimit: DAILY_OUTBOUND_LIMIT,
+          message: isGroup
+            ? `Message envoyé dans le groupe à ${nowFr()}`
+            : `Message envoyé à ${chatIdToDisplay(result.chatId)} à ${nowFr()}`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ error: msg });
+      }
+    }
+
+    case "send_whatsapp_status": {
+      const message = String(args.message ?? "").trim();
+      const backgroundColor = args.background_color ? String(args.background_color) : undefined;
+      try {
+        const result = await sendWhatsAppTextStatus(message, { backgroundColor });
+        return JSON.stringify({
+          success: true,
+          idMessage: result.idMessage,
+          audienceCount: result.audienceCount,
+          publishedAt: nowFr(),
+          message: `✅ Statut WhatsApp publié pour ${result.audienceCount} contact(s) : « ${message.slice(0, 80)}${message.length > 80 ? "…" : ""} »`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({
+          error: msg.includes("Forbidden")
+            ? "Publication de statut refusée par Evolution API. Vérifiez que l'instance est connectée et que sendStatus est activé."
+            : msg,
+        });
+      }
+    }
+
+    case "list_whatsapp_chats": {
+      const count = Math.min(Math.max(Number(args.count) || 50, 1), 200);
+      const chats = await listWhatsAppChats(count);
+      return JSON.stringify({
+        count: chats.length,
+        chats: chats.map((c) => ({
+          id: c.id,
+          name: c.name,
+          display: c.id.endsWith("@c.us") ? chatIdToDisplay(c.id) : c.name,
+          type: c.type,
+          archive: c.archive,
+        })),
+      });
+    }
+
+    case "mark_chat_read": {
+      const chatId = await resolveRecipient(String(args.chat_id ?? ""));
+      const idMessage = args.id_message ? String(args.id_message) : undefined;
+      const result = await markChatRead(chatId, idMessage);
       return JSON.stringify({
         success: true,
-        chatId: result.chatId,
-        display: isGroup ? chatId : chatIdToDisplay(result.chatId),
-        isGroup,
-        idMessage: result.idMessage,
-        sentAt: nowFr(),
-        outboundToday: countOutboundToday(),
-        outboundLimit: DAILY_OUTBOUND_LIMIT,
-        message: isGroup
-          ? `Message envoyé dans le groupe à ${nowFr()}`
-          : `Message envoyé à ${chatIdToDisplay(result.chatId)} à ${nowFr()}`,
+        chatId,
+        setRead: result.setRead,
+        message: `Chat ${chatIdToDisplay(chatId)} marqué comme lu.`,
       });
+    }
+
+    case "list_green_incoming_messages": {
+      const raw = await getLastIncomingMessages();
+      const messages = raw.map((m) => ({
+        idMessage: m.idMessage,
+        chatId: m.chatId,
+        display: chatIdToDisplay(m.chatId),
+        senderName: m.senderName || m.senderContactName || "",
+        typeMessage: m.typeMessage,
+        text:
+          m.textMessage?.trim() ||
+          m.extendedTextMessageData?.text?.trim() ||
+          `[${m.typeMessage}]`,
+        timestamp: m.timestamp,
+      }));
+      return JSON.stringify({ count: messages.length, messages });
     }
 
     case "message_all_group_members": {
@@ -858,6 +1176,198 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         offer: s.business_offer || null,
         price: s.business_price || null,
         configured: Boolean(s.business_owner_name || s.business_offer),
+      });
+    }
+
+    case "create_automation": {
+      const type = String(args.type ?? "") as AutomationType;
+      if (!["group_prospect", "keyword_sales", "custom_followup"].includes(type)) {
+        return JSON.stringify({ error: "type invalide." });
+      }
+
+      const config: Record<string, unknown> = {
+        initialMessage: args.initial_message ? String(args.initial_message) : undefined,
+        maxMembers: args.max_members ? Number(args.max_members) : 30,
+        enableAutoReply: args.enable_auto_reply !== false,
+        conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
+        keywords: Array.isArray(args.keywords) ? args.keywords.map(String) : undefined,
+        productName: args.product_name ? String(args.product_name) : undefined,
+        price: args.price ? String(args.price) : undefined,
+        salesScript: args.sales_script ? String(args.sales_script) : undefined,
+        personalizeMessages: args.personalize_messages === true,
+        abVariants: Array.isArray(args.ab_variants)
+          ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
+              id: v.id || `v${i + 1}`,
+              message: String(v.message ?? ""),
+            }))
+          : undefined,
+        sequenceSteps: Array.isArray(args.sequence_steps)
+          ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>).map(
+              (s) => ({
+                delayDays: Number(s.delayDays ?? 1),
+                message: String(s.message ?? ""),
+                condition: (s.condition as "no_reply" | "always") || "no_reply",
+              })
+            )
+          : undefined,
+        mediaUrl: args.media_url ? String(args.media_url) : undefined,
+        mediaType: args.media_type ? (String(args.media_type) as "image" | "document" | "audio") : undefined,
+      };
+
+      if (type === "group_prospect") {
+        if (!args.group_id || !args.initial_message) {
+          return JSON.stringify({
+            error: "group_prospect requiert group_id et initial_message.",
+          });
+        }
+        try {
+          await requireGreenApiAuthorized("la création d'une campagne de prospection groupe");
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return JSON.stringify({ error: msg });
+        }
+        const groupId = await resolveGroupId(String(args.group_id));
+        const group = await findGroupByNameOrId(groupId);
+        config.groupId = groupId;
+        config.groupName = group?.name ?? String(args.group_id);
+      }
+
+      if (type === "keyword_sales") {
+        const keywords = Array.isArray(args.keywords) ? args.keywords.map(String) : [];
+        if (!keywords.length) {
+          return JSON.stringify({ error: "keyword_sales requiert au moins un mot-clé." });
+        }
+        config.keywords = keywords;
+      }
+
+      const auto = createAutomation({
+        name: String(args.name ?? "Automatisation"),
+        type,
+        config: config as Parameters<typeof createAutomation>[0]["config"],
+        summary: args.summary ? String(args.summary) : undefined,
+        budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
+        status: "active",
+      });
+
+      let targetsAdded = 0;
+      if (type === "group_prospect" && config.groupId) {
+        try {
+          targetsAdded = await bootstrapGroupProspectTargets(auto.id);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return JSON.stringify({
+            error: `Automatisation créée (#${auto.id}) mais échec chargement membres : ${msg}`,
+            automationId: auto.id,
+          });
+        }
+      }
+
+      const detail = getAutomationDetail(auto.id);
+      return JSON.stringify({
+        success: true,
+        automationId: auto.id,
+        name: auto.name,
+        type: auto.type,
+        status: auto.status,
+        targetsAdded,
+        summary: auto.summary,
+        stats: detail?.automation.stats,
+        message: `Automatisation « ${auto.name} » créée et active. Visible sur la page Automatisation.`,
+        pageHint: "L'utilisateur peut ouvrir Automatisation (bouton en haut) pour suivre les stats.",
+        completedAt: nowFr(),
+      });
+    }
+
+    case "list_automations": {
+      const status = args.status ? (String(args.status) as AutomationStatus) : undefined;
+      const list = listAutomations(status ? { status, limit: 50 } : { limit: 50 });
+      return JSON.stringify({
+        count: list.length,
+        automations: list.map((a) => ({
+          id: a.id,
+          name: a.name,
+          type: a.type,
+          status: a.status,
+          summary: a.summary,
+          stats: a.stats,
+          budgetFcfa: a.budget_fcfa,
+          createdAt: a.created_at,
+        })),
+      });
+    }
+
+    case "get_automation_report": {
+      const id = Number(args.automation_id);
+      if (!Number.isFinite(id)) {
+        return JSON.stringify({ error: "automation_id invalide." });
+      }
+      const detail = getAutomationDetail(id);
+      if (!detail) {
+        return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
+      }
+      const { automation, targets, logs } = detail;
+      return JSON.stringify({
+        id: automation.id,
+        name: automation.name,
+        type: automation.type,
+        status: automation.status,
+        summary: automation.summary,
+        config: automation.config,
+        stats: automation.stats,
+        budgetFcfa: automation.budget_fcfa,
+        targetsTotal: targets.length,
+        targetsPending: targets.filter((t) => t.status === "pending").length,
+        targetsContacted: targets.filter((t) => t.status === "contacted").length,
+        targetsReplied: targets.filter((t) => t.status === "replied").length,
+        recentLogs: logs.slice(0, 15).map((l) => ({
+          level: l.level,
+          message: l.message,
+          at: l.created_at,
+        })),
+      });
+    }
+
+    case "set_automation_status": {
+      const id = Number(args.automation_id);
+      const status = String(args.status ?? "") as "active" | "paused" | "completed";
+      if (!Number.isFinite(id) || !["active", "paused", "completed"].includes(status)) {
+        return JSON.stringify({ error: "Paramètres invalides." });
+      }
+      const updated = updateAutomationStatus(id, status);
+      if (!updated) {
+        return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
+      }
+      return JSON.stringify({
+        success: true,
+        automationId: id,
+        status: updated.status,
+        message: `Automatisation #${id} → ${status}.`,
+      });
+    }
+
+    case "create_group_rule": {
+      const groupId = await resolveGroupId(String(args.group_id ?? ""));
+      const keywords = Array.isArray(args.keywords)
+        ? args.keywords.map((k) => String(k).trim()).filter(Boolean)
+        : [];
+      const replyGuide = String(args.reply_guide ?? "").trim();
+      if (!keywords.length || !replyGuide) {
+        return JSON.stringify({ error: "keywords et reply_guide requis." });
+      }
+      const group = await findGroupByNameOrId(groupId);
+      const rule = createGroupReplyRule({
+        groupId,
+        groupLabel: group?.name,
+        keywords,
+        replyGuide,
+        automationId: args.automation_id != null ? Number(args.automation_id) : undefined,
+      });
+      return JSON.stringify({
+        success: true,
+        ruleId: rule.id,
+        groupId: rule.group_id,
+        keywords: rule.keywords,
+        message: `Règle groupe créée pour ${group?.name || groupId}.`,
       });
     }
 

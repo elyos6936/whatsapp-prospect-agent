@@ -1,27 +1,26 @@
-# WhatsApp Agent / Agent Team
+# WhatsApp Agent
 
-Application locale multi-agents. **WhatsApp** et **Publicité Meta** sont les membres actifs de l'équipe.
+Application locale d'agent WhatsApp : prospection, automatisations, réponses automatiques et console Green-API.
 
 ## Démarrage rapide
 
 ```bash
 cd whatsapp-prospect-agent
-npm install
+npm run setup
 npm run dev
 ```
 
 Ouvrez **http://localhost:3000**
 
-1. L'écran **Équipe** affiche **WhatsApp** + **Publicité Meta**
-2. Cliquez sur une carte pour ouvrir son workspace
-3. Configurez OpenAI, Green-API et Meta Ads via **Connexions**
+1. Cliquez sur la carte **WhatsApp** pour ouvrir le workspace
+2. Configurez OpenAI et Green-API via **Connexions**
 
 ## Configuration (via l'interface)
 
 1. Cliquez sur **Connexions**
 2. Onglet **OpenAI** : collez votre clé `sk-...`
 3. Onglet **Green-API** : Instance ID, Token, URL → **Connecter WhatsApp**
-4. Onglet **Meta Ads** : Access Token, Ad Account ID (`act_…`), Page ID, n° WhatsApp Business → **Connecter Meta Ads**
+4. Onglet **Profil** : prénom, offre, tarif (pour les réponses auto)
 
 Les identifiants sont stockés localement dans `data/agent.db`.
 
@@ -32,126 +31,60 @@ OPENAI_API_KEY=sk-...
 GREEN_API_ID_INSTANCE=
 GREEN_API_TOKEN=
 GREEN_API_BASE_URL=https://api.green-api.com
-META_ACCESS_TOKEN=
-META_AD_ACCOUNT_ID=act_
-META_PAGE_ID=
-META_WHATSAPP_NUMBER=+229XXXXXXXX
-META_GRAPH_VERSION=v21.0
 PORT=3000
 OPENAI_MODEL=gpt-4o
 ```
 
-## Agent Publicité Meta (2e compétence)
+## Fonctionnalités WhatsApp
 
-Campagnes **Click-to-WhatsApp** (Facebook / Instagram) + rapports dans l'interface.
+- **Agent IA** : instructions en langage naturel (prospection, groupes, contacts, programmation)
+- **Automatisations** : campagnes de prospection groupe, vente sur mots-clés, suivi personnalisé
+- **Console Green-API** : inbox, chats, groupes, statuts, envoi direct, 40+ méthodes API
+- **Réponses automatiques** : conversation IA avec les prospects entrants
+- **Bilan du jour** : statistiques SQLite en temps réel
 
-### Prérequis Meta
-1. Compte [Meta Business](https://business.facebook.com) avec un **compte publicitaire** actif
-2. Une **Page Facebook** liée, WhatsApp Business lié à la Page
-3. Une app sur [developers.facebook.com](https://developers.facebook.com) avec Marketing API
-4. Token long-lived avec permissions : `ads_management`, `ads_read`, `business_management` (et accès au compte pub / page)
-5. Récupérer : Access Token, Ad Account ID (`act_123…`), Page ID, numéro WhatsApp
-
-### Flux sécurisé
-1. Demandez un brouillon (« Crée une campagne WhatsApp budget 10 / jour au Bénin : … »)
-2. L'agent affiche le brouillon → vous validez
-3. Création réelle sur Meta en **PAUSED**
-4. « Lance / active » → statut **ACTIVE**
-5. « Mets en pause » → **PAUSED**
-
-### Rapports
-Dans le workspace Meta (panneau gauche) : dépense, impressions, clics, conversations, liste des campagnes  
-API : `GET /api/ads/report?preset=today|last_7d|last_30d`
-
-### Exemples
-- « Vérifie ma connexion Meta »
-- « Liste mes campagnes »
-- « Rapport des 7 derniers jours »
-- « Mets en pause la campagne 120… »
-
-## Exemples d'instructions WhatsApp
+## Exemples d'instructions
 
 - « Liste mes groupes WhatsApp »
 - « Envoie un message à +229XXXXXXXX : Bonjour… »
+- « Prospecte tout le groupe X avec ce message… »
 - « Bilan d'aujourd'hui »
 - « Montre la conversation avec +229XXXXXXXX »
-- « Mon prénom est Awa, mon offre est … , tarif 25 000 FCFA »
-- « Montre-moi les messages reçus aujourd'hui »
-- « Liste mes contacts »
-- « Enregistre +229… , boutique mode Cotonou, statut intéressé »
-- « Arrête toute réponse automatique avec +229… »
-- « Bloque +229… » / « Passe ce numéro en STOP »
+- « Poste le statut WhatsApp : … »
+- « Programme un message à 6h30 »
 
-## Base de données & rapports
+## Base de données
 
-**SQLite** — fichier local `data/agent.db` (déjà utilisé par l'app).
+**SQLite** — fichier local `data/agent.db`.
 
 | Table | Contenu |
 |---|---|
 | `messages` | Conversations WhatsApp (entrant / sortant) |
 | `contacts` | Pipeline prospection |
-| `agent_conversation` | Instructions au chat agent uniquement |
+| `agent_conversation` | Instructions au chat agent |
+| `automations` | Campagnes automatisées |
 | `scheduled_messages` | Envois programmés |
 | `settings` | Clés API + profil business |
 
-### Accès aux données
-- Fichier : `whatsapp-prospect-agent/data/agent.db` (DB Browser for SQLite, DBeaver, etc.)
-- API : `GET /api/reports/daily` · `GET /api/contacts/:phone/thread`
-- Chat agent : « Bilan d'aujourd'hui » / « Conversation avec +229… »
+API : `GET /api/reports/daily` · `GET /api/automations` · `GET /api/contacts/:phone/thread`
 
-Les échanges prospects **ne polluent plus** le chat agent : ils vivent en base pour bilans et rapports.
+## Contacts & garde-fous
 
-### Profil business
-Connexions → onglet **Profil** (prénom, offre, tarif FCFA) — utilisé pour les réponses auto.
-
-## Contacts & garde-fous (Étape 4)
-
-### Contacts (table SQLite)
 | Champ | Valeurs |
 |---|---|
 | status | `nouveau`, `en_conversation`, `interesse`, `stop` |
 | auto_reply | 0/1 — réponse auto pour **ce** numéro |
-
-Le panneau gauche liste les contacts connus. Un message entrant crée/met à jour automatiquement le contact.
 
 ### Réponse auto
 1. Toggle **global** (panneau gauche)
 2. **ET** `auto_reply = 1` sur le contact
 3. **ET** statut ≠ `stop`
 
-Sinon le message est enregistré en base sans réponse automatique.
-
-### STOP
-- Phrase prospect type « Je ne veux plus recevoir… » / « stop » → confirmation + statut `stop`
-- « Arrête de répondre à +229… » → `set_auto_reply(false)`
-- « Bloque +229… » → statut `stop` (aucun envoi possible, même demandé manuellement)
-
-### Brouillon & anti-spam
-- Message **rédigé par l'agent** : brouillon dans le chat, puis « ok » / « envoie »
-- Texte **dicté mot pour mot** : envoi direct
-- Espacement **45–120 s** entre deux envois sortants
-
 ### Quota journalier
-Maximum **30 messages sortants / jour**. Au-delà : refus clair dans le chat.
-
-## Réception des messages (Étape 3)
-
-Polling Green-API (`receiveNotification` / `deleteNotification`) toutes les 3 s — pas besoin de webhook/ngrok en local.
-
-- **Affichage temps réel** dans le chat WhatsApp :
-  - **WhatsApp · Contact** = message entrant
-  - **WhatsApp · Envoyé** = message sortant
-- Outils agent : `get_chat_history`, `list_incoming_messages`
-
-### Test rapide
-1. Ouvrez le workspace **WhatsApp** (pas seulement l’écran Équipe)
-2. Envoyez un SMS à votre compte depuis un second numéro
-3. Le message doit apparaître sous ~3 s
-4. Demandez : « Montre l'historique avec +229… » ou « Messages reçus aujourd'hui »
+Maximum **30 messages sortants / jour**.
 
 ## Prérequis Green-API
 
 - Instance sur [green-api.com](https://green-api.com)
 - WhatsApp autorisé (QR scanné)
 - État `authorized`
-- URL de base selon l'instance (ex. `https://7107.api.greenapi.com`)

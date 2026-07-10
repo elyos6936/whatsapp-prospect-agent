@@ -151,6 +151,7 @@ export async function generateWhatsAppReply(input: {
   chatId: string;
   senderName: string;
   incomingText: string;
+  automationContext?: string;
 }): Promise<string> {
   const client = getOpenAiClient();
   const display = chatIdToDisplay(input.chatId);
@@ -164,6 +165,7 @@ export async function generateWhatsAppReply(input: {
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
 ${businessContextBlock()}
+${input.automationContext ? `\n## Automatisation active\n${input.automationContext}\n` : ""}
 
 ## Contact
 ${input.senderName} (${display})
