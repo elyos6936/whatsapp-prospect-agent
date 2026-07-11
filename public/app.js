@@ -4,77 +4,110 @@ function apiUrl(path) {
   return `${base}${path}`;
 }
 
-/* ── Elements ── */
+/* ── Markdown rendering ── */
+function renderMarkdown(text) {
+  if (typeof marked !== "undefined") {
+    try {
+      const html = marked.parse(text, { breaks: true, gfm: true });
+      return typeof DOMPurify !== "undefined" ? DOMPurify.sanitize(html) : html;
+    } catch {/* fall through */}
+  }
+  return escapeHtml(text).replace(/\n/g, "<br>");
+}
+
+function escapeHtml(str) {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/* ── DOM shortcuts ── */
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
-const messagesEl = $("#messages");
-const formEl = $("#chat-form");
-const inputEl = $("#message-input");
-const sendBtn = $("#send-btn");
+const messagesEl     = $("#messages");
+const formEl         = $("#chat-form");
+const inputEl        = $("#message-input");
+const sendBtn        = $("#send-btn");
+const filePreviewsEl = $("#file-previews");
+const fileInput      = $("#file-input");
+const attachBtn      = $("#attach-btn");
+const micBtn         = $("#mic-btn");
 
-const openaiStatus = $("#openai-status");
+const openaiStatus   = $("#openai-status");
 const whatsappStatus = $("#whatsapp-status");
-const openaiDetail = $("#openai-detail");
+const openaiDetail   = $("#openai-detail");
 const whatsappDetail = $("#whatsapp-detail");
-const cardOpenai = $("#card-openai");
-const cardWhatsapp = $("#card-whatsapp");
+const cardOpenai     = $("#card-openai");
+const cardWhatsapp   = $("#card-whatsapp");
 
-const modalOverlay = $("#modal-overlay");
-const connectBtn = $("#connect-btn");
-const modalClose = $("#modal-close");
-const clearBtn = $("#clear-btn");
+const modalOverlay    = $("#modal-overlay");
+const connectBtn      = $("#connect-btn");
+const modalClose      = $("#modal-close");
+const clearBtn        = $("#clear-btn");
 
-const openaiKeyInput = $("#openai-key");
-const saveOpenaiBtn = $("#save-openai");
-const openaiFeedback = $("#openai-feedback");
-const evoUrlInput = $("#evo-url");
-const evoKeyInput = $("#evo-key");
-const evoInstanceInput = $("#evo-instance");
+const openaiKeyInput  = $("#openai-key");
+const saveOpenaiBtn   = $("#save-openai");
+const openaiFeedback  = $("#openai-feedback");
+const evoUrlInput     = $("#evo-url");
+const evoKeyInput     = $("#evo-key");
+const evoInstanceInput= $("#evo-instance");
 const evoWebhookInput = $("#evo-webhook");
-const saveEvoBtn = $("#save-evolution");
-const testEvoBtn = $("#test-evolution");
-const evoShowQrBtn = $("#evo-show-qr");
-const evoQrPanel = $("#evo-qr-panel");
-const evoQrOutput = $("#evo-qr-output");
-const evoQrHint = $("#evo-qr-hint");
-const evoFeedback = $("#evo-feedback");
+const saveEvoBtn      = $("#save-evolution");
+const testEvoBtn      = $("#test-evolution");
+const evoShowQrBtn    = $("#evo-show-qr");
+const evoQrPanel      = $("#evo-qr-panel");
+const evoQrOutput     = $("#evo-qr-output");
+const evoFeedback     = $("#evo-feedback");
 const autoReplyToggle = $("#auto-reply-toggle");
-const contactsListEl = $("#contacts-list");
+const contactsListEl  = $("#contacts-list");
 const outboundQuotaEl = $("#outbound-quota");
-const resetQuotaBtn = $("#reset-quota-btn");
-const dailyBilanEl = $("#daily-bilan");
+const resetQuotaBtn   = $("#reset-quota-btn");
+const dailyBilanEl    = $("#daily-bilan");
 const refreshBilanBtn = $("#refresh-bilan");
-const businessNameInput = $("#business-name");
+const businessNameInput  = $("#business-name");
 const businessOfferInput = $("#business-offer");
 const businessPriceInput = $("#business-price");
-const saveBusinessBtn = $("#save-business");
-const businessFeedback = $("#business-feedback");
-const viewTeam = $("#view-team");
+const saveBusinessBtn    = $("#save-business");
+const businessFeedback   = $("#business-feedback");
+const viewTeam      = $("#view-team");
 const viewWorkspace = $("#view-workspace");
-const backTeamBtn = $("#back-team-btn");
+const backTeamBtn   = $("#back-team-btn");
 const agentWhatsapp = $("#agent-whatsapp");
-const agentWaDot = $("#agent-wa-dot");
-const agentWaLabel = $("#agent-wa-label");
-const appTitle = $("#app-title");
-const appSubtitle = $("#app-subtitle");
-const statusPills = $("#status-pills");
+const agentWaDot    = $("#agent-wa-dot");
+const agentWaLabel  = $("#agent-wa-label");
+const appTitle      = $("#app-title");
+const appSubtitle   = $("#app-subtitle");
+const statusPills   = $("#status-pills");
 
+/* ── State ── */
 let sending = false;
 let currentView = "team";
 let workspaceReady = false;
 let lastIncomingId = 0;
 let lastWhatsAppId = 0;
 let lastAgentMsgId = 0;
-const seenIncomingIds = new Set();
-const seenWhatsAppIds = new Set();
-const seenAgentMsgIds = new Set();
+const seenIncomingIds  = new Set();
+const seenWhatsAppIds  = new Set();
+const seenAgentMsgIds  = new Set();
+
+/* ── File attachment state ── */
+let pendingFiles = []; // { id, name, type, data, previewUrl }
+
+/* ── Voice recording state ── */
+let mediaRecorder     = null;
+let recordingChunks   = [];
+let isRecording       = false;
+let recordingTimer    = null;
+let recordingSeconds  = 0;
 
 const STATUS_LABELS = {
-  nouveau: "Nouveau",
-  en_conversation: "En cours",
-  interesse: "Intéressé",
-  stop: "STOP",
+  nouveau:        "Nouveau",
+  en_conversation:"En cours",
+  interesse:      "Intéressé",
+  stop:           "STOP",
 };
 
 /* ── Utils ── */
@@ -101,9 +134,48 @@ function scrollToBottom(force = false) {
   }
 }
 
-function appendMessageTo(container, { role, content, created_at, isError = false, isWhatsapp = false, isWhatsappOut = false, sender = "", forceScroll = false }) {
+function fileIcon(type) {
+  if (type.startsWith("image/")) return "🖼️";
+  if (type.startsWith("video/")) return "🎬";
+  if (type.startsWith("audio/")) return "🎵";
+  if (type === "application/pdf") return "📄";
+  return "📎";
+}
+
+function formatBytes(n) {
+  if (n < 1024) return `${n} o`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} Ko`;
+  return `${(n / 1024 / 1024).toFixed(1)} Mo`;
+}
+
+/* ── Message rendering ── */
+function buildMediaHTML(url, type, name) {
+  const fullUrl = url.startsWith("http") ? url : apiUrl(url);
+  if (type.startsWith("image/")) {
+    return `<img src="${escapeHtml(fullUrl)}" alt="${escapeHtml(name)}" class="msg-image" loading="lazy" />`;
+  }
+  if (type.startsWith("audio/")) {
+    return `<audio controls class="msg-audio" src="${escapeHtml(fullUrl)}"></audio>`;
+  }
+  if (type.startsWith("video/")) {
+    return `<video controls class="msg-audio" style="max-width:100%;border-radius:8px;margin-top:0.5rem" src="${escapeHtml(fullUrl)}"></video>`;
+  }
+  const icon = fileIcon(type);
+  return `<a href="${escapeHtml(fullUrl)}" target="_blank" rel="noopener" class="msg-file-link">${icon} ${escapeHtml(name)}</a>`;
+}
+
+function appendMessageTo(container, {
+  role, content, created_at,
+  isError = false,
+  isWhatsapp = false,
+  isWhatsappOut = false,
+  sender = "",
+  forceScroll = false,
+  attachments = [],
+}) {
   if (!container) return;
   const div = document.createElement("div");
+
   if (isWhatsappOut) {
     div.className = "msg whatsapp-out";
   } else {
@@ -119,18 +191,39 @@ function appendMessageTo(container, { role, content, created_at, isError = false
         ? "Vous"
         : "Agent";
 
-  div.innerHTML = `
+  const metaHtml = `
     <div class="meta">
-      <span>${label}</span>
+      <span>${escapeHtml(label)}</span>
       <span>${formatTime(created_at)}</span>
-    </div>
-    <div class="body"></div>
-  `;
-  div.querySelector(".body").textContent = content;
+    </div>`;
+
+  const bodyDiv = document.createElement("div");
+  bodyDiv.className = "body";
+
+  const isAssistant = role === "assistant" && !isWhatsapp && !isWhatsappOut;
+  if (isAssistant) {
+    bodyDiv.innerHTML = renderMarkdown(content);
+  } else {
+    bodyDiv.textContent = content;
+  }
+
+  // Render attachments
+  let mediaHtml = "";
+  for (const att of attachments) {
+    mediaHtml += buildMediaHTML(att.url, att.type, att.name);
+  }
+
+  div.innerHTML = metaHtml;
+  div.appendChild(bodyDiv);
+  if (mediaHtml) {
+    const mediaWrap = document.createElement("div");
+    mediaWrap.innerHTML = mediaHtml;
+    div.appendChild(mediaWrap);
+  }
+
   container.appendChild(div);
-  const near =
-    forceScroll ||
-    role === "user" ||
+
+  const near = forceScroll || role === "user" ||
     container.scrollHeight - container.scrollTop - container.clientHeight <= 80;
   if (near) container.scrollTop = container.scrollHeight;
 }
@@ -156,17 +249,10 @@ function showTypingIn(container, on, id = "typing-indicator") {
   container.scrollTop = container.scrollHeight;
 }
 
-function showTyping(on) {
-  showTypingIn(messagesEl, on, "typing-indicator");
-}
+function showTyping(on) { showTypingIn(messagesEl, on, "typing-indicator"); }
 
-function setStatusPill(el, state) {
-  el.className = "status-pill " + state;
-}
-
-function setConnectionCard(card, state) {
-  card.className = "connection-card " + state;
-}
+function setStatusPill(el, state) { el.className = "status-pill " + state; }
+function setConnectionCard(card, state) { card.className = "connection-card " + state; }
 
 function setAgentWaStatus(state, label) {
   if (agentWaDot) {
@@ -181,6 +267,7 @@ function updateStatusPillsVisibility() {
 }
 window.updateStatusPillsVisibility = updateStatusPillsVisibility;
 
+/* ── Views ── */
 function showTeamView() {
   currentView = "team";
   window.currentView = currentView;
@@ -190,7 +277,7 @@ function showTeamView() {
   backTeamBtn?.classList.add("hidden");
   clearBtn?.classList.add("hidden");
   if (appTitle) appTitle.textContent = "Agent Team";
-  if (appSubtitle) appSubtitle.textContent = "Votre équipe d’agents IA";
+  if (appSubtitle) appSubtitle.textContent = "Votre équipe d'agents IA";
   document.title = "Agent Team";
 }
 
@@ -211,10 +298,10 @@ async function showWhatsAppWorkspace() {
     workspaceReady = true;
     await bootstrapWorkspace();
   }
-
   inputEl?.focus();
 }
 
+/* ── Data loading ── */
 async function loadContacts() {
   if (!contactsListEl) return;
   try {
@@ -251,9 +338,7 @@ async function loadContacts() {
       });
       contactsListEl.appendChild(item);
     }
-  } catch {
-    /* ignore */
-  }
+  } catch {/* ignore */}
 }
 
 async function loadDailyBilan() {
@@ -285,8 +370,7 @@ async function loadDailyBilan() {
   }
 }
 
-/* ── API ── */
-/** Étape 3 : les messages WhatsApp (entrants/sortants) s'affichent en temps réel dans le chat. */
+/* ── Polling ── */
 async function pollWhatsApp() {
   try {
     const res = await fetch(apiUrl(`/api/whatsapp?since=${lastWhatsAppId}`));
@@ -298,7 +382,6 @@ async function pollWhatsApp() {
       seenWhatsAppIds.add(m.id);
       lastWhatsAppId = Math.max(lastWhatsAppId, m.id);
       added++;
-
       const isOut = m.direction === "sortant";
       appendMessage({
         role: isOut ? "assistant" : "user",
@@ -314,25 +397,19 @@ async function pollWhatsApp() {
       void loadDailyBilan();
       void loadContacts();
     }
-  } catch {
-    /* ignore */
-  }
+  } catch {/* ignore */}
 }
 
 async function pollAgentHistory() {
-  // Pendant un envoi manuel, la réponse est déjà affichée par sendMessage()
   if (sending) return;
-
   try {
     const res = await fetch(apiUrl(`/api/history/since?since=${lastAgentMsgId}`));
     if (!res.ok) return;
     const data = await res.json();
-
     for (const m of data.messages ?? []) {
       if (seenAgentMsgIds.has(m.id)) continue;
       seenAgentMsgIds.add(m.id);
       lastAgentMsgId = Math.max(lastAgentMsgId, m.id);
-
       appendMessage({
         role: m.role,
         content: m.content,
@@ -340,13 +417,7 @@ async function pollAgentHistory() {
         isError: m.content.startsWith("❌"),
       });
     }
-  } catch {
-    /* ignore */
-  }
-}
-
-async function pollIncoming() {
-  await pollWhatsApp();
+  } catch {/* ignore */}
 }
 
 async function loadHistory() {
@@ -358,8 +429,7 @@ async function loadHistory() {
   if (!data.messages.length) {
     appendMessage({
       role: "assistant",
-      content:
-        "Bonjour ! Je suis votre agent WhatsApp.\n\n1. Connexions → OpenAI + Evolution API.\n2. Cliquez « Connecter WhatsApp (QR) » pour scanner le QR code.\n3. Ex. : « Liste mes groupes », « Envoie un message à +229… ».",
+      content: "Bonjour ! Je suis votre agent WhatsApp.\n\n1. Connexions → OpenAI + Evolution API.\n2. Cliquez « Connecter WhatsApp (QR) » pour scanner le QR code.\n3. Ex. : « Liste mes groupes », « Envoie un message à +229… ».",
       created_at: new Date().toISOString(),
     });
     return;
@@ -384,13 +454,10 @@ async function refreshStatus() {
       fetch(apiUrl("/api/health")),
       fetch(apiUrl("/api/settings")),
     ]);
-
     if (!healthRes.ok) throw new Error();
-
-    const health = await healthRes.json();
+    const health   = await healthRes.json();
     const settings = settingsRes.ok ? await settingsRes.json() : null;
 
-    // OpenAI
     if (health.openai?.configured) {
       setStatusPill(openaiStatus, "connected");
       openaiDetail.textContent = settings?.openai?.maskedKey
@@ -403,7 +470,6 @@ async function refreshStatus() {
       setConnectionCard(cardOpenai, "error");
     }
 
-    // WhatsApp
     if (health.whatsapp?.connected) {
       setStatusPill(whatsappStatus, "connected");
       whatsappDetail.textContent = health.whatsapp.message || "Connecté";
@@ -411,7 +477,7 @@ async function refreshStatus() {
       setAgentWaStatus("connected", "Connecté · prêt");
     } else if (settings?.evolution?.configured) {
       setStatusPill(whatsappStatus, "pending");
-      whatsappDetail.textContent = health.whatsapp?.message || "Configuré — en attente d'autorisation";
+      whatsappDetail.textContent = health.whatsapp?.message || "Configuré — en attente";
       setConnectionCard(cardWhatsapp, "error");
       setAgentWaStatus("pending", "En attente d'autorisation");
     } else {
@@ -433,7 +499,6 @@ async function refreshStatus() {
         bonus > 0 ? `${today}/${limit} (+${bonus} bonus)` : `${today}/${limit}`;
     }
 
-    // Pré-remplir le modal
     if (settings?.evolution) {
       if (settings.evolution.baseUrl) evoUrlInput.value = settings.evolution.baseUrl;
       if (settings.evolution.instanceName) evoInstanceInput.value = settings.evolution.instanceName;
@@ -455,32 +520,251 @@ async function refreshStatus() {
   }
 }
 
+/* ── File attachment ── */
+function addPendingFile(file) {
+  if (pendingFiles.length >= 6) return;
+  const id = Math.random().toString(36).slice(2);
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const dataUrl = e.target.result;
+    const base64 = dataUrl.split(",")[1];
+    const entry = { id, name: file.name, type: file.type, data: base64, previewUrl: null };
+    if (file.type.startsWith("image/")) entry.previewUrl = dataUrl;
+    pendingFiles.push(entry);
+    renderFilePreviews();
+  };
+  reader.readAsDataURL(file);
+}
+
+function removePendingFile(id) {
+  pendingFiles = pendingFiles.filter((f) => f.id !== id);
+  renderFilePreviews();
+}
+
+function renderFilePreviews() {
+  if (!filePreviewsEl) return;
+  if (!pendingFiles.length) {
+    filePreviewsEl.classList.add("hidden");
+    filePreviewsEl.innerHTML = "";
+    return;
+  }
+  filePreviewsEl.classList.remove("hidden");
+  filePreviewsEl.innerHTML = "";
+  for (const f of pendingFiles) {
+    const chip = document.createElement("div");
+    chip.className = "file-preview-chip";
+
+    let mediaHtml;
+    if (f.previewUrl) {
+      mediaHtml = `<img src="${f.previewUrl}" class="file-preview-thumb" alt="" />`;
+    } else {
+      const icon = fileIcon(f.type);
+      mediaHtml = `<div class="file-preview-icon">${icon}</div>`;
+    }
+
+    chip.innerHTML = `
+      ${mediaHtml}
+      <span class="file-preview-name">${escapeHtml(f.name)}</span>
+      <button type="button" class="file-preview-remove" data-id="${f.id}" title="Retirer">×</button>
+    `;
+    chip.querySelector(".file-preview-remove").addEventListener("click", () => removePendingFile(f.id));
+    filePreviewsEl.appendChild(chip);
+  }
+}
+
+async function uploadFile(file) {
+  const res = await fetch(apiUrl("/api/upload"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: file.name, type: file.type, data: file.data }),
+  });
+  if (!res.ok) throw new Error(`Upload échoué: ${file.name}`);
+  return res.json(); // { url }
+}
+
+/* ── Voice recording ── */
+function updateMicButton() {
+  if (!micBtn) return;
+  micBtn.classList.toggle("recording", isRecording);
+  micBtn.title = isRecording ? "Arrêter l'enregistrement" : "Note vocale";
+  micBtn.innerHTML = isRecording
+    ? `<span class="recording-dot"></span>`
+    : `<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+        <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+        <line x1="12" y1="19" x2="12" y2="23"/>
+        <line x1="8" y1="23" x2="16" y2="23"/>
+      </svg>`;
+}
+
+function updateRecordingHint() {
+  let hint = document.querySelector(".recording-hint-el");
+  if (isRecording) {
+    if (!hint) {
+      hint = document.createElement("span");
+      hint.className = "recording-label recording-hint-el";
+      micBtn.parentNode.insertBefore(hint, micBtn);
+    }
+    const m = Math.floor(recordingSeconds / 60).toString().padStart(2, "0");
+    const s = (recordingSeconds % 60).toString().padStart(2, "0");
+    hint.innerHTML = `<span class="recording-dot"></span> ${m}:${s}`;
+  } else if (hint) {
+    hint.remove();
+  }
+}
+
+async function startRecording() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : MediaRecorder.isTypeSupported("audio/webm")
+        ? "audio/webm"
+        : "audio/mp4";
+
+    mediaRecorder   = new MediaRecorder(stream, { mimeType });
+    recordingChunks = [];
+    recordingSeconds = 0;
+
+    mediaRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) recordingChunks.push(e.data);
+    };
+
+    mediaRecorder.onstop = () => {
+      stream.getTracks().forEach((t) => t.stop());
+      const blob = new Blob(recordingChunks, { type: mimeType });
+      const ext  = mimeType.includes("mp4") ? "m4a" : "webm";
+      const name = `note-vocale-${Date.now()}.${ext}`;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const base64 = e.target.result.split(",")[1];
+        pendingFiles.push({ id: Math.random().toString(36).slice(2), name, type: mimeType, data: base64, previewUrl: null });
+        renderFilePreviews();
+        formEl.requestSubmit();
+      };
+      reader.readAsDataURL(blob);
+    };
+
+    mediaRecorder.start(250);
+    isRecording = true;
+
+    recordingTimer = setInterval(() => {
+      recordingSeconds++;
+      updateRecordingHint();
+      if (recordingSeconds >= 120) stopRecording(); // max 2min
+    }, 1000);
+
+    updateMicButton();
+    updateRecordingHint();
+  } catch (err) {
+    alert("Microphone non disponible : " + err.message);
+  }
+}
+
+function stopRecording() {
+  if (!isRecording || !mediaRecorder) return;
+  clearInterval(recordingTimer);
+  recordingTimer  = null;
+  isRecording     = false;
+  mediaRecorder.stop();
+  mediaRecorder   = null;
+  updateMicButton();
+  updateRecordingHint();
+}
+
+micBtn?.addEventListener("click", () => {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    startRecording();
+  }
+});
+
+/* ── File input ── */
+attachBtn?.addEventListener("click", () => fileInput?.click());
+
+fileInput?.addEventListener("change", () => {
+  for (const file of fileInput.files ?? []) addPendingFile(file);
+  fileInput.value = "";
+});
+
+/* ── Send message ── */
 async function sendMessage(text) {
-  if (sending || !text.trim()) return;
+  const hasFiles = pendingFiles.length > 0;
+  if (sending || (!text.trim() && !hasFiles)) return;
+
   sending = true;
   sendBtn.disabled = true;
 
-  appendMessage({ role: "user", content: text, created_at: new Date().toISOString(), forceScroll: true });
+  // Optimistic display of user bubble
+  const filesToSend = [...pendingFiles];
+  pendingFiles = [];
+  renderFilePreviews();
+
+  const localAttachments = filesToSend.map((f) => ({
+    name: f.name,
+    type: f.type,
+    url: f.previewUrl || "",
+  }));
+
+  appendMessage({
+    role: "user",
+    content: text,
+    created_at: new Date().toISOString(),
+    forceScroll: true,
+    attachments: localAttachments,
+  });
+
   inputEl.value = "";
   autoResize();
   showTyping(true);
 
   try {
+    // Upload all files first
+    const uploaded = [];
+    for (const f of filesToSend) {
+      try {
+        const { url } = await uploadFile(f);
+        uploaded.push({ name: f.name, type: f.type, url });
+      } catch {
+        uploaded.push({ name: f.name, type: f.type, url: "" });
+      }
+    }
+
+    // Build message: text + file references
+    let finalMessage = text.trim();
+    for (const u of uploaded) {
+      if (!u.url) continue;
+      const fullUrl = apiUrl(u.url);
+      if (u.type.startsWith("image/")) {
+        finalMessage += (finalMessage ? "\n" : "") + `[Image jointe: ${u.name}] ${fullUrl}`;
+      } else if (u.type.startsWith("audio/")) {
+        finalMessage += (finalMessage ? "\n" : "") + `[Note vocale: ${u.name}] ${fullUrl}`;
+      } else if (u.type.startsWith("video/")) {
+        finalMessage += (finalMessage ? "\n" : "") + `[Vidéo jointe: ${u.name}] ${fullUrl}`;
+      } else {
+        finalMessage += (finalMessage ? "\n" : "") + `[Fichier joint: ${u.name}] ${fullUrl}`;
+      }
+    }
+
+    if (!finalMessage.trim()) {
+      showTyping(false);
+      return;
+    }
+
     const res = await fetch(apiUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ message: text }),
+      body: JSON.stringify({ message: finalMessage }),
     });
 
     const data = await res.json();
     showTyping(false);
 
-    // Marquer l'ID serveur comme déjà vu pour éviter le doublon via pollAgentHistory
     if (data.id) {
       seenAgentMsgIds.add(data.id);
       lastAgentMsgId = Math.max(lastAgentMsgId, data.id);
     } else {
-      // Fallback : resync le curseur avec l'historique
       try {
         const hist = await fetch(apiUrl("/api/history"));
         if (hist.ok) {
@@ -490,7 +774,19 @@ async function sendMessage(text) {
             lastAgentMsgId = Math.max(lastAgentMsgId, m.id);
           }
         }
-      } catch { /* ignore */ }
+      } catch {/* ignore */}
+    }
+
+    // Re-render user bubble with real uploaded URLs
+    if (uploaded.length > 0 && localAttachments.some((a) => !a.url)) {
+      const lastUserMsg = messagesEl.querySelectorAll(".msg.user");
+      if (lastUserMsg.length) {
+        const last = lastUserMsg[lastUserMsg.length - 1];
+        const mediaWrap = last.querySelector("div:last-child");
+        if (mediaWrap && mediaWrap !== last.querySelector(".body")) {
+          mediaWrap.innerHTML = uploaded.map((u) => u.url ? buildMediaHTML(u.url, u.type, u.name) : "").join("");
+        }
+      }
     }
 
     appendMessage({
@@ -521,9 +817,7 @@ function openModal(tab = "openai") {
   switchTab(tab);
 }
 
-function closeModal() {
-  modalOverlay.classList.add("hidden");
-}
+function closeModal() { modalOverlay.classList.add("hidden"); }
 
 function switchTab(name) {
   $$(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
@@ -533,14 +827,9 @@ function switchTab(name) {
 /* ── Settings handlers ── */
 saveOpenaiBtn.addEventListener("click", async () => {
   const apiKey = openaiKeyInput.value.trim();
-  if (!apiKey) {
-    setFeedback(openaiFeedback, "Entrez votre clé API OpenAI.", "err");
-    return;
-  }
-
+  if (!apiKey) { setFeedback(openaiFeedback, "Entrez votre clé API OpenAI.", "err"); return; }
   saveOpenaiBtn.disabled = true;
   setFeedback(openaiFeedback, "Enregistrement…");
-
   try {
     const res = await fetch(apiUrl("/api/settings/openai"), {
       method: "POST",
@@ -548,7 +837,6 @@ saveOpenaiBtn.addEventListener("click", async () => {
       body: JSON.stringify({ apiKey }),
     });
     const data = await res.json();
-
     if (!res.ok) {
       setFeedback(openaiFeedback, data.error || "Erreur", "err");
     } else {
@@ -565,15 +853,13 @@ saveOpenaiBtn.addEventListener("click", async () => {
 
 async function saveEvolutionApi() {
   const baseUrl = evoUrlInput.value.trim();
-  const apiKey = evoKeyInput.value.trim();
+  const apiKey  = evoKeyInput.value.trim();
   const instanceName = evoInstanceInput.value.trim();
-  const webhookUrl = evoWebhookInput?.value?.trim() || "";
-
+  const webhookUrl   = evoWebhookInput?.value?.trim() || "";
   if (!apiKey || !instanceName) {
     setFeedback(evoFeedback, "Clé API et nom d'instance sont requis.", "err");
     return null;
   }
-
   const res = await fetch(apiUrl("/api/settings/evolution"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -585,7 +871,6 @@ async function saveEvolutionApi() {
 saveEvoBtn?.addEventListener("click", async () => {
   saveEvoBtn.disabled = true;
   setFeedback(evoFeedback, "Connexion en cours…");
-
   try {
     const { res, data } = await saveEvolutionApi();
     if (!res.ok) {
@@ -596,7 +881,7 @@ saveEvoBtn?.addEventListener("click", async () => {
       evoQrPanel?.classList.add("hidden");
       await refreshStatus();
     } else {
-      setFeedback(evoFeedback, "Config enregistrée. Cliquez « Connecter WhatsApp (QR) » pour scanner.", "ok");
+      setFeedback(evoFeedback, "Config enregistrée. Cliquez « Connecter WhatsApp (QR) ».", "ok");
       await refreshStatus();
     }
   } catch (err) {
@@ -609,15 +894,10 @@ saveEvoBtn?.addEventListener("click", async () => {
 testEvoBtn?.addEventListener("click", async () => {
   testEvoBtn.disabled = true;
   setFeedback(evoFeedback, "Test en cours…");
-
   try {
-    if (evoKeyInput.value.trim() && evoInstanceInput.value.trim()) {
-      await saveEvolutionApi();
-    }
-
-    const res = await fetch(apiUrl("/api/settings/evolution/test"), { method: "POST" });
+    if (evoKeyInput.value.trim() && evoInstanceInput.value.trim()) await saveEvolutionApi();
+    const res  = await fetch(apiUrl("/api/settings/evolution/test"), { method: "POST" });
     const data = await res.json();
-
     if (data.connected) {
       setFeedback(evoFeedback, "✅ " + data.message, "ok");
       evoQrPanel?.classList.add("hidden");
@@ -636,20 +916,12 @@ async function showEvolutionQr() {
   evoQrPanel?.classList.remove("hidden");
   if (evoQrOutput) evoQrOutput.innerHTML = '<p class="contacts-empty">Chargement du QR…</p>';
   setFeedback(evoFeedback, "Génération du QR code…");
-
   try {
-    if (evoKeyInput.value.trim() && evoInstanceInput.value.trim()) {
-      await saveEvolutionApi();
-    }
-
-    const res = await fetch(apiUrl("/api/evolution/instance/qr"));
+    if (evoKeyInput.value.trim() && evoInstanceInput.value.trim()) await saveEvolutionApi();
+    const res  = await fetch(apiUrl("/api/evolution/instance/qr"));
     const data = await res.json();
     if (!res.ok) throw new Error(data.error || "Impossible d'obtenir le QR code");
-
-    if (window.WhatsAppConsole?.renderQrPanel) {
-      window.WhatsAppConsole.renderQrPanel(evoQrOutput, data);
-    }
-
+    if (window.WhatsAppConsole?.renderQrPanel) window.WhatsAppConsole.renderQrPanel(evoQrOutput, data);
     if (data.connected) {
       setFeedback(evoFeedback, "✅ " + (data.message || "WhatsApp déjà connecté"), "ok");
     } else {
@@ -673,16 +945,13 @@ saveBusinessBtn?.addEventListener("click", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ownerName: businessNameInput?.value?.trim() || "",
-        offer: businessOfferInput?.value?.trim() || "",
-        price: businessPriceInput?.value?.trim() || "",
+        offer:     businessOfferInput?.value?.trim() || "",
+        price:     businessPriceInput?.value?.trim() || "",
       }),
     });
     const data = await res.json();
-    if (!res.ok) {
-      setFeedback(businessFeedback, data.error || "Erreur", "err");
-    } else {
-      setFeedback(businessFeedback, "✅ Profil business enregistré dans SQLite", "ok");
-    }
+    if (!res.ok) { setFeedback(businessFeedback, data.error || "Erreur", "err"); }
+    else         { setFeedback(businessFeedback, "✅ Profil enregistré", "ok"); }
   } catch (err) {
     setFeedback(businessFeedback, err.message, "err");
   } finally {
@@ -690,24 +959,15 @@ saveBusinessBtn?.addEventListener("click", async () => {
   }
 });
 
-refreshBilanBtn?.addEventListener("click", () => {
-  void loadDailyBilan();
-});
+refreshBilanBtn?.addEventListener("click", () => void loadDailyBilan());
 
-/* ── Events ── */
+/* ── UI Events ── */
 connectBtn.addEventListener("click", () => openModal("openai"));
 modalClose.addEventListener("click", closeModal);
-modalOverlay.addEventListener("click", (e) => {
-  if (e.target === modalOverlay) closeModal();
-});
+modalOverlay.addEventListener("click", (e) => { if (e.target === modalOverlay) closeModal(); });
 
-agentWhatsapp?.addEventListener("click", () => {
-  showWhatsAppWorkspace();
-});
-
-backTeamBtn?.addEventListener("click", () => {
-  showTeamView();
-});
+agentWhatsapp?.addEventListener("click", () => { showWhatsAppWorkspace(); });
+backTeamBtn?.addEventListener("click", () => { showTeamView(); });
 
 $$(".tab").forEach((tab) => {
   tab.addEventListener("click", () => switchTab(tab.dataset.tab));
@@ -720,16 +980,14 @@ autoReplyToggle?.addEventListener("change", async () => {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: autoReplyToggle.checked }),
     });
-  } catch {
-    autoReplyToggle.checked = !autoReplyToggle.checked;
-  }
+  } catch { autoReplyToggle.checked = !autoReplyToggle.checked; }
 });
 
 resetQuotaBtn?.addEventListener("click", async () => {
-  if (!confirm("Débloquer les envois pour aujourd'hui ? (ajoute un bonus au quota journalier)")) return;
+  if (!confirm("Débloquer les envois pour aujourd'hui ?")) return;
   resetQuotaBtn.disabled = true;
   try {
-    const res = await fetch(apiUrl("/api/settings/outbound-quota"), {
+    const res  = await fetch(apiUrl("/api/settings/outbound-quota"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "reset", extra: 20 }),
@@ -738,8 +996,7 @@ resetQuotaBtn?.addEventListener("click", async () => {
     if (!res.ok) throw new Error(data.error || "Erreur");
     if (outboundQuotaEl && data.outbound) {
       const { today, limit, bonus } = data.outbound;
-      outboundQuotaEl.textContent =
-        bonus > 0 ? `${today}/${limit} (+${bonus} bonus)` : `${today}/${limit}`;
+      outboundQuotaEl.textContent = bonus > 0 ? `${today}/${limit} (+${bonus} bonus)` : `${today}/${limit}`;
     }
     alert(data.message || "Quota débloqué.");
   } catch (err) {
@@ -757,7 +1014,7 @@ clearBtn.addEventListener("click", async () => {
 
 $$(".hints li").forEach((li) => {
   li.addEventListener("click", () => {
-    const text = li.textContent.replace(/^«|»$/g, "").trim();
+    const text = li.textContent.replace(/^«\s*/, "").replace(/\s*»$/, "").trim();
     inputEl.value = text;
     autoResize();
     inputEl.focus();
@@ -766,6 +1023,7 @@ $$(".hints li").forEach((li) => {
 
 formEl.addEventListener("submit", (e) => {
   e.preventDefault();
+  if (isRecording) { stopRecording(); return; }
   sendMessage(inputEl.value);
 });
 
@@ -777,6 +1035,15 @@ inputEl.addEventListener("keydown", (e) => {
 });
 
 inputEl.addEventListener("input", autoResize);
+
+// Paste files into composer
+inputEl.addEventListener("paste", (e) => {
+  const files = [...(e.clipboardData?.files ?? [])];
+  if (files.length) {
+    e.preventDefault();
+    files.forEach(addPendingFile);
+  }
+});
 
 function autoResize() {
   inputEl.style.height = "auto";
@@ -793,6 +1060,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+/* ── Bootstrap ── */
 async function bootstrapWorkspace() {
   try {
     await loadHistory();
@@ -804,7 +1072,6 @@ async function bootstrapWorkspace() {
     });
   }
 
-  // Curseur WhatsApp : messages déjà en base ne sont pas rejoués ; seuls les nouveaux s'affichent
   try {
     const res = await fetch(apiUrl("/api/whatsapp?since=0"));
     if (res.ok) {
@@ -814,22 +1081,16 @@ async function bootstrapWorkspace() {
         lastWhatsAppId = Math.max(lastWhatsAppId, m.id);
       }
     }
-  } catch { /* ignore */ }
+  } catch {/* ignore */}
 
   scrollToBottom(true);
   await loadContacts();
   await loadDailyBilan();
 }
 
-/* ── Init ── */
 async function init() {
   showTeamView();
-
-  try {
-    await refreshStatus();
-  } catch {
-    /* serveur peut être lent au démarrage */
-  }
+  try { await refreshStatus(); } catch {/* serveur peut être lent */}
 
   setInterval(refreshStatus, 5000);
   setInterval(() => {

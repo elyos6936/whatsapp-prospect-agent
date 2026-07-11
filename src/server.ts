@@ -2,6 +2,8 @@ import Fastify from "fastify";
 import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
 import path from "node:path";
+import fs from "node:fs";
+import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import {
@@ -45,6 +47,9 @@ import { processSendQueue } from "./send-queue.js";
 import { processDueSequences } from "./sequences.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const uploadsDir = path.join(__dirname, "..", "public", "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
 const app = Fastify({ logger: true });
 
@@ -414,6 +419,19 @@ app.post<{ Body: { message?: string } }>("/api/chat", async (request, reply) => 
       created_at: saved.created_at,
       error: true,
     };
+  }
+});
+
+app.post<{ Body: { name?: string; type?: string; data?: string } }>("/api/upload", async (request, reply) => {
+  const { name, type, data } = request.body ?? {};
+  if (!name || !data) return reply.status(400).send({ error: "name et data requis." });
+  const ext = path.extname(name) || ".bin";
+  const filename = `${crypto.randomUUID()}${ext}`;
+  try {
+    fs.writeFileSync(path.join(uploadsDir, filename), Buffer.from(data, "base64"));
+    return { url: `/uploads/${filename}` };
+  } catch (err) {
+    return reply.status(500).send({ error: "Erreur lors de l'enregistrement du fichier." });
   }
 });
 
