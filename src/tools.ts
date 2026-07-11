@@ -1,23 +1,27 @@
 import type OpenAI from "openai";
 import {
-  getGreenApiCredentials,
+  getEvolutionCredentials,
   getChatHistory,
   getGroupMembers,
   getLastIncomingMessages,
+  createWhatsAppGroup,
   findGroupByNameOrId,
   listPersonalContacts,
   listWhatsAppChats,
   listWhatsAppGroups,
+  listWhatsAppChannels,
   markChatRead,
   messageGroupMembers,
   normalizePhoneToChatId,
+  normalizeGroupParticipantId,
+  isLikelyPhoneJid,
   sendWhatsAppMessage,
   sendWhatsAppTextStatus,
-  testGreenApiConnection,
+  testEvolutionConnection,
   chatIdToDisplay,
   chatIdToNumber,
-  requireGreenApiAuthorized,
-} from "./greenapi.js";
+  requireEvolutionConnected,
+} from "./evolutionapi.js";
 import {
   CONTACT_STATUSES,
   blockContact,
@@ -25,7 +29,7 @@ import {
   countOutboundToday,
   createAutomation,
   createGroupReplyRule,
-  DAILY_OUTBOUND_LIMIT,
+  getEffectiveOutboundLimit,
   getAutomationDetail,
   getAppSettings,
   getContact,
@@ -53,7 +57,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "check_whatsapp_connection",
-      description: "Vérifie si WhatsApp est connecté via Green-API.",
+      description: "Vérifie si WhatsApp est connecté via Evolution API.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -61,7 +65,17 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "list_whatsapp_groups",
-      description: "Liste tous les groupes WhatsApp dont l'utilisateur est membre.",
+      description:
+        "Liste tous les groupes WhatsApp dont l'utilisateur est membre, avec leur nom lisible et leur ID (@g.us).",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_whatsapp_channels",
+      description:
+        "Liste les chaînes / newsletters WhatsApp (@newsletter) suivies par le compte, avec noms et IDs.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -88,7 +102,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "list_personal_contacts",
       description:
-        "Liste les contacts du carnet WhatsApp via Green-API (hors groupes). À utiliser seulement si l'utilisateur demande explicitement les contacts WhatsApp / carnet d'adresses.",
+        "Liste les contacts du carnet WhatsApp via Evolution API (hors groupes). À utiliser seulement si l'utilisateur demande explicitement les contacts WhatsApp / carnet d'adresses.",
       parameters: {
         type: "object",
         properties: {
@@ -103,7 +117,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "get_chat_history",
       description:
-        "Récupère l'historique d'une conversation WhatsApp via Green-API (messages entrants et sortants).",
+        "Récupère l'historique d'une conversation WhatsApp via Evolution API (messages entrants et sortants).",
       parameters: {
         type: "object",
         properties: {
@@ -419,7 +433,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "send_whatsapp_status",
       description:
-        "Publie un STATUT WhatsApp (story) texte via Green-API sendTextStatus. Utiliser quand l'utilisateur demande de poster/publier un statut WhatsApp.",
+        "Publie un STATUT WhatsApp (story) texte. Utiliser quand l'utilisateur demande de poster/publier un statut WhatsApp.",
       parameters: {
         type: "object",
         properties: {
@@ -439,7 +453,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "list_whatsapp_chats",
       description:
-        "Liste les chats WhatsApp de l'instance (getChats Green-API), triés par activité récente.",
+        "Liste les conversations WhatsApp (contacts, groupes, chaînes) avec noms lisibles et IDs.",
       parameters: {
         type: "object",
         properties: {
@@ -453,7 +467,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "mark_chat_read",
-      description: "Marque un chat ou un message comme lu (readChat Green-API).",
+      description: "Marque un chat ou un message comme lu.",
       parameters: {
         type: "object",
         properties: {
@@ -473,7 +487,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "list_green_incoming_messages",
       description:
-        "Derniers messages entrants sur l'instance Green-API (lastIncomingMessages), hors base locale.",
+        "Derniers messages entrants sur l'instance Evolution API, hors base locale.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -613,6 +627,33 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "create_whatsapp_group",
+      description:
+        "Crée un nouveau groupe WhatsApp avec un nom (subject) et au moins un participant (numéro international). WhatsApp exige minimum 1 membre en plus du créateur.",
+      parameters: {
+        type: "object",
+        properties: {
+          subject: { type: "string", description: "Nom du groupe (ex. TEXTE, Automax)" },
+          participants: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Numéros à ajouter (ex. +22945584212). Au moins 1 requis. Si absent, le contact prospect le plus récent sera utilisé.",
+          },
+          description: { type: "string", description: "Description du groupe (optionnel)" },
+          promote_participants: {
+            type: "boolean",
+            description: "Promouvoir tous les participants admin (défaut false)",
+          },
+        },
+        required: ["subject"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_group_rule",
       description:
         "Crée une règle de réponse automatique dans un groupe WhatsApp. L'IA répond publiquement quand un message contient un mot-clé.",
@@ -638,7 +679,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   },
 ];
 
-/** Outils qui n'ont pas besoin de Green-API immédiatement */
+/** Outils qui n'ont pas besoin d'Evolution API immédiatement */
 const LOCAL_TOOLS = new Set([
   "save_contact",
   "list_contacts",
@@ -719,20 +760,20 @@ function formatContact(c: {
 }
 
 export async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
-  if (!LOCAL_TOOLS.has(name) && !getGreenApiCredentials()) {
+  if (!LOCAL_TOOLS.has(name) && !(await getEvolutionCredentials())) {
     return JSON.stringify({
       error:
-        "Green-API non configuré. Demandez à l'utilisateur d'ouvrir « Connexions » et de renseigner Instance ID, Token et URL.",
+        "Evolution API non configurée. Demandez à l'utilisateur d'ouvrir « Connexions » et de renseigner URL, clé API et nom d'instance.",
     });
   }
 
   switch (name) {
     case "check_whatsapp_connection": {
-      const result = await testGreenApiConnection();
+      const result = await testEvolutionConnection();
       return JSON.stringify({
         ...result,
-        outboundToday: countOutboundToday(),
-        outboundLimit: DAILY_OUTBOUND_LIMIT,
+        outboundToday: await countOutboundToday(),
+        outboundLimit: await getEffectiveOutboundLimit(),
       });
     }
 
@@ -740,8 +781,76 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       const groups = await listWhatsAppGroups();
       return JSON.stringify({
         count: groups.length,
-        groups: groups.map((g) => ({ id: g.id, name: g.name })),
+        groups: groups.map((g) => ({
+          id: g.id,
+          name: g.name,
+          type: "groupe",
+        })),
+        hint: groups.length
+          ? "Utilisez name pour identifier le groupe et id (@g.us) pour envoyer un message."
+          : "Aucun groupe trouvé — vérifiez que WhatsApp est connecté.",
       });
+    }
+
+    case "list_whatsapp_channels": {
+      const channels = await listWhatsAppChannels();
+      return JSON.stringify({
+        count: channels.length,
+        channels: channels.map((c) => ({
+          id: c.id,
+          name: c.name,
+          type: "chaîne WhatsApp",
+        })),
+        hint: channels.length
+          ? "Les chaînes utilisent un ID @newsletter. Les noms peuvent être absents selon la version Evolution API."
+          : "Aucune chaîne détectée sur ce compte.",
+      });
+    }
+
+    case "create_whatsapp_group": {
+      const subject = String(args.subject ?? "").trim();
+      if (!subject) {
+        return JSON.stringify({ error: "Le nom du groupe (subject) est requis." });
+      }
+
+      let participants: string[] = [];
+      if (Array.isArray(args.participants)) {
+        participants = args.participants.map((p) => String(p)).filter(Boolean);
+      } else if (args.participants) {
+        participants = [String(args.participants)];
+      }
+
+      if (participants.length === 0) {
+        const contacts = await listContacts({ limit: 10 });
+        const pick = contacts.find((c) => c.status !== "stop");
+        if (pick) participants = [pick.phone];
+      }
+
+      if (participants.length === 0) {
+        return JSON.stringify({
+          error:
+            "WhatsApp exige au moins 1 participant pour créer un groupe. Indiquez un numéro (+229…) ou enregistrez un contact prospect d'abord.",
+        });
+      }
+
+      try {
+        const result = await createWhatsAppGroup({
+          subject,
+          participants,
+          description: args.description ? String(args.description) : undefined,
+          promoteParticipants: args.promote_participants === true,
+        });
+        return JSON.stringify({
+          success: true,
+          groupId: result.groupId,
+          name: result.subject,
+          participantsAdded: result.participantCount,
+          message: `Groupe « ${result.subject} » créé (${result.groupId}). ${result.participantCount} participant(s) ajouté(s).`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ error: msg });
+      }
     }
 
     case "get_group_members": {
@@ -791,7 +900,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "list_incoming_messages": {
-      const messages = listIncomingMessages({
+      const messages = await listIncomingMessages({
         contactPhone: args.contact_phone ? String(args.contact_phone) : undefined,
         todayOnly: Boolean(args.today_only),
         limit: Math.min(Number(args.limit) || 30, 100),
@@ -816,7 +925,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           error: `Statut invalide. Attendu : ${CONTACT_STATUSES.join(", ")}`,
         });
       }
-      const contact = saveContact({
+      const contact = await saveContact({
         phone,
         name: args.name !== undefined ? String(args.name) : undefined,
         notes: args.notes !== undefined ? String(args.notes) : undefined,
@@ -836,7 +945,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         statusRaw && CONTACT_STATUSES.includes(statusRaw as ContactStatus)
           ? (statusRaw as ContactStatus)
           : undefined;
-      const contacts = listContacts({
+      const contacts = await listContacts({
         status,
         limit: Math.min(Number(args.limit) || 50, 100),
       });
@@ -849,7 +958,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     case "set_auto_reply": {
       const phone = String(args.phone ?? "");
       const enabled = Boolean(args.enabled);
-      const contact = setContactAutoReply(phone, enabled);
+      const contact = await setContactAutoReply(phone, enabled);
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
@@ -861,7 +970,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "block_contact": {
       const phone = String(args.phone ?? "");
-      const contact = blockContact(phone);
+      const contact = await blockContact(phone);
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
@@ -871,7 +980,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "unblock_contact": {
       const phone = String(args.phone ?? "");
-      const contact = unblockContact(phone);
+      const contact = await unblockContact(phone);
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
@@ -886,7 +995,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         const chatId = await resolveRecipient(recipient);
 
         if (chatId.endsWith("@c.us")) {
-          const existing = getContact(chatId);
+          const existing = await getContact(chatId);
           if (existing?.status === "stop") {
             return JSON.stringify({
               error: `Ce contact est en STOP. Aucun message ne sera envoyé. Demandez à l'utilisateur de le débloquer si vraiment nécessaire.`,
@@ -897,8 +1006,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         const result = await sendWhatsAppMessage(chatId, message);
         if (chatId.endsWith("@c.us")) {
           try {
-            setContactAutoReply(chatId, true);
-            saveContact({
+            await setContactAutoReply(chatId, true);
+            await saveContact({
               phone: chatId,
               status: "en_conversation",
               autoReply: true,
@@ -916,7 +1025,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           idMessage: result.idMessage,
           sentAt: nowFr(),
           outboundToday: countOutboundToday(),
-          outboundLimit: DAILY_OUTBOUND_LIMIT,
+          outboundLimit: getEffectiveOutboundLimit(),
           message: isGroup
             ? `Message envoyé dans le groupe à ${nowFr()}`
             : `Message envoyé à ${chatIdToDisplay(result.chatId)} à ${nowFr()}`,
@@ -952,13 +1061,19 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     case "list_whatsapp_chats": {
       const count = Math.min(Math.max(Number(args.count) || 50, 1), 200);
       const chats = await listWhatsAppChats(count);
+      const typeLabel: Record<string, string> = {
+        user: "contact",
+        group: "groupe",
+        channel: "chaîne",
+        broadcast: "statuts",
+      };
       return JSON.stringify({
         count: chats.length,
         chats: chats.map((c) => ({
           id: c.id,
           name: c.name,
-          display: c.id.endsWith("@c.us") ? chatIdToDisplay(c.id) : c.name,
-          type: c.type,
+          display: c.type === "user" && isLikelyPhoneJid(c.id) ? chatIdToDisplay(normalizeGroupParticipantId(c.id)) : c.name,
+          type: typeLabel[c.type] ?? c.type,
           archive: c.archive,
         })),
       });
@@ -1005,8 +1120,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         skipped: result.skipped,
         sent: result.sent.map((s) => ({ ...s, display: chatIdToDisplay(s.chatId) })),
         errors: result.errors,
-        outboundToday: countOutboundToday(),
-        outboundLimit: DAILY_OUTBOUND_LIMIT,
+        outboundToday: await countOutboundToday(),
+        outboundLimit: await getEffectiveOutboundLimit(),
         completedAt: nowFr(),
       });
     }
@@ -1029,7 +1144,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
       const chatId = await resolveRecipient(recipientRaw);
       if (chatId.endsWith("@c.us")) {
-        const existing = getContact(chatId);
+        const existing = await getContact(chatId);
         if (existing?.status === "stop") {
           return JSON.stringify({
             error: "Ce contact est en STOP. Impossible de programmer un envoi.",
@@ -1056,7 +1171,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           : recipientRaw.trim()
         : chatIdToDisplay(chatId);
 
-      const job = scheduleMessage({
+      const job = await scheduleMessage({
         recipient: chatId,
         recipientLabel: label,
         message,
@@ -1076,7 +1191,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "list_scheduled_messages": {
-      const jobs = listScheduledMessages({
+      const jobs = await listScheduledMessages({
         includeDone: Boolean(args.include_done),
         limit: 50,
       });
@@ -1101,7 +1216,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         return JSON.stringify({ error: "ID invalide." });
       }
       try {
-        const job = cancelScheduledMessage(id);
+        const job = await cancelScheduledMessage(id);
         if (!job) return JSON.stringify({ error: `Message programmé #${id} introuvable.` });
         return JSON.stringify({
           success: true,
@@ -1117,7 +1232,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "get_daily_bilan": {
-      const bilan = getDailyBilan(args.date ? String(args.date) : undefined);
+      const bilan = await getDailyBilan(args.date ? String(args.date) : undefined);
       return JSON.stringify({
         ...bilan,
         summary: `Bilan ${bilan.date} : ${bilan.incoming} entrant(s), ${bilan.outgoing} sortant(s), ${bilan.uniqueContacts} contact(s) actifs. Pipeline : ${bilan.contactsByStatus.nouveau} nouveau · ${bilan.contactsByStatus.en_conversation} en conversation · ${bilan.contactsByStatus.interesse} intéressé · ${bilan.contactsByStatus.stop} STOP. Programmés : ${bilan.scheduledSentToday} envoyé(s) ce jour, ${bilan.scheduledPending} en attente.`,
@@ -1130,8 +1245,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         return JSON.stringify({ error: "Le numéro / chatId est requis." });
       }
       const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200);
-      const thread = getContactThread(phone, limit);
-      const contact = getContact(
+      const thread = await getContactThread(phone, limit);
+      const contact = await getContact(
         phone.includes("@") ? phone.trim() : `${phone.replace(/\D/g, "")}@c.us`
       );
       return JSON.stringify({
@@ -1152,12 +1267,12 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "save_business_profile": {
-      saveBusinessProfile({
+      await saveBusinessProfile({
         ownerName: args.owner_name !== undefined ? String(args.owner_name) : undefined,
         offer: args.offer !== undefined ? String(args.offer) : undefined,
         price: args.price !== undefined ? String(args.price) : undefined,
       });
-      const s = getAppSettings();
+      const s = await getAppSettings();
       return JSON.stringify({
         success: true,
         profile: {
@@ -1170,7 +1285,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "get_business_profile": {
-      const s = getAppSettings();
+      const s = await getAppSettings();
       return JSON.stringify({
         ownerName: s.business_owner_name || null,
         offer: s.business_offer || null,
@@ -1221,7 +1336,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           });
         }
         try {
-          await requireGreenApiAuthorized("la création d'une campagne de prospection groupe");
+          await requireEvolutionConnected("la création d'une campagne de prospection groupe");
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({ error: msg });
@@ -1240,7 +1355,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         config.keywords = keywords;
       }
 
-      const auto = createAutomation({
+      const auto = await createAutomation({
         name: String(args.name ?? "Automatisation"),
         type,
         config: config as Parameters<typeof createAutomation>[0]["config"],
@@ -1262,7 +1377,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         }
       }
 
-      const detail = getAutomationDetail(auto.id);
+      const detail = await getAutomationDetail(auto.id);
       return JSON.stringify({
         success: true,
         automationId: auto.id,
@@ -1280,7 +1395,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "list_automations": {
       const status = args.status ? (String(args.status) as AutomationStatus) : undefined;
-      const list = listAutomations(status ? { status, limit: 50 } : { limit: 50 });
+      const list = await listAutomations(status ? { status, limit: 50 } : { limit: 50 });
       return JSON.stringify({
         count: list.length,
         automations: list.map((a) => ({
@@ -1301,7 +1416,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       if (!Number.isFinite(id)) {
         return JSON.stringify({ error: "automation_id invalide." });
       }
-      const detail = getAutomationDetail(id);
+      const detail = await getAutomationDetail(id);
       if (!detail) {
         return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
       }
@@ -1333,7 +1448,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       if (!Number.isFinite(id) || !["active", "paused", "completed"].includes(status)) {
         return JSON.stringify({ error: "Paramètres invalides." });
       }
-      const updated = updateAutomationStatus(id, status);
+      const updated = await updateAutomationStatus(id, status);
       if (!updated) {
         return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
       }
@@ -1355,7 +1470,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         return JSON.stringify({ error: "keywords et reply_guide requis." });
       }
       const group = await findGroupByNameOrId(groupId);
-      const rule = createGroupReplyRule({
+      const rule = await createGroupReplyRule({
         groupId,
         groupLabel: group?.name,
         keywords,

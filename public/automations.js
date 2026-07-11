@@ -29,7 +29,9 @@
   }
 
   async function api(path, opts = {}) {
-    const res = await fetch(path, {
+    const base = (window.KLANVIO_CONFIG?.apiUrl || "").replace(/\/$/, "");
+    const url = `${base}${path}`;
+    const res = await fetch(url, {
       method: opts.method || "GET",
       headers: opts.body ? { "Content-Type": "application/json" } : undefined,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
@@ -127,7 +129,7 @@
   }
 
   async function reloadMembers(id, onDone) {
-    if (!confirm("Recharger les membres du groupe depuis Green-API ? WhatsApp doit être autorisé (état authorized).")) {
+    if (!confirm("Recharger les membres du groupe depuis Evolution API ? WhatsApp doit être connecté (état open).")) {
       return;
     }
     try {

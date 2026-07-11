@@ -1,9 +1,11 @@
 import {
   chatIdToDisplay,
   chatIdsMatch,
-  resolveProspectChatId,
+  isLikelyPhoneJid,
+  isLidJid,
+  resolveInboundChatId,
   sendWhatsAppMessage,
-  testGreenApiConnection,
+  testEvolutionConnection,
   getLastIncomingMessages,
 } from "./evolutionapi.js";
 import {
@@ -23,6 +25,10 @@ import {
   updateAutomationStats,
   updateAutomationTarget,
   getContact,
+  findProspectPhoneForLidReply,
+  findUnansweredInboundMessages,
+  hasOutboundReplyAfter,
+  setContactWhatsappLid,
 } from "./db.js";
 import { scoreIncomingMessage } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
@@ -49,7 +55,7 @@ function extractEvolutionInboundText(message: unknown): string | null {
 }
 
 /** Webhook Evolution API — MESSAGES_UPSERT */
-export function handleEvolutionWebhook(payload: unknown): number {
+export async function handleEvolutionWebhook(payload: unknown): Promise<number> {
   if (!payload || typeof payload !== "object") return 0;
   const body = payload as Record<string, unknown>;
   const event = String(body.event ?? body.type ?? "").toUpperCase();
@@ -66,6 +72,8 @@ export function handleEvolutionWebhook(payload: unknown): number {
     if (!key || key.fromMe) continue;
 
     const rawChatId = key.remoteJid ?? "";
+    if (isBroadcastOrStatusJid(rawChatId)) continue;
+
     const text = extractEvolutionInboundText(row.message);
     if (!text) continue;
 
@@ -75,10 +83,16 @@ export function handleEvolutionWebhook(payload: unknown): number {
       continue;
     }
 
-    const chatId = resolveProspectChatId(rawChatId, key.participant);
+    const keyExtra = key as { senderPn?: string; remoteJidAlt?: string; participant?: string };
+    const chatId = await resolveInboundChatId(rawChatId, {
+      senderPn: keyExtra.senderPn,
+      remoteJidAlt: keyExtra.remoteJidAlt,
+      participant: keyExtra.participant,
+      senderName: String(row.pushName ?? ""),
+    });
     const msgId = key.id ?? `evo-${Date.now()}`;
     const senderName = String(row.pushName ?? chatIdToDisplay(chatId));
-    if (ingestInboundMessage(chatId, senderName, text, msgId, "notification")) {
+    if (await ingestInboundMessage(chatId, senderName, text, msgId, "notification")) {
       processed++;
     }
   }
@@ -115,7 +129,7 @@ function placeholderForType(type: string): string | null {
   switch (type) {
     case "audioMessage":
     case "voiceMessage":
-      return "[Message vocal reçu — réponse auto sur message texte uniquement pour l'instant]";
+      return "[Message vocal reçu]";
     case "imageMessage":
       return "[Image reçue]";
     case "videoMessage":
@@ -129,6 +143,22 @@ function placeholderForType(type: string): string | null {
   }
 }
 
+function isBroadcastOrStatusJid(jid: string): boolean {
+  const j = jid.trim().toLowerCase();
+  return j === "status@broadcast" || j.endsWith("@broadcast");
+}
+
+/** Seuls les vrais messages texte en DM déclenchent une réponse auto. */
+function isAutoReplyEligible(text: string, remoteJid: string): boolean {
+  if (isBroadcastOrStatusJid(remoteJid)) return false;
+  const trimmed = text.trim();
+  if (!trimmed) return false;
+  if (trimmed.startsWith("[") && /reçu|reçue|Message vocal|Image|Vidéo|Document|Sticker|Audio|Photo|Video/i.test(trimmed)) {
+    return false;
+  }
+  return true;
+}
+
 const pendingReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const pendingReplyPayloads = new Map<string, { senderName: string; text: string }>();
 
@@ -140,7 +170,7 @@ async function ensureWhatsAppAuthorized(): Promise<boolean> {
   if (now - lastAuthCheckMs < 30_000) return lastAuthOk;
   lastAuthCheckMs = now;
   try {
-    const state = await testGreenApiConnection();
+    const state = await testEvolutionConnection();
     lastAuthOk = state.connected;
     pollHealth.authorized = lastAuthOk;
     if (!lastAuthOk) {
@@ -161,35 +191,41 @@ function findAutomationTarget(
   return targets.find((t) => chatIdsMatch(t.target_id, chatId));
 }
 
-function recordAutomationEngagement(chatId: string, text: string, interested: boolean): void {
-  const followups = listActiveAutomations().filter(
+async function recordAutomationEngagement(
+  chatId: string,
+  text: string,
+  interested: boolean
+): Promise<void> {
+  const followups = (await listActiveAutomations()).filter(
     (a) => a.type === "group_prospect" || a.type === "custom_followup"
   );
   for (const auto of followups) {
-    const targets = listAutomationTargets(auto.id, { limit: 500 });
+    const targets = await listAutomationTargets(auto.id, { limit: 500 });
     const target = findAutomationTarget(targets, chatId);
     if (auto.type === "group_prospect" && !target) continue;
     if (target) {
-      updateAutomationTarget(auto.id, target.target_id, { status: interested ? "interested" : "replied" });
+      await updateAutomationTarget(auto.id, target.target_id, {
+        status: interested ? "interested" : "replied",
+      });
       if (target.ab_variant) {
-        recordAbReply(auto.id, target.ab_variant, interested);
+        await recordAbReply(auto.id, target.ab_variant, interested);
       }
     }
   }
   void text;
 }
 
-function buildAutomationContext(text: string, chatId: string): string | undefined {
+async function buildAutomationContext(text: string, chatId: string): Promise<string | undefined> {
   const parts: string[] = [];
-  const memory = getMemoryContextBlock(chatId);
+  const memory = await getMemoryContextBlock(chatId);
   if (memory) parts.push(memory);
 
-  const contact = getContact(chatId);
+  const contact = await getContact(chatId);
   if (contact && contact.lead_score > 0) {
     parts.push(`Score prospect : ${contact.lead_score}/100`);
   }
 
-  const keywordAutos = findMatchingKeywordAutomations(text);
+  const keywordAutos = await findMatchingKeywordAutomations(text);
   for (const auto of keywordAutos) {
     const lines = [
       `Automatisation « ${auto.name} » (vente sur mots-clés)`,
@@ -199,19 +235,19 @@ function buildAutomationContext(text: string, chatId: string): string | undefine
       auto.config.conversationGuide ? `Consignes : ${auto.config.conversationGuide}` : "",
     ].filter(Boolean);
     parts.push(lines.join("\n"));
-    addAutomationLog(auto.id, "info", `Message entrant déclencheur de ${chatIdToDisplay(chatId)}`);
+    await addAutomationLog(auto.id, "info", `Message entrant déclencheur de ${chatIdToDisplay(chatId)}`);
     const stats = auto.stats;
-    updateAutomationStats(auto.id, {
+    await updateAutomationStats(auto.id, {
       messagesHandled: (stats.messagesHandled ?? 0) + 1,
       lastActionAt: new Date().toISOString(),
     });
   }
 
-  const followups = listActiveAutomations().filter(
+  const followups = (await listActiveAutomations()).filter(
     (a) => a.type === "group_prospect" || a.type === "custom_followup"
   );
   for (const auto of followups) {
-    const targets = listAutomationTargets(auto.id, { limit: 500 });
+    const targets = await listAutomationTargets(auto.id, { limit: 500 });
     const target = findAutomationTarget(targets, chatId);
     if (auto.type === "group_prospect" && !target) continue;
     if (auto.config.conversationGuide) {
@@ -229,7 +265,7 @@ async function runGroupAutoReply(
   senderName: string,
   text: string
 ): Promise<void> {
-  const rule = findGroupReplyRule(groupId, text);
+  const rule = await findGroupReplyRule(groupId, text);
   if (!rule) return;
 
   const automationContext = rule.reply_guide
@@ -251,10 +287,10 @@ async function runGroupAutoReply(
 }
 
 async function runAutoReply(chatId: string, senderName: string, text: string): Promise<void> {
-  if (!shouldAutoReplyContact(chatId)) {
-    const reason = isContactBlocked(chatId)
+  if (!(await shouldAutoReplyContact(chatId))) {
+    const reason = (await isContactBlocked(chatId))
       ? "STOP"
-      : !isAutoReplyEnabled()
+      : !(await isAutoReplyEnabled())
         ? "auto globale OFF"
         : "auto contact OFF";
     console.log(`📩 ${senderName} (pas de réponse — ${reason}): ${text.slice(0, 40)}`);
@@ -271,16 +307,16 @@ async function runAutoReply(chatId: string, senderName: string, text: string): P
 
     if (isStopRequest(text)) {
       reply = getStopConfirmationReply();
-      blockContact(chatId);
+      await blockContact(chatId);
     } else if (text.startsWith("[") && text.includes("reçu")) {
       reply =
         "Merci pour votre message ! Pour que je puisse vous répondre précisément, pourriez-vous m'écrire votre question en texte ? 🙂";
     } else {
-      const scoring = scoreIncomingMessage(text, chatId);
-      recordAutomationEngagement(chatId, text, scoring.interested);
+      const scoring = await scoreIncomingMessage(text, chatId);
+      await recordAutomationEngagement(chatId, text, scoring.interested);
       void refreshContactMemory(chatId).catch(() => {});
 
-      const automationContext = buildAutomationContext(text, chatId);
+      const automationContext = await buildAutomationContext(text, chatId);
       const handoff = await maybeCreateHandoff({
         chatId,
         senderName,
@@ -300,7 +336,10 @@ async function runAutoReply(chatId: string, senderName: string, text: string): P
       });
     }
 
-    const sent = await sendWhatsAppMessage(chatId, reply, { enableAutoReply: false });
+    const sent = await sendWhatsAppMessage(chatId, reply, {
+      enableAutoReply: false,
+      countsTowardQuota: false,
+    });
     console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -314,32 +353,52 @@ function scheduleAutoReply(chatId: string, senderName: string, text: string): vo
   const existing = pendingReplyTimers.get(chatId);
   if (existing) clearTimeout(existing);
 
-  const delay = getAdaptiveReplyDelay(chatId);
-  console.log(`⏳ Réponse auto à ${senderName} dans ${Math.round(delay / 1000)}s…`);
+  void (async () => {
+    const delay = await getAdaptiveReplyDelay(chatId);
+    console.log(`⏳ Réponse auto à ${senderName} dans ${Math.round(delay / 1000)}s…`);
 
-  const timer = setTimeout(() => {
-    pendingReplyTimers.delete(chatId);
-    const payload = pendingReplyPayloads.get(chatId);
-    pendingReplyPayloads.delete(chatId);
-    if (!payload) return;
-    void runAutoReply(chatId, payload.senderName, payload.text);
-  }, delay);
+    const timer = setTimeout(() => {
+      pendingReplyTimers.delete(chatId);
+      const payload = pendingReplyPayloads.get(chatId);
+      pendingReplyPayloads.delete(chatId);
+      if (!payload) return;
+      void runAutoReply(chatId, payload.senderName, payload.text);
+    }, delay);
 
-  pendingReplyTimers.set(chatId, timer);
+    pendingReplyTimers.set(chatId, timer);
+  })();
 }
 
-function ingestInboundMessage(
-  chatId: string,
+async function resolveInboundForStorage(
+  rawChatId: string,
+  senderName?: string,
+  meta: { senderPn?: string; remoteJidAlt?: string; participant?: string } = {}
+): Promise<{ chatId: string; rawLid?: string }> {
+  const raw = rawChatId.trim();
+  const chatId = await resolveInboundChatId(raw, { ...meta, senderName });
+  const rawLid = isLidJid(raw) ? raw : !isLikelyPhoneJid(raw) ? `${raw.replace(/@c\.us$/i, "").replace(/\D/g, "")}@lid` : undefined;
+  if (rawLid && isLikelyPhoneJid(chatId)) {
+    await setContactWhatsappLid(chatId, rawLid);
+  }
+  return { chatId, rawLid };
+}
+
+async function ingestInboundMessage(
+  rawChatId: string,
   senderName: string,
   text: string,
   greenApiId: string,
-  source: "notification" | "history"
-): boolean {
-  if (chatId.endsWith("@g.us") || !text.trim()) return false;
-  if (whatsAppMessageExists(greenApiId)) return false;
+  source: "notification" | "history",
+  meta: { senderPn?: string; remoteJidAlt?: string; participant?: string } = {}
+): Promise<boolean> {
+  if (rawChatId.endsWith("@g.us") || !text.trim()) return false;
+  if (await whatsAppMessageExists(greenApiId)) return false;
+
+  const { chatId } = await resolveInboundForStorage(rawChatId, senderName, meta);
+  if (chatId === "inconnu") return false;
 
   try {
-    saveWhatsAppMessage({
+    await saveWhatsAppMessage({
       contactPhone: chatId,
       direction: "entrant",
       body: text,
@@ -348,7 +407,7 @@ function ingestInboundMessage(
     });
 
     try {
-      touchIncomingContact(chatId, senderName);
+      await touchIncomingContact(chatId, senderName);
     } catch (err) {
       console.error("Erreur upsert contact:", err);
     }
@@ -361,8 +420,13 @@ function ingestInboundMessage(
     }
 
     const tag = source === "history" ? "sync" : "notif";
-    console.log(`📩 WhatsApp entrant [${tag}] de ${senderName}: ${text.slice(0, 60)}…`);
-    scheduleAutoReply(chatId, senderName, text);
+    console.log(`📩 WhatsApp entrant [${tag}] de ${senderName} → ${chatIdToDisplay(chatId)}: ${text.slice(0, 60)}…`);
+
+    if (isAutoReplyEligible(text, rawChatId)) {
+      scheduleAutoReply(chatId, senderName, text);
+    } else {
+      console.log(`   ↳ ignoré pour réponse auto (statut/média/broadcast)`);
+    }
     return true;
   } catch (err) {
     console.error("Erreur enregistrement message entrant:", err);
@@ -371,10 +435,46 @@ function ingestInboundMessage(
   }
 }
 
+async function reprocessPendingAutoReplies(): Promise<number> {
+  if (!(await isAutoReplyEnabled())) return 0;
+
+  const pending = await findUnansweredInboundMessages(40);
+  let queued = 0;
+
+  for (const msg of pending) {
+    let chatId = msg.contact_phone;
+    const digits = chatId.replace(/@c\.us|@lid|@s\.whatsapp\.net/gi, "").replace(/\D/g, "");
+
+    if (isLidJid(chatId) || !isLikelyPhoneJid(chatId)) {
+      const lid = isLidJid(chatId) ? chatId : `${digits}@lid`;
+      const resolved = await findProspectPhoneForLidReply(lid, msg.sender_name ?? undefined);
+      if (!resolved) continue;
+      chatId = resolved;
+      await setContactWhatsappLid(resolved, lid);
+    }
+
+    if (!(await shouldAutoReplyContact(chatId))) continue;
+    if (await hasOutboundReplyAfter(msg.id, chatId, msg.contact_phone)) continue;
+    if (!isAutoReplyEligible(msg.body, chatId)) continue;
+
+    const senderName = msg.sender_name || chatIdToDisplay(chatId);
+    console.log(`🔄 Relance réponse auto → ${senderName} (${chatIdToDisplay(chatId)})`);
+    scheduleAutoReply(chatId, senderName, msg.body);
+    queued++;
+  }
+
+  if (queued > 0) {
+    console.log(`🔄 ${queued} réponse(s) auto remise(s) en file`);
+  }
+  return queued;
+}
+
+export { reprocessPendingAutoReplies };
+
 export async function syncIncomingFromHistory(): Promise<number> {
   pollHealth.lastSyncAt = new Date().toISOString();
 
-  const settings = getAppSettings();
+  const settings = await getAppSettings();
   if (!settings.evolution_api_key || !settings.evolution_instance_name) return 0;
   if (!(await ensureWhatsAppAuthorized())) return 0;
 
@@ -385,9 +485,8 @@ export async function syncIncomingFromHistory(): Promise<number> {
       if (m.typeMessage === "reactionMessage" || m.typeMessage === "deletedMessage") continue;
 
       const rawChatId = m.chatId ?? m.senderId ?? "";
-      if (!rawChatId || rawChatId.endsWith("@g.us")) continue;
+      if (!rawChatId || rawChatId.endsWith("@g.us") || isBroadcastOrStatusJid(rawChatId)) continue;
 
-      const chatId = resolveProspectChatId(rawChatId, m.senderId);
       const text =
         m.textMessage?.trim() ||
         m.extendedTextMessageData?.text?.trim() ||
@@ -397,8 +496,14 @@ export async function syncIncomingFromHistory(): Promise<number> {
       const greenApiId = m.idMessage;
       if (!greenApiId) continue;
 
-      const senderName = m.senderName || m.senderContactName || chatIdToDisplay(chatId);
-      if (ingestInboundMessage(chatId, senderName, text, greenApiId, "history")) {
+      const senderName = m.senderName || m.senderContactName || chatIdToDisplay(rawChatId);
+      if (
+        await ingestInboundMessage(rawChatId, senderName, text, greenApiId, "history", {
+          senderPn: m.senderPn,
+          remoteJidAlt: m.remoteJidAlt,
+          participant: m.senderId,
+        })
+      ) {
         added++;
       }
     }
@@ -428,14 +533,18 @@ export function startNotificationPoller(intervalMs = 3000): void {
 
   console.log(`🔔 Sync messages entrants Evolution API (toutes les ${intervalMs / 1000}s)`);
   console.log(`📥 Webhook : POST /api/evolution/webhook (recommandé en production)`);
-  console.log(`🤖 Réponses automatiques : ${isAutoReplyEnabled() ? "activées" : "DÉSACTIVÉES — activez le toggle dans l'interface"}`);
-  console.log(`📦 Conversations prospects → SQLite (data/agent.db), pas le chat agent`);
+  void (async () => {
+    const enabled = await isAutoReplyEnabled();
+    console.log(`🤖 Réponses automatiques : ${enabled ? "activées" : "DÉSACTIVÉES — activez le toggle dans l'interface"}`);
+    console.log(`📦 Conversations prospects → PostgreSQL, pas le chat agent`);
 
-  if (!isAutoReplyEnabled()) {
-    console.warn(`⚠️  Réponses auto OFF : les messages entrants seront reçus mais pas de réponse automatique.`);
-  }
+    if (!enabled) {
+      console.warn(`⚠️  Réponses auto OFF : les messages entrants seront reçus mais pas de réponse automatique.`);
+    }
+  })();
 
   void syncIncomingFromHistory();
+  void reprocessPendingAutoReplies();
 
   intervalHandle = setInterval(async () => {
     if (polling) return;

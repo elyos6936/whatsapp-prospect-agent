@@ -1,391 +1,99 @@
-import { DatabaseSync } from "node:sqlite";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { sql } from "./pg.js";
 import { config } from "./config.js";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const dataDir = path.join(__dirname, "..", "data");
-const dbPath = path.join(dataDir, "agent.db");
-
-if (!fs.existsSync(dataDir)) {
-  fs.mkdirSync(dataDir, { recursive: true });
-}
-
-export const db = new DatabaseSync(dbPath);
-
-db.exec("PRAGMA journal_mode = WAL");
-db.exec("PRAGMA foreign_keys = ON");
-
-db.exec(`
-  CREATE TABLE IF NOT EXISTS settings (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL,
-    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-  );
-
-  CREATE TABLE IF NOT EXISTS agent_conversation (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-  );
-
-  CREATE TABLE IF NOT EXISTS messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contact_phone TEXT NOT NULL,
-    sender_name TEXT,
-    direction TEXT NOT NULL CHECK (direction IN ('entrant', 'sortant')),
-    body TEXT NOT NULL,
-    green_api_id TEXT UNIQUE,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-  );
-
-  CREATE TABLE IF NOT EXISTS contacts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    phone TEXT NOT NULL UNIQUE,
-    name TEXT,
-    notes TEXT,
-    status TEXT NOT NULL DEFAULT 'nouveau'
-      CHECK (status IN ('nouveau', 'en_conversation', 'interesse', 'stop')),
-    auto_reply INTEGER NOT NULL DEFAULT 0 CHECK (auto_reply IN (0, 1)),
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-  );
-
-  CREATE TABLE IF NOT EXISTS scheduled_messages (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recipient TEXT NOT NULL,
-    recipient_label TEXT,
-    message TEXT NOT NULL,
-    send_at TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending'
-      CHECK (status IN ('pending', 'sent', 'failed', 'cancelled')),
-    error TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    sent_at TEXT
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_messages_created ON messages(created_at);
-  CREATE INDEX IF NOT EXISTS idx_messages_phone ON messages(contact_phone);
-  CREATE INDEX IF NOT EXISTS idx_agent_conversation_created ON agent_conversation(created_at);
-  CREATE INDEX IF NOT EXISTS idx_contacts_status ON contacts(status);
-  CREATE INDEX IF NOT EXISTS idx_scheduled_pending ON scheduled_messages(status, send_at);
-
-  CREATE TABLE IF NOT EXISTS automations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    type TEXT NOT NULL CHECK (type IN ('group_prospect', 'keyword_sales', 'custom_followup')),
-    status TEXT NOT NULL DEFAULT 'active'
-      CHECK (status IN ('active', 'paused', 'completed', 'failed')),
-    config_json TEXT NOT NULL DEFAULT '{}',
-    stats_json TEXT NOT NULL DEFAULT '{}',
-    summary TEXT,
-    budget_fcfa INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-  );
-
-  CREATE TABLE IF NOT EXISTS automation_targets (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    automation_id INTEGER NOT NULL,
-    target_id TEXT NOT NULL,
-    target_label TEXT,
-    status TEXT NOT NULL DEFAULT 'pending'
-      CHECK (status IN ('pending', 'contacted', 'replied', 'interested', 'stopped', 'error')),
-    last_action_at TEXT,
-    notes TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    UNIQUE(automation_id, target_id),
-    FOREIGN KEY (automation_id) REFERENCES automations(id) ON DELETE CASCADE
-  );
-
-  CREATE TABLE IF NOT EXISTS automation_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    automation_id INTEGER NOT NULL,
-    level TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('info', 'success', 'warning', 'error')),
-    message TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    FOREIGN KEY (automation_id) REFERENCES automations(id) ON DELETE CASCADE
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_automations_status ON automations(status);
-  CREATE INDEX IF NOT EXISTS idx_automation_targets_auto ON automation_targets(automation_id, status);
-  CREATE INDEX IF NOT EXISTS idx_automation_logs_auto ON automation_logs(automation_id, created_at);
-
-  CREATE TABLE IF NOT EXISTS contact_sequences (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contact_phone TEXT NOT NULL,
-    automation_id INTEGER,
-    name TEXT NOT NULL,
-    steps_json TEXT NOT NULL,
-    current_step INTEGER NOT NULL DEFAULT 0,
-    status TEXT NOT NULL DEFAULT 'active'
-      CHECK (status IN ('active', 'paused', 'completed', 'cancelled')),
-    next_step_at TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    FOREIGN KEY (automation_id) REFERENCES automations(id) ON DELETE SET NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS send_queue (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    recipient TEXT NOT NULL,
-    recipient_label TEXT,
-    message TEXT,
-    media_url TEXT,
-    media_type TEXT,
-    priority INTEGER NOT NULL DEFAULT 5,
-    send_at TEXT NOT NULL,
-    status TEXT NOT NULL DEFAULT 'pending'
-      CHECK (status IN ('pending', 'sent', 'failed', 'cancelled')),
-    automation_id INTEGER,
-    sequence_id INTEGER,
-    ab_variant TEXT,
-    error TEXT,
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    sent_at TEXT
-  );
-
-  CREATE TABLE IF NOT EXISTS group_reply_rules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_id TEXT NOT NULL,
-    group_label TEXT,
-    keywords_json TEXT NOT NULL DEFAULT '[]',
-    reply_guide TEXT,
-    automation_id INTEGER,
-    status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'paused')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
-  );
-
-  CREATE TABLE IF NOT EXISTS handoff_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    contact_phone TEXT NOT NULL,
-    contact_name TEXT,
-    reason TEXT NOT NULL,
-    summary TEXT,
-    suggested_reply TEXT,
-    status TEXT NOT NULL DEFAULT 'pending'
-      CHECK (status IN ('pending', 'resolved', 'dismissed')),
-    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
-    resolved_at TEXT
-  );
-
-  CREATE INDEX IF NOT EXISTS idx_contact_sequences_phone ON contact_sequences(contact_phone, status);
-  CREATE INDEX IF NOT EXISTS idx_send_queue_pending ON send_queue(status, priority DESC, send_at);
-  CREATE INDEX IF NOT EXISTS idx_group_reply_rules_group ON group_reply_rules(group_id, status);
-  CREATE INDEX IF NOT EXISTS idx_handoff_pending ON handoff_events(status, created_at);
-`);
 
 export const DAILY_OUTBOUND_LIMIT = 30;
 export const CONTACT_STATUSES = ["nouveau", "en_conversation", "interesse", "stop"] as const;
 export type ContactStatus = (typeof CONTACT_STATUSES)[number];
 
-/** Migrations légères pour bases déjà créées */
-function migrateSchema(): void {
-  const tables = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='messages'")
-    .all() as { name: string }[];
-
-  if (tables.length > 0) {
-    const cols = db.prepare("PRAGMA table_info(messages)").all() as { name: string }[];
-    if (!cols.some((c) => c.name === "sender_name")) {
-      db.exec("ALTER TABLE messages ADD COLUMN sender_name TEXT");
-      console.log("📦 Migration : colonne sender_name ajoutée à messages");
-    }
-  }
-
-  const contactTables = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='contacts'")
-    .all() as { name: string }[];
-
-  if (contactTables.length > 0) {
-    const cols = db.prepare("PRAGMA table_info(contacts)").all() as { name: string }[];
-    if (!cols.some((c) => c.name === "updated_at")) {
-      db.exec(`ALTER TABLE contacts ADD COLUMN updated_at TEXT`);
-      db.exec(`UPDATE contacts SET updated_at = COALESCE(created_at, datetime('now', 'localtime')) WHERE updated_at IS NULL`);
-      console.log("📦 Migration : colonne updated_at ajoutée à contacts");
-    }
-    if (!cols.some((c) => c.name === "notes")) {
-      db.exec("ALTER TABLE contacts ADD COLUMN notes TEXT");
-      console.log("📦 Migration : colonne notes ajoutée à contacts");
-    }
-    if (!cols.some((c) => c.name === "auto_reply")) {
-      db.exec("ALTER TABLE contacts ADD COLUMN auto_reply INTEGER NOT NULL DEFAULT 0");
-      console.log("📦 Migration : colonne auto_reply ajoutée à contacts");
-    }
-    if (!cols.some((c) => c.name === "lead_score")) {
-      db.exec("ALTER TABLE contacts ADD COLUMN lead_score INTEGER NOT NULL DEFAULT 0");
-      console.log("📦 Migration : colonne lead_score ajoutée à contacts");
-    }
-    if (!cols.some((c) => c.name === "memory_summary")) {
-      db.exec("ALTER TABLE contacts ADD COLUMN memory_summary TEXT");
-      console.log("📦 Migration : colonne memory_summary ajoutée à contacts");
-    }
-    if (!cols.some((c) => c.name === "memory_updated_at")) {
-      db.exec("ALTER TABLE contacts ADD COLUMN memory_updated_at TEXT");
-      console.log("📦 Migration : colonne memory_updated_at ajoutée à contacts");
-    }
-    if (!cols.some((c) => c.name === "handoff_status")) {
-      db.exec("ALTER TABLE contacts ADD COLUMN handoff_status TEXT");
-      console.log("📦 Migration : colonne handoff_status ajoutée à contacts");
-    }
-  }
-
-  const targetTables = db
-    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='automation_targets'")
-    .all() as { name: string }[];
-  if (targetTables.length > 0) {
-    const tcols = db.prepare("PRAGMA table_info(automation_targets)").all() as { name: string }[];
-    if (!tcols.some((c) => c.name === "ab_variant")) {
-      db.exec("ALTER TABLE automation_targets ADD COLUMN ab_variant TEXT");
-      console.log("📦 Migration : colonne ab_variant ajoutée à automation_targets");
-    }
-  }
-
-  // Migrer l'ancienne liste JSON blocked_contacts → status stop
-  try {
-    const raw = getSettingRaw("blocked_contacts");
-    if (raw && raw !== "[]") {
-      const list = JSON.parse(raw) as string[];
-      for (const chatId of list) {
-        if (!chatId) continue;
-        upsertContactInternal({
-          phone: chatId,
-          status: "stop",
-          autoReply: false,
-        });
-      }
-      setSettingRaw("blocked_contacts", "[]");
-      console.log(`📦 Migration : ${list.length} contact(s) STOP migrés`);
-    }
-  } catch {
-    /* ignore */
-  }
-
-  // Contacts prospectés avant le correctif auto_reply : réactiver une seule fois
-  try {
-    if (!getSettingRaw("migration_auto_reply_prospect_fix_v1")) {
-      const fixed = db
-        .prepare(
-          `UPDATE contacts SET auto_reply = 1, updated_at = datetime('now', 'localtime')
-           WHERE auto_reply = 0
-             AND status IN ('nouveau', 'en_conversation')
-             AND phone IN (
-               SELECT DISTINCT contact_phone FROM messages WHERE direction = 'sortant'
-             )`
-        )
-        .run();
-      setSettingRaw("migration_auto_reply_prospect_fix_v1", "1");
-      if (fixed.changes > 0) {
-        console.log(`📦 Migration : auto_reply activé pour ${fixed.changes} contact(s) prospecté(s)`);
-      }
-    }
-  } catch {
-    /* ignore */
-  }
-
-  try {
-    if (!getSettingRaw("migration_drop_video_graphis_v1")) {
-      db.exec("DROP TABLE IF EXISTS video_jobs");
-      db.exec("DROP TABLE IF EXISTS video_agent_conversation");
-      db.exec("DROP TABLE IF EXISTS graphis_jobs");
-      db.exec("DROP TABLE IF EXISTS graphis_agent_conversation");
-      for (const key of [
-        "kie_api_key",
-        "anthropic_api_key",
-        "graphis_brand_json",
-      ]) {
-        db.prepare("DELETE FROM settings WHERE key = ?").run(key);
-      }
-      setSettingRaw("migration_drop_video_graphis_v1", "1");
-      console.log("📦 Migration : modules Montage Vidéo et Graphis supprimés de la base");
-    }
-  } catch {
-    /* ignore */
-  }
-
-  try {
-    if (!getSettingRaw("migration_drop_meta_youtube_v1")) {
-      db.exec("DROP TABLE IF EXISTS youtube_watch_developed_ideas");
-      db.exec("DROP TABLE IF EXISTS youtube_watch_runs");
-      db.exec("DROP TABLE IF EXISTS youtube_watch_channels");
-      db.exec("DROP TABLE IF EXISTS ads_agent_conversation");
-      for (const key of [
-        "meta_access_token",
-        "meta_ad_account_id",
-        "meta_page_id",
-        "meta_whatsapp_number",
-      ]) {
-        db.prepare("DELETE FROM settings WHERE key = ?").run(key);
-      }
-      setSettingRaw("migration_drop_meta_youtube_v1", "1");
-      console.log("📦 Migration : modules Meta Ads et Veille YouTube supprimés de la base");
-    }
-  } catch {
-    /* ignore */
-  }
+/** Heure locale au format comparable (ex-SQLite localtime). */
+export function formatLocalDateTime(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
-function getSettingRaw(key: string): string {
-  const row = db.prepare("SELECT value FROM settings WHERE key = ?").get(key) as
-    | { value: string }
-    | undefined;
-  return row?.value ?? "";
+export function parseLocalDateTime(value: string): Date {
+  const [datePart, timePart = "00:00:00"] = value.trim().split(/\s+/);
+  const [y, m, d] = datePart.split("-").map(Number);
+  const [h, min, s] = timePart.split(":").map(Number);
+  return new Date(y, m - 1, d, h ?? 0, min ?? 0, s ?? 0);
 }
 
-function setSettingRaw(key: string, value: string): void {
-  db.prepare(
-    `INSERT INTO settings (key, value, updated_at)
-     VALUES (?, ?, datetime('now', 'localtime'))
-     ON CONFLICT(key) DO UPDATE SET
-       value = excluded.value,
-       updated_at = excluded.updated_at`
-  ).run(key, value);
+function toTsParam(value: string | Date): Date {
+  return value instanceof Date ? value : parseLocalDateTime(value);
 }
 
-function upsertContactInternal(input: {
+function formatTs(value: unknown): string {
+  if (value == null) return "";
+  if (value instanceof Date) return formatLocalDateTime(value);
+  return String(value);
+}
+
+function formatTsNullable(value: unknown): string | null {
+  if (value == null) return null;
+  return formatTs(value);
+}
+
+async function getSettingRaw(key: string): Promise<string> {
+  const rows = await sql<{ value: string }[]>`SELECT value FROM settings WHERE key = ${key}`;
+  return rows[0]?.value ?? "";
+}
+
+async function setSettingRaw(key: string, value: string): Promise<void> {
+  await sql`
+    INSERT INTO settings (key, value, updated_at)
+    VALUES (${key}, ${value}, NOW())
+    ON CONFLICT (key) DO UPDATE SET
+      value = EXCLUDED.value,
+      updated_at = NOW()
+  `;
+}
+
+async function getSetting(key: string): Promise<string> {
+  return getSettingRaw(key);
+}
+
+async function setSetting(key: string, value: string): Promise<void> {
+  await setSettingRaw(key, value);
+}
+
+async function upsertContactInternal(input: {
   phone: string;
   name?: string | null;
   notes?: string | null;
   status?: ContactStatus;
   autoReply?: boolean;
-}): void {
-  const existing = db
-    .prepare("SELECT id FROM contacts WHERE phone = ?")
-    .get(input.phone) as { id: number } | undefined;
+}): Promise<void> {
+  const existing = await sql<{ id: number }[]>`
+    SELECT id FROM contacts WHERE phone = ${input.phone}
+  `;
 
-  if (!existing) {
-    db.prepare(
-      `INSERT INTO contacts (phone, name, notes, status, auto_reply)
-       VALUES (?, ?, ?, ?, ?)`
-    ).run(
-      input.phone,
-      input.name ?? null,
-      input.notes ?? null,
-      input.status ?? "nouveau",
-      input.autoReply === undefined ? 0 : input.autoReply ? 1 : 0
-    );
+  const autoReply =
+    input.autoReply === undefined ? null : input.autoReply ? 1 : 0;
+
+  if (!existing.length) {
+    await sql`
+      INSERT INTO contacts (phone, name, notes, status, auto_reply)
+      VALUES (
+        ${input.phone},
+        ${input.name ?? null},
+        ${input.notes ?? null},
+        ${input.status ?? "nouveau"},
+        ${autoReply ?? 0}
+      )
+    `;
     return;
   }
 
-  db.prepare(
-    `UPDATE contacts SET
-       name = COALESCE(?, name),
-       notes = COALESCE(?, notes),
-       status = COALESCE(?, status),
-       auto_reply = COALESCE(?, auto_reply),
-       updated_at = datetime('now', 'localtime')
-     WHERE phone = ?`
-  ).run(
-    input.name ?? null,
-    input.notes ?? null,
-    input.status ?? null,
-    input.autoReply === undefined ? null : input.autoReply ? 1 : 0,
-    input.phone
-  );
+  await sql`
+    UPDATE contacts SET
+      name = COALESCE(${input.name ?? null}, name),
+      notes = COALESCE(${input.notes ?? null}, notes),
+      status = COALESCE(${input.status ?? null}, status),
+      auto_reply = COALESCE(${autoReply}, auto_reply),
+      updated_at = NOW()
+    WHERE phone = ${input.phone}
+  `;
 }
-
-migrateSchema();
 
 export type AgentRole = "user" | "assistant";
 
@@ -398,9 +106,6 @@ export interface AgentMessage {
 
 export interface AppSettings {
   openai_api_key: string;
-  green_api_id_instance: string;
-  green_api_token: string;
-  green_api_base_url: string;
   evolution_api_base_url: string;
   evolution_api_key: string;
   evolution_instance_name: string;
@@ -409,69 +114,47 @@ export interface AppSettings {
   business_price: string;
 }
 
-function getSetting(key: string): string {
-  return getSettingRaw(key);
-}
-
-function setSetting(key: string, value: string): void {
-  setSettingRaw(key, value);
-}
-
-export function getAppSettings(): AppSettings {
+export async function getAppSettings(): Promise<AppSettings> {
   return {
-    openai_api_key: getSetting("openai_api_key") || config.envOpenAiKey,
-    green_api_id_instance: getSetting("green_api_id_instance") || config.envGreenApiId,
-    green_api_token: getSetting("green_api_token") || config.envGreenApiToken,
-    green_api_base_url:
-      getSetting("green_api_base_url") || config.envGreenApiBaseUrl || config.defaultGreenApiBaseUrl,
+    openai_api_key: (await getSetting("openai_api_key")) || config.envOpenAiKey,
     evolution_api_base_url:
-      getSetting("evolution_api_base_url") || config.envEvolutionBaseUrl || config.defaultEvolutionBaseUrl,
-    evolution_api_key: getSetting("evolution_api_key") || config.envEvolutionApiKey,
-    evolution_instance_name: getSetting("evolution_instance_name") || config.envEvolutionInstance,
-    business_owner_name: getSetting("business_owner_name") || "",
-    business_offer: getSetting("business_offer") || "",
-    business_price: getSetting("business_price") || "",
+      (await getSetting("evolution_api_base_url")) ||
+      config.envEvolutionBaseUrl ||
+      config.defaultEvolutionBaseUrl,
+    evolution_api_key: (await getSetting("evolution_api_key")) || config.envEvolutionApiKey,
+    evolution_instance_name:
+      (await getSetting("evolution_instance_name")) || config.envEvolutionInstance,
+    business_owner_name: (await getSetting("business_owner_name")) || "",
+    business_offer: (await getSetting("business_offer")) || "",
+    business_price: (await getSetting("business_price")) || "",
   };
 }
 
-export function saveOpenAiKey(key: string): void {
-  setSetting("openai_api_key", key.trim());
+export async function saveOpenAiKey(key: string): Promise<void> {
+  await setSetting("openai_api_key", key.trim());
 }
 
-export function saveGreenApiSettings(input: {
-  idInstance: string;
-  apiToken: string;
-  baseUrl: string;
-}): void {
-  setSetting("green_api_id_instance", input.idInstance.trim());
-  setSetting("green_api_token", input.apiToken.trim());
-  setSetting(
-    "green_api_base_url",
-    (input.baseUrl.trim() || config.defaultGreenApiBaseUrl).replace(/\/$/, "")
-  );
-}
-
-export function saveEvolutionSettings(input: {
+export async function saveEvolutionSettings(input: {
   baseUrl: string;
   apiKey: string;
   instanceName: string;
-}): void {
-  setSetting(
+}): Promise<void> {
+  await setSetting(
     "evolution_api_base_url",
     (input.baseUrl.trim() || config.defaultEvolutionBaseUrl).replace(/\/$/, "")
   );
-  setSetting("evolution_api_key", input.apiKey.trim());
-  setSetting("evolution_instance_name", input.instanceName.trim());
+  await setSetting("evolution_api_key", input.apiKey.trim());
+  await setSetting("evolution_instance_name", input.instanceName.trim());
 }
 
-export function saveBusinessProfile(input: {
+export async function saveBusinessProfile(input: {
   ownerName?: string;
   offer?: string;
   price?: string;
-}): void {
-  if (input.ownerName !== undefined) setSetting("business_owner_name", input.ownerName.trim());
-  if (input.offer !== undefined) setSetting("business_offer", input.offer.trim());
-  if (input.price !== undefined) setSetting("business_price", input.price.trim());
+}): Promise<void> {
+  if (input.ownerName !== undefined) await setSetting("business_owner_name", input.ownerName.trim());
+  if (input.offer !== undefined) await setSetting("business_offer", input.offer.trim());
+  if (input.price !== undefined) await setSetting("business_price", input.price.trim());
 }
 
 export function maskSecret(value: string, visible = 4): string {
@@ -480,43 +163,47 @@ export function maskSecret(value: string, visible = 4): string {
   return `${"*".repeat(Math.max(0, value.length - visible))}${value.slice(-visible)}`;
 }
 
-export function saveAgentMessage(role: AgentRole, content: string): AgentMessage {
-  const result = db
-    .prepare("INSERT INTO agent_conversation (role, content) VALUES (?, ?)")
-    .run(role, content);
-
-  return db
-    .prepare("SELECT id, role, content, created_at FROM agent_conversation WHERE id = ?")
-    .get(result.lastInsertRowid) as unknown as AgentMessage;
+function mapAgentMessage(row: Record<string, unknown>): AgentMessage {
+  return {
+    id: Number(row.id),
+    role: row.role as AgentRole,
+    content: String(row.content),
+    created_at: formatTs(row.created_at),
+  };
 }
 
-export function getRecentAgentMessages(limit = 50): AgentMessage[] {
-  const rows = db
-    .prepare(
-      `SELECT id, role, content, created_at
-       FROM agent_conversation
-       ORDER BY id DESC
-       LIMIT ?`
-    )
-    .all(limit) as unknown as AgentMessage[];
-
-  return rows.reverse();
+export async function saveAgentMessage(role: AgentRole, content: string): Promise<AgentMessage> {
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO agent_conversation (role, content)
+    VALUES (${role}, ${content})
+    RETURNING id, role, content, created_at
+  `;
+  return mapAgentMessage(rows[0]);
 }
 
-export function getAgentMessagesSince(sinceId = 0, limit = 50): AgentMessage[] {
-  return db
-    .prepare(
-      `SELECT id, role, content, created_at
-       FROM agent_conversation
-       WHERE id > ?
-       ORDER BY id ASC
-       LIMIT ?`
-    )
-    .all(sinceId, limit) as unknown as AgentMessage[];
+export async function getRecentAgentMessages(limit = 50): Promise<AgentMessage[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, role, content, created_at
+    FROM agent_conversation
+    ORDER BY id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapAgentMessage).reverse();
 }
 
-export function clearAgentConversation(): void {
-  db.prepare("DELETE FROM agent_conversation").run();
+export async function getAgentMessagesSince(sinceId = 0, limit = 50): Promise<AgentMessage[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, role, content, created_at
+    FROM agent_conversation
+    WHERE id > ${sinceId}
+    ORDER BY id ASC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapAgentMessage);
+}
+
+export async function clearAgentConversation(): Promise<void> {
+  await sql`DELETE FROM agent_conversation`;
 }
 
 export interface WhatsAppMessage {
@@ -529,182 +216,192 @@ export interface WhatsAppMessage {
   created_at: string;
 }
 
-export function saveWhatsAppMessage(input: {
+function mapWhatsAppMessage(row: Record<string, unknown>): WhatsAppMessage {
+  return {
+    id: Number(row.id),
+    contact_phone: String(row.contact_phone),
+    sender_name: row.sender_name != null ? String(row.sender_name) : null,
+    direction: row.direction as WhatsAppMessage["direction"],
+    body: String(row.body),
+    green_api_id: row.green_api_id != null ? String(row.green_api_id) : null,
+    created_at: formatTs(row.created_at),
+  };
+}
+
+export async function saveWhatsAppMessage(input: {
   contactPhone: string;
   direction: "entrant" | "sortant";
   body: string;
   greenApiId?: string;
   senderName?: string;
-}): WhatsAppMessage {
-  const result = db
-    .prepare(
-      `INSERT INTO messages (contact_phone, sender_name, direction, body, green_api_id)
-       VALUES (?, ?, ?, ?, ?)`
+  countsTowardQuota?: boolean;
+}): Promise<WhatsAppMessage> {
+  const countsTowardQuota =
+    input.direction === "sortant" ? (input.countsTowardQuota !== false ? 1 : 0) : 1;
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO messages (contact_phone, sender_name, direction, body, green_api_id, counts_toward_quota)
+    VALUES (
+      ${input.contactPhone},
+      ${input.senderName ?? null},
+      ${input.direction},
+      ${input.body},
+      ${input.greenApiId ?? null},
+      ${countsTowardQuota}
     )
-    .run(
-      input.contactPhone,
-      input.senderName ?? null,
-      input.direction,
-      input.body,
-      input.greenApiId ?? null
-    );
-
-  return db
-    .prepare(
-      `SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-       FROM messages WHERE id = ?`
-    )
-    .get(result.lastInsertRowid) as unknown as WhatsAppMessage;
+    RETURNING id, contact_phone, sender_name, direction, body, green_api_id, created_at
+  `;
+  return mapWhatsAppMessage(rows[0]);
 }
 
-export function whatsAppMessageExists(greenApiId: string): boolean {
-  const row = db
-    .prepare("SELECT 1 FROM messages WHERE green_api_id = ?")
-    .get(greenApiId);
-  return Boolean(row);
+export async function whatsAppMessageExists(greenApiId: string): Promise<boolean> {
+  const rows = await sql`SELECT 1 FROM messages WHERE green_api_id = ${greenApiId} LIMIT 1`;
+  return rows.length > 0;
 }
 
-export function getIncomingMessagesSince(sinceId = 0, limit = 50): WhatsAppMessage[] {
-  return db
-    .prepare(
-      `SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-       FROM messages
-       WHERE direction = 'entrant' AND id > ?
-       ORDER BY id ASC
-       LIMIT ?`
-    )
-    .all(sinceId, limit) as unknown as WhatsAppMessage[];
+export async function getIncomingMessagesSince(sinceId = 0, limit = 50): Promise<WhatsAppMessage[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+    FROM messages
+    WHERE direction = 'entrant' AND id > ${sinceId}
+    ORDER BY id ASC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapWhatsAppMessage);
 }
 
-export function getRecentIncomingMessages(limit = 30): WhatsAppMessage[] {
-  const rows = db
-    .prepare(
-      `SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-       FROM messages
-       WHERE direction = 'entrant'
-       ORDER BY id DESC
-       LIMIT ?`
-    )
-    .all(limit) as unknown as WhatsAppMessage[];
-  return rows.reverse();
+export async function getRecentIncomingMessages(limit = 30): Promise<WhatsAppMessage[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+    FROM messages
+    WHERE direction = 'entrant'
+    ORDER BY id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapWhatsAppMessage).reverse();
 }
 
-export function getWhatsAppMessagesSince(sinceId = 0, limit = 50): WhatsAppMessage[] {
-  return db
-    .prepare(
-      `SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-       FROM messages
-       WHERE id > ?
-       ORDER BY id ASC
-       LIMIT ?`
-    )
-    .all(sinceId, limit) as unknown as WhatsAppMessage[];
+export async function getWhatsAppMessagesSince(sinceId = 0, limit = 50): Promise<WhatsAppMessage[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+    FROM messages
+    WHERE id > ${sinceId}
+    ORDER BY id ASC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapWhatsAppMessage);
 }
 
-export function listIncomingMessages(options: {
-  contactPhone?: string;
-  todayOnly?: boolean;
-  limit?: number;
-} = {}): WhatsAppMessage[] {
+export async function listIncomingMessages(
+  options: { contactPhone?: string; todayOnly?: boolean; limit?: number } = {}
+): Promise<WhatsAppMessage[]> {
   const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
-  const conditions = ["direction = 'entrant'"];
-  const params: (string | number)[] = [];
+  let rows: Record<string, unknown>[];
 
-  if (options.contactPhone) {
+  if (options.contactPhone && options.todayOnly) {
     const phone = options.contactPhone.trim();
     const chatId = phone.includes("@") ? phone : `${phone.replace(/\D/g, "")}@c.us`;
-    conditions.push("contact_phone = ?");
-    params.push(chatId);
+    rows = await sql<Record<string, unknown>[]>`
+      SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+      FROM messages
+      WHERE direction = 'entrant' AND contact_phone = ${chatId} AND created_at::date = CURRENT_DATE
+      ORDER BY id DESC
+      LIMIT ${limit}
+    `;
+  } else if (options.contactPhone) {
+    const phone = options.contactPhone.trim();
+    const chatId = phone.includes("@") ? phone : `${phone.replace(/\D/g, "")}@c.us`;
+    rows = await sql<Record<string, unknown>[]>`
+      SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+      FROM messages
+      WHERE direction = 'entrant' AND contact_phone = ${chatId}
+      ORDER BY id DESC
+      LIMIT ${limit}
+    `;
+  } else if (options.todayOnly) {
+    rows = await sql<Record<string, unknown>[]>`
+      SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+      FROM messages
+      WHERE direction = 'entrant' AND created_at::date = CURRENT_DATE
+      ORDER BY id DESC
+      LIMIT ${limit}
+    `;
+  } else {
+    rows = await sql<Record<string, unknown>[]>`
+      SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+      FROM messages
+      WHERE direction = 'entrant'
+      ORDER BY id DESC
+      LIMIT ${limit}
+    `;
   }
 
-  if (options.todayOnly) {
-    conditions.push("date(created_at) = date('now', 'localtime')");
-  }
-
-  params.push(limit);
-
-  const rows = db
-    .prepare(
-      `SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-       FROM messages
-       WHERE ${conditions.join(" AND ")}
-       ORDER BY id DESC
-       LIMIT ?`
-    )
-    .all(...params) as unknown as WhatsAppMessage[];
-
-  return rows.reverse();
+  return rows.map(mapWhatsAppMessage).reverse();
 }
 
-export function getWhatsAppMessageStats(): {
+export async function getWhatsAppMessageStats(): Promise<{
   totalIncoming: number;
   totalOutgoing: number;
   incomingToday: number;
   outgoingToday: number;
-} {
-  const totalIncoming = (
-    db.prepare("SELECT COUNT(*) as c FROM messages WHERE direction = 'entrant'").get() as { c: number }
-  ).c;
-  const totalOutgoing = (
-    db.prepare("SELECT COUNT(*) as c FROM messages WHERE direction = 'sortant'").get() as { c: number }
-  ).c;
-  const incomingToday = (
-    db
-      .prepare(
-        "SELECT COUNT(*) as c FROM messages WHERE direction = 'entrant' AND date(created_at) = date('now', 'localtime')"
-      )
-      .get() as { c: number }
-  ).c;
-  const outgoingToday = (
-    db
-      .prepare(
-        "SELECT COUNT(*) as c FROM messages WHERE direction = 'sortant' AND date(created_at) = date('now', 'localtime')"
-      )
-      .get() as { c: number }
-  ).c;
-  return { totalIncoming, totalOutgoing, incomingToday, outgoingToday };
+}> {
+  const [totalIncomingRow] = await sql<{ c: number }[]>`
+    SELECT COUNT(*)::int as c FROM messages WHERE direction = 'entrant'
+  `;
+  const [totalOutgoingRow] = await sql<{ c: number }[]>`
+    SELECT COUNT(*)::int as c FROM messages WHERE direction = 'sortant'
+  `;
+  const [incomingTodayRow] = await sql<{ c: number }[]>`
+    SELECT COUNT(*)::int as c FROM messages
+    WHERE direction = 'entrant' AND created_at::date = CURRENT_DATE
+  `;
+  const [outgoingTodayRow] = await sql<{ c: number }[]>`
+    SELECT COUNT(*)::int as c FROM messages
+    WHERE direction = 'sortant' AND created_at::date = CURRENT_DATE
+  `;
+  return {
+    totalIncoming: Number(totalIncomingRow?.c ?? 0),
+    totalOutgoing: Number(totalOutgoingRow?.c ?? 0),
+    incomingToday: Number(incomingTodayRow?.c ?? 0),
+    outgoingToday: Number(outgoingTodayRow?.c ?? 0),
+  };
 }
 
-export function listAllIncomingMessages(limit = 100): WhatsAppMessage[] {
+export async function listAllIncomingMessages(limit = 100): Promise<WhatsAppMessage[]> {
   const safe = Math.min(Math.max(limit, 1), 500);
-  const rows = db
-    .prepare(
-      `SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-       FROM messages
-       WHERE direction = 'entrant'
-       ORDER BY id DESC
-       LIMIT ?`
-    )
-    .all(safe) as unknown as WhatsAppMessage[];
-  return rows;
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+    FROM messages
+    WHERE direction = 'entrant'
+    ORDER BY id DESC
+    LIMIT ${safe}
+  `;
+  return rows.map(mapWhatsAppMessage);
 }
 
-export function getContactChatHistory(chatId: string, limit = 12): WhatsAppMessage[] {
+export async function getContactChatHistory(chatId: string, limit = 12): Promise<WhatsAppMessage[]> {
   const digits = chatId.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
-  const rows = db
-    .prepare(
-      `SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-       FROM messages
-       WHERE contact_phone = ?
-          OR (? != '' AND (
-            contact_phone = ? || '@c.us'
-            OR contact_phone = ? || '@lid'
-            OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ?
-          ))
-       ORDER BY id DESC
-       LIMIT ?`
-    )
-    .all(chatId, digits, digits, digits, digits, limit) as unknown as WhatsAppMessage[];
-  return rows.reverse();
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+    FROM messages
+    WHERE contact_phone = ${chatId}
+       OR (${digits} != '' AND (
+         contact_phone = ${digits} || '@c.us'
+         OR contact_phone = ${digits} || '@lid'
+         OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+       ))
+    ORDER BY id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapWhatsAppMessage).reverse();
 }
 
-export function isAutoReplyEnabled(): boolean {
-  const v = getSetting("whatsapp_auto_reply");
+export async function isAutoReplyEnabled(): Promise<boolean> {
+  const v = await getSetting("whatsapp_auto_reply");
   return v !== "0";
 }
 
-export function setAutoReplyEnabled(enabled: boolean): void {
-  setSetting("whatsapp_auto_reply", enabled ? "1" : "0");
+export async function setAutoReplyEnabled(enabled: boolean): Promise<void> {
+  await setSetting("whatsapp_auto_reply", enabled ? "1" : "0");
 }
 
 export interface Contact {
@@ -727,14 +424,22 @@ function normalizeContactPhone(phone: string): string {
   if (trimmed.endsWith("@g.us")) {
     throw new Error("Les groupes WhatsApp ne peuvent pas être enregistrés comme contacts de prospection.");
   }
-  if (trimmed.endsWith("@c.us")) return trimmed;
-  if (trimmed.endsWith("@lid")) {
-    const digits = trimmed.replace(/@lid/gi, "").replace(/\D/g, "");
-    if (digits.length >= 8) return `${digits}@c.us`;
+  if (trimmed.endsWith("@lid")) return trimmed;
+  if (trimmed.endsWith("@c.us")) {
+    const digits = trimmed.replace(/@c\.us/gi, "").replace(/\D/g, "");
+    if (digits.length >= 8 && digits.length <= 13) return trimmed;
+    if (digits.length >= 8) return `${digits}@lid`;
+    return trimmed;
+  }
+  if (trimmed.endsWith("@s.whatsapp.net")) {
+    const digits = trimmed.replace(/@s\.whatsapp\.net/gi, "").replace(/\D/g, "");
+    if (digits.length >= 8 && digits.length <= 13) return `${digits}@c.us`;
+    if (digits.length >= 8) return `${digits}@lid`;
   }
   if (trimmed.includes("@")) {
     const digits = trimmed.replace(/@\w+/g, "").replace(/\D/g, "");
-    if (digits.length >= 8) return `${digits}@c.us`;
+    if (digits.length >= 8 && digits.length <= 13) return `${digits}@c.us`;
+    if (digits.length >= 8) return `${digits}@lid`;
     return trimmed;
   }
   const digits = trimmed.replace(/\D/g, "");
@@ -742,24 +447,39 @@ function normalizeContactPhone(phone: string): string {
   return `${digits}@c.us`;
 }
 
-function lookupContactRow(chatId: string): Contact | null {
-  const row = db
-    .prepare(
-      `SELECT id, phone, name, notes, status, auto_reply,
-              COALESCE(lead_score, 0) as lead_score,
-              memory_summary, memory_updated_at, handoff_status,
-              created_at, updated_at
-       FROM contacts WHERE phone = ?`
-    )
-    .get(chatId) as Contact | undefined;
-  return row ?? null;
+function mapContact(row: Record<string, unknown>): Contact {
+  return {
+    id: Number(row.id),
+    phone: String(row.phone),
+    name: row.name != null ? String(row.name) : null,
+    notes: row.notes != null ? String(row.notes) : null,
+    status: row.status as ContactStatus,
+    auto_reply: Number(row.auto_reply),
+    lead_score: Number(row.lead_score ?? 0),
+    memory_summary: row.memory_summary != null ? String(row.memory_summary) : null,
+    memory_updated_at: formatTsNullable(row.memory_updated_at),
+    handoff_status: row.handoff_status != null ? String(row.handoff_status) : null,
+    created_at: formatTs(row.created_at),
+    updated_at: formatTs(row.updated_at),
+  };
 }
 
-function findContactForChat(chatId: string): Contact | null {
+async function lookupContactRow(chatId: string): Promise<Contact | null> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, phone, name, notes, status, auto_reply,
+           COALESCE(lead_score, 0) as lead_score,
+           memory_summary, memory_updated_at, handoff_status,
+           created_at, updated_at
+    FROM contacts WHERE phone = ${chatId} OR whatsapp_lid = ${chatId}
+  `;
+  return rows[0] ? mapContact(rows[0]) : null;
+}
+
+async function findContactForChat(chatId: string): Promise<Contact | null> {
   const trimmed = chatId.trim();
   try {
     const normalized = normalizeContactPhone(trimmed);
-    const direct = lookupContactRow(normalized);
+    const direct = await lookupContactRow(normalized);
     if (direct) return direct;
   } catch {
     /* try digit fallback */
@@ -769,67 +489,79 @@ function findContactForChat(chatId: string): Contact | null {
   return lookupContactRow(`${digits}@c.us`);
 }
 
-export function getContact(phone: string): Contact | null {
+export async function getContact(phone: string): Promise<Contact | null> {
   const trimmed = phone.trim();
   if (trimmed.endsWith("@g.us")) return null;
   return findContactForChat(trimmed);
 }
 
-export function listContacts(options: { status?: ContactStatus; limit?: number } = {}): Contact[] {
+export async function listContacts(
+  options: { status?: ContactStatus; limit?: number } = {}
+): Promise<Contact[]> {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 200);
-  const select = `SELECT id, phone, name, notes, status, auto_reply,
-    COALESCE(lead_score, 0) as lead_score, memory_summary, memory_updated_at, handoff_status,
-    created_at, updated_at FROM contacts`;
-  if (options.status) {
-    return db
-      .prepare(`${select} WHERE status = ? ORDER BY updated_at DESC LIMIT ?`)
-      .all(options.status, limit) as unknown as Contact[];
-  }
-  return db.prepare(`${select} ORDER BY updated_at DESC LIMIT ?`).all(limit) as unknown as Contact[];
+  const rows = options.status
+    ? await sql<Record<string, unknown>[]>`
+        SELECT id, phone, name, notes, status, auto_reply,
+          COALESCE(lead_score, 0) as lead_score, memory_summary, memory_updated_at, handoff_status,
+          created_at, updated_at
+        FROM contacts
+        WHERE status = ${options.status}
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `
+    : await sql<Record<string, unknown>[]>`
+        SELECT id, phone, name, notes, status, auto_reply,
+          COALESCE(lead_score, 0) as lead_score, memory_summary, memory_updated_at, handoff_status,
+          created_at, updated_at
+        FROM contacts
+        ORDER BY updated_at DESC
+        LIMIT ${limit}
+      `;
+  return rows.map(mapContact);
 }
 
-export function updateContactLeadScore(phone: string, score: number): void {
+export async function updateContactLeadScore(phone: string, score: number): Promise<void> {
   const chatId = normalizeContactPhone(phone);
   const clamped = Math.max(0, Math.min(100, Math.round(score)));
-  db.prepare(
-    `UPDATE contacts SET lead_score = ?, updated_at = datetime('now', 'localtime') WHERE phone = ?`
-  ).run(clamped, chatId);
+  await sql`
+    UPDATE contacts SET lead_score = ${clamped}, updated_at = NOW() WHERE phone = ${chatId}
+  `;
   if (clamped >= 70) {
-    db.prepare(
-      `UPDATE contacts SET status = 'interesse', updated_at = datetime('now', 'localtime')
-       WHERE phone = ? AND status != 'stop'`
-    ).run(chatId);
+    await sql`
+      UPDATE contacts SET status = 'interesse', updated_at = NOW()
+      WHERE phone = ${chatId} AND status != 'stop'
+    `;
   }
 }
 
-export function updateContactMemory(phone: string, summary: string): void {
+export async function updateContactMemory(phone: string, summary: string): Promise<void> {
   const chatId = normalizeContactPhone(phone);
-  db.prepare(
-    `UPDATE contacts SET memory_summary = ?, memory_updated_at = datetime('now', 'localtime'),
-     updated_at = datetime('now', 'localtime') WHERE phone = ?`
-  ).run(summary.trim(), chatId);
+  await sql`
+    UPDATE contacts SET memory_summary = ${summary.trim()}, memory_updated_at = NOW(),
+      updated_at = NOW() WHERE phone = ${chatId}
+  `;
 }
 
-export function setContactHandoff(phone: string, status: string | null): void {
+export async function setContactHandoff(phone: string, status: string | null): Promise<void> {
   const chatId = normalizeContactPhone(phone);
-  db.prepare(
-    `UPDATE contacts SET handoff_status = ?, updated_at = datetime('now', 'localtime') WHERE phone = ?`
-  ).run(status, chatId);
+  await sql`
+    UPDATE contacts SET handoff_status = ${status}, updated_at = NOW() WHERE phone = ${chatId}
+  `;
 }
 
-export function saveContact(input: {
+export async function saveContact(input: {
   phone: string;
   name?: string | null;
   notes?: string | null;
   status?: ContactStatus;
   autoReply?: boolean;
-}): Contact {
+}): Promise<Contact> {
   const chatId = normalizeContactPhone(input.phone);
   if (input.status && !CONTACT_STATUSES.includes(input.status)) {
     throw new Error(`Statut invalide. Attendu : ${CONTACT_STATUSES.join(", ")}`);
   }
 
-  upsertContactInternal({
+  await upsertContactInternal({
     phone: chatId,
     name: input.name,
     notes: input.notes,
@@ -837,20 +569,19 @@ export function saveContact(input: {
     autoReply: input.autoReply,
   });
 
-  const contact = getContact(chatId);
+  const contact = await getContact(chatId);
   if (!contact) throw new Error("Impossible d'enregistrer le contact.");
   return contact;
 }
 
-/** Crée le contact s'il n'existe pas ; met à jour le nom ; passe en conversation si besoin. */
-export function touchIncomingContact(chatId: string, senderName?: string): Contact {
-  const existing = getContact(chatId);
+export async function touchIncomingContact(chatId: string, senderName?: string): Promise<Contact> {
+  const existing = await getContact(chatId);
   if (!existing) {
     return saveContact({
       phone: chatId,
       name: senderName || null,
       status: "en_conversation",
-      autoReply: true,
+      autoReply: false,
     });
   }
 
@@ -858,88 +589,191 @@ export function touchIncomingContact(chatId: string, senderName?: string): Conta
     phone: string;
     name?: string | null;
     status?: ContactStatus;
-    autoReply?: boolean;
   } = { phone: chatId };
 
   if (senderName && !existing.name) updates.name = senderName;
   if (existing.status === "nouveau") updates.status = "en_conversation";
-  // Prospect qui écrit : activer la réponse auto (sauf STOP explicite)
-  if (existing.status !== "stop" && existing.auto_reply !== 1) {
-    updates.autoReply = true;
-  }
 
   return saveContact(updates);
 }
 
-export function setContactAutoReply(phone: string, enabled: boolean): Contact {
+export async function setContactAutoReply(phone: string, enabled: boolean): Promise<Contact> {
   return saveContact({ phone, autoReply: enabled });
 }
 
-export function blockContact(chatId: string): Contact {
+export async function blockContact(chatId: string): Promise<Contact> {
   return saveContact({ phone: chatId, status: "stop", autoReply: false });
 }
 
-export function unblockContact(chatId: string): Contact {
-  const existing = getContact(chatId);
+export async function unblockContact(chatId: string): Promise<Contact> {
+  const existing = await getContact(chatId);
   const nextStatus: ContactStatus =
     existing && existing.status === "stop" ? "en_conversation" : existing?.status ?? "en_conversation";
   return saveContact({ phone: chatId, status: nextStatus });
 }
 
-
-export function isContactBlocked(chatId: string): boolean {
-  const contact = findContactForChat(chatId);
+export async function isContactBlocked(chatId: string): Promise<boolean> {
+  const contact = await findContactForChat(chatId);
   if (contact) return contact.status === "stop";
-  // Fallback ancienne liste JSON si jamais encore présente
   try {
-    const list = JSON.parse(getSetting("blocked_contacts") || "[]") as string[];
+    const list = JSON.parse((await getSetting("blocked_contacts")) || "[]") as string[];
     return list.includes(chatId);
   } catch {
     return false;
   }
 }
 
-/** Auto-reply pour UN contact : global ON + contact.auto_reply=1 + pas STOP. */
-export function shouldAutoReplyContact(chatId: string): boolean {
-  if (!isAutoReplyEnabled()) return false;
-  if (isContactBlocked(chatId)) return false;
-  const contact = findContactForChat(chatId);
-  if (!contact) return true;
+export async function shouldAutoReplyContact(chatId: string): Promise<boolean> {
+  if (!(await isAutoReplyEnabled())) return false;
+  if (await isContactBlocked(chatId)) return false;
+  const contact = await findContactForChat(chatId);
+  if (!contact) return false;
   return contact.auto_reply === 1;
 }
 
-export function countOutboundToday(): number {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) as n FROM messages
-       WHERE direction = 'sortant'
-         AND date(created_at) = date('now', 'localtime')`
-    )
-    .get() as { n: number };
+export async function setContactWhatsappLid(phone: string, lid: string): Promise<void> {
+  const chatId = normalizeContactPhone(phone);
+  const lidNorm = lid.includes("@") ? lid.trim() : `${lid.replace(/\D/g, "")}@lid`;
+  await sql`
+    UPDATE contacts SET whatsapp_lid = ${lidNorm}, updated_at = NOW() WHERE phone = ${chatId}
+  `;
+}
+
+export async function findProspectPhoneForLidReply(
+  lidOrPseudo: string,
+  senderName?: string
+): Promise<string | null> {
+  const lidDigits = lidOrPseudo.replace(/@c\.us|@lid|@s\.whatsapp\.net/gi, "").replace(/\D/g, "");
+  const lid = lidOrPseudo.includes("@") ? lidOrPseudo.trim() : `${lidDigits}@lid`;
+
+  const mapped = await sql<{ phone: string }[]>`
+    SELECT phone FROM contacts WHERE whatsapp_lid = ${lid} OR whatsapp_lid = ${`${lidDigits}@lid`}
+    LIMIT 1
+  `;
+  if (mapped[0]?.phone) return mapped[0].phone;
+
+  if (senderName?.trim()) {
+    const byName = await sql<{ phone: string }[]>`
+      SELECT phone FROM contacts
+      WHERE auto_reply = 1 AND status != 'stop' AND name = ${senderName.trim()}
+      LIMIT 2
+    `;
+    if (byName.length === 1) return byName[0].phone;
+  }
+
+  const recentOut = await sql<{ phone: string }[]>`
+    SELECT m.contact_phone as phone
+    FROM messages m
+    JOIN contacts c ON c.phone = m.contact_phone AND c.auto_reply = 1 AND c.status != 'stop'
+    WHERE m.direction = 'sortant'
+      AND m.created_at >= NOW() - INTERVAL '15 minutes'
+    ORDER BY m.created_at DESC
+    LIMIT 2
+  `;
+  if (recentOut.length === 1) return recentOut[0].phone;
+
+  return null;
+}
+
+export async function findUnansweredInboundMessages(limit = 30): Promise<WhatsAppMessage[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT m.id, m.contact_phone, m.sender_name, m.direction, m.body, m.green_api_id, m.created_at
+    FROM messages m
+    WHERE m.direction = 'entrant'
+      AND m.created_at >= NOW() - INTERVAL '24 hours'
+    ORDER BY m.id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapWhatsAppMessage);
+}
+
+export async function hasOutboundReplyAfter(
+  inboundId: number,
+  ...phones: string[]
+): Promise<boolean> {
+  const ids = phones.filter(Boolean);
+  if (ids.length === 0) return false;
+  const rows = await sql`
+    SELECT 1 FROM messages
+    WHERE direction = 'sortant' AND id > ${inboundId} AND contact_phone IN ${sql(ids)}
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+export async function getDailyOutboundLimit(): Promise<number> {
+  const raw = await getSetting("daily_outbound_limit");
+  const n = Number(raw);
+  if (Number.isFinite(n) && n >= 5) return Math.min(Math.floor(n), 500);
+  return DAILY_OUTBOUND_LIMIT;
+}
+
+function outboundQuotaBonusKey(): string {
+  return `outbound_quota_bonus_${formatLocalDateTime(new Date()).slice(0, 10)}`;
+}
+
+export async function getOutboundQuotaBonus(): Promise<number> {
+  const n = Number((await getSetting(outboundQuotaBonusKey())) || 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+export async function getEffectiveOutboundLimit(): Promise<number> {
+  return (await getDailyOutboundLimit()) + (await getOutboundQuotaBonus());
+}
+
+export async function setDailyOutboundLimit(limit: number): Promise<number> {
+  const safe = Math.min(Math.max(Math.floor(limit), 5), 500);
+  await setSetting("daily_outbound_limit", String(safe));
+  return safe;
+}
+
+export async function resetOutboundQuotaForToday(extra = 15): Promise<{
+  sent: number;
+  limit: number;
+  bonus: number;
+  effectiveLimit: number;
+}> {
+  const sent = await countOutboundToday();
+  const limit = await getDailyOutboundLimit();
+  const needed = Math.max(0, sent - limit);
+  const bonus = needed + extra;
+  await setSetting(outboundQuotaBonusKey(), String(bonus));
+  return { sent, limit, bonus, effectiveLimit: limit + bonus };
+}
+
+export async function countOutboundToday(): Promise<number> {
+  const [row] = await sql<{ n: number }[]>`
+    SELECT COUNT(*)::int as n FROM messages
+    WHERE direction = 'sortant'
+      AND COALESCE(counts_toward_quota, 1) = 1
+      AND created_at::date = CURRENT_DATE
+  `;
   return Number(row?.n ?? 0);
 }
 
-export function canSendOutbound(): { ok: true } | { ok: false; reason: string; sent: number; limit: number } {
-  const sent = countOutboundToday();
-  if (sent >= DAILY_OUTBOUND_LIMIT) {
+export async function canSendOutbound(): Promise<
+  { ok: true } | { ok: false; reason: string; sent: number; limit: number }
+> {
+  const sent = await countOutboundToday();
+  const limit = (await getDailyOutboundLimit()) + (await getOutboundQuotaBonus());
+  if (sent >= limit) {
     return {
       ok: false,
-      reason: `Limite journalière atteinte (${sent}/${DAILY_OUTBOUND_LIMIT} messages sortants). Réessayez demain.`,
+      reason: `Limite journalière atteinte (${sent}/${limit} messages sortants comptabilisés). Réinitialisez le quota dans la barre latérale ou réessayez demain.`,
       sent,
-      limit: DAILY_OUTBOUND_LIMIT,
+      limit,
     };
   }
   return { ok: true };
 }
 
-export function assertCanSendTo(chatId: string): void {
-  // Les groupes (@g.us) ne sont jamais en STOP — seul le quota journalier s'applique
-  if (!chatId.endsWith("@g.us") && isContactBlocked(chatId)) {
+export async function assertCanSendTo(chatId: string): Promise<void> {
+  if (!chatId.endsWith("@g.us") && (await isContactBlocked(chatId))) {
     throw new Error(
       `Contact ${chatId} est en statut STOP. Aucun envoi possible. Débloquez-le d'abord si vraiment nécessaire.`
     );
   }
-  const check = canSendOutbound();
+  const check = await canSendOutbound();
   if (!check.ok) throw new Error(check.reason);
 }
 
@@ -957,15 +791,6 @@ export interface ScheduledMessage {
   sent_at: string | null;
 }
 
-/** Heure locale au format SQLite datetime('now','localtime') comparable. */
-export function formatLocalDateTime(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-/**
- * Parse une heure locale "HH:MM" ou "HHhMM" → datetime du prochain créneau (aujourd'hui ou demain).
- */
 export function resolveLocalSendAt(input: {
   delayMinutes?: number;
   sendAtLocal?: string;
@@ -1004,7 +829,6 @@ export function resolveLocalSendAt(input: {
   target.setSeconds(0, 0);
   target.setHours(hours, minutes, 0, 0);
 
-  // Si l'heure est déjà passée (ou dans moins de 15 s), programmer demain
   if (target.getTime() <= now.getTime() + 15_000) {
     target.setDate(target.getDate() + 1);
   }
@@ -1012,106 +836,109 @@ export function resolveLocalSendAt(input: {
   return formatLocalDateTime(target);
 }
 
-export function scheduleMessage(input: {
+function mapScheduledMessage(row: Record<string, unknown>): ScheduledMessage {
+  return {
+    id: Number(row.id),
+    recipient: String(row.recipient),
+    recipient_label: row.recipient_label != null ? String(row.recipient_label) : null,
+    message: String(row.message),
+    send_at: formatTs(row.send_at),
+    status: row.status as ScheduledStatus,
+    error: row.error != null ? String(row.error) : null,
+    created_at: formatTs(row.created_at),
+    sent_at: formatTsNullable(row.sent_at),
+  };
+}
+
+export async function scheduleMessage(input: {
   recipient: string;
   recipientLabel?: string;
   message: string;
   sendAt: string;
-}): ScheduledMessage {
-  const result = db
-    .prepare(
-      `INSERT INTO scheduled_messages (recipient, recipient_label, message, send_at)
-       VALUES (?, ?, ?, ?)`
+}): Promise<ScheduledMessage> {
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO scheduled_messages (recipient, recipient_label, message, send_at)
+    VALUES (
+      ${input.recipient},
+      ${input.recipientLabel ?? null},
+      ${input.message},
+      ${toTsParam(input.sendAt)}
     )
-    .run(input.recipient, input.recipientLabel ?? null, input.message, input.sendAt);
-
-  return db
-    .prepare(
-      `SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-       FROM scheduled_messages WHERE id = ?`
-    )
-    .get(result.lastInsertRowid) as unknown as ScheduledMessage;
+    RETURNING id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+  `;
+  return mapScheduledMessage(rows[0]);
 }
 
-export function listScheduledMessages(options: { includeDone?: boolean; limit?: number } = {}): ScheduledMessage[] {
+export async function listScheduledMessages(
+  options: { includeDone?: boolean; limit?: number } = {}
+): Promise<ScheduledMessage[]> {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
-  if (options.includeDone) {
-    return db
-      .prepare(
-        `SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-         FROM scheduled_messages
-         ORDER BY send_at DESC
-         LIMIT ?`
-      )
-      .all(limit) as unknown as ScheduledMessage[];
-  }
-  return db
-    .prepare(
-      `SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-       FROM scheduled_messages
-       WHERE status = 'pending'
-       ORDER BY send_at ASC
-       LIMIT ?`
-    )
-    .all(limit) as unknown as ScheduledMessage[];
+  const rows = options.includeDone
+    ? await sql<Record<string, unknown>[]>`
+        SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+        FROM scheduled_messages
+        ORDER BY send_at DESC
+        LIMIT ${limit}
+      `
+    : await sql<Record<string, unknown>[]>`
+        SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+        FROM scheduled_messages
+        WHERE status = 'pending'
+        ORDER BY send_at ASC
+        LIMIT ${limit}
+      `;
+  return rows.map(mapScheduledMessage);
 }
 
-export function getDueScheduledMessages(limit = 10): ScheduledMessage[] {
-  const now = formatLocalDateTime(new Date());
-  return db
-    .prepare(
-      `SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-       FROM scheduled_messages
-       WHERE status = 'pending' AND send_at <= ?
-       ORDER BY send_at ASC
-       LIMIT ?`
-    )
-    .all(now, limit) as unknown as ScheduledMessage[];
+export async function getDueScheduledMessages(limit = 10): Promise<ScheduledMessage[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+    FROM scheduled_messages
+    WHERE status = 'pending' AND send_at <= NOW()
+    ORDER BY send_at ASC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapScheduledMessage);
 }
 
-export function cancelScheduledMessage(id: number): ScheduledMessage | null {
-  const row = db
-    .prepare(
-      `SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-       FROM scheduled_messages WHERE id = ?`
-    )
-    .get(id) as ScheduledMessage | undefined;
-
+export async function cancelScheduledMessage(id: number): Promise<ScheduledMessage | null> {
+  const existing = await sql<Record<string, unknown>[]>`
+    SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+    FROM scheduled_messages WHERE id = ${id}
+  `;
+  const row = existing[0];
   if (!row) return null;
-  if (row.status !== "pending") {
-    throw new Error(`Impossible d'annuler : statut actuel = ${row.status}.`);
+  const mapped = mapScheduledMessage(row);
+  if (mapped.status !== "pending") {
+    throw new Error(`Impossible d'annuler : statut actuel = ${mapped.status}.`);
   }
 
-  db.prepare(
-    `UPDATE scheduled_messages SET status = 'cancelled' WHERE id = ?`
-  ).run(id);
+  await sql`UPDATE scheduled_messages SET status = 'cancelled' WHERE id = ${id}`;
 
-  return db
-    .prepare(
-      `SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-       FROM scheduled_messages WHERE id = ?`
-    )
-    .get(id) as unknown as ScheduledMessage;
+  const updated = await sql<Record<string, unknown>[]>`
+    SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+    FROM scheduled_messages WHERE id = ${id}
+  `;
+  return mapScheduledMessage(updated[0]);
 }
 
-export function markScheduledSent(id: number): void {
-  db.prepare(
-    `UPDATE scheduled_messages
-     SET status = 'sent', sent_at = datetime('now', 'localtime'), error = NULL
-     WHERE id = ?`
-  ).run(id);
+export async function markScheduledSent(id: number): Promise<void> {
+  await sql`
+    UPDATE scheduled_messages
+    SET status = 'sent', sent_at = NOW(), error = NULL
+    WHERE id = ${id}
+  `;
 }
 
-export function markScheduledFailed(id: number, error: string): void {
-  db.prepare(
-    `UPDATE scheduled_messages
-     SET status = 'failed', error = ?, sent_at = datetime('now', 'localtime')
-     WHERE id = ?`
-  ).run(error.slice(0, 500), id);
+export async function markScheduledFailed(id: number, error: string): Promise<void> {
+  await sql`
+    UPDATE scheduled_messages
+    SET status = 'failed', error = ${error.slice(0, 500)}, sent_at = NOW()
+    WHERE id = ${id}
+  `;
 }
 
-/** Conversation complète d'un contact (pour rapports). */
-export function getContactThread(phone: string, limit = 100): WhatsAppMessage[] {
+export async function getContactThread(phone: string, limit = 100): Promise<WhatsAppMessage[]> {
   const trimmed = phone.trim();
   const chatId = trimmed.includes("@") ? trimmed : `${trimmed.replace(/\D/g, "")}@c.us`;
   return getContactChatHistory(chatId, limit);
@@ -1134,24 +961,25 @@ export interface DailyBilan {
   }>;
 }
 
-/** Bilan du jour (ou d'une date YYYY-MM-DD) pour reporting. */
-export function getDailyBilan(date?: string): DailyBilan {
-  const day = date?.trim() || (db.prepare(`SELECT date('now', 'localtime') as d`).get() as { d: string }).d;
+export async function getDailyBilan(date?: string): Promise<DailyBilan> {
+  const day =
+    date?.trim() ||
+    formatLocalDateTime(new Date()).slice(0, 10);
 
-  const counts = db
-    .prepare(
-      `SELECT
-         SUM(CASE WHEN direction = 'entrant' THEN 1 ELSE 0 END) as incoming,
-         SUM(CASE WHEN direction = 'sortant' THEN 1 ELSE 0 END) as outgoing,
-         COUNT(DISTINCT contact_phone) as uniqueContacts
-       FROM messages
-       WHERE date(created_at) = ?`
-    )
-    .get(day) as { incoming: number | null; outgoing: number | null; uniqueContacts: number | null };
+  const [counts] = await sql<
+    Array<{ incoming: number | null; outgoing: number | null; uniqueContacts: number | null }>
+  >`
+    SELECT
+      SUM(CASE WHEN direction = 'entrant' THEN 1 ELSE 0 END)::int as incoming,
+      SUM(CASE WHEN direction = 'sortant' THEN 1 ELSE 0 END)::int as outgoing,
+      COUNT(DISTINCT contact_phone)::int as uniqueContacts
+    FROM messages
+    WHERE created_at::date = ${day}::date
+  `;
 
-  const statusRows = db
-    .prepare(`SELECT status, COUNT(*) as n FROM contacts GROUP BY status`)
-    .all() as Array<{ status: string; n: number }>;
+  const statusRows = await sql<Array<{ status: string; n: number }>>`
+    SELECT status, COUNT(*)::int as n FROM contacts GROUP BY status
+  `;
 
   const contactsByStatus: Record<string, number> = {
     nouveau: 0,
@@ -1163,57 +991,55 @@ export function getDailyBilan(date?: string): DailyBilan {
     contactsByStatus[row.status] = Number(row.n);
   }
 
-  const scheduledPending = (
-    db.prepare(`SELECT COUNT(*) as n FROM scheduled_messages WHERE status = 'pending'`).get() as {
-      n: number;
-    }
-  ).n;
+  const [scheduledPendingRow] = await sql<{ n: number }[]>`
+    SELECT COUNT(*)::int as n FROM scheduled_messages WHERE status = 'pending'
+  `;
 
-  const scheduledSentToday = (
-    db
-      .prepare(
-        `SELECT COUNT(*) as n FROM scheduled_messages
-         WHERE status = 'sent' AND date(COALESCE(sent_at, send_at)) = ?`
-      )
-      .get(day) as { n: number }
-  ).n;
+  const [scheduledSentTodayRow] = await sql<{ n: number }[]>`
+    SELECT COUNT(*)::int as n FROM scheduled_messages
+    WHERE status = 'sent' AND COALESCE(sent_at, send_at)::date = ${day}::date
+  `;
 
-  const topConversations = db
-    .prepare(
-      `SELECT m.contact_phone as phone,
-              (SELECT name FROM contacts c WHERE c.phone = m.contact_phone) as name,
-              COUNT(*) as messageCount,
-              (SELECT body FROM messages m2
-                 WHERE m2.contact_phone = m.contact_phone
-                 ORDER BY m2.id DESC LIMIT 1) as lastMessage,
-              MAX(m.created_at) as lastAt
-       FROM messages m
-       WHERE date(m.created_at) = ?
-       GROUP BY m.contact_phone
-       ORDER BY messageCount DESC
-       LIMIT 15`
-    )
-    .all(day) as Array<{
-    phone: string;
-    name: string | null;
-    messageCount: number;
-    lastMessage: string;
-    lastAt: string;
-  }>;
+  const topRows = await sql<
+    Array<{
+      phone: string;
+      name: string | null;
+      messageCount: number;
+      lastMessage: string;
+      lastAt: Date | string;
+    }>
+  >`
+    SELECT m.contact_phone as phone,
+           (SELECT name FROM contacts c WHERE c.phone = m.contact_phone) as name,
+           COUNT(*)::int as "messageCount",
+           (SELECT body FROM messages m2
+              WHERE m2.contact_phone = m.contact_phone
+              ORDER BY m2.id DESC LIMIT 1) as "lastMessage",
+           MAX(m.created_at) as "lastAt"
+    FROM messages m
+    WHERE m.created_at::date = ${day}::date
+    GROUP BY m.contact_phone
+    ORDER BY "messageCount" DESC
+    LIMIT 15
+  `;
 
   return {
     date: day,
-    incoming: Number(counts.incoming ?? 0),
-    outgoing: Number(counts.outgoing ?? 0),
-    uniqueContacts: Number(counts.uniqueContacts ?? 0),
+    incoming: Number(counts?.incoming ?? 0),
+    outgoing: Number(counts?.outgoing ?? 0),
+    uniqueContacts: Number(counts?.uniqueContacts ?? 0),
     contactsByStatus,
-    scheduledPending: Number(scheduledPending),
-    scheduledSentToday: Number(scheduledSentToday),
-    topConversations,
+    scheduledPending: Number(scheduledPendingRow?.n ?? 0),
+    scheduledSentToday: Number(scheduledSentTodayRow?.n ?? 0),
+    topConversations: topRows.map((r) => ({
+      phone: r.phone,
+      name: r.name,
+      messageCount: Number(r.messageCount),
+      lastMessage: r.lastMessage,
+      lastAt: formatTs(r.lastAt),
+    })),
   };
 }
-
-/* ── Automatisations ── */
 
 export const AUTOMATION_TYPES = ["group_prospect", "keyword_sales", "custom_followup"] as const;
 export type AutomationType = (typeof AUTOMATION_TYPES)[number];
@@ -1302,8 +1128,8 @@ function parseAutomationRow(row: {
   stats_json: string;
   summary: string | null;
   budget_fcfa: number;
-  created_at: string;
-  updated_at: string;
+  created_at: unknown;
+  updated_at: unknown;
 }): Automation {
   let config: AutomationConfig = {};
   let stats: AutomationStats = {};
@@ -1326,18 +1152,40 @@ function parseAutomationRow(row: {
     stats,
     summary: row.summary,
     budget_fcfa: row.budget_fcfa,
-    created_at: row.created_at,
-    updated_at: row.updated_at,
+    created_at: formatTs(row.created_at),
+    updated_at: formatTs(row.updated_at),
   };
 }
 
-function recomputeAutomationStats(automationId: number): AutomationStats {
-  const rows = db
-    .prepare(
-      `SELECT status, COUNT(*) as n FROM automation_targets
-       WHERE automation_id = ? GROUP BY status`
-    )
-    .all(automationId) as Array<{ status: string; n: number }>;
+function mapAutomationTarget(row: Record<string, unknown>): AutomationTarget {
+  return {
+    id: Number(row.id),
+    automation_id: Number(row.automation_id),
+    target_id: String(row.target_id),
+    target_label: row.target_label != null ? String(row.target_label) : null,
+    status: row.status as TargetStatus,
+    last_action_at: formatTsNullable(row.last_action_at),
+    notes: row.notes != null ? String(row.notes) : null,
+    ab_variant: row.ab_variant != null ? String(row.ab_variant) : null,
+    created_at: formatTs(row.created_at),
+  };
+}
+
+function mapAutomationLog(row: Record<string, unknown>): AutomationLog {
+  return {
+    id: Number(row.id),
+    automation_id: Number(row.automation_id),
+    level: row.level as AutomationLog["level"],
+    message: String(row.message),
+    created_at: formatTs(row.created_at),
+  };
+}
+
+async function recomputeAutomationStats(automationId: number): Promise<AutomationStats> {
+  const rows = await sql<Array<{ status: string; n: number }>>`
+    SELECT status, COUNT(*)::int as n FROM automation_targets
+    WHERE automation_id = ${automationId} GROUP BY status
+  `;
 
   const stats: AutomationStats = {
     pending: 0,
@@ -1358,7 +1206,7 @@ function recomputeAutomationStats(automationId: number): AutomationStats {
     else if (row.status === "error") stats.errors = n;
   }
 
-  const auto = getAutomation(automationId);
+  const auto = await getAutomation(automationId);
   if (auto) {
     stats.messagesHandled = auto.stats.messagesHandled ?? 0;
     stats.outboundUsed = auto.stats.outboundUsed ?? 0;
@@ -1366,221 +1214,238 @@ function recomputeAutomationStats(automationId: number): AutomationStats {
     stats.lastActionAt = auto.stats.lastActionAt;
   }
 
-  db.prepare(
-    `UPDATE automations SET stats_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
-  ).run(JSON.stringify(stats), automationId);
+  await sql`
+    UPDATE automations SET stats_json = ${JSON.stringify(stats)}, updated_at = NOW()
+    WHERE id = ${automationId}
+  `;
 
   return stats;
 }
 
-export function createAutomation(input: {
+export async function createAutomation(input: {
   name: string;
   type: AutomationType;
   config: AutomationConfig;
   summary?: string;
   budgetFcfa?: number;
   status?: AutomationStatus;
-}): Automation {
-  const result = db
-    .prepare(
-      `INSERT INTO automations (name, type, status, config_json, stats_json, summary, budget_fcfa)
-       VALUES (?, ?, ?, ?, '{}', ?, ?)`
+}): Promise<Automation> {
+  const rows = await sql<
+    Array<Parameters<typeof parseAutomationRow>[0]>
+  >`
+    INSERT INTO automations (name, type, status, config_json, stats_json, summary, budget_fcfa)
+    VALUES (
+      ${input.name.trim()},
+      ${input.type},
+      ${input.status ?? "active"},
+      ${JSON.stringify(input.config)},
+      '{}',
+      ${input.summary?.trim() || null},
+      ${input.budgetFcfa ?? 0}
     )
-    .run(
-      input.name.trim(),
-      input.type,
-      input.status ?? "active",
-      JSON.stringify(input.config),
-      input.summary?.trim() || null,
-      input.budgetFcfa ?? 0
-    );
+    RETURNING id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
+  `;
 
-  const id = Number(result.lastInsertRowid);
-  addAutomationLog(id, "info", `Automatisation créée : ${input.name}`);
-  return getAutomation(id)!;
+  const id = rows[0].id;
+  await addAutomationLog(id, "info", `Automatisation créée : ${input.name}`);
+  return (await getAutomation(id))!;
 }
 
-export function getAutomation(id: number): Automation | null {
-  const row = db
-    .prepare(
-      `SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
-       FROM automations WHERE id = ?`
-    )
-    .get(id) as Parameters<typeof parseAutomationRow>[0] | undefined;
-  return row ? parseAutomationRow(row) : null;
+export async function getAutomation(id: number): Promise<Automation | null> {
+  const rows = await sql<Array<Parameters<typeof parseAutomationRow>[0]>>`
+    SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
+    FROM automations WHERE id = ${id}
+  `;
+  return rows[0] ? parseAutomationRow(rows[0]) : null;
 }
 
-export function listAutomations(options: { status?: AutomationStatus; limit?: number } = {}): Automation[] {
+export async function listAutomations(
+  options: { status?: AutomationStatus; limit?: number } = {}
+): Promise<Automation[]> {
   const limit = options.limit ?? 100;
-  const base =
-    `SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
-     FROM automations`;
   const rows = options.status
-    ? (db
-        .prepare(`${base} WHERE status = ? ORDER BY id DESC LIMIT ?`)
-        .all(options.status, limit) as Parameters<typeof parseAutomationRow>[0][])
-    : (db
-        .prepare(`${base} ORDER BY id DESC LIMIT ?`)
-        .all(limit) as Parameters<typeof parseAutomationRow>[0][]);
+    ? await sql<Array<Parameters<typeof parseAutomationRow>[0]>>`
+        SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
+        FROM automations
+        WHERE status = ${options.status}
+        ORDER BY id DESC
+        LIMIT ${limit}
+      `
+    : await sql<Array<Parameters<typeof parseAutomationRow>[0]>>`
+        SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
+        FROM automations
+        ORDER BY id DESC
+        LIMIT ${limit}
+      `;
   return rows.map(parseAutomationRow);
 }
 
-export function listActiveAutomations(): Automation[] {
+export async function listActiveAutomations(): Promise<Automation[]> {
   return listAutomations({ status: "active", limit: 50 });
 }
 
-export function updateAutomationStatus(id: number, status: AutomationStatus): Automation | null {
-  db.prepare(
-    `UPDATE automations SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
-  ).run(status, id);
-  addAutomationLog(id, "info", `Statut → ${status}`);
+export async function updateAutomationStatus(
+  id: number,
+  status: AutomationStatus
+): Promise<Automation | null> {
+  await sql`UPDATE automations SET status = ${status}, updated_at = NOW() WHERE id = ${id}`;
+  await addAutomationLog(id, "info", `Statut → ${status}`);
   return getAutomation(id);
 }
 
-export function updateAutomationStats(id: number, patch: Partial<AutomationStats>): Automation | null {
-  const auto = getAutomation(id);
+export async function updateAutomationStats(
+  id: number,
+  patch: Partial<AutomationStats>
+): Promise<Automation | null> {
+  const auto = await getAutomation(id);
   if (!auto) return null;
   const stats = { ...auto.stats, ...patch };
-  db.prepare(
-    `UPDATE automations SET stats_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
-  ).run(JSON.stringify(stats), id);
+  await sql`
+    UPDATE automations SET stats_json = ${JSON.stringify(stats)}, updated_at = NOW()
+    WHERE id = ${id}
+  `;
   return getAutomation(id);
 }
 
-export function addAutomationTargets(
+export async function addAutomationTargets(
   automationId: number,
   targets: Array<{ targetId: string; targetLabel?: string }>
-): number {
-  const stmt = db.prepare(
-    `INSERT OR IGNORE INTO automation_targets (automation_id, target_id, target_label)
-     VALUES (?, ?, ?)`
-  );
+): Promise<number> {
   let added = 0;
   for (const t of targets) {
-    const r = stmt.run(automationId, t.targetId, t.targetLabel ?? null);
-    if (r.changes > 0) added++;
+    const result = await sql`
+      INSERT INTO automation_targets (automation_id, target_id, target_label)
+      VALUES (${automationId}, ${t.targetId}, ${t.targetLabel ?? null})
+      ON CONFLICT (automation_id, target_id) DO NOTHING
+    `;
+    if (result.count > 0) added++;
   }
-  recomputeAutomationStats(automationId);
+  await recomputeAutomationStats(automationId);
   return added;
 }
 
-export function listAutomationTargets(
+export async function listAutomationTargets(
   automationId: number,
   options: { status?: TargetStatus; limit?: number } = {}
-): AutomationTarget[] {
+): Promise<AutomationTarget[]> {
   const limit = options.limit ?? 500;
-  const base = `SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
-                FROM automation_targets WHERE automation_id = ?`;
-  if (options.status) {
-    return db
-      .prepare(`${base} AND status = ? ORDER BY id ASC LIMIT ?`)
-      .all(automationId, options.status, limit) as unknown as AutomationTarget[];
-  }
-  return db
-    .prepare(`${base} ORDER BY id ASC LIMIT ?`)
-    .all(automationId, limit) as unknown as AutomationTarget[];
+  const rows = options.status
+    ? await sql<Record<string, unknown>[]>`
+        SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
+        FROM automation_targets
+        WHERE automation_id = ${automationId} AND status = ${options.status}
+        ORDER BY id ASC
+        LIMIT ${limit}
+      `
+    : await sql<Record<string, unknown>[]>`
+        SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
+        FROM automation_targets
+        WHERE automation_id = ${automationId}
+        ORDER BY id ASC
+        LIMIT ${limit}
+      `;
+  return rows.map(mapAutomationTarget);
 }
 
-export function updateAutomationTarget(
+export async function updateAutomationTarget(
   automationId: number,
   targetId: string,
   patch: { status?: TargetStatus; notes?: string }
-): void {
+): Promise<void> {
   if (patch.status && patch.notes !== undefined) {
-    db.prepare(
-      `UPDATE automation_targets
-       SET last_action_at = datetime('now', 'localtime'), status = ?, notes = ?
-       WHERE automation_id = ? AND target_id = ?`
-    ).run(patch.status, patch.notes, automationId, targetId);
+    await sql`
+      UPDATE automation_targets
+      SET last_action_at = NOW(), status = ${patch.status}, notes = ${patch.notes}
+      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+    `;
   } else if (patch.status) {
-    db.prepare(
-      `UPDATE automation_targets
-       SET last_action_at = datetime('now', 'localtime'), status = ?
-       WHERE automation_id = ? AND target_id = ?`
-    ).run(patch.status, automationId, targetId);
+    await sql`
+      UPDATE automation_targets
+      SET last_action_at = NOW(), status = ${patch.status}
+      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+    `;
   } else if (patch.notes !== undefined) {
-    db.prepare(
-      `UPDATE automation_targets
-       SET last_action_at = datetime('now', 'localtime'), notes = ?
-       WHERE automation_id = ? AND target_id = ?`
-    ).run(patch.notes, automationId, targetId);
+    await sql`
+      UPDATE automation_targets
+      SET last_action_at = NOW(), notes = ${patch.notes}
+      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+    `;
   } else {
-    db.prepare(
-      `UPDATE automation_targets
-       SET last_action_at = datetime('now', 'localtime')
-       WHERE automation_id = ? AND target_id = ?`
-    ).run(automationId, targetId);
+    await sql`
+      UPDATE automation_targets
+      SET last_action_at = NOW()
+      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+    `;
   }
-  recomputeAutomationStats(automationId);
+  await recomputeAutomationStats(automationId);
 }
 
-export function getNextPendingTarget(automationId: number): AutomationTarget | null {
-  return (
-    db
-      .prepare(
-        `SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
-         FROM automation_targets
-         WHERE automation_id = ? AND status = 'pending'
-         ORDER BY id ASC LIMIT 1`
-      )
-      .get(automationId) as AutomationTarget | undefined
-  ) ?? null;
+export async function getNextPendingTarget(automationId: number): Promise<AutomationTarget | null> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
+    FROM automation_targets
+    WHERE automation_id = ${automationId} AND status = 'pending'
+    ORDER BY id ASC LIMIT 1
+  `;
+  return rows[0] ? mapAutomationTarget(rows[0]) : null;
 }
 
-export function addAutomationLog(
+export async function addAutomationLog(
   automationId: number,
   level: AutomationLog["level"],
   message: string
-): AutomationLog {
-  const result = db
-    .prepare(`INSERT INTO automation_logs (automation_id, level, message) VALUES (?, ?, ?)`)
-    .run(automationId, level, message);
-  return {
-    id: Number(result.lastInsertRowid),
-    automation_id: automationId,
-    level,
-    message,
-    created_at: new Date().toISOString(),
-  };
+): Promise<AutomationLog> {
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO automation_logs (automation_id, level, message)
+    VALUES (${automationId}, ${level}, ${message})
+    RETURNING id, automation_id, level, message, created_at
+  `;
+  return mapAutomationLog(rows[0]);
 }
 
-export function listAutomationLogs(automationId: number, limit = 50): AutomationLog[] {
-  return db
-    .prepare(
-      `SELECT id, automation_id, level, message, created_at
-       FROM automation_logs WHERE automation_id = ?
-       ORDER BY id DESC LIMIT ?`
-    )
-    .all(automationId, limit) as unknown as AutomationLog[];
+export async function listAutomationLogs(
+  automationId: number,
+  limit = 50
+): Promise<AutomationLog[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, automation_id, level, message, created_at
+    FROM automation_logs WHERE automation_id = ${automationId}
+    ORDER BY id DESC LIMIT ${limit}
+  `;
+  return rows.map(mapAutomationLog);
 }
 
-export function getAutomationDetail(id: number): {
+export async function getAutomationDetail(id: number): Promise<{
   automation: Automation;
   targets: AutomationTarget[];
   logs: AutomationLog[];
-} | null {
-  const automation = getAutomation(id);
+} | null> {
+  const automation = await getAutomation(id);
   if (!automation) return null;
-  const targets = listAutomationTargets(id);
-  const logs = listAutomationLogs(id, 30);
-  const stats = recomputeAutomationStats(id);
+  const targets = await listAutomationTargets(id);
+  const logs = await listAutomationLogs(id, 30);
+  const stats = await recomputeAutomationStats(id);
   automation.stats = stats;
   return { automation, targets, logs };
 }
 
-export function updateAutomationConfig(id: number, config: AutomationConfig): Automation | null {
-  db.prepare(
-    `UPDATE automations SET config_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?`
-  ).run(JSON.stringify(config), id);
+export async function updateAutomationConfig(
+  id: number,
+  config: AutomationConfig
+): Promise<Automation | null> {
+  await sql`
+    UPDATE automations SET config_json = ${JSON.stringify(config)}, updated_at = NOW()
+    WHERE id = ${id}
+  `;
   return getAutomation(id);
 }
 
-export function findMatchingKeywordAutomations(text: string): Automation[] {
+export async function findMatchingKeywordAutomations(text: string): Promise<Automation[]> {
   const normalized = text
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}/gu, "");
-  const active = listActiveAutomations().filter((a) => a.type === "keyword_sales");
+  const active = (await listActiveAutomations()).filter((a) => a.type === "keyword_sales");
   return active.filter((a) => {
     const keywords = a.config.keywords ?? [];
     return keywords.some((kw) => {
@@ -1592,8 +1457,6 @@ export function findMatchingKeywordAutomations(text: string): Automation[] {
     });
   });
 }
-
-/* ── File d'envoi intelligente ── */
 
 export interface QueueItem {
   id: number;
@@ -1613,7 +1476,27 @@ export interface QueueItem {
   sent_at: string | null;
 }
 
-export function enqueueSend(input: {
+function mapQueueItem(row: Record<string, unknown>): QueueItem {
+  return {
+    id: Number(row.id),
+    recipient: String(row.recipient),
+    recipient_label: row.recipient_label != null ? String(row.recipient_label) : null,
+    message: row.message != null ? String(row.message) : null,
+    media_url: row.media_url != null ? String(row.media_url) : null,
+    media_type: row.media_type != null ? String(row.media_type) : null,
+    priority: Number(row.priority),
+    send_at: formatTs(row.send_at),
+    status: String(row.status),
+    automation_id: row.automation_id != null ? Number(row.automation_id) : null,
+    sequence_id: row.sequence_id != null ? Number(row.sequence_id) : null,
+    ab_variant: row.ab_variant != null ? String(row.ab_variant) : null,
+    error: row.error != null ? String(row.error) : null,
+    created_at: formatTs(row.created_at),
+    sent_at: formatTsNullable(row.sent_at),
+  };
+}
+
+export async function enqueueSend(input: {
   recipient: string;
   recipientLabel?: string;
   message?: string;
@@ -1624,51 +1507,65 @@ export function enqueueSend(input: {
   automationId?: number;
   sequenceId?: number;
   abVariant?: string;
-}): QueueItem {
+}): Promise<QueueItem> {
   const sendAt = input.sendAt ?? formatLocalDateTime(new Date());
-  const result = db
-    .prepare(
-      `INSERT INTO send_queue (recipient, recipient_label, message, media_url, media_type, priority, send_at, automation_id, sequence_id, ab_variant)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO send_queue (
+      recipient, recipient_label, message, media_url, media_type, priority, send_at,
+      automation_id, sequence_id, ab_variant
     )
-    .run(
-      input.recipient,
-      input.recipientLabel ?? null,
-      input.message ?? null,
-      input.mediaUrl ?? null,
-      input.mediaType ?? null,
-      input.priority ?? 5,
-      sendAt,
-      input.automationId ?? null,
-      input.sequenceId ?? null,
-      input.abVariant ?? null
-    );
-  return db
-    .prepare(`SELECT * FROM send_queue WHERE id = ?`)
-    .get(result.lastInsertRowid) as unknown as QueueItem;
-}
-
-export function getDueQueueItems(limit = 3): QueueItem[] {
-  return db
-    .prepare(
-      `SELECT * FROM send_queue
-       WHERE status = 'pending' AND send_at <= datetime('now', 'localtime')
-       ORDER BY priority DESC, send_at ASC LIMIT ?`
+    VALUES (
+      ${input.recipient},
+      ${input.recipientLabel ?? null},
+      ${input.message ?? null},
+      ${input.mediaUrl ?? null},
+      ${input.mediaType ?? null},
+      ${input.priority ?? 5},
+      ${toTsParam(sendAt)},
+      ${input.automationId ?? null},
+      ${input.sequenceId ?? null},
+      ${input.abVariant ?? null}
     )
-    .all(limit) as unknown as QueueItem[];
+    RETURNING *
+  `;
+  return mapQueueItem(rows[0]);
 }
 
-export function markQueueSent(id: number): void {
-  db.prepare(
-    `UPDATE send_queue SET status = 'sent', sent_at = datetime('now', 'localtime') WHERE id = ?`
-  ).run(id);
+export async function getDueQueueItems(limit = 3): Promise<QueueItem[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT * FROM send_queue
+    WHERE status = 'pending' AND send_at <= NOW()
+    ORDER BY priority DESC, send_at ASC LIMIT ${limit}
+  `;
+  return rows.map(mapQueueItem);
 }
 
-export function markQueueFailed(id: number, error: string): void {
-  db.prepare(`UPDATE send_queue SET status = 'failed', error = ? WHERE id = ?`).run(error, id);
+export async function markQueueSent(id: number): Promise<void> {
+  await sql`UPDATE send_queue SET status = 'sent', sent_at = NOW() WHERE id = ${id}`;
 }
 
-/* ── Séquences multi-étapes ── */
+export async function markQueueFailed(id: number, error: string): Promise<void> {
+  await sql`UPDATE send_queue SET status = 'failed', error = ${error} WHERE id = ${id}`;
+}
+
+export async function rescheduleSendQueueItem(id: number, sendAt: string): Promise<void> {
+  await sql`UPDATE send_queue SET send_at = ${toTsParam(sendAt)} WHERE id = ${id}`;
+}
+
+export async function cancelPendingSendQueue(): Promise<number> {
+  const result = await sql`
+    UPDATE send_queue SET status = 'cancelled', error = 'Annulé manuellement'
+    WHERE status = 'pending'
+  `;
+  return Number(result.count);
+}
+
+export async function pauseAllActiveAutomations(): Promise<number> {
+  const result = await sql`
+    UPDATE automations SET status = 'paused', updated_at = NOW() WHERE status = 'active'
+  `;
+  return Number(result.count);
+}
 
 export interface SequenceStep {
   delayDays: number;
@@ -1690,36 +1587,7 @@ export interface ContactSequence {
   created_at: string;
 }
 
-export function createContactSequence(input: {
-  contactPhone: string;
-  name: string;
-  steps: SequenceStep[];
-  automationId?: number;
-}): ContactSequence {
-  const phone = normalizeContactPhone(input.contactPhone);
-  const firstDelay = input.steps[0]?.delayDays ?? 0;
-  const nextAt = new Date();
-  nextAt.setDate(nextAt.getDate() + firstDelay);
-  const result = db
-    .prepare(
-      `INSERT INTO contact_sequences (contact_phone, automation_id, name, steps_json, next_step_at)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(
-      phone,
-      input.automationId ?? null,
-      input.name,
-      JSON.stringify(input.steps),
-      formatLocalDateTime(nextAt)
-    );
-  return getContactSequence(Number(result.lastInsertRowid))!;
-}
-
-export function getContactSequence(id: number): ContactSequence | null {
-  const row = db.prepare(`SELECT * FROM contact_sequences WHERE id = ?`).get(id) as
-    | Record<string, unknown>
-    | undefined;
-  if (!row) return null;
+function mapContactSequence(row: Record<string, unknown>): ContactSequence {
   let steps: SequenceStep[] = [];
   try {
     steps = JSON.parse(String(row.steps_json || "[]")) as SequenceStep[];
@@ -1734,46 +1602,76 @@ export function getContactSequence(id: number): ContactSequence | null {
     steps,
     current_step: Number(row.current_step ?? 0),
     status: String(row.status),
-    next_step_at: row.next_step_at ? String(row.next_step_at) : null,
-    created_at: String(row.created_at),
+    next_step_at: formatTsNullable(row.next_step_at),
+    created_at: formatTs(row.created_at),
   };
 }
 
-export function listDueSequences(limit = 20): ContactSequence[] {
-  const rows = db
-    .prepare(
-      `SELECT id FROM contact_sequences
-       WHERE status = 'active' AND next_step_at IS NOT NULL AND next_step_at <= datetime('now', 'localtime')
-       ORDER BY next_step_at ASC LIMIT ?`
+export async function createContactSequence(input: {
+  contactPhone: string;
+  name: string;
+  steps: SequenceStep[];
+  automationId?: number;
+}): Promise<ContactSequence> {
+  const phone = normalizeContactPhone(input.contactPhone);
+  const firstDelay = input.steps[0]?.delayDays ?? 0;
+  const nextAt = new Date();
+  nextAt.setDate(nextAt.getDate() + firstDelay);
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO contact_sequences (contact_phone, automation_id, name, steps_json, next_step_at)
+    VALUES (
+      ${phone},
+      ${input.automationId ?? null},
+      ${input.name},
+      ${JSON.stringify(input.steps)},
+      ${toTsParam(formatLocalDateTime(nextAt))}
     )
-    .all(limit) as Array<{ id: number }>;
-  return rows.map((r) => getContactSequence(r.id)).filter(Boolean) as ContactSequence[];
+    RETURNING *
+  `;
+  return mapContactSequence(rows[0]);
 }
 
-export function advanceSequence(id: number): void {
-  const seq = getContactSequence(id);
+export async function getContactSequence(id: number): Promise<ContactSequence | null> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT * FROM contact_sequences WHERE id = ${id}
+  `;
+  return rows[0] ? mapContactSequence(rows[0]) : null;
+}
+
+export async function listDueSequences(limit = 20): Promise<ContactSequence[]> {
+  const rows = await sql<Array<{ id: number }>>`
+    SELECT id FROM contact_sequences
+    WHERE status = 'active' AND next_step_at IS NOT NULL AND next_step_at <= NOW()
+    ORDER BY next_step_at ASC LIMIT ${limit}
+  `;
+  const sequences = await Promise.all(rows.map((r) => getContactSequence(r.id)));
+  return sequences.filter(Boolean) as ContactSequence[];
+}
+
+export async function advanceSequence(id: number): Promise<void> {
+  const seq = await getContactSequence(id);
   if (!seq) return;
   const nextStep = seq.current_step + 1;
   if (nextStep >= seq.steps.length) {
-    db.prepare(`UPDATE contact_sequences SET status = 'completed', next_step_at = NULL WHERE id = ?`).run(id);
+    await sql`UPDATE contact_sequences SET status = 'completed', next_step_at = NULL WHERE id = ${id}`;
     return;
   }
   const delay = seq.steps[nextStep]?.delayDays ?? 1;
   const nextAt = new Date();
   nextAt.setDate(nextAt.getDate() + delay);
-  db.prepare(
-    `UPDATE contact_sequences SET current_step = ?, next_step_at = ? WHERE id = ?`
-  ).run(nextStep, formatLocalDateTime(nextAt), id);
+  await sql`
+    UPDATE contact_sequences SET current_step = ${nextStep}, next_step_at = ${toTsParam(formatLocalDateTime(nextAt))}
+    WHERE id = ${id}
+  `;
 }
 
-export function cancelSequencesForContact(phone: string): void {
+export async function cancelSequencesForContact(phone: string): Promise<void> {
   const chatId = normalizeContactPhone(phone);
-  db.prepare(
-    `UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL WHERE contact_phone = ? AND status = 'active'`
-  ).run(chatId);
+  await sql`
+    UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
+    WHERE contact_phone = ${chatId} AND status = 'active'
+  `;
 }
-
-/* ── Règles groupes ── */
 
 export interface GroupReplyRule {
   id: number;
@@ -1786,33 +1684,7 @@ export interface GroupReplyRule {
   created_at: string;
 }
 
-export function createGroupReplyRule(input: {
-  groupId: string;
-  groupLabel?: string;
-  keywords: string[];
-  replyGuide?: string;
-  automationId?: number;
-}): GroupReplyRule {
-  const result = db
-    .prepare(
-      `INSERT INTO group_reply_rules (group_id, group_label, keywords_json, reply_guide, automation_id)
-       VALUES (?, ?, ?, ?, ?)`
-    )
-    .run(
-      input.groupId,
-      input.groupLabel ?? null,
-      JSON.stringify(input.keywords),
-      input.replyGuide ?? null,
-      input.automationId ?? null
-    );
-  return getGroupReplyRule(Number(result.lastInsertRowid))!;
-}
-
-export function getGroupReplyRule(id: number): GroupReplyRule | null {
-  const row = db.prepare(`SELECT * FROM group_reply_rules WHERE id = ?`).get(id) as
-    | Record<string, unknown>
-    | undefined;
-  if (!row) return null;
+function mapGroupReplyRule(row: Record<string, unknown>): GroupReplyRule {
   let keywords: string[] = [];
   try {
     keywords = JSON.parse(String(row.keywords_json || "[]")) as string[];
@@ -1822,28 +1694,57 @@ export function getGroupReplyRule(id: number): GroupReplyRule | null {
   return {
     id: Number(row.id),
     group_id: String(row.group_id),
-    group_label: row.group_label ? String(row.group_label) : null,
+    group_label: row.group_label != null ? String(row.group_label) : null,
     keywords,
-    reply_guide: row.reply_guide ? String(row.reply_guide) : null,
+    reply_guide: row.reply_guide != null ? String(row.reply_guide) : null,
     automation_id: row.automation_id != null ? Number(row.automation_id) : null,
     status: String(row.status),
-    created_at: String(row.created_at),
+    created_at: formatTs(row.created_at),
   };
 }
 
-export function listActiveGroupReplyRules(): GroupReplyRule[] {
-  const rows = db
-    .prepare(`SELECT id FROM group_reply_rules WHERE status = 'active'`)
-    .all() as Array<{ id: number }>;
-  return rows.map((r) => getGroupReplyRule(r.id)).filter(Boolean) as GroupReplyRule[];
+export async function createGroupReplyRule(input: {
+  groupId: string;
+  groupLabel?: string;
+  keywords: string[];
+  replyGuide?: string;
+  automationId?: number;
+}): Promise<GroupReplyRule> {
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO group_reply_rules (group_id, group_label, keywords_json, reply_guide, automation_id)
+    VALUES (
+      ${input.groupId},
+      ${input.groupLabel ?? null},
+      ${JSON.stringify(input.keywords)},
+      ${input.replyGuide ?? null},
+      ${input.automationId ?? null}
+    )
+    RETURNING *
+  `;
+  return mapGroupReplyRule(rows[0]);
 }
 
-export function findGroupReplyRule(groupId: string, text: string): GroupReplyRule | null {
+export async function getGroupReplyRule(id: number): Promise<GroupReplyRule | null> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT * FROM group_reply_rules WHERE id = ${id}
+  `;
+  return rows[0] ? mapGroupReplyRule(rows[0]) : null;
+}
+
+export async function listActiveGroupReplyRules(): Promise<GroupReplyRule[]> {
+  const rows = await sql<Array<{ id: number }>>`
+    SELECT id FROM group_reply_rules WHERE status = 'active'
+  `;
+  const rules = await Promise.all(rows.map((r) => getGroupReplyRule(r.id)));
+  return rules.filter(Boolean) as GroupReplyRule[];
+}
+
+export async function findGroupReplyRule(groupId: string, text: string): Promise<GroupReplyRule | null> {
   const normalized = text
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}/gu, "");
-  for (const rule of listActiveGroupReplyRules()) {
+  for (const rule of await listActiveGroupReplyRules()) {
     if (rule.group_id !== groupId) continue;
     if (!rule.keywords.length) return rule;
     const match = rule.keywords.some((kw) => {
@@ -1858,8 +1759,6 @@ export function findGroupReplyRule(groupId: string, text: string): GroupReplyRul
   return null;
 }
 
-/* ── Handoff humain ── */
-
 export interface HandoffEvent {
   id: number;
   contact_phone: string;
@@ -1872,59 +1771,68 @@ export interface HandoffEvent {
   resolved_at: string | null;
 }
 
-export function createHandoffEvent(input: {
+function mapHandoffEvent(row: Record<string, unknown>): HandoffEvent {
+  return {
+    id: Number(row.id),
+    contact_phone: String(row.contact_phone),
+    contact_name: row.contact_name != null ? String(row.contact_name) : null,
+    reason: String(row.reason),
+    summary: row.summary != null ? String(row.summary) : null,
+    suggested_reply: row.suggested_reply != null ? String(row.suggested_reply) : null,
+    status: String(row.status),
+    created_at: formatTs(row.created_at),
+    resolved_at: formatTsNullable(row.resolved_at),
+  };
+}
+
+export async function createHandoffEvent(input: {
   contactPhone: string;
   contactName?: string;
   reason: string;
   summary?: string;
   suggestedReply?: string;
-}): HandoffEvent {
+}): Promise<HandoffEvent> {
   const phone = normalizeContactPhone(input.contactPhone);
-  setContactHandoff(phone, "pending");
-  const result = db
-    .prepare(
-      `INSERT INTO handoff_events (contact_phone, contact_name, reason, summary, suggested_reply)
-       VALUES (?, ?, ?, ?, ?)`
+  await setContactHandoff(phone, "pending");
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO handoff_events (contact_phone, contact_name, reason, summary, suggested_reply)
+    VALUES (
+      ${phone},
+      ${input.contactName ?? null},
+      ${input.reason},
+      ${input.summary ?? null},
+      ${input.suggestedReply ?? null}
     )
-    .run(
-      phone,
-      input.contactName ?? null,
-      input.reason,
-      input.summary ?? null,
-      input.suggestedReply ?? null
-    );
-  return db
-    .prepare(`SELECT * FROM handoff_events WHERE id = ?`)
-    .get(result.lastInsertRowid) as unknown as HandoffEvent;
+    RETURNING *
+  `;
+  return mapHandoffEvent(rows[0]);
 }
 
-export function listPendingHandoffs(limit = 30): HandoffEvent[] {
-  return db
-    .prepare(
-      `SELECT * FROM handoff_events WHERE status = 'pending' ORDER BY id DESC LIMIT ?`
-    )
-    .all(limit) as unknown as HandoffEvent[];
+export async function listPendingHandoffs(limit = 30): Promise<HandoffEvent[]> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT * FROM handoff_events WHERE status = 'pending' ORDER BY id DESC LIMIT ${limit}
+  `;
+  return rows.map(mapHandoffEvent);
 }
 
-export function resolveHandoff(id: number, status: "resolved" | "dismissed"): void {
-  const row = db.prepare(`SELECT contact_phone FROM handoff_events WHERE id = ?`).get(id) as
-    | { contact_phone: string }
-    | undefined;
-  db.prepare(
-    `UPDATE handoff_events SET status = ?, resolved_at = datetime('now', 'localtime') WHERE id = ?`
-  ).run(status, id);
-  if (row) setContactHandoff(row.contact_phone, null);
+export async function resolveHandoff(id: number, status: "resolved" | "dismissed"): Promise<void> {
+  const rows = await sql<Array<{ contact_phone: string }>>`
+    SELECT contact_phone FROM handoff_events WHERE id = ${id}
+  `;
+  await sql`
+    UPDATE handoff_events SET status = ${status}, resolved_at = NOW() WHERE id = ${id}
+  `;
+  if (rows[0]) await setContactHandoff(rows[0].contact_phone, null);
 }
 
-export function updateAutomationTargetAb(
+export async function updateAutomationTargetAb(
   automationId: number,
   targetId: string,
   abVariant: string
-): void {
-  db.prepare(
-    `UPDATE automation_targets SET ab_variant = ?, last_action_at = datetime('now', 'localtime')
-     WHERE automation_id = ? AND target_id = ?`
-  ).run(abVariant, automationId, targetId);
+): Promise<void> {
+  await sql`
+    UPDATE automation_targets SET ab_variant = ${abVariant}, last_action_at = NOW()
+    WHERE automation_id = ${automationId} AND target_id = ${targetId}
+  `;
 }
 
-console.log(`📦 SQLite prêt : ${dbPath}`);

@@ -1,9 +1,8 @@
-/* Console Green-API — panneau WhatsApp */
+/* Console WhatsApp — Evolution API */
 (function () {
   const $ = (sel) => document.querySelector(sel);
   const $$ = (sel) => document.querySelectorAll(sel);
 
-  let catalog = null;
   let inboxSource = "local";
   let inboxTodayOnly = false;
   let consoleReady = false;
@@ -31,14 +30,43 @@
   }
 
   async function api(path, opts = {}) {
-    const res = await fetch(path, {
+    const base = (window.KLANVIO_CONFIG?.apiUrl || "").replace(/\/$/, "");
+    const url = `${base}${path}`;
+    const res = await fetch(url, {
       method: opts.method || "GET",
       headers: opts.body ? { "Content-Type": "application/json" } : undefined,
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || res.statusText);
+    if (!res.ok) throw new Error(data.error || data.message || res.statusText);
     return data;
+  }
+
+  function renderQrPanel(container, data) {
+    if (!container) return;
+    if (data.connected) {
+      container.innerHTML = `<p class="form-feedback ok">${esc(data.message || "WhatsApp connecté.")}</p>`;
+      return;
+    }
+    const b64 = data.base64 || "";
+    const pairing = data.pairingCode || "";
+    container.innerHTML = `
+      ${b64 ? `<img class="gapi-qr" src="data:image/png;base64,${esc(b64)}" alt="QR WhatsApp" />` : ""}
+      ${pairing ? `<p class="toggle-hint">Code d'appairage : <strong>${esc(pairing)}</strong></p>` : ""}
+      <p class="toggle-hint">${esc(data.message || "Scannez le QR avec WhatsApp → Appareils connectés.")}</p>`;
+  }
+
+  async function loadQr(into) {
+    const out = into || $("#gapi-instance-output");
+    if (out) out.innerHTML = '<p class="contacts-empty">Chargement du QR…</p>';
+    try {
+      const data = await api("/api/evolution/instance/qr");
+      renderQrPanel(out, data);
+      return data;
+    } catch (err) {
+      if (out) out.innerHTML = `<p class="contacts-empty">${esc(err.message)}</p>`;
+      throw err;
+    }
   }
 
   function switchWaMode(mode) {
@@ -76,23 +104,23 @@
     if (tab === "chats") void loadChats();
     if (tab === "contacts") void loadContacts();
     if (tab === "groups") void loadGroups();
+    if (tab === "instance") void loadQr();
   }
 
   async function loadDashboard() {
     const el = $("#gapi-dashboard");
     if (!el) return;
     try {
-      const d = await api("/api/greenapi/dashboard");
+      const d = await api("/api/evolution/dashboard");
       const s = d.stats || {};
       const poll = d.poll || {};
       el.innerHTML = `
         <div class="gapi-kpi-grid">
           <div class="gapi-kpi"><span>État instance</span><strong>${esc(d.instance?.state || "?")}</strong><small>${esc(d.instance?.message || "")}</small></div>
-          <div class="gapi-kpi"><span>Messages reçus (total)</span><strong>${s.totalIncoming ?? 0}</strong><small>${s.incomingToday ?? 0} aujourd'hui</small></div>
+          <div class="gapi-kpi"><span>Messages reçus</span><strong>${s.totalIncoming ?? 0}</strong><small>${s.incomingToday ?? 0} aujourd'hui</small></div>
           <div class="gapi-kpi"><span>Messages envoyés</span><strong>${s.totalOutgoing ?? 0}</strong><small>${s.outboundToday ?? 0}/${s.outboundLimit ?? 30} quota jour</small></div>
-          <div class="gapi-kpi"><span>Chats actifs</span><strong>${s.chatsCount ?? 0}</strong><small>${s.contactsCount ?? 0} contacts · ${s.groupsCount ?? 0} groupes</small></div>
-          <div class="gapi-kpi"><span>File Green-API</span><strong>${s.greenIncomingQueue ?? 0}</strong><small>lastIncomingMessages</small></div>
-          <div class="gapi-kpi"><span>Polling</span><strong>${poll.webhookBlocked ? "Webhook bloqué" : "OK"}</strong><small>${poll.lastIncomingAt ? "Dernier entrant " + fmtTime(poll.lastIncomingAt) : "—"}</small></div>
+          <div class="gapi-kpi"><span>Chats / contacts</span><strong>${s.chatsCount ?? 0}</strong><small>${s.contactsCount ?? 0} contacts · ${s.groupsCount ?? 0} groupes</small></div>
+          <div class="gapi-kpi"><span>Sync Evolution</span><strong>${poll.authorized ? "OK" : "Hors ligne"}</strong><small>${poll.lastIncomingAt ? "Dernier entrant " + fmtTime(poll.lastIncomingAt) : "—"}</small></div>
         </div>`;
     } catch (err) {
       el.innerHTML = `<p class="contacts-empty">${esc(err.message)}</p>`;
@@ -125,12 +153,12 @@
 
   async function loadInbox() {
     try {
-      if (inboxSource === "green") {
-        const data = await api("/api/greenapi/inbox/green");
-        renderInboxMessages(data.messages, "Green-API");
+      if (inboxSource === "live") {
+        const data = await api("/api/evolution/inbox/live");
+        renderInboxMessages(data.messages, "Evolution");
       } else {
         const q = inboxTodayOnly ? "?today=1&limit=200" : "?limit=200";
-        const data = await api(`/api/greenapi/inbox/local${q}`);
+        const data = await api(`/api/evolution/inbox/local${q}`);
         const msgs = (data.messages || []).map((m) => ({
           ...m,
           display: m.contact_phone?.endsWith("@c.us") ? "+" + m.contact_phone.replace("@c.us", "") : m.contact_phone,
@@ -147,7 +175,7 @@
     const list = $("#gapi-chats-list");
     if (!list) return;
     try {
-      const data = await api("/api/greenapi/chats?count=150");
+      const data = await api("/api/evolution/chats?count=150");
       const chats = data.chats || [];
       if (!chats.length) {
         list.innerHTML = '<p class="contacts-empty">Aucun chat.</p>';
@@ -171,7 +199,7 @@
     if (!detail) return;
     detail.innerHTML = '<p class="contacts-empty">Chargement…</p>';
     try {
-      const data = await api(`/api/greenapi/chat-history?chatId=${encodeURIComponent(chatId)}&count=60`);
+      const data = await api(`/api/evolution/chat-history?chatId=${encodeURIComponent(chatId)}&count=60`);
       const rows = (data.messages || [])
         .map(
           (m) => `<div class="gapi-msg ${m.type}">
@@ -198,7 +226,7 @@
     const el = $("#gapi-contacts-list");
     if (!el) return;
     try {
-      const data = await api("/api/greenapi/contacts?count=200");
+      const data = await api("/api/evolution/contacts?count=200");
       const contacts = data.contacts || [];
       if (!contacts.length) {
         el.innerHTML = '<p class="contacts-empty">Aucun contact.</p>';
@@ -207,8 +235,8 @@
       el.innerHTML = contacts
         .map(
           (c) => `<div class="gapi-row">
-            <div class="gapi-row-top"><strong>${esc(c.name || c.contactName || c.id)}</strong><button type="button" class="btn btn-ghost btn-sm gapi-use-chat" data-chat="${esc(c.id)}">Envoyer</button></div>
-            <div class="gapi-row-meta">${esc(c.id)} · ${esc(c.type || "")}</div>
+            <div class="gapi-row-top"><strong>${esc(c.name || c.id)}</strong><button type="button" class="btn btn-ghost btn-sm gapi-use-chat" data-chat="${esc(c.id)}">Envoyer</button></div>
+            <div class="gapi-row-meta">${esc(c.id)}</div>
           </div>`
         )
         .join("");
@@ -221,7 +249,7 @@
     const list = $("#gapi-groups-list");
     if (!list) return;
     try {
-      const data = await api("/api/greenapi/groups");
+      const data = await api("/api/evolution/groups");
       const groups = data.groups || [];
       if (!groups.length) {
         list.innerHTML = '<p class="contacts-empty">Aucun groupe.</p>';
@@ -244,11 +272,8 @@
     if (!detail) return;
     detail.innerHTML = '<p class="contacts-empty">Chargement…</p>';
     try {
-      const data = await api("/api/greenapi/call", {
-        method: "POST",
-        body: { method: "getGroupData", http: "POST", body: { groupId } },
-      });
-      const g = data.result || {};
+      const data = await api(`/api/evolution/groups/members?groupId=${encodeURIComponent(groupId)}`);
+      const g = data.group || {};
       const members = (g.participants || [])
         .map((p) => `<li>${esc(p.name || p.id)}${p.isAdmin ? " (admin)" : ""}</li>`)
         .join("");
@@ -262,56 +287,8 @@
   }
 
   async function markRead(chatId) {
-    await api("/api/greenapi/read-chat", { method: "POST", body: { chatId } });
+    await api("/api/evolution/read-chat", { method: "POST", body: { chatId } });
     alert("Chat marqué comme lu.");
-  }
-
-  async function loadCatalog() {
-    if (catalog) return catalog;
-    catalog = await api("/api/greenapi/catalog");
-    return catalog;
-  }
-
-  async function initApiExplorer() {
-    const catSel = $("#gapi-api-category");
-    const methodSel = $("#gapi-api-method");
-    if (!catSel || !methodSel || catSel.options.length) return;
-
-    const c = await loadCatalog();
-    for (const cat of c.categories || []) {
-      const opt = document.createElement("option");
-      opt.value = cat.id;
-      opt.textContent = cat.label;
-      catSel.appendChild(opt);
-    }
-
-    function fillMethods() {
-      const catId = catSel.value;
-      methodSel.innerHTML = "";
-      const methods = (c.methods || []).filter((m) => m.category === catId);
-      for (const m of methods) {
-        const opt = document.createElement("option");
-        opt.value = m.method;
-        opt.textContent = `${m.method} — ${m.label}`;
-        opt.dataset.http = m.http;
-        opt.dataset.desc = m.description;
-        opt.dataset.body = m.bodyExample ? JSON.stringify(m.bodyExample, null, 2) : "{}";
-        methodSel.appendChild(opt);
-      }
-      updateMethodDesc();
-    }
-
-    function updateMethodDesc() {
-      const opt = methodSel.selectedOptions[0];
-      const desc = $("#gapi-api-desc");
-      const body = $("#gapi-api-body");
-      if (desc) desc.textContent = opt?.dataset.desc || "";
-      if (body && opt?.dataset.body) body.value = opt.dataset.body;
-    }
-
-    catSel.addEventListener("change", fillMethods);
-    methodSel.addEventListener("change", updateMethodDesc);
-    fillMethods();
   }
 
   async function initConsole() {
@@ -321,7 +298,6 @@
       return;
     }
     consoleReady = true;
-    await initApiExplorer();
     switchGapiTab("overview");
   }
 
@@ -391,33 +367,13 @@
       return;
     }
     try {
-      const data = await api("/api/greenapi/send-status", {
+      const data = await api("/api/evolution/send-status", {
         method: "POST",
-        body: { message, backgroundColor, font: "SERIF", participants: [] },
+        body: { message, backgroundColor, font: "SERIF" },
       });
-      setFeedback(fb, "Statut publié · " + (data.result?.idMessage || "OK"), "ok");
+      setFeedback(fb, `Statut publié · ${data.audienceCount ?? ""} contact(s)`, "ok");
     } catch (err) {
       setFeedback(fb, err.message, "err");
-    }
-  });
-
-  $("#gapi-status-in")?.addEventListener("click", async () => {
-    const pre = $("#gapi-status-history");
-    try {
-      const data = await api("/api/greenapi/statuses/incoming?minutes=1440");
-      if (pre) pre.textContent = JSON.stringify(data.result, null, 2);
-    } catch (err) {
-      if (pre) pre.textContent = err.message;
-    }
-  });
-
-  $("#gapi-status-out")?.addEventListener("click", async () => {
-    const pre = $("#gapi-status-history");
-    try {
-      const data = await api("/api/greenapi/statuses/outgoing?minutes=1440");
-      if (pre) pre.textContent = JSON.stringify(data.result, null, 2);
-    } catch (err) {
-      if (pre) pre.textContent = err.message;
     }
   });
 
@@ -430,7 +386,7 @@
       return;
     }
     try {
-      const data = await api("/api/greenapi/send-message", {
+      const data = await api("/api/evolution/send-message", {
         method: "POST",
         body: { chatId, message },
       });
@@ -441,67 +397,17 @@
     }
   });
 
-  $("#gapi-load-settings")?.addEventListener("click", async () => {
-    const out = $("#gapi-instance-output");
-    try {
-      const data = await api("/api/greenapi/instance/settings");
-      if (out) out.innerHTML = `<pre class="gapi-json-preview">${esc(JSON.stringify(data.result, null, 2))}</pre>`;
-    } catch (err) {
-      if (out) out.innerHTML = `<p class="contacts-empty">${esc(err.message)}</p>`;
-    }
-  });
-
-  $("#gapi-load-qr")?.addEventListener("click", async () => {
-    const out = $("#gapi-instance-output");
-    try {
-      const data = await api("/api/greenapi/instance/qr");
-      const r = data.result || {};
-      const b64 = r.message || r.qrCode || r.base64 || "";
-      if (out) {
-        out.innerHTML = b64
-          ? `<img class="gapi-qr" src="data:image/png;base64,${esc(b64)}" alt="QR WhatsApp" /><pre class="gapi-json-preview">${esc(JSON.stringify(r, null, 2))}</pre>`
-          : `<pre class="gapi-json-preview">${esc(JSON.stringify(r, null, 2))}</pre>`;
-      }
-    } catch (err) {
-      if (out) out.innerHTML = `<p class="contacts-empty">${esc(err.message)}</p>`;
-    }
-  });
-
+  $("#gapi-load-qr")?.addEventListener("click", () => void loadQr());
   $("#gapi-reboot")?.addEventListener("click", async () => {
-    if (!confirm("Redémarrer l'instance Green-API ?")) return;
+    if (!confirm("Redémarrer l'instance Evolution API ?")) return;
     const out = $("#gapi-instance-output");
     try {
-      const data = await api("/api/greenapi/call", { method: "POST", body: { method: "reboot", http: "GET" } });
+      const data = await api("/api/evolution/instance/restart", { method: "POST" });
       if (out) out.innerHTML = `<pre class="gapi-json-preview">${esc(JSON.stringify(data.result, null, 2))}</pre>`;
     } catch (err) {
       if (out) out.innerHTML = `<p class="contacts-empty">${esc(err.message)}</p>`;
     }
   });
 
-  $("#gapi-api-run")?.addEventListener("click", async () => {
-    const method = $("#gapi-api-method")?.value;
-    const http = $("#gapi-api-method")?.selectedOptions[0]?.dataset.http || "GET";
-    const resultEl = $("#gapi-api-result");
-    let query = {};
-    let body = {};
-    try {
-      query = JSON.parse($("#gapi-api-query")?.value || "{}");
-      body = JSON.parse($("#gapi-api-body")?.value || "{}");
-    } catch {
-      if (resultEl) resultEl.textContent = "JSON invalide dans query ou body.";
-      return;
-    }
-    const pathSuffix = $("#gapi-api-suffix")?.value?.trim() || undefined;
-    try {
-      const data = await api("/api/greenapi/call", {
-        method: "POST",
-        body: { method, http, query, body, pathSuffix },
-      });
-      if (resultEl) resultEl.textContent = JSON.stringify(data, null, 2);
-    } catch (err) {
-      if (resultEl) resultEl.textContent = err.message;
-    }
-  });
-
-  window.GreenApiConsole = { switchWaMode, initConsole };
+  window.WhatsAppConsole = { switchWaMode, initConsole, loadQr, renderQrPanel };
 })();

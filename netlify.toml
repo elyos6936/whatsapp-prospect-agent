@@ -1,0 +1,18 @@
+[build]
+  publish = "public"
+  command = "node scripts/inject-netlify-config.mjs"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[[redirects]]
+  from = "/api/*"
+  to = ":KLANVIO_API_URL/api/:splat"
+  status = 200
+  force = true
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"

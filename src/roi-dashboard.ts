@@ -24,9 +24,9 @@ export interface RoiDashboard {
   abSummary: Array<{ automationId: number; name: string; variants: Record<string, unknown> }>;
 }
 
-export function getRoiDashboard(): RoiDashboard {
-  const autos = listAutomations({ limit: 100 });
-  const contacts = listContacts({ limit: 500 });
+export async function getRoiDashboard(): Promise<RoiDashboard> {
+  const autos = await listAutomations({ limit: 100 });
+  const contacts = await listContacts({ limit: 500 });
 
   let contacted = 0;
   let replied = 0;
@@ -67,7 +67,7 @@ export function getRoiDashboard(): RoiDashboard {
     };
   });
 
-  const msgStats = getWhatsAppMessageStats();
+  const msgStats = await getWhatsAppMessageStats();
   const hotLeads = contacts.filter((c) => (c.lead_score ?? 0) >= 70).length;
 
   return {

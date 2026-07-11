@@ -5,30 +5,31 @@ import {
   enqueueSend,
   getContactChatHistory,
   listDueSequences,
+  type ContactSequence,
   type SequenceStep,
 } from "./db.js";
 
 export async function processDueSequences(): Promise<number> {
-  const due = listDueSequences(15);
+  const due = await listDueSequences(15);
   let queued = 0;
 
   for (const seq of due) {
     const step = seq.steps[seq.current_step];
     if (!step) {
-      advanceSequence(seq.id);
+      await advanceSequence(seq.id);
       continue;
     }
 
     if (step.condition === "no_reply") {
-      const history = getContactChatHistory(seq.contact_phone, 5);
+      const history = await getContactChatHistory(seq.contact_phone, 5);
       const hasReply = history.some((m) => m.direction === "entrant");
       if (hasReply) {
-        cancelSequencesForContact(seq.contact_phone);
+        await cancelSequencesForContact(seq.contact_phone);
         continue;
       }
     }
 
-    enqueueSend({
+    await enqueueSend({
       recipient: seq.contact_phone,
       message: step.message,
       mediaUrl: step.mediaUrl,
@@ -37,18 +38,18 @@ export async function processDueSequences(): Promise<number> {
       automationId: seq.automation_id ?? undefined,
       sequenceId: seq.id,
     });
-    advanceSequence(seq.id);
+    await advanceSequence(seq.id);
     queued++;
   }
 
   return queued;
 }
 
-export function startSequenceForContact(input: {
+export async function startSequenceForContact(input: {
   contactPhone: string;
   name: string;
   steps: SequenceStep[];
   automationId?: number;
-}): ReturnType<typeof createContactSequence> {
+}): Promise<ContactSequence> {
   return createContactSequence(input);
 }

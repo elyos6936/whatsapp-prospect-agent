@@ -3,7 +3,7 @@ import {
   markScheduledFailed,
   markScheduledSent,
 } from "./db.js";
-import { chatIdToDisplay, sendWhatsAppMessage } from "./greenapi.js";
+import { chatIdToDisplay, sendWhatsAppMessage } from "./evolutionapi.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -13,17 +13,17 @@ async function processDue(): Promise<void> {
   running = true;
 
   try {
-    const due = getDueScheduledMessages(5);
+    const due = await getDueScheduledMessages(5);
     for (const job of due) {
       try {
         await sendWhatsAppMessage(job.recipient, job.message);
-        markScheduledSent(job.id);
+        await markScheduledSent(job.id);
 
         const label = job.recipient_label || chatIdToDisplay(job.recipient);
         console.log(`⏰ Scheduled #${job.id} envoyé → ${label}`);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        markScheduledFailed(job.id, msg);
+        await markScheduledFailed(job.id, msg);
         console.error(`⏰ Scheduled #${job.id} échoué:`, msg);
       }
     }

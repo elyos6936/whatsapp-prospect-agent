@@ -11,7 +11,7 @@ export async function registerFeatureRoutes(app: FastifyInstance): Promise<void>
   app.get("/api/roi/dashboard", async () => getRoiDashboard());
 
   app.get("/api/handoffs", async () => ({
-    handoffs: listPendingHandoffs(50),
+    handoffs: await listPendingHandoffs(50),
   }));
 
   app.patch<{ Params: { id: string }; Body: { status?: string } }>(
@@ -22,13 +22,13 @@ export async function registerFeatureRoutes(app: FastifyInstance): Promise<void>
       if (!Number.isFinite(id) || (status !== "resolved" && status !== "dismissed")) {
         return reply.status(400).send({ error: "status doit être resolved ou dismissed." });
       }
-      resolveHandoff(id, status);
+      await resolveHandoff(id, status);
       return { ok: true };
     }
   );
 
   app.get("/api/contacts/scored", async () => {
-    const contacts = listContacts({ limit: 200 });
+    const contacts = await listContacts({ limit: 200 });
     return {
       contacts: contacts
         .map((c) => ({
@@ -55,7 +55,7 @@ export async function registerFeatureRoutes(app: FastifyInstance): Promise<void>
     if (!groupId?.trim()) {
       return reply.status(400).send({ error: "groupId requis." });
     }
-    const rule = createGroupReplyRule({
+    const rule = await createGroupReplyRule({
       groupId: groupId.trim(),
       groupLabel,
       keywords: keywords ?? [],

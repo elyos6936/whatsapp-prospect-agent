@@ -26,23 +26,27 @@ export function pickAbVariant(auto: Automation): AbPick {
   return { variantId: pick.id, message: pick.message };
 }
 
-export function recordAbSent(automationId: number, variantId: string): void {
-  const auto = getAutomation(automationId);
+export async function recordAbSent(automationId: number, variantId: string): Promise<void> {
+  const auto = await getAutomation(automationId);
   if (!auto) return;
   const abResults = { ...(auto.stats.abResults ?? {}) };
   const cur = abResults[variantId] ?? { sent: 0, replied: 0, interested: 0 };
   cur.sent += 1;
   abResults[variantId] = cur;
-  updateAutomationStats(automationId, { abResults });
+  await updateAutomationStats(automationId, { abResults });
 }
 
-export function recordAbReply(automationId: number, variantId: string, interested = false): void {
-  const auto = getAutomation(automationId);
+export async function recordAbReply(
+  automationId: number,
+  variantId: string,
+  interested = false
+): Promise<void> {
+  const auto = await getAutomation(automationId);
   if (!auto) return;
   const abResults = { ...(auto.stats.abResults ?? {}) };
   const cur = abResults[variantId] ?? { sent: 0, replied: 0, interested: 0 };
   cur.replied += 1;
   if (interested) cur.interested += 1;
   abResults[variantId] = cur;
-  updateAutomationStats(automationId, { abResults });
+  await updateAutomationStats(automationId, { abResults });
 }

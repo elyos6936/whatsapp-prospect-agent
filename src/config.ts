@@ -10,16 +10,10 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 export const config = {
   port,
+  databaseUrl: process.env.DATABASE_URL?.trim() || "",
   openaiModel: process.env.OPENAI_MODEL?.trim() || "gpt-4o",
-  defaultGreenApiBaseUrl: "https://api.green-api.com",
   defaultEvolutionBaseUrl: "http://localhost:8080",
   envOpenAiKey: process.env.OPENAI_API_KEY?.trim() || "",
-  envGreenApiId: process.env.GREEN_API_ID_INSTANCE?.trim() || "",
-  envGreenApiToken: process.env.GREEN_API_TOKEN?.trim() || "",
-  envGreenApiBaseUrl: (process.env.GREEN_API_BASE_URL?.trim() || "https://api.green-api.com").replace(
-    /\/$/,
-    ""
-  ),
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),
   envEvolutionApiKey: process.env.EVOLUTION_API_KEY?.trim() || "",
   envEvolutionInstance: process.env.EVOLUTION_INSTANCE_NAME?.trim() || "",

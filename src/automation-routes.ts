@@ -9,11 +9,11 @@ import {
   type AutomationType,
 } from "./db.js";
 import { bootstrapGroupProspectTargets, reloadGroupProspectTargets } from "./automation-engine.js";
-import { findGroupByNameOrId, requireGreenApiAuthorized } from "./greenapi.js";
+import { findGroupByNameOrId, requireEvolutionConnected } from "./evolutionapi.js";
 
 export async function registerAutomationRoutes(app: FastifyInstance): Promise<void> {
   app.get("/api/automations", async () => {
-    const automations = listAutomations({ limit: 100 });
+    const automations = await listAutomations({ limit: 100 });
     return { automations };
   });
 
@@ -22,7 +22,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     if (!Number.isFinite(id)) {
       return reply.status(400).send({ error: "ID invalide." });
     }
-    const detail = getAutomationDetail(id);
+    const detail = await getAutomationDetail(id);
     if (!detail) {
       return reply.status(404).send({ error: "Automatisation introuvable." });
     }
@@ -40,7 +40,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (!status || !["active", "paused", "completed", "failed"].includes(status)) {
         return reply.status(400).send({ error: "Statut invalide (active, paused, completed, failed)." });
       }
-      const updated = updateAutomationStatus(id, status);
+      const updated = await updateAutomationStatus(id, status);
       if (!updated) {
         return reply.status(404).send({ error: "Automatisation introuvable." });
       }
@@ -62,7 +62,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       return reply.status(400).send({ error: "name et type requis." });
     }
 
-    const auto = createAutomation({
+    const auto = await createAutomation({
       name: name.trim(),
       type,
       config: config as Parameters<typeof createAutomation>[0]["config"],
@@ -88,18 +88,18 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         initialMessage: config.initial_message ? String(config.initial_message) : undefined,
         maxMembers: config.max_members ? Number(config.max_members) : 30,
       };
-      updateAutomationConfig(auto.id, savedConfig);
+      await updateAutomationConfig(auto.id, savedConfig);
       try {
-        await requireGreenApiAuthorized("la création d'une campagne de prospection groupe");
+        await requireEvolutionConnected("la création d'une campagne de prospection groupe");
         const count = await bootstrapGroupProspectTargets(auto.id);
-        return { automation: getAutomationDetail(auto.id), targetsAdded: count };
+        return { automation: await getAutomationDetail(auto.id), targetsAdded: count };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        return reply.status(400).send({ error: msg, automation: getAutomationDetail(auto.id) });
+        return reply.status(400).send({ error: msg, automation: await getAutomationDetail(auto.id) });
       }
     }
 
-    return { automation: getAutomationDetail(auto.id) };
+    return { automation: await getAutomationDetail(auto.id) };
   });
 
   app.post<{ Params: { id: string } }>("/api/automations/:id/reload-members", async (req, reply) => {
@@ -107,7 +107,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
     if (!Number.isFinite(id)) {
       return reply.status(400).send({ error: "ID invalide." });
     }
-    const detail = getAutomationDetail(id);
+    const detail = await getAutomationDetail(id);
     if (!detail) {
       return reply.status(404).send({ error: "Automatisation introuvable." });
     }
@@ -119,11 +119,11 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       return {
         ok: true,
         targetsAdded,
-        automation: getAutomationDetail(id),
+        automation: await getAutomationDetail(id),
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return reply.status(400).send({ error: msg, automation: getAutomationDetail(id) });
+      return reply.status(400).send({ error: msg, automation: await getAutomationDetail(id) });
     }
   });
 }

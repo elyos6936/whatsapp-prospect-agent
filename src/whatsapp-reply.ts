@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
 import { getAppSettings, getContactChatHistory } from "./db.js";
-import { chatIdToDisplay } from "./greenapi.js";
+import { chatIdToDisplay } from "./evolutionapi.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu réponds aux messages WhatsApp entrants au nom d'un entrepreneur en Afrique francophone (Bénin, Sénégal, Côte d'Ivoire…).
 
@@ -74,18 +74,18 @@ export function isStopRequest(text: string): boolean {
   );
 }
 
-function getOpenAiClient(): OpenAI {
-  const key = getAppSettings().openai_api_key;
+async function getOpenAiClient(): Promise<OpenAI> {
+  const key = (await getAppSettings()).openai_api_key;
   if (!key) throw new Error("Clé OpenAI manquante.");
   return new OpenAI({ apiKey: key });
 }
 
-function formatHistory(
+async function formatHistory(
   chatId: string,
   senderName: string,
   excludeIncoming?: string
-): { text: string; messageCount: number; isOngoingConversation: boolean } {
-  const history = getContactChatHistory(chatId, 20);
+): Promise<{ text: string; messageCount: number; isOngoingConversation: boolean }> {
+  const history = await getContactChatHistory(chatId, 20);
 
   let filtered = history;
   if (excludeIncoming && history.length > 0) {
@@ -114,8 +114,8 @@ function formatHistory(
 }
 
 /** Délai avant réponse auto : 30–90 s (premier contact) / 15–40 s (déjà engagé). */
-export function getAdaptiveReplyDelay(chatId: string): number {
-  const { isOngoingConversation } = formatHistory(chatId, "", undefined);
+export async function getAdaptiveReplyDelay(chatId: string): Promise<number> {
+  const { isOngoingConversation } = await formatHistory(chatId, "", undefined);
   if (isOngoingConversation) {
     return 15_000 + Math.floor(Math.random() * 25_000);
   }
@@ -137,8 +137,8 @@ function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-function businessContextBlock(): string {
-  const s = getAppSettings();
+async function businessContextBlock(): Promise<string> {
+  const s = await getAppSettings();
   const lines = [
     `Prénom / nom à utiliser : ${s.business_owner_name || "(non configuré — ne pas inventer de prénom, te présenter comme l'équipe / la formation)"}`,
     `Offre / formation : ${s.business_offer || "(non configuré — rester général et proposer d'échanger)"}`,
@@ -153,9 +153,9 @@ export async function generateWhatsAppReply(input: {
   incomingText: string;
   automationContext?: string;
 }): Promise<string> {
-  const client = getOpenAiClient();
+  const client = await getOpenAiClient();
   const display = chatIdToDisplay(input.chatId);
-  const { text: historyText, messageCount, isOngoingConversation } = formatHistory(
+  const { text: historyText, messageCount, isOngoingConversation } = await formatHistory(
     input.chatId,
     input.senderName,
     input.incomingText
@@ -164,7 +164,7 @@ export async function generateWhatsAppReply(input: {
   const prospectStyle = analyzeProspectStyle(input.incomingText);
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
-${businessContextBlock()}
+${await businessContextBlock()}
 ${input.automationContext ? `\n## Automatisation active\n${input.automationContext}\n` : ""}
 
 ## Contact

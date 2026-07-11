@@ -912,7 +912,7 @@ body {
   .view-team { padding: 1.25rem 1rem 2rem; }
 }
 
-/* ── Console Green-API (WhatsApp) ── */
+/* ── Console WhatsApp (Evolution API) ── */
 #view-workspace {
   display: flex;
   flex-direction: column;
@@ -1390,6 +1390,19 @@ body {
   display: block;
   margin-bottom: 0.75rem;
   border-radius: 8px;
+}
+
+.evo-qr-panel {
+  margin-top: 1rem;
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.15);
+  text-align: center;
+}
+
+.evo-qr-panel .gapi-qr {
+  margin: 0.5rem auto 0.75rem;
 }
 
 .gapi-members { margin: 0.5rem 0 1rem; padding-left: 1.2rem; font-size: 0.85rem; }

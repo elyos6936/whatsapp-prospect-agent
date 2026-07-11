@@ -7,24 +7,24 @@ import {
   updateContactMemory,
 } from "./db.js";
 
-export function getMemoryContextBlock(chatId: string): string {
-  const contact = getContact(chatId);
+export async function getMemoryContextBlock(chatId: string): Promise<string> {
+  const contact = await getContact(chatId);
   if (!contact?.memory_summary?.trim()) return "";
   return `Résumé des échanges précédents avec ce contact :\n${contact.memory_summary}`;
 }
 
 export async function refreshContactMemory(chatId: string): Promise<void> {
-  const history = getContactChatHistory(chatId, 40);
+  const history = await getContactChatHistory(chatId, 40);
   if (history.length < 6) return;
 
-  const contact = getContact(chatId);
+  const contact = await getContact(chatId);
   if (contact?.memory_updated_at) {
     const last = new Date(contact.memory_updated_at.replace(" ", "T"));
     const hoursSince = (Date.now() - last.getTime()) / 3_600_000;
     if (hoursSince < 6) return;
   }
 
-  const key = getAppSettings().openai_api_key;
+  const key = (await getAppSettings()).openai_api_key;
   if (!key) return;
 
   const transcript = history
@@ -47,5 +47,5 @@ export async function refreshContactMemory(chatId: string): Promise<void> {
   });
 
   const summary = response.choices[0]?.message?.content?.trim();
-  if (summary) updateContactMemory(chatId, summary);
+  if (summary) await updateContactMemory(chatId, summary);
 }

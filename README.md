@@ -1,6 +1,6 @@
 # WhatsApp Agent
 
-Application locale d'agent WhatsApp : prospection, automatisations, réponses automatiques et console Green-API.
+Application locale d'agent WhatsApp : prospection, automatisations, réponses automatiques via **Evolution API**.
 
 ## Démarrage rapide
 
@@ -12,79 +12,37 @@ npm run dev
 
 Ouvrez **http://localhost:3000**
 
-1. Cliquez sur la carte **WhatsApp** pour ouvrir le workspace
-2. Configurez OpenAI et Green-API via **Connexions**
+1. Cliquez sur la carte **WhatsApp**
+2. **Connexions** → OpenAI + Evolution API
+3. **Connecter WhatsApp (QR)** → scannez le QR code
 
-## Configuration (via l'interface)
+## Configuration Evolution API
 
-1. Cliquez sur **Connexions**
-2. Onglet **OpenAI** : collez votre clé `sk-...`
-3. Onglet **Green-API** : Instance ID, Token, URL → **Connecter WhatsApp**
-4. Onglet **Profil** : prénom, offre, tarif (pour les réponses auto)
+Dans **Connexions → Evolution API** :
 
-Les identifiants sont stockés localement dans `data/agent.db`.
+- URL du serveur (ex. Hostinger)
+- Clé API (`apikey`)
+- Nom de l'instance
+- Bouton **Connecter WhatsApp (QR)** pour lier votre compte
 
-## Variables d'environnement (optionnelles)
+Variables `.env` optionnelles :
 
 ```env
 OPENAI_API_KEY=sk-...
-GREEN_API_ID_INSTANCE=
-GREEN_API_TOKEN=
-GREEN_API_BASE_URL=https://api.green-api.com
+EVOLUTION_API_BASE_URL=https://votre-serveur.com
+EVOLUTION_API_KEY=
+EVOLUTION_INSTANCE_NAME=mon-instance
 PORT=3000
-OPENAI_MODEL=gpt-4o
 ```
 
-## Fonctionnalités WhatsApp
+## Fonctionnalités
 
-- **Agent IA** : instructions en langage naturel (prospection, groupes, contacts, programmation)
-- **Automatisations** : campagnes de prospection groupe, vente sur mots-clés, suivi personnalisé
-- **Console Green-API** : inbox, chats, groupes, statuts, envoi direct, 40+ méthodes API
-- **Réponses automatiques** : conversation IA avec les prospects entrants
-- **Bilan du jour** : statistiques SQLite en temps réel
+- **Agent IA** : instructions en langage naturel
+- **Console WhatsApp** : inbox, chats, groupes, statuts, envoi test, QR
+- **Automatisations** : campagnes groupe, séquences, ROI
 
-## Exemples d'instructions
+## Prérequis
 
-- « Liste mes groupes WhatsApp »
-- « Envoie un message à +229XXXXXXXX : Bonjour… »
-- « Prospecte tout le groupe X avec ce message… »
-- « Bilan d'aujourd'hui »
-- « Montre la conversation avec +229XXXXXXXX »
-- « Poste le statut WhatsApp : … »
-- « Programme un message à 6h30 »
-
-## Base de données
-
-**SQLite** — fichier local `data/agent.db`.
-
-| Table | Contenu |
-|---|---|
-| `messages` | Conversations WhatsApp (entrant / sortant) |
-| `contacts` | Pipeline prospection |
-| `agent_conversation` | Instructions au chat agent |
-| `automations` | Campagnes automatisées |
-| `scheduled_messages` | Envois programmés |
-| `settings` | Clés API + profil business |
-
-API : `GET /api/reports/daily` · `GET /api/automations` · `GET /api/contacts/:phone/thread`
-
-## Contacts & garde-fous
-
-| Champ | Valeurs |
-|---|---|
-| status | `nouveau`, `en_conversation`, `interesse`, `stop` |
-| auto_reply | 0/1 — réponse auto pour **ce** numéro |
-
-### Réponse auto
-1. Toggle **global** (panneau gauche)
-2. **ET** `auto_reply = 1` sur le contact
-3. **ET** statut ≠ `stop`
-
-### Quota journalier
-Maximum **30 messages sortants / jour**.
-
-## Prérequis Green-API
-
-- Instance sur [green-api.com](https://green-api.com)
-- WhatsApp autorisé (QR scanné)
-- État `authorized`
+- Node.js 20+
+- Serveur [Evolution API](https://doc.evolution-api.com) (VPS / Hostinger)
+- Clé OpenAI

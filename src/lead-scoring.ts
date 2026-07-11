@@ -17,8 +17,8 @@ export interface ScoringResult {
   handoffReason?: string;
 }
 
-export function scoreIncomingMessage(text: string, chatId: string): ScoringResult {
-  const contact = getContact(chatId);
+export async function scoreIncomingMessage(text: string, chatId: string): Promise<ScoringResult> {
+  const contact = await getContact(chatId);
   const current = contact?.lead_score ?? 0;
   let delta = 2;
 
@@ -29,7 +29,7 @@ export function scoreIncomingMessage(text: string, chatId: string): ScoringResul
   if (/\?/.test(text)) delta += 5;
 
   const newScore = Math.max(0, Math.min(100, current + delta));
-  updateContactLeadScore(chatId, newScore);
+  await updateContactLeadScore(chatId, newScore);
 
   const label = newScore >= 70 ? "chaud" : newScore >= 40 ? "tiède" : "froid";
   const interested = newScore >= 70;
@@ -49,11 +49,14 @@ export function scoreIncomingMessage(text: string, chatId: string): ScoringResul
   };
 }
 
-export function recordAutomationConversion(automationId: number, revenueFcfa = 0): void {
-  const auto = getAutomation(automationId);
+export async function recordAutomationConversion(
+  automationId: number,
+  revenueFcfa = 0
+): Promise<void> {
+  const auto = await getAutomation(automationId);
   if (!auto) return;
   const stats = auto.stats;
-  updateAutomationStats(automationId, {
+  await updateAutomationStats(automationId, {
     conversions: (stats.conversions ?? 0) + 1,
     revenueFcfa: (stats.revenueFcfa ?? 0) + revenueFcfa,
   });

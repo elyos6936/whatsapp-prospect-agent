@@ -6,8 +6,8 @@ import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 
 const MAX_TOOL_ROUNDS = 8;
 
-function getOpenAiClient(): OpenAI {
-  const key = getAppSettings().openai_api_key;
+async function getOpenAiClient(): Promise<OpenAI> {
+  const key = (await getAppSettings()).openai_api_key;
   if (!key) {
     throw new Error(
       "Clé OpenAI manquante. Ouvrez « Connexions » et renseignez votre clé API OpenAI."
@@ -37,8 +37,8 @@ function formatOpenAiError(err: unknown): string {
 }
 
 export async function chatWithAgent(userMessage: string): Promise<string> {
-  const client = getOpenAiClient();
-  const history = getRecentAgentMessages(50);
+  const client = await getOpenAiClient();
+  const history = await getRecentAgentMessages(50);
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
     ...toOpenAiMessages(history),

@@ -1,3 +1,9 @@
+/* ── API base (Netlify → Hostinger) ── */
+function apiUrl(path) {
+  const base = (window.KLANVIO_CONFIG?.apiUrl || "").replace(/\/$/, "");
+  return `${base}${path}`;
+}
+
 /* ── Elements ── */
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
@@ -28,10 +34,15 @@ const evoInstanceInput = $("#evo-instance");
 const evoWebhookInput = $("#evo-webhook");
 const saveEvoBtn = $("#save-evolution");
 const testEvoBtn = $("#test-evolution");
+const evoShowQrBtn = $("#evo-show-qr");
+const evoQrPanel = $("#evo-qr-panel");
+const evoQrOutput = $("#evo-qr-output");
+const evoQrHint = $("#evo-qr-hint");
 const evoFeedback = $("#evo-feedback");
 const autoReplyToggle = $("#auto-reply-toggle");
 const contactsListEl = $("#contacts-list");
 const outboundQuotaEl = $("#outbound-quota");
+const resetQuotaBtn = $("#reset-quota-btn");
 const dailyBilanEl = $("#daily-bilan");
 const refreshBilanBtn = $("#refresh-bilan");
 const businessNameInput = $("#business-name");
@@ -187,7 +198,7 @@ async function showWhatsAppWorkspace() {
   currentView = "whatsapp";
   window.currentView = currentView;
   updateStatusPillsVisibility();
-  window.GreenApiConsole?.switchWaMode?.("agent");
+  window.WhatsAppConsole?.switchWaMode?.("agent");
   viewTeam?.classList.add("hidden");
   viewWorkspace?.classList.remove("hidden");
   backTeamBtn?.classList.remove("hidden");
@@ -207,7 +218,7 @@ async function showWhatsAppWorkspace() {
 async function loadContacts() {
   if (!contactsListEl) return;
   try {
-    const res = await fetch("/api/contacts");
+    const res = await fetch(apiUrl("/api/contacts"));
     if (!res.ok) return;
     const data = await res.json();
     const contacts = data.contacts ?? [];
@@ -248,7 +259,7 @@ async function loadContacts() {
 async function loadDailyBilan() {
   if (!dailyBilanEl) return;
   try {
-    const res = await fetch("/api/reports/daily");
+    const res = await fetch(apiUrl("/api/reports/daily"));
     if (!res.ok) return;
     const b = await res.json();
     const s = b.contactsByStatus || {};
@@ -278,7 +289,7 @@ async function loadDailyBilan() {
 /** Étape 3 : les messages WhatsApp (entrants/sortants) s'affichent en temps réel dans le chat. */
 async function pollWhatsApp() {
   try {
-    const res = await fetch(`/api/whatsapp?since=${lastWhatsAppId}`);
+    const res = await fetch(apiUrl(`/api/whatsapp?since=${lastWhatsAppId}`));
     if (!res.ok) return;
     const data = await res.json();
     let added = 0;
@@ -313,7 +324,7 @@ async function pollAgentHistory() {
   if (sending) return;
 
   try {
-    const res = await fetch(`/api/history/since?since=${lastAgentMsgId}`);
+    const res = await fetch(apiUrl(`/api/history/since?since=${lastAgentMsgId}`));
     if (!res.ok) return;
     const data = await res.json();
 
@@ -339,7 +350,7 @@ async function pollIncoming() {
 }
 
 async function loadHistory() {
-  const res = await fetch("/api/history");
+  const res = await fetch(apiUrl("/api/history"));
   if (!res.ok) throw new Error("Impossible de charger l'historique");
   const data = await res.json();
   messagesEl.innerHTML = "";
@@ -348,7 +359,7 @@ async function loadHistory() {
     appendMessage({
       role: "assistant",
       content:
-        "Bonjour ! Je suis votre agent WhatsApp.\n\n1. Connexions → OpenAI + Green-API.\n2. Les messages WhatsApp reçus apparaissent ici en temps réel.\n3. Ex. : « Liste mes groupes », « Montre l'historique avec +229… », « Messages reçus aujourd'hui ».",
+        "Bonjour ! Je suis votre agent WhatsApp.\n\n1. Connexions → OpenAI + Evolution API.\n2. Cliquez « Connecter WhatsApp (QR) » pour scanner le QR code.\n3. Ex. : « Liste mes groupes », « Envoie un message à +229… ».",
       created_at: new Date().toISOString(),
     });
     return;
@@ -370,8 +381,8 @@ async function loadHistory() {
 async function refreshStatus() {
   try {
     const [healthRes, settingsRes] = await Promise.all([
-      fetch("/api/health"),
-      fetch("/api/settings"),
+      fetch(apiUrl("/api/health")),
+      fetch(apiUrl("/api/settings")),
     ]);
 
     if (!healthRes.ok) throw new Error();
@@ -398,7 +409,7 @@ async function refreshStatus() {
       whatsappDetail.textContent = health.whatsapp.message || "Connecté";
       setConnectionCard(cardWhatsapp, "connected");
       setAgentWaStatus("connected", "Connecté · prêt");
-    } else if (settings?.evolution?.configured || settings?.greenApi?.configured) {
+    } else if (settings?.evolution?.configured) {
       setStatusPill(whatsappStatus, "pending");
       whatsappDetail.textContent = health.whatsapp?.message || "Configuré — en attente d'autorisation";
       setConnectionCard(cardWhatsapp, "error");
@@ -417,16 +428,15 @@ async function refreshStatus() {
     }
 
     if (outboundQuotaEl && health.outbound) {
-      outboundQuotaEl.textContent = `${health.outbound.today}/${health.outbound.limit}`;
+      const { today, limit, bonus } = health.outbound;
+      outboundQuotaEl.textContent =
+        bonus > 0 ? `${today}/${limit} (+${bonus} bonus)` : `${today}/${limit}`;
     }
 
     // Pré-remplir le modal
     if (settings?.evolution) {
       if (settings.evolution.baseUrl) evoUrlInput.value = settings.evolution.baseUrl;
       if (settings.evolution.instanceName) evoInstanceInput.value = settings.evolution.instanceName;
-    }
-    if (settings?.greenApi) {
-      // rétrocompat
     }
     if (settings?.business) {
       if (businessNameInput) businessNameInput.value = settings.business.ownerName || "";
@@ -456,7 +466,7 @@ async function sendMessage(text) {
   showTyping(true);
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch(apiUrl("/api/chat"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text }),
@@ -472,7 +482,7 @@ async function sendMessage(text) {
     } else {
       // Fallback : resync le curseur avec l'historique
       try {
-        const hist = await fetch("/api/history");
+        const hist = await fetch(apiUrl("/api/history"));
         if (hist.ok) {
           const h = await hist.json();
           for (const m of h.messages ?? []) {
@@ -532,7 +542,7 @@ saveOpenaiBtn.addEventListener("click", async () => {
   setFeedback(openaiFeedback, "Enregistrement…");
 
   try {
-    const res = await fetch("/api/settings/openai", {
+    const res = await fetch(apiUrl("/api/settings/openai"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ apiKey }),
@@ -564,7 +574,7 @@ async function saveEvolutionApi() {
     return null;
   }
 
-  const res = await fetch("/api/settings/evolution", {
+  const res = await fetch(apiUrl("/api/settings/evolution"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ baseUrl, apiKey, instanceName, webhookUrl }),
@@ -583,9 +593,10 @@ saveEvoBtn?.addEventListener("click", async () => {
     } else if (data.connected) {
       setFeedback(evoFeedback, "✅ " + (data.message || "WhatsApp connecté !"), "ok");
       evoKeyInput.value = "";
+      evoQrPanel?.classList.add("hidden");
       await refreshStatus();
     } else {
-      setFeedback(evoFeedback, "⚠️ " + (data.message || "Configuré mais non connecté"), "err");
+      setFeedback(evoFeedback, "Config enregistrée. Cliquez « Connecter WhatsApp (QR) » pour scanner.", "ok");
       await refreshStatus();
     }
   } catch (err) {
@@ -604,13 +615,14 @@ testEvoBtn?.addEventListener("click", async () => {
       await saveEvolutionApi();
     }
 
-    const res = await fetch("/api/settings/evolution/test", { method: "POST" });
+    const res = await fetch(apiUrl("/api/settings/evolution/test"), { method: "POST" });
     const data = await res.json();
 
     if (data.connected) {
       setFeedback(evoFeedback, "✅ " + data.message, "ok");
+      evoQrPanel?.classList.add("hidden");
     } else {
-      setFeedback(evoFeedback, "⚠️ " + data.message, "err");
+      setFeedback(evoFeedback, "⚠️ " + data.message + " — utilisez « Connecter WhatsApp (QR) ».", "err");
     }
     await refreshStatus();
   } catch (err) {
@@ -620,11 +632,43 @@ testEvoBtn?.addEventListener("click", async () => {
   }
 });
 
+async function showEvolutionQr() {
+  evoQrPanel?.classList.remove("hidden");
+  if (evoQrOutput) evoQrOutput.innerHTML = '<p class="contacts-empty">Chargement du QR…</p>';
+  setFeedback(evoFeedback, "Génération du QR code…");
+
+  try {
+    if (evoKeyInput.value.trim() && evoInstanceInput.value.trim()) {
+      await saveEvolutionApi();
+    }
+
+    const res = await fetch(apiUrl("/api/evolution/instance/qr"));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Impossible d'obtenir le QR code");
+
+    if (window.WhatsAppConsole?.renderQrPanel) {
+      window.WhatsAppConsole.renderQrPanel(evoQrOutput, data);
+    }
+
+    if (data.connected) {
+      setFeedback(evoFeedback, "✅ " + (data.message || "WhatsApp déjà connecté"), "ok");
+    } else {
+      setFeedback(evoFeedback, "Scannez le QR avec WhatsApp → Appareils connectés.", "ok");
+    }
+    await refreshStatus();
+  } catch (err) {
+    setFeedback(evoFeedback, err.message, "err");
+    if (evoQrOutput) evoQrOutput.innerHTML = "";
+  }
+}
+
+evoShowQrBtn?.addEventListener("click", () => void showEvolutionQr());
+
 saveBusinessBtn?.addEventListener("click", async () => {
   saveBusinessBtn.disabled = true;
   setFeedback(businessFeedback, "Enregistrement…");
   try {
-    const res = await fetch("/api/settings/business", {
+    const res = await fetch(apiUrl("/api/settings/business"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -671,7 +715,7 @@ $$(".tab").forEach((tab) => {
 
 autoReplyToggle?.addEventListener("change", async () => {
   try {
-    await fetch("/api/settings/auto-reply", {
+    await fetch(apiUrl("/api/settings/auto-reply"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: autoReplyToggle.checked }),
@@ -681,9 +725,33 @@ autoReplyToggle?.addEventListener("change", async () => {
   }
 });
 
+resetQuotaBtn?.addEventListener("click", async () => {
+  if (!confirm("Débloquer les envois pour aujourd'hui ? (ajoute un bonus au quota journalier)")) return;
+  resetQuotaBtn.disabled = true;
+  try {
+    const res = await fetch(apiUrl("/api/settings/outbound-quota"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "reset", extra: 20 }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Erreur");
+    if (outboundQuotaEl && data.outbound) {
+      const { today, limit, bonus } = data.outbound;
+      outboundQuotaEl.textContent =
+        bonus > 0 ? `${today}/${limit} (+${bonus} bonus)` : `${today}/${limit}`;
+    }
+    alert(data.message || "Quota débloqué.");
+  } catch (err) {
+    alert(err instanceof Error ? err.message : "Impossible de réinitialiser le quota.");
+  } finally {
+    resetQuotaBtn.disabled = false;
+  }
+});
+
 clearBtn.addEventListener("click", async () => {
   if (!confirm("Effacer toute la conversation ?")) return;
-  await fetch("/api/history", { method: "DELETE" });
+  await fetch(apiUrl("/api/history"), { method: "DELETE" });
   await loadHistory();
 });
 
@@ -738,7 +806,7 @@ async function bootstrapWorkspace() {
 
   // Curseur WhatsApp : messages déjà en base ne sont pas rejoués ; seuls les nouveaux s'affichent
   try {
-    const res = await fetch("/api/whatsapp?since=0");
+    const res = await fetch(apiUrl("/api/whatsapp?since=0"));
     if (res.ok) {
       const data = await res.json();
       for (const m of data.messages ?? []) {

@@ -8,7 +8,7 @@ export async function generatePersonalizedOpener(input: {
   groupName: string;
   conversationGuide?: string;
 }): Promise<string> {
-  const key = getAppSettings().openai_api_key;
+  const key = (await getAppSettings()).openai_api_key;
   if (!key) return personalizeFallback(input);
 
   const client = new OpenAI({ apiKey: key });

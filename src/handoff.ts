@@ -23,7 +23,7 @@ export async function maybeCreateHandoff(input: {
     suggestedReply = "Bonjour, je reprends la conversation personnellement. Comment puis-je vous aider ?";
   }
 
-  createHandoffEvent({
+  await createHandoffEvent({
     contactPhone: input.chatId,
     contactName: input.senderName,
     reason: input.scoring.handoffReason || "Intervention humaine recommandée",
