@@ -5,6 +5,12 @@ services:
     restart: unless-stopped
     ports:
       - "3001:3001"
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.klanvio-api.rule=Host(`klanvio-api.srv1820011.hstgr.cloud`)
+      - traefik.http.routers.klanvio-api.entrypoints=websecure
+      - traefik.http.routers.klanvio-api.tls.certresolver=letsencrypt
+      - traefik.http.services.klanvio-api.loadbalancer.server.port=3001
     environment:
       PORT: "3001"
       NODE_ENV: production
