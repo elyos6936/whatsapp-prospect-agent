@@ -75,33 +75,44 @@ $env:HOSTINGER_SSH = "root@srv1820011.hstgr.cloud"
 bash deploy/hostinger/deploy.sh
 ```
 
-### 2.2 Alternative : terminal web Hostinger
+### 2.2 Recommandé : terminal web Hostinger + git clone
 
-1. hPanel → VPS → **Terminal** (ou SSH depuis un autre PC)
-2. Sur le VPS, une première fois :
+Le code est publié sur GitHub (`elyos6936/whatsapp-prospect-agent`, branche `master`).
+
+1. hPanel → VPS → **Terminal (navigateur)**, connecté en `root`.
+2. Cloner (ou mettre à jour) le projet :
 
 ```bash
-mkdir -p /opt/klanvio
+cd /opt
+git clone https://github.com/elyos6936/whatsapp-prospect-agent.git klanvio 2>/dev/null || (cd klanvio && git pull)
 cd /opt/klanvio
-# Uploadez le projet (zip, git clone, ou rsync depuis votre PC)
 ```
 
-3. Créez `/opt/klanvio/.env` (copiez `deploy/hostinger/env.example` et remplissez) :
+3. Vérifier Node ≥ 20 (sinon l'installer) :
 
-```env
+```bash
+node -v || (curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get install -y nodejs)
+```
+
+4. Créer `/opt/klanvio/.env` :
+
+```bash
+cat > /opt/klanvio/.env <<'EOF'
 PORT=3001
 NODE_ENV=production
-DATABASE_URL=postgresql://postgres.omquaouhfifynvrpqilv:[MOT_DE_PASSE]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
+DATABASE_URL=postgresql://postgres.omquaouhfifynvrpqilv:jxVrk6pk1trYgp5W@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
 SUPABASE_URL=https://omquaouhfifynvrpqilv.supabase.co
-OPENAI_API_KEY=sk-...
 EVOLUTION_API_BASE_URL=https://evolution-api-kxse.srv1820011.hstgr.cloud
-EVOLUTION_API_KEY=votre_cle
-EVOLUTION_INSTANCE_NAME=votre_instance
+EVOLUTION_API_KEY=RvYzeDK63Gl3fBKJ7bVovn5kJbp8AMpO
+EVOLUTION_INSTANCE_NAME=automax-prospection
 CORS_ORIGINS=https://klanvio.netlify.app
 PUBLIC_API_URL=https://klanvio-api.srv1820011.hstgr.cloud
+EOF
 ```
 
-4. Installez et démarrez :
+> La clé OpenAI est déjà stockée dans la base Supabase (migrée). Si l'agent ne répond pas, ajoutez `OPENAI_API_KEY=sk-...` dans ce `.env`.
+
+5. Installer les dépendances et démarrer avec PM2 :
 
 ```bash
 cd /opt/klanvio
@@ -109,14 +120,16 @@ npm install --omit=dev
 npm install -g pm2
 pm2 start deploy/hostinger/ecosystem.config.cjs
 pm2 save
-pm2 startup   # suivez les instructions affichées
+pm2 startup   # exécutez la commande affichée
 ```
 
-5. Test local sur le VPS :
+6. Test local sur le VPS :
 
 ```bash
 curl http://127.0.0.1:3001/api/health
 ```
+
+Pour redéployer plus tard : `cd /opt/klanvio && git pull && npm install --omit=dev && pm2 reload klanvio-api`.
 
 ### 2.3 Nginx + HTTPS
 

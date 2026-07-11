@@ -1,0 +1,19 @@
+services:
+  klanvio-api:
+    build: .
+    container_name: klanvio-api
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: "3001"
+      NODE_ENV: production
+      # Renseignez les variables ci-dessous dans Docker Manager (Environment variables)
+      # ou décommentez-les ici pour un déploiement local :
+      # DATABASE_URL: postgresql://...
+      # SUPABASE_URL: https://omquaouhfifynvrpqilv.supabase.co
+      # EVOLUTION_API_BASE_URL: https://evolution-api-kxse.srv1820011.hstgr.cloud
+      # EVOLUTION_API_KEY: ...
+      # EVOLUTION_INSTANCE_NAME: automax-prospection
+      # CORS_ORIGINS: https://klanvio.netlify.app
+      # PUBLIC_API_URL: https://klanvio-api.srv1820011.hstgr.cloud
