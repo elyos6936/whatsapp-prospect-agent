@@ -975,6 +975,49 @@ export async function markScheduledFailed(userId: number, id: number, error: str
   `;
 }
 
+/** Annule tous les envois programmés encore en attente pour un destinataire (chatId @g.us / @c.us). */
+export async function cancelPendingScheduledForRecipient(
+  userId: number,
+  recipientChatId: string
+): Promise<number> {
+  const rows = await sql<{ id: number }[]>`
+    UPDATE scheduled_messages
+    SET status = 'cancelled'
+    WHERE user_id = ${userId} AND recipient = ${recipientChatId} AND status = 'pending'
+    RETURNING id
+  `;
+  return rows.length;
+}
+
+/** Modifie le texte et/ou l'heure d'un envoi programmé encore en attente. */
+export async function updateScheduledMessage(
+  userId: number,
+  id: number,
+  input: { message?: string; sendAt?: string }
+): Promise<ScheduledMessage> {
+  const existing = await sql<Record<string, unknown>[]>`
+    SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+    FROM scheduled_messages WHERE user_id = ${userId} AND id = ${id}
+  `;
+  const row = existing[0];
+  if (!row) throw new Error(`Message programmé #${id} introuvable.`);
+  const mapped = mapScheduledMessage(row);
+  if (mapped.status !== "pending") {
+    throw new Error(`Impossible de modifier : statut actuel = ${mapped.status}.`);
+  }
+
+  const newMessage = input.message?.trim() || mapped.message;
+  const newSendAt = input.sendAt ? toTsParam(input.sendAt) : parseLocalDateTime(mapped.send_at);
+
+  const updated = await sql<Record<string, unknown>[]>`
+    UPDATE scheduled_messages
+    SET message = ${newMessage}, send_at = ${newSendAt}
+    WHERE user_id = ${userId} AND id = ${id}
+    RETURNING id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
+  `;
+  return mapScheduledMessage(updated[0]);
+}
+
 export async function getContactThread(userId: number, phone: string, limit = 100): Promise<WhatsAppMessage[]> {
   const trimmed = phone.trim();
   const chatId = trimmed.includes("@") ? trimmed : `${trimmed.replace(/\D/g, "")}@c.us`;

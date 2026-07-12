@@ -66,6 +66,7 @@ import {
   CONTACT_STATUSES,
   blockContact,
   cancelScheduledMessage,
+  cancelPendingScheduledForRecipient,
   countOutboundToday,
   createAutomation,
   createGroupReplyRule,
@@ -86,6 +87,7 @@ import {
   saveContact,
   scheduleMessage,
   setContactAutoReply,
+  updateScheduledMessage,
   updateAutomationConfig,
   updateAutomationStatus,
   type AutomationConfig,
@@ -824,6 +826,70 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "schedule_whatsapp_messages_batch",
+      description:
+        "Programme plusieurs messages WhatsApp en une seule opération (idéal pour 2+ envois au même groupe à des heures différentes). Option replace_pending_for_recipient : annule d'abord les envois en attente pour ce destinataire avant de programmer les nouveaux (utile pour modifier des messages déjà planifiés).",
+      parameters: {
+        type: "object",
+        properties: {
+          replace_pending_for_recipient: {
+            type: "string",
+            description:
+              "Optionnel — nom de groupe, @g.us ou numéro : annule les envois pending existants pour ce destinataire avant de créer les nouveaux.",
+          },
+          messages: {
+            type: "array",
+            description: "Liste des messages à programmer.",
+            items: {
+              type: "object",
+              properties: {
+                recipient: {
+                  type: "string",
+                  description: "Numéro, chatId, ID groupe (@g.us) ou nom de groupe",
+                },
+                message: { type: "string", description: "Texte exact à envoyer" },
+                delay_minutes: {
+                  type: "number",
+                  description: "Envoi dans N minutes. Mutuellement exclusif avec send_at_local.",
+                },
+                send_at_local: {
+                  type: "string",
+                  description: "Heure locale HH:MM ou HHhMM (ex. 13:30). Si déjà passée → demain.",
+                },
+              },
+              required: ["recipient", "message"],
+            },
+          },
+        },
+        required: ["messages"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_scheduled_message",
+      description:
+        "Modifie un message programmé encore en attente (texte et/ou heure). Préférer schedule_whatsapp_messages_batch avec replace_pending_for_recipient pour remplacer plusieurs envois d'un coup.",
+      parameters: {
+        type: "object",
+        properties: {
+          id: { type: "number", description: "ID du message programmé" },
+          message: { type: "string", description: "Nouveau texte (optionnel)" },
+          send_at_local: {
+            type: "string",
+            description: "Nouvelle heure locale HH:MM (optionnel)",
+          },
+        },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "list_scheduled_messages",
       description: "Liste les messages WhatsApp programmés (en attente par défaut).",
       parameters: {
@@ -1502,6 +1568,8 @@ const LOCAL_TOOLS = new Set([
   "check_whatsapp_connection",
   "list_scheduled_messages",
   "cancel_scheduled_message",
+  "update_scheduled_message",
+  "schedule_whatsapp_messages_batch",
   "get_daily_bilan",
   "get_contact_conversation",
   "save_business_profile",
@@ -1591,6 +1659,74 @@ async function resolveGroupId(userId: number, groupIdOrName: string): Promise<st
 
 function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+interface ScheduleOneInput {
+  recipientRaw: string;
+  message: string;
+  delayMinutes?: number;
+  sendAtLocal?: string;
+}
+
+async function scheduleOneMessage(
+  userId: number,
+  input: ScheduleOneInput
+): Promise<
+  | { ok: true; job: Awaited<ReturnType<typeof scheduleMessage>>; label: string; isGroup: boolean }
+  | { ok: false; error: string }
+> {
+  const message = input.message.trim();
+  if (!message) return { ok: false, error: "Le texte du message est requis." };
+
+  const hasDelay = input.delayMinutes !== undefined && input.delayMinutes !== null;
+  const hasTime = Boolean(input.sendAtLocal?.trim());
+
+  if (hasDelay === hasTime) {
+    return {
+      ok: false,
+      error: "Indiquez UNIQUEMENT delay_minutes (ex. 2) OU send_at_local (ex. 13:30), pas les deux ni aucun.",
+    };
+  }
+
+  let chatId: string;
+  try {
+    chatId = await resolveRecipient(userId, input.recipientRaw);
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  if (chatId.endsWith("@c.us")) {
+    const existing = await getContact(userId, chatId);
+    if (existing?.status === "stop") {
+      return { ok: false, error: "Ce contact est en STOP. Impossible de programmer un envoi." };
+    }
+  }
+
+  let sendAt: string;
+  try {
+    sendAt = resolveLocalSendAt({
+      delayMinutes: hasDelay ? Number(input.delayMinutes) : undefined,
+      sendAtLocal: hasTime ? String(input.sendAtLocal) : undefined,
+    });
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+
+  const isGroup = chatId.endsWith("@g.us");
+  const label = isGroup
+    ? input.recipientRaw.trim().endsWith("@g.us")
+      ? chatId
+      : input.recipientRaw.trim()
+    : chatIdToDisplay(chatId);
+
+  const job = await scheduleMessage(userId, {
+    recipient: chatId,
+    recipientLabel: label,
+    message,
+    sendAt,
+  });
+
+  return { ok: true, job, label, isGroup };
 }
 
 function formatContact(c: {
@@ -2811,67 +2947,160 @@ export async function executeTool(
     }
 
     case "schedule_whatsapp_message": {
-      const recipientRaw = String(args.recipient ?? "");
-      const message = String(args.message ?? "").trim();
-      if (!message) {
-        return JSON.stringify({ error: "Le texte du message est requis." });
-      }
-
-      const hasDelay = args.delay_minutes !== undefined && args.delay_minutes !== null && args.delay_minutes !== "";
-      const hasTime = Boolean(args.send_at_local);
-
-      if (hasDelay === hasTime) {
-        return JSON.stringify({
-          error: "Indiquez UNIQUEMENT delay_minutes (ex. 2) OU send_at_local (ex. 06:30), pas les deux ni aucun.",
-        });
-      }
-
-      const chatId = await resolveRecipient(userId, recipientRaw);
-      if (chatId.endsWith("@c.us")) {
-        const existing = await getContact(userId, chatId);
-        if (existing?.status === "stop") {
-          return JSON.stringify({
-            error: "Ce contact est en STOP. Impossible de programmer un envoi.",
-          });
-        }
-      }
-
-      let sendAt: string;
-      try {
-        sendAt = resolveLocalSendAt({
-          delayMinutes: hasDelay ? Number(args.delay_minutes) : undefined,
-          sendAtLocal: hasTime ? String(args.send_at_local) : undefined,
-        });
-      } catch (err) {
-        return JSON.stringify({
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-
-      const isGroup = chatId.endsWith("@g.us");
-      const label = isGroup
-        ? recipientRaw.endsWith("@g.us")
-          ? chatId
-          : recipientRaw.trim()
-        : chatIdToDisplay(chatId);
-
-      const job = await scheduleMessage(userId, {
-        recipient: chatId,
-        recipientLabel: label,
-        message,
-        sendAt,
+      const result = await scheduleOneMessage(userId, {
+        recipientRaw: String(args.recipient ?? ""),
+        message: String(args.message ?? ""),
+        delayMinutes:
+          args.delay_minutes !== undefined && args.delay_minutes !== null && args.delay_minutes !== ""
+            ? Number(args.delay_minutes)
+            : undefined,
+        sendAtLocal: args.send_at_local ? String(args.send_at_local) : undefined,
       });
 
+      if (!result.ok) {
+        return JSON.stringify({ error: result.error });
+      }
+
+      const { job, label, isGroup } = result;
       return JSON.stringify({
         success: true,
         id: job.id,
-        recipient: chatId,
+        recipient: job.recipient,
         label,
         isGroup,
         message: job.message,
         sendAt: job.send_at,
         confirmation: `⏰ Message #${job.id} programmé pour ${label} à ${job.send_at} (heure locale).`,
       });
+    }
+
+    case "schedule_whatsapp_messages_batch": {
+      const rawList = args.messages;
+      if (!Array.isArray(rawList) || rawList.length === 0) {
+        return JSON.stringify({ error: "La liste messages est requise (au moins 1 entrée)." });
+      }
+      if (rawList.length > 20) {
+        return JSON.stringify({ error: "Maximum 20 messages par lot." });
+      }
+
+      let cancelled = 0;
+      const replaceRaw = String(args.replace_pending_for_recipient ?? "").trim();
+      if (replaceRaw) {
+        try {
+          const chatId = await resolveRecipient(userId, replaceRaw);
+          cancelled = await cancelPendingScheduledForRecipient(userId, chatId);
+        } catch (err) {
+          return JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      const scheduled: Array<{
+        id: number;
+        recipient: string;
+        label: string;
+        message: string;
+        sendAt: string;
+      }> = [];
+      const errors: Array<{ index: number; error: string }> = [];
+
+      for (let i = 0; i < rawList.length; i++) {
+        const item = rawList[i];
+        if (!item || typeof item !== "object") {
+          errors.push({ index: i, error: "Entrée invalide." });
+          continue;
+        }
+        const row = item as Record<string, unknown>;
+        const result = await scheduleOneMessage(userId, {
+          recipientRaw: String(row.recipient ?? ""),
+          message: String(row.message ?? ""),
+          delayMinutes:
+            row.delay_minutes !== undefined && row.delay_minutes !== null && row.delay_minutes !== ""
+              ? Number(row.delay_minutes)
+              : undefined,
+          sendAtLocal: row.send_at_local ? String(row.send_at_local) : undefined,
+        });
+        if (!result.ok) {
+          errors.push({ index: i, error: result.error });
+          continue;
+        }
+        scheduled.push({
+          id: result.job.id,
+          recipient: result.job.recipient,
+          label: result.label,
+          message: result.job.message,
+          sendAt: result.job.send_at,
+        });
+      }
+
+      if (!scheduled.length) {
+        return JSON.stringify({
+          success: false,
+          cancelled,
+          errors,
+          error: "Aucun message n'a pu être programmé.",
+        });
+      }
+
+      const lines = scheduled.map(
+        (s) => `• #${s.id} → ${s.label} à ${s.sendAt} : « ${s.message.slice(0, 80)} »`
+      );
+
+      return JSON.stringify({
+        success: errors.length === 0,
+        cancelled,
+        scheduledCount: scheduled.length,
+        errorCount: errors.length,
+        scheduled,
+        errors: errors.length ? errors : undefined,
+        confirmation:
+          (cancelled > 0 ? `🗑️ ${cancelled} envoi(s) en attente annulé(s).\n` : "") +
+          `⏰ ${scheduled.length} message(s) programmé(s) :\n${lines.join("\n")}`,
+      });
+    }
+
+    case "update_scheduled_message": {
+      const id = Number(args.id);
+      if (!Number.isInteger(id) || id < 1) {
+        return JSON.stringify({ error: "ID invalide." });
+      }
+
+      const newMessage = args.message != null ? String(args.message).trim() : undefined;
+      const newTime = args.send_at_local ? String(args.send_at_local).trim() : undefined;
+      if (!newMessage && !newTime) {
+        return JSON.stringify({ error: "Indiquez message et/ou send_at_local à modifier." });
+      }
+
+      let sendAt: string | undefined;
+      if (newTime) {
+        try {
+          sendAt = resolveLocalSendAt({ sendAtLocal: newTime });
+        } catch (err) {
+          return JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      try {
+        const job = await updateScheduledMessage(userId, id, {
+          message: newMessage,
+          sendAt,
+        });
+        return JSON.stringify({
+          success: true,
+          id: job.id,
+          message: job.message,
+          sendAt: job.send_at,
+          label: job.recipient_label || chatIdToDisplay(job.recipient),
+          confirmation: `✏️ Message #${job.id} mis à jour — envoi prévu à ${job.send_at}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
     }
 
     case "list_scheduled_messages": {

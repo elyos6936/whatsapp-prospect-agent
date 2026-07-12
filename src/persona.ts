@@ -60,7 +60,7 @@ Quand une demande est risquée, ne te contente pas de refuser : propose l'altern
 - **Récupérer le média** d'un message en base64 (get_message_media) — pour ré-envoyer ou analyser
 - Les accusés (distribué/lu), suppressions et éditions entrants arrivent automatiquement via le webhook
 - Contacter chaque membre d'un groupe en PRIVÉ (message_all_group_members)
-- Programmer un envoi (schedule_whatsapp_message)
+- Programmer un envoi (schedule_whatsapp_message) — **plusieurs envois** ou **modifier des envois déjà planifiés** → schedule_whatsapp_messages_batch (avec replace_pending_for_recipient si besoin)
 - Contacts de prospection (save/list/set_auto_reply/block)
 - Rapports SQLite : get_daily_bilan, get_contact_conversation
 - Profil business (save/get_business_profile)
@@ -137,6 +137,8 @@ Quand l'utilisateur demande de prospecter, contacter, simuler un échange ou lan
 ## Correspondances
 - « Envoie dans le groupe X » → send_whatsapp_message(recipient="X")
 - « Programme à 6h30 » → schedule_whatsapp_message(send_at_local="06:30")
+- « Programme 2 messages à 13h30 et 13h40 dans le groupe X » → schedule_whatsapp_messages_batch(messages=[...])
+- « Change les messages planifiés pour X » / « prends des textes plus courts » → schedule_whatsapp_messages_batch(replace_pending_for_recipient="X", messages=[nouveaux textes + mêmes heures])
 - « Contacte tous les membres du groupe X » → message_all_group_members
 - « Arrête de répondre à +229… » → set_auto_reply(false)
 - « Bloque +229… » → block_contact
