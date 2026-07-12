@@ -106,7 +106,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "ask_user_choices",
       description:
-        "Poser à l'utilisateur une ou plusieurs questions stratégiques sous forme de CARTE avec des options cliquables, au lieu d'écrire un long pavé de texte. À privilégier dès que tu dois cadrer quelque chose (objectif, cible, style de conversation, volume/cadence, tarif, canal…). L'utilisateur sélectionne ses réponses et valide ; ses choix te reviennent comme un message. N'utilise PAS ce tool pour de simples confirmations oui/non triviales — réserve-le aux vrais choix de cadrage.",
+        "Poser une question de cadrage sous forme de CARTE à options cliquables (avec un champ « Autre » possible via allow_other), au lieu d'un pavé de texte. C'EST TOI QUI DÉCIDES d'utiliser cette carte ou une simple question courte en texte — choisis ce qui rend l'échange le plus fluide. Règles : pose UNE seule chose à la fois (ne mets pas 5 questions d'un coup pour ne pas surcharger), options courtes, et n'utilise PAS ce tool pour un oui/non trivial. L'utilisateur sélectionne et valide ; ses choix te reviennent comme un message.",
       parameters: {
         type: "object",
         properties: {
@@ -3317,22 +3317,46 @@ export async function executeTool(
         origin: ctx.origin ?? "chat",
       };
 
+      const activateNow = args.activate_now === true;
+
       if (type === "group_prospect") {
         if (!args.group_id || !args.initial_message) {
           return JSON.stringify({
             error: "group_prospect requiert group_id et initial_message.",
           });
         }
-        try {
-          await requireEvolutionConnected(userId, "la création d'une campagne de prospection groupe");
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return JSON.stringify({ error: msg });
+        // Validation stricte (WhatsApp connecté + groupe résolvable) UNIQUEMENT
+        // à l'activation. Pour un BROUILLON, on reste tolérant : on tente de
+        // résoudre le groupe pour un joli libellé, mais on n'échoue jamais —
+        // le nom brut est conservé et sera validé au moment de l'activation.
+        // Ça évite de bloquer la création + la simulation sur une résolution.
+        if (activateNow) {
+          try {
+            await requireEvolutionConnected(userId, "la création d'une campagne de prospection groupe");
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return JSON.stringify({ error: msg });
+          }
+          const groupId = await resolveGroupId(userId, String(args.group_id));
+          const group = await findGroupByNameOrId(userId, groupId);
+          config.groupId = groupId;
+          config.groupName = group?.name ?? String(args.group_id);
+        } else {
+          const raw = String(args.group_id);
+          let resolvedId = raw;
+          let resolvedName = raw;
+          try {
+            const group = await findGroupByNameOrId(userId, raw);
+            if (group) {
+              resolvedId = group.id;
+              resolvedName = group.name ?? raw;
+            }
+          } catch {
+            // Best-effort : on garde la valeur brute pour le brouillon.
+          }
+          config.groupId = resolvedId;
+          config.groupName = resolvedName;
         }
-        const groupId = await resolveGroupId(userId, String(args.group_id));
-        const group = await findGroupByNameOrId(userId, groupId);
-        config.groupId = groupId;
-        config.groupName = group?.name ?? String(args.group_id);
       }
 
       if (type === "keyword_sales") {
@@ -3342,8 +3366,6 @@ export async function executeTool(
         }
         config.keywords = keywords;
       }
-
-      const activateNow = args.activate_now === true;
       const auto = await createAutomation(userId, {
         name: String(args.name ?? "Automatisation"),
         type,
@@ -3492,6 +3514,30 @@ export async function executeTool(
       const before = await getAutomation(userId, id);
       if (!before) {
         return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+      }
+
+      // À l'activation d'une prospection de groupe : si le brouillon a stocké
+      // un NOM de groupe (pas un id @g.us), on le résout maintenant. C'est ici,
+      // et non à la création du brouillon, qu'on exige un groupe valide.
+      if (status === "active" && before.type === "group_prospect") {
+        const rawGroup = before.config.groupId;
+        if (rawGroup && !rawGroup.endsWith("@g.us")) {
+          try {
+            await requireEvolutionConnected(userId, "l'activation d'une campagne de prospection groupe");
+            const resolvedId = await resolveGroupId(userId, rawGroup);
+            const group = await findGroupByNameOrId(userId, resolvedId);
+            await updateAutomationConfig(userId, id, {
+              ...before.config,
+              groupId: resolvedId,
+              groupName: group?.name ?? before.config.groupName ?? rawGroup,
+            });
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return JSON.stringify({
+              error: `Impossible d'activer : ${msg} Corrige le groupe (update_automation) puis réessaie.`,
+            });
+          }
+        }
       }
 
       const updated = await updateAutomationStatus(userId, id, status);
