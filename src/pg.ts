@@ -12,6 +12,8 @@ export const sql = postgres(config.databaseUrl, {
   max: 10,
   idle_timeout: 20,
   connect_timeout: 10,
+  // PgBouncer (port 6543 Supabase) ne supporte pas les prepared statements.
+  prepare: false,
 });
 
 console.log("📦 PostgreSQL prêt (DATABASE_URL)");
