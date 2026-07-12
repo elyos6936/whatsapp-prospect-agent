@@ -16,6 +16,29 @@ function isDanglingAnnouncement(text: string): boolean {
   return /[:：]$/u.test(t);
 }
 
+/**
+ * Détecte une annonce de simulation « vide » : le modèle dit qu'il commence /
+ * lance la simulation mais ne fournit aucun message concret (ni guillemets, ni
+ * contenu réel). C'est le bug typique où la simulation est zappée.
+ */
+function isEmptySimulationStart(text: string): boolean {
+  const t = text.trim();
+  const announcesSim =
+    /\b(commen[çc]ons|d[ée]marr\w*|lan[çc]\w*|d[ée]buton\w*|on commence|passons\s+[àa])\b[^.!?]{0,40}\bsimulation\b/i.test(
+      t
+    ) || /\bsimulation\b[^.!?]{0,20}\b(commence|d[ée]marre|c'est parti)\b/i.test(t);
+  if (!announcesSim) return false;
+  // S'il y a déjà un vrai message entre guillemets ou un contenu multi-lignes conséquent, ce n'est pas vide.
+  const hasQuotedMessage = /[«"„][^»"]{8,}[»"]/.test(t);
+  const isShort = t.length < 240;
+  return !hasQuotedMessage && isShort;
+}
+
+/** Petite pause. */
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) {
@@ -102,16 +125,29 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
     rounds++;
 
     let response: OpenAI.Chat.Completions.ChatCompletion;
-    try {
-      response = await client.chat.completions.create({
-        model: config.openaiModel,
-        messages,
-        tools: TOOL_DEFINITIONS,
-        tool_choice: "auto",
-        max_tokens: 4096,
-      });
-    } catch (err) {
-      throw new Error(formatOpenAiError(err));
+    const MAX_API_RETRIES = 3;
+    let apiAttempt = 0;
+    for (;;) {
+      apiAttempt++;
+      try {
+        response = await client.chat.completions.create({
+          model: config.openaiModel,
+          messages,
+          tools: TOOL_DEFINITIONS,
+          tool_choice: "auto",
+          max_tokens: 4096,
+        });
+        break;
+      } catch (err) {
+        const status = err instanceof OpenAI.APIError ? err.status : undefined;
+        const retryable = status === 429 || status === 500 || status === 503;
+        if (retryable && apiAttempt <= MAX_API_RETRIES) {
+          // Back-off exponentiel : 1s, 2s, 4s.
+          await sleep(1000 * 2 ** (apiAttempt - 1));
+          continue;
+        }
+        throw new Error(formatOpenAiError(err));
+      }
     }
 
     const choice = response.choices[0];
@@ -170,6 +206,18 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
         role: "system",
         content:
           "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète : reprends l'annonce PUIS le texte annoncé en entier (le message de prospection, la suggestion, etc.), dans un seul message. Ne termine pas sur «\u00A0:\u00A0».",
+      });
+      continue;
+    }
+
+    // Garde-fou simulation : le modèle a dit « commençons la simulation » sans
+    // écrire de message concret. On le force à dérouler réellement la simulation.
+    if (isEmptySimulationStart(text) && rounds < MAX_TOOL_ROUNDS) {
+      messages.push({ role: "assistant", content: text });
+      messages.push({
+        role: "system",
+        content:
+          "Tu viens d'annoncer la simulation SANS l'écrire — c'est interdit. Écris MAINTENANT la simulation réelle, dans ce message : d'abord le premier message tel qu'il partirait au prospect (voix de l'entreprise, entre guillemets «\u00A0…\u00A0»), puis la réponse réaliste du prospect (préfixée par son nom), sur 2-3 tours. Termine par «\u00A0Est-ce que cela te convient ?\u00A0». Pas de bloc de code.",
       });
       continue;
     }
