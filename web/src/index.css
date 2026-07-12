@@ -1,0 +1,176 @@
+@import 'tailwindcss';
+
+@theme inline {
+  --color-bg-0: var(--bg-0);
+  --color-bg-100: var(--bg-100);
+  --color-bg-200: var(--bg-200);
+  --color-bg-300: var(--bg-300);
+  --color-text-100: var(--text-100);
+  --color-text-200: var(--text-200);
+  --color-text-300: var(--text-300);
+  --color-text-400: var(--text-400);
+  --color-text-500: var(--text-500);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-brand: var(--brand);
+  --color-brand-dark: var(--brand-dark);
+  --color-brand-muted: var(--brand-muted);
+  --color-brand-border: var(--brand-border);
+  --color-border: var(--border);
+  --font-serif: 'Source Serif 4', Georgia, serif;
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --ease-silk: cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* Thème noir/bleu Klanvio */
+:root {
+  --bg-0: #050a0f;
+  --bg-100: #0a1120;
+  --bg-200: #101827;
+  --bg-300: #162035;
+  --text-100: #e2eaf6;
+  --text-200: #c8d4e8;
+  --text-300: #9aabc4;
+  --text-400: #7a8fad;
+  --text-500: #5c6778;
+  --accent: #2057ce;
+  --accent-hover: #1845a8;
+  --brand: #2057ce;
+  --brand-dark: #1845a8;
+  --brand-muted: rgba(32, 87, 206, 0.15);
+  --brand-border: rgba(32, 87, 206, 0.42);
+  --brand-ring: rgba(32, 87, 206, 0.24);
+  --border: rgba(255, 255, 255, 0.08);
+  --ease-silk: cubic-bezier(0.2, 0, 0, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  background: var(--bg-0);
+  color: var(--text-100);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--bg-300);
+  border-radius: 999px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.35s var(--ease-silk) forwards;
+}
+
+.skeleton-shine {
+  background: linear-gradient(90deg, var(--bg-200) 25%, var(--bg-300) 50%, var(--bg-200) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease-in-out infinite;
+}
+
+.prose-klanvio {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.prose-klanvio p { margin: 0 0 0.75em; }
+.prose-klanvio p:last-child { margin-bottom: 0; }
+.prose-klanvio ul, .prose-klanvio ol { margin: 0 0 0.75em 1.25em; }
+.prose-klanvio code:not(pre code) {
+  font-size: 0.85em;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  background: rgba(32, 87, 206, 0.15);
+  color: #93c5fd;
+}
+.prose-klanvio pre {
+  margin: 0.5em 0;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #050a0f;
+  border: 1px solid var(--border);
+}
+.prose-klanvio a {
+  color: #3b82f6;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+.prose-klanvio .chat-media-image {
+  display: block;
+  max-width: min(100%, 22rem);
+  max-height: 20rem;
+  width: auto;
+  height: auto;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-100);
+  object-fit: contain;
+}
+.prose-klanvio .chat-media-video {
+  display: block;
+  max-width: min(100%, 28rem);
+  max-height: 22rem;
+  width: 100%;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-100);
+}
+.prose-klanvio .chat-media-caption {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.4rem;
+  font-size: 0.75rem;
+  color: var(--text-500);
+}
+.prose-klanvio .chat-media-fallback {
+  max-width: min(100%, 28rem);
+  padding: 0.75rem 1rem;
+  border-radius: 12px;
+  border: 1px dashed var(--border);
+  background: var(--bg-100);
+}

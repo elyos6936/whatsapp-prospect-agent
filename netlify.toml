@@ -1,15 +1,22 @@
 [build]
-  publish = "public"
-  command = "node scripts/inject-netlify-config.mjs"
+  base = "web"
+  publish = "web/dist"
+  command = "npm install && npm run build"
 
 [build.environment]
   NODE_VERSION = "20"
+  VITE_API_URL = "https://klanvio-api.srv1820011.hstgr.cloud"
 
 [[redirects]]
   from = "/api/*"
   to = ":KLANVIO_API_URL/api/:splat"
   status = 200
   force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
 
 [[headers]]
   for = "/*"

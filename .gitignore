@@ -1,6 +1,7 @@
 scripts/configure.ts
 node_modules/
 dist/
+web/dist/
 data/
 !.gitkeep
 .env

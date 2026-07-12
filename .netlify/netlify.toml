@@ -7,13 +7,15 @@ plugins = []
 [functions."*"]
 
 [build]
-publish = "C:\\Projets\\whatsapp-prospect-agent\\public"
+publish = "C:\\Projets\\whatsapp-prospect-agent\\web\\dist"
 publishOrigin = "config"
 commandOrigin = "config"
-command = "node scripts/inject-netlify-config.mjs"
+command = "npm install && npm run build"
+base = "C:\\Projets\\whatsapp-prospect-agent\\web"
 
 [build.environment]
 NODE_VERSION = "20"
+VITE_API_URL = "https://klanvio-api.srv1820011.hstgr.cloud"
 
 [build.processing]
 
@@ -39,6 +41,18 @@ from = "/api/*"
 to = ":KLANVIO_API_URL/api/:splat"
 status = 200.0
 force = true
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]
+
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200.0
+force = false
 
 [redirects.query]
 
