@@ -2,14 +2,23 @@ import type { FastifyInstance } from "fastify";
 import { requireUserId } from "./auth.js";
 import {
   createAutomation,
+  getAutomation,
   getAutomationDetail,
+  getDailyBilan,
   listAutomations,
+  listAutomationTargets,
+  listScheduledMessages,
+  cancelScheduledMessage,
+  saveAgentMessage,
+  getRecentAgentMessages,
+  clearAgentConversation,
   updateAutomationConfig,
   updateAutomationStatus,
   type AutomationStatus,
   type AutomationType,
 } from "./db.js";
 import { bootstrapGroupProspectTargets, reloadGroupProspectTargets } from "./automation-engine.js";
+import { chatWithAgent } from "./agent.js";
 import { findGroupByNameOrId, requireEvolutionConnected } from "./evolutionapi.js";
 
 export async function registerAutomationRoutes(app: FastifyInstance): Promise<void> {
@@ -131,5 +140,116 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(400).send({ error: msg, automation: await getAutomationDetail(userId, id) });
     }
+  });
+
+  // --- Constructeur d'automatisation (page Automatisation → Manuel) : chat IA dédié ---
+  app.get("/api/automations/builder/history", async (request) => {
+    const userId = requireUserId(request);
+    const messages = await getRecentAgentMessages(userId, 100, "automation");
+    return { messages };
+  });
+
+  app.post<{ Body: { message?: string } }>("/api/automations/builder/chat", async (req, reply) => {
+    const userId = requireUserId(req);
+    const message = req.body?.message?.trim();
+    if (!message) {
+      return reply.status(400).send({ error: "Le champ « message » est requis." });
+    }
+
+    await saveAgentMessage(userId, "user", message, "automation");
+    try {
+      const assistantReply = await chatWithAgent(userId, message, {
+        channel: "automation",
+        origin: "manual",
+        builder: true,
+      });
+      const saved = await saveAgentMessage(userId, "assistant", assistantReply, "automation");
+      return { id: saved.id, reply: saved.content, created_at: saved.created_at };
+    } catch (err) {
+      const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
+      const saved = await saveAgentMessage(userId, "assistant", `❌ ${errorText}`, "automation");
+      return { id: saved.id, reply: saved.content, created_at: saved.created_at, error: true };
+    }
+  });
+
+  app.delete("/api/automations/builder/history", async (request) => {
+    const userId = requireUserId(request);
+    await clearAgentConversation(userId, "automation");
+    return { ok: true };
+  });
+
+  // --- Envois programmés ponctuels (sous-section « Automatique ») ---
+  app.get("/api/scheduled", async (request) => {
+    const userId = requireUserId(request);
+    const messages = await listScheduledMessages(userId, { includeDone: true, limit: 100 });
+    return { messages };
+  });
+
+  app.delete<{ Params: { id: string } }>("/api/scheduled/:id", async (req, reply) => {
+    const userId = requireUserId(req);
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return reply.status(400).send({ error: "ID invalide." });
+    }
+    const cancelled = await cancelScheduledMessage(userId, id);
+    if (!cancelled) {
+      return reply.status(404).send({ error: "Message programmé introuvable." });
+    }
+    return { ok: true, message: cancelled };
+  });
+
+  // --- Statistiques d'une automatisation (taux de réponse, messages) ---
+  app.get<{ Params: { id: string } }>("/api/automations/:id/stats", async (req, reply) => {
+    const userId = requireUserId(req);
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return reply.status(400).send({ error: "ID invalide." });
+    }
+    const auto = await getAutomation(userId, id);
+    if (!auto) {
+      return reply.status(404).send({ error: "Automatisation introuvable." });
+    }
+
+    const targets = await listAutomationTargets(userId, id, { limit: 1000 });
+    const contacted = targets.filter((t) => t.status !== "pending").length;
+    const replied = targets.filter((t) => t.status === "replied" || t.status === "interested").length;
+    const interested = targets.filter((t) => t.status === "interested").length;
+    const pending = targets.filter((t) => t.status === "pending").length;
+    const stopped = targets.filter((t) => t.status === "stopped").length;
+
+    const messagesSent =
+      (Number(auto.stats.outboundUsed) || 0) || contacted;
+    const messagesHandled = Number(auto.stats.messagesHandled) || 0;
+    const responseRate = contacted > 0 ? Math.round((replied / contacted) * 100) : null;
+
+    const bilan = await getDailyBilan(userId).catch(() => null);
+
+    return {
+      automation: {
+        id: auto.id,
+        name: auto.name,
+        type: auto.type,
+        status: auto.status,
+        mode: auto.config.mode ?? null,
+        origin: auto.config.origin ?? "chat",
+      },
+      stats: {
+        targetsTotal: targets.length,
+        contacted,
+        pending,
+        replied,
+        interested,
+        stopped,
+        messagesSent,
+        messagesHandled,
+        responseRatePercent: responseRate,
+        conversions: Number(auto.stats.conversions) || 0,
+        lastActionAt: auto.stats.lastActionAt ?? null,
+        report: typeof auto.stats.report === "string" ? auto.stats.report : null,
+      },
+      today: bilan
+        ? { date: bilan.date, incoming: bilan.incoming, outgoing: bilan.outgoing }
+        : null,
+    };
   });
 }

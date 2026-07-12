@@ -1610,7 +1610,17 @@ function formatContact(c: {
   };
 }
 
-export async function executeTool(userId: number, name: string, args: Record<string, unknown>): Promise<string> {
+export interface ToolContext {
+  /** Origine d'une automatisation créée par un tool ('chat' = chat principal, 'manual' = constructeur). */
+  origin?: "chat" | "manual";
+}
+
+export async function executeTool(
+  userId: number,
+  name: string,
+  args: Record<string, unknown>,
+  ctx: ToolContext = {}
+): Promise<string> {
   if (!LOCAL_TOOLS.has(name)) {
     if (!(await getEvolutionCredentials(userId))) {
       return JSON.stringify({
@@ -3019,6 +3029,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
         stopOnDissatisfaction: args.stop_on_dissatisfaction !== false,
         stopOnUnknownQuestion: args.stop_on_unknown_question !== false,
         simulationApproved: false,
+        origin: ctx.origin ?? "chat",
       };
 
       if (type === "group_prospect") {

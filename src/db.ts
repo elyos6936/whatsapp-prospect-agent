@@ -175,39 +175,59 @@ function mapAgentMessage(row: Record<string, unknown>): AgentMessage {
   };
 }
 
-export async function saveAgentMessage(userId: number, role: AgentRole, content: string): Promise<AgentMessage> {
+/** Canal de conversation agent : 'main' = chat principal, 'automation' = constructeur d'automatisations. */
+export type AgentChannel = "main" | "automation";
+
+export async function saveAgentMessage(
+  userId: number,
+  role: AgentRole,
+  content: string,
+  channel: AgentChannel = "main"
+): Promise<AgentMessage> {
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO agent_conversation (user_id, role, content)
-    VALUES (${userId}, ${role}, ${content})
+    INSERT INTO agent_conversation (user_id, role, content, channel)
+    VALUES (${userId}, ${role}, ${content}, ${channel})
     RETURNING id, role, content, created_at
   `;
   return mapAgentMessage(rows[0]);
 }
 
-export async function getRecentAgentMessages(userId: number, limit = 50): Promise<AgentMessage[]> {
+export async function getRecentAgentMessages(
+  userId: number,
+  limit = 50,
+  channel: AgentChannel = "main"
+): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
-    WHERE user_id = ${userId}
+    WHERE user_id = ${userId} AND channel = ${channel}
     ORDER BY id DESC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage).reverse();
 }
 
-export async function getAgentMessagesSince(userId: number, sinceId = 0, limit = 50): Promise<AgentMessage[]> {
+export async function getAgentMessagesSince(
+  userId: number,
+  sinceId = 0,
+  limit = 50,
+  channel: AgentChannel = "main"
+): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
-    WHERE user_id = ${userId} AND id > ${sinceId}
+    WHERE user_id = ${userId} AND channel = ${channel} AND id > ${sinceId}
     ORDER BY id ASC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage);
 }
 
-export async function clearAgentConversation(userId: number): Promise<void> {
-  await sql`DELETE FROM agent_conversation WHERE user_id = ${userId}`;
+export async function clearAgentConversation(
+  userId: number,
+  channel: AgentChannel = "main"
+): Promise<void> {
+  await sql`DELETE FROM agent_conversation WHERE user_id = ${userId} AND channel = ${channel}`;
 }
 
 export interface WhatsAppMessage {
@@ -1121,6 +1141,8 @@ export interface AutomationConfig {
   stopOnUnknownQuestion?: boolean;
   /** La simulation a été validée par l'utilisateur (garde-fou avant activation). */
   simulationApproved?: boolean;
+  /** Origine de l'automatisation : 'chat' (chat principal) ou 'manual' (page Automatisation). */
+  origin?: "chat" | "manual";
 }
 
 export interface AutomationStats {

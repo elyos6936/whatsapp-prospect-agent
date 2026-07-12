@@ -348,6 +348,88 @@ export async function resolveHandoff(
   });
 }
 
+// --- Constructeur d'automatisation (page Automatisation → Manuel) ---
+export interface BuilderMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  created_at: string;
+}
+
+export async function fetchBuilderHistory(): Promise<BuilderMessage[]> {
+  const data = await request<{ messages: BuilderMessage[] }>('/api/automations/builder/history');
+  return data.messages ?? [];
+}
+
+export async function sendBuilderMessage(message: string): Promise<{
+  id: number;
+  reply: string;
+  created_at: string;
+  error?: boolean;
+}> {
+  return request('/api/automations/builder/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message }),
+  });
+}
+
+export async function clearBuilderHistory(): Promise<void> {
+  await request('/api/automations/builder/history', { method: 'DELETE' });
+}
+
+// --- Envois programmés (sous-section « Automatique ») ---
+export interface ScheduledMessageItem {
+  id: number;
+  recipient: string;
+  recipient_label: string | null;
+  message: string;
+  send_at: string;
+  status: string;
+  error: string | null;
+  created_at: string;
+  sent_at: string | null;
+}
+
+export async function fetchScheduledMessages(): Promise<ScheduledMessageItem[]> {
+  const data = await request<{ messages: ScheduledMessageItem[] }>('/api/scheduled');
+  return data.messages ?? [];
+}
+
+export async function cancelScheduledMessage(id: number): Promise<void> {
+  await request(`/api/scheduled/${id}`, { method: 'DELETE' });
+}
+
+// --- Stats d'une automatisation ---
+export interface AutomationStats {
+  automation: {
+    id: number;
+    name: string;
+    type: string;
+    status: string;
+    mode: string | null;
+    origin: string;
+  };
+  stats: {
+    targetsTotal: number;
+    contacted: number;
+    pending: number;
+    replied: number;
+    interested: number;
+    stopped: number;
+    messagesSent: number;
+    messagesHandled: number;
+    responseRatePercent: number | null;
+    conversions: number;
+    lastActionAt: string | null;
+    report: string | null;
+  };
+  today: { date: string; incoming: number; outgoing: number } | null;
+}
+
+export async function fetchAutomationStats(id: number): Promise<AutomationStats> {
+  return request<AutomationStats>(`/api/automations/${id}/stats`);
+}
+
 export async function registerUser(input: {
   email: string;
   password: string;

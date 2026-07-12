@@ -1,11 +1,27 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT } from "./persona.js";
-import { getAppSettings, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
+import { AUTOMATION_BUILDER_PROMPT } from "./persona.js";
+import {
+  getAppSettings,
+  getRecentAgentMessages,
+  type AgentChannel,
+  type AgentMessage,
+  type AppSettings,
+} from "./db.js";
 import { testEvolutionConnection } from "./evolutionapi.js";
-import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
+import { executeTool, TOOL_DEFINITIONS, type ToolContext } from "./tools.js";
 
 const MAX_TOOL_ROUNDS = 8;
+
+export interface ChatAgentOptions {
+  /** Canal de conversation (historique isolé). Défaut : 'main'. */
+  channel?: AgentChannel;
+  /** Origine des automatisations créées pendant cet échange ('chat' ou 'manual'). */
+  origin?: "chat" | "manual";
+  /** Mode constructeur d'automatisation (page Automatisation → Manuel). */
+  builder?: boolean;
+}
 
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
@@ -58,7 +74,14 @@ function formatOpenAiError(err: unknown): string {
   return String(err);
 }
 
-export async function chatWithAgent(userId: number, userMessage: string): Promise<string> {
+export async function chatWithAgent(
+  userId: number,
+  userMessage: string,
+  options: ChatAgentOptions = {}
+): Promise<string> {
+  const channel = options.channel ?? "main";
+  const toolCtx: ToolContext = { origin: options.origin ?? "chat" };
+
   const connection = await testEvolutionConnection(userId);
   if (!connection.connected) {
     return (
@@ -73,11 +96,11 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
   const client = await getOpenAiClient(userId);
   const [settings, history] = await Promise.all([
     getAppSettings(userId),
-    getRecentAgentMessages(userId, 50),
+    getRecentAgentMessages(userId, 50, channel),
   ]);
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
-    { role: "system", content: SYSTEM_PROMPT },
+    { role: "system", content: options.builder ? AUTOMATION_BUILDER_PROMPT : SYSTEM_PROMPT },
     { role: "system", content: buildBusinessContext(settings, connection) },
     ...toOpenAiMessages(history),
   ];
@@ -131,7 +154,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
 
         let result: string;
         try {
-          result = await executeTool(userId, toolCall.function.name, args);
+          result = await executeTool(userId, toolCall.function.name, args, toolCtx);
         } catch (err) {
           result = JSON.stringify({
             error: err instanceof Error ? err.message : String(err),
