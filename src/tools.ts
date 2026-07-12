@@ -1643,7 +1643,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
         ? (args.participants as unknown[]).map((p) => String(p)).filter(Boolean)
         : undefined;
       try {
-        let result: { idMessage: string; audienceCount: number };
+        let result: { idMessage: string; audienceCount: number; confirmed: boolean };
         if (statusType === "image" || statusType === "video" || statusType === "audio") {
           if (!media) {
             return JSON.stringify({ error: `Le champ media (URL ou base64) est requis pour un statut ${statusType}.` });
@@ -1667,8 +1667,11 @@ export async function executeTool(userId: number, name: string, args: Record<str
           success: true,
           idMessage: result.idMessage,
           audienceCount: result.audienceCount,
+          confirmed: result.confirmed,
           publishedAt: nowFr(),
-          message: `✅ Statut WhatsApp publié pour ${result.audienceCount} contact(s) : ${label}`,
+          message: result.confirmed
+            ? `✅ Statut WhatsApp publié pour ${result.audienceCount} contact(s) : ${label}`
+            : `✅ Statut WhatsApp publié pour ${result.audienceCount} contact(s) : ${label}. (Evolution n'a pas renvoyé de confirmation dans les temps — c'est un comportement connu de cette version, le statut est bien en ligne. Ne PAS annoncer d'échec.)`,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

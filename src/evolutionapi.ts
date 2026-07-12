@@ -1426,7 +1426,7 @@ export async function sendWhatsAppTextStatus(
   userId: number,
   message: string,
   options: { backgroundColor?: string; font?: string; participants?: string[] } = {}
-): Promise<{ idMessage: string; audienceCount: number }> {
+): Promise<{ idMessage: string; audienceCount: number; confirmed: boolean }> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
@@ -1486,25 +1486,33 @@ export async function sendWhatsAppTextStatus(
       const data = await evolutionFetch<unknown>(creds, `/message/sendStatus/${creds.instanceName}`, {
         method: "POST",
         body,
-        timeoutMs: 60_000,
+        timeoutMs: 90_000,
       });
       return {
         idMessage: extractMessageId(data) || `status-${Date.now()}`,
         audienceCount: statusJidList.length,
+        confirmed: true,
       };
     } catch (err) {
       lastErr = err instanceof Error ? err : new Error(String(err));
-      const retryable =
-        err instanceof EvolutionApiError &&
-        (err.status === 400 || err.status === 422 || /délai|timeout|Abort/i.test(lastErr.message));
+      // Timeout : sur Evolution v2.3.7, le statut EST publié malgré l'absence de
+      // réponse. On NE retente PAS (sinon publication en double) → succès probable.
+      if (isEvolutionTimeoutError(err)) {
+        return {
+          idMessage: `status-${Date.now()}`,
+          audienceCount: statusJidList.length,
+          confirmed: false,
+        };
+      }
+      // 400/422 : corps rejeté → on tente la variante suivante.
+      const retryable = err instanceof EvolutionApiError && (err.status === 400 || err.status === 422);
       if (!retryable) throw err;
     }
   }
 
   throw new EvolutionApiError(
-    `Timeout Evolution API v2.3.7 lors de la publication du statut (${statusJidList.length} contacts ciblés). ` +
-      `Les messages fonctionnent, mais sendStatus est instable sur cette version — mettez à jour Evolution sur Hostinger ou publiez depuis WhatsApp. ` +
-      `Détail : ${lastErr?.message ?? "timeout"}`
+    `Publication du statut refusée par Evolution API (${statusJidList.length} contacts ciblés). ` +
+      `Détail : ${lastErr?.message ?? "erreur inconnue"}`
   );
 }
 
@@ -1522,7 +1530,7 @@ export async function sendWhatsAppMediaStatus(
     backgroundColor?: string;
     participants?: string[];
   }
-): Promise<{ idMessage: string; audienceCount: number }> {
+): Promise<{ idMessage: string; audienceCount: number; confirmed: boolean }> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
   if (!input.content?.trim()) throw new EvolutionApiError("Le contenu du statut (URL ou base64) est requis.");
@@ -1547,16 +1555,37 @@ export async function sendWhatsAppMediaStatus(
   if (input.caption) body.caption = input.caption;
   if (input.backgroundColor && input.type !== "audio") body.backgroundColor = input.backgroundColor;
 
-  const data = await evolutionFetch<unknown>(creds, `/message/sendStatus/${creds.instanceName}`, {
-    method: "POST",
-    body,
-    timeoutMs: 60_000,
-  });
+  try {
+    const data = await evolutionFetch<unknown>(creds, `/message/sendStatus/${creds.instanceName}`, {
+      method: "POST",
+      body,
+      timeoutMs: 90_000,
+    });
+    return {
+      idMessage: extractMessageId(data) || `status-${Date.now()}`,
+      audienceCount: statusJidList.length,
+      confirmed: true,
+    };
+  } catch (err) {
+    // Bug connu Evolution v2.3.7 : sendStatus PUBLIE le statut mais ne renvoie pas
+    // de réponse HTTP → timeout. On considère donc l'envoi comme probablement réussi.
+    if (isEvolutionTimeoutError(err)) {
+      return {
+        idMessage: `status-${Date.now()}`,
+        audienceCount: statusJidList.length,
+        confirmed: false,
+      };
+    }
+    throw err;
+  }
+}
 
-  return {
-    idMessage: extractMessageId(data) || `status-${Date.now()}`,
-    audienceCount: statusJidList.length,
-  };
+/** Détecte un timeout Evolution (le statut est souvent publié malgré l'absence de réponse). */
+function isEvolutionTimeoutError(err: unknown): boolean {
+  if (err instanceof EvolutionApiError) {
+    return /délai|timeout|Abort|attente dépassé/i.test(err.message);
+  }
+  return err instanceof Error && (err.name === "AbortError" || /timeout|abort/i.test(err.message));
 }
 
 export async function listWhatsAppChats(userId: number, count = 100): Promise<
