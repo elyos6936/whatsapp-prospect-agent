@@ -90,6 +90,7 @@ import {
   updateScheduledMessage,
   updateAutomationConfig,
   updateAutomationStatus,
+  deleteAutomation,
   type AutomationConfig,
   type AutomationStatus,
   type AutomationType,
@@ -1551,6 +1552,22 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "delete_automation",
+      description:
+        "Supprime DÉFINITIVEMENT une automatisation/campagne et ses données liées (cibles, logs, envois programmés en attente). Action irréversible. À n'utiliser que si l'utilisateur demande explicitement de SUPPRIMER (pas juste mettre en pause ou terminer).",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: { type: "number", description: "ID de la campagne à supprimer." },
+        },
+        required: ["automation_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_whatsapp_group",
       description:
         "Crée un nouveau groupe WhatsApp avec un nom (subject) et au moins un participant (numéro international). WhatsApp exige minimum 1 membre en plus du créateur.",
@@ -1626,6 +1643,7 @@ const LOCAL_TOOLS = new Set([
   "list_automations",
   "get_automation_report",
   "set_automation_status",
+  "delete_automation",
   "create_group_rule",
 ]);
 
@@ -3572,6 +3590,26 @@ export async function executeTool(
           status === "active"
             ? `Campagne #${id} activée${targetsAdded ? ` — ${targetsAdded} cible(s) chargée(s)` : ""}. Les envois démarrent côté serveur.`
             : `Campagne #${id} → ${status}.`,
+      });
+    }
+
+    case "delete_automation": {
+      const id = Number(args.automation_id);
+      if (!Number.isFinite(id)) {
+        return JSON.stringify({ error: "automation_id invalide." });
+      }
+      const existing = await getAutomation(userId, id);
+      if (!existing) {
+        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+      }
+      const deleted = await deleteAutomation(userId, id);
+      if (!deleted) {
+        return JSON.stringify({ error: `Campagne #${id} introuvable ou déjà supprimée.` });
+      }
+      return JSON.stringify({
+        success: true,
+        automationId: id,
+        message: `Campagne « ${existing.name} » (#${id}) supprimée définitivement.`,
       });
     }
 

@@ -1420,6 +1420,28 @@ export async function updateAutomationStatus(
   return getAutomation(userId, id);
 }
 
+/**
+ * Supprime définitivement une automatisation et ses données liées.
+ * automation_targets et automation_logs sont supprimés par cascade FK.
+ * send_queue et group_reply_rules n'ont pas de FK → nettoyage explicite.
+ * contact_sequences.automation_id est ON DELETE SET NULL (conservé).
+ * Renvoie true si une ligne a été supprimée.
+ */
+export async function deleteAutomation(userId: number, id: number): Promise<boolean> {
+  const existing = await getAutomation(userId, id);
+  if (!existing) return false;
+  // Annule les envois programmés non partis rattachés à cette campagne.
+  await sql`
+    UPDATE send_queue SET status = 'cancelled'
+    WHERE user_id = ${userId} AND automation_id = ${id} AND status = 'pending'
+  `.catch(() => {});
+  await sql`DELETE FROM group_reply_rules WHERE user_id = ${userId} AND automation_id = ${id}`.catch(() => {});
+  const rows = await sql<{ id: number }[]>`
+    DELETE FROM automations WHERE user_id = ${userId} AND id = ${id} RETURNING id
+  `;
+  return rows.length > 0;
+}
+
 export async function updateAutomationStats(
   userId: number,
   id: number,

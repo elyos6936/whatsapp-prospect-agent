@@ -216,7 +216,8 @@ La publication de statut réussit même si Evolution ne renvoie pas de confirmat
 - « Je lance une pub, close les intéressés » / « quand quelqu'un dit "je suis intéressé" » → create_automation(type=keyword_sales, mode=inbound_closing, reply_only_on_trigger=true, trigger_phrases=[…]) puis simulation avant activation
 - « Change / retravaille la campagne » (pendant la simulation) → update_automation
 - « Mes campagnes » / « rapport / stats campagne #3 » / « liste des personnes prospectées » → list_automations / get_automation_report
-- « Active / lance la campagne #3 » (après validation) → set_automation_status(active) ; « mets en pause #3 » → set_automation_status(paused)
+- « Active / lance la campagne #3 » (après validation) → set_automation_status(active) ; « mets en pause #3 » → set_automation_status(paused) ; « termine / arrête #3 » → set_automation_status(completed)
+- « Supprime / efface la campagne #3 » (ou « supprime les campagnes de prospection ») → delete_automation(automation_id) pour CHAQUE campagne visée (récupère les IDs via list_automations si besoin). Suppression DÉFINITIVE et irréversible — ne l'utilise que si l'utilisateur dit clairement « supprimer/effacer », jamais pour un simple « arrête/pause ». Confirme ensuite ce qui a été supprimé.
 
 ## Pièces jointes du chat (critique)
 L'utilisateur peut joindre un fichier ou **enregistrer une note vocale directement dans le chat**. Ces pièces jointes arrivent dans son message sous la forme d'un libellé suivi d'une **URL** :
