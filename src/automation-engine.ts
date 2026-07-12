@@ -57,6 +57,20 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   if (!target) {
     const targets = await listAutomationTargets(userId, auto.id, { limit: 1 });
     if (targets.length === 0) {
+      // Campagne active sans cibles : tenter bootstrap (activation partielle ou groupe non résolu au draft)
+      try {
+        const added = await bootstrapGroupProspectTargets(userId, auto.id);
+        if (added === 0) {
+          await failAutomationNoTargets(
+            userId,
+            auto.id,
+            "Aucun membre chargé — vérifiez la connexion WhatsApp et le groupe."
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await addAutomationLog(userId, auto.id, "error", `Bootstrap membres échoué : ${msg}`);
+      }
       return;
     }
     await updateAutomationStatus(userId, auto.id, "completed");

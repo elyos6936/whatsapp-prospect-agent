@@ -107,7 +107,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "ask_user_choices",
       description:
-        "Poser une question de cadrage sous forme de CARTE à options cliquables (avec un champ « Autre » possible via allow_other), au lieu d'un pavé de texte. C'EST TOI QUI DÉCIDES d'utiliser cette carte ou une simple question courte en texte — choisis ce qui rend l'échange le plus fluide. Règles : pose UNE seule chose à la fois (ne mets pas 5 questions d'un coup pour ne pas surcharger), options courtes, et n'utilise PAS ce tool pour un oui/non trivial. L'utilisateur sélectionne et valide ; ses choix te reviennent comme un message.",
+        "Poser une question de cadrage sous forme de CARTE à options cliquables (avec un champ « Autre » possible via allow_other), au lieu d'un pavé de texte. C'EST TOI QUI DÉCIDES d'utiliser cette carte ou une simple question courte en texte — choisis ce qui rend l'échange le plus fluide. Règles : la carte ne doit contenir QU'UNE SEULE question (tableau questions de longueur 1), options courtes, et n'utilise PAS ce tool pour un oui/non trivial. L'utilisateur sélectionne et valide ; ses choix te reviennent comme un message.",
       parameters: {
         type: "object",
         properties: {
@@ -1324,7 +1324,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "create_automation",
       description:
-        "Crée une automatisation WhatsApp active (visible sur la page Automatisation). Utiliser quand l'utilisateur décrit un workflow récurrent : prospecter un groupe, vendre un produit sur mots-clés, etc. L'automatisation démarre immédiatement.",
+        "Crée une automatisation WhatsApp (visible sur la page Automatisation). Utiliser pour prospecter un groupe, vendre sur mots-clés, etc. Par défaut crée un BROUILLON (activate_now=false, statut paused) pour simuler avant d'activer ; passer activate_now=true UNIQUEMENT après validation explicite de la simulation par l'utilisateur.",
       parameters: {
         type: "object",
         properties: {
