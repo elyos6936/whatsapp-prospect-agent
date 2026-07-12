@@ -1,0 +1,61 @@
+headersOrigin = "config"
+redirectsOrigin = "config"
+plugins = []
+
+[functions]
+
+[functions."*"]
+
+[build]
+publish = "C:\\Projets\\whatsapp-prospect-agent\\web\\web\\dist"
+publishOrigin = "config"
+commandOrigin = "config"
+base = "C:\\Projets\\whatsapp-prospect-agent\\web"
+command = "npm install && npm run build"
+
+[build.environment]
+NODE_VERSION = "20"
+VITE_API_URL = "https://klanvio-api.srv1820011.hstgr.cloud"
+
+[build.processing]
+
+[build.processing.css]
+
+[build.processing.html]
+
+[build.processing.images]
+
+[build.processing.js]
+
+[build.services]
+
+[[headers]]
+for = "/*"
+
+[headers.values]
+X-Frame-Options = "DENY"
+X-Content-Type-Options = "nosniff"
+
+[[redirects]]
+from = "/api/*"
+to = ":KLANVIO_API_URL/api/:splat"
+status = 200.0
+force = true
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]
+
+[[redirects]]
+from = "/*"
+to = "/index.html"
+status = 200.0
+force = false
+
+[redirects.query]
+
+[redirects.conditions]
+
+[redirects.headers]

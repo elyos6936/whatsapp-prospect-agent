@@ -38,9 +38,11 @@ function fmtTime(iso?: string): string {
 function ScheduledCard({
   item,
   onCancel,
+  cancelling,
 }: {
   item: ScheduledMessageItem;
   onCancel?: () => void;
+  cancelling?: boolean;
 }) {
   return (
     <article className="rounded-2xl border border-white/10 bg-bg-100 p-4">
@@ -68,9 +70,10 @@ function ScheduledCard({
         <button
           type="button"
           onClick={onCancel}
-          className="mt-3 rounded-lg border border-white/10 px-3 py-1 text-xs hover:bg-bg-200"
+          disabled={cancelling}
+          className="mt-3 rounded-lg border border-white/10 px-3 py-1 text-xs hover:bg-bg-200 disabled:cursor-not-allowed disabled:opacity-50"
         >
-          Annuler
+          {cancelling ? 'Annulation…' : 'Annuler'}
         </button>
       )}
     </article>
@@ -86,6 +89,31 @@ export function AutomationPage() {
   const [handoffs, setHandoffs] = useState<HandoffItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+
+  const handleCancelScheduled = useCallback(
+    async (id: number) => {
+      setCancellingId(id);
+      setError(null);
+      const previous = scheduled;
+      setScheduled((prev) =>
+        prev.map((m) => (m.id === id ? { ...m, status: 'cancelled' } : m)),
+      );
+      try {
+        await cancelScheduledMessage(id);
+        const sched = await fetchScheduledMessages();
+        setScheduled(sched);
+      } catch (err) {
+        setScheduled(previous);
+        setError(
+          err instanceof Error ? err.message : "Impossible d'annuler cet envoi.",
+        );
+      } finally {
+        setCancellingId(null);
+      }
+    },
+    [scheduled],
+  );
 
   const loadAll = useCallback(async () => {
     setLoading(true);
@@ -303,12 +331,10 @@ export function AutomationPage() {
                     <ScheduledCard
                       key={item.id}
                       item={item}
+                      cancelling={cancellingId === item.id}
                       onCancel={
                         item.status === 'pending'
-                          ? async () => {
-                              await cancelScheduledMessage(item.id);
-                              await loadAll();
-                            }
+                          ? () => void handleCancelScheduled(item.id)
                           : undefined
                       }
                     />
