@@ -21,6 +21,10 @@ import {
   sendWhatsAppLocation,
   sendWhatsAppContact,
   sendWhatsAppReaction,
+  sendWhatsAppPoll,
+  sendWhatsAppList,
+  sendWhatsAppSticker,
+  sendWhatsAppMediaStatus,
   sendWhatsAppTextStatus,
   testEvolutionConnection,
   chatIdToDisplay,
@@ -294,6 +298,10 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           link_preview: {
             type: "boolean",
             description: "true pour afficher l'aperçu de lien (carte) des URLs du message. Défaut : comportement natif.",
+          },
+          delay_ms: {
+            type: "number",
+            description: "Délai en millisecondes d'affichage « en train d'écrire… » avant l'envoi (max 20000). Ex. 3000 pour 3s.",
           },
         },
         required: ["recipient", "message"],
@@ -589,17 +597,130 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "send_whatsapp_status",
       description:
-        "Publie un STATUT WhatsApp (story) texte. Utiliser quand l'utilisateur demande de poster/publier un statut WhatsApp.",
+        "Publie un STATUT WhatsApp (story) : texte, image, vidéo ou audio. Utiliser quand l'utilisateur demande de poster/publier un statut/une story WhatsApp. Audience : par défaut tous les contacts, ou ciblée via participants.",
       parameters: {
         type: "object",
         properties: {
-          message: { type: "string", description: "Texte du statut (max 500 caractères)" },
+          type: {
+            type: "string",
+            enum: ["text", "image", "video", "audio"],
+            description: "Type de statut. Défaut : text.",
+          },
+          message: {
+            type: "string",
+            description: "Texte du statut (type=text, max 500 caractères) OU légende pour un média.",
+          },
+          media: {
+            type: "string",
+            description: "URL publique OU base64 du média (requis pour type image/video/audio).",
+          },
           background_color: {
             type: "string",
-            description: "Couleur fond hex (défaut #228B22, éviter blanc)",
+            description: "Couleur fond hex (statut texte/image, défaut #228B22, éviter blanc)",
+          },
+          font: {
+            type: "string",
+            enum: ["SERIF", "SAN_SERIF", "NORICAN", "BRYNDAN", "BEBAS"],
+            description: "Police du statut texte (défaut SERIF).",
+          },
+          participants: {
+            type: "array",
+            items: { type: "string" },
+            description: "Numéros ciblés (optionnel). Sinon publié pour tous les contacts.",
           },
         },
         required: ["message"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_whatsapp_poll",
+      description:
+        "Envoie un SONDAGE (poll) à un contact ou un groupe. Les votes reviennent automatiquement et apparaissent dans les messages entrants (best-effort selon Evolution).",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…), chatId (@c.us), ID/nom de groupe (@g.us)" },
+          question: { type: "string", description: "La question du sondage" },
+          options: {
+            type: "array",
+            items: { type: "string" },
+            description: "Options du sondage (2 minimum)",
+          },
+          selectable_count: {
+            type: "number",
+            description: "Nombre de choix qu'un votant peut sélectionner (défaut 1)",
+          },
+          delay_ms: { type: "number", description: "Délai « écrit… » avant envoi (ms, optionnel)" },
+        },
+        required: ["recipient", "question", "options"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_whatsapp_list",
+      description:
+        "Envoie une LISTE interactive (menu de sélection avec sections). EXPÉRIMENTAL : le rendu dépend de la version WhatsApp du destinataire, à utiliser en test.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…), chatId ou groupe" },
+          title: { type: "string", description: "Titre de la liste" },
+          description: { type: "string", description: "Texte du corps" },
+          button_text: { type: "string", description: "Libellé du bouton (ex. « Voir les options »)" },
+          footer_text: { type: "string", description: "Texte de pied (optionnel)" },
+          sections: {
+            type: "array",
+            description: "Sections de la liste",
+            items: {
+              type: "object",
+              properties: {
+                title: { type: "string", description: "Titre de la section" },
+                rows: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      title: { type: "string" },
+                      description: { type: "string" },
+                      rowId: { type: "string" },
+                    },
+                    required: ["title"],
+                    additionalProperties: false,
+                  },
+                },
+              },
+              required: ["title", "rows"],
+              additionalProperties: false,
+            },
+          },
+          delay_ms: { type: "number", description: "Délai « écrit… » avant envoi (ms, optionnel)" },
+        },
+        required: ["recipient", "title", "description", "button_text", "sections"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_whatsapp_sticker",
+      description:
+        "Envoie un STICKER (image statique WebP/PNG/JPEG). La source peut être une URL publique ou du base64.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…), chatId ou groupe" },
+          sticker: { type: "string", description: "URL publique OU base64 de l'image du sticker" },
+          delay_ms: { type: "number", description: "Délai « écrit… » avant envoi (ms, optionnel)" },
+        },
+        required: ["recipient", "sticker"],
         additionalProperties: false,
       },
     },
@@ -1162,6 +1283,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
       const mentionEveryone = args.mention_everyone === true;
       const linkPreview =
         typeof args.link_preview === "boolean" ? (args.link_preview as boolean) : undefined;
+      const delayMs = Number(args.delay_ms);
       try {
         const chatId = await resolveRecipient(userId, recipient);
 
@@ -1179,11 +1301,13 @@ export async function executeTool(userId: number, name: string, args: Record<str
           mentioned?: string[];
           mentionsEveryOne?: boolean;
           linkPreview?: boolean;
+          delay?: number;
         } = {};
         if (replyTo) textOptions.quoted = { id: replyTo, remoteJid: chatId, fromMe: false };
         if (mentions && mentions.length > 0) textOptions.mentioned = mentions;
         if (mentionEveryone) textOptions.mentionsEveryOne = true;
         if (typeof linkPreview === "boolean") textOptions.linkPreview = linkPreview;
+        if (Number.isFinite(delayMs) && delayMs > 0) textOptions.delay = delayMs;
 
         const result = await sendWhatsAppMessage(userId, chatId, message, {
           textOptions: Object.keys(textOptions).length > 0 ? textOptions : undefined,
@@ -1240,6 +1364,129 @@ export async function executeTool(userId: number, name: string, args: Record<str
           message: emoji
             ? `Réaction ${emoji} envoyée à ${nowFr()}`
             : `Réaction retirée à ${nowFr()}`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ error: msg });
+      }
+    }
+
+    case "send_whatsapp_poll": {
+      const recipient = String(args.recipient ?? "");
+      const question = String(args.question ?? "").trim();
+      const options = Array.isArray(args.options)
+        ? (args.options as unknown[]).map((o) => String(o)).filter((s) => s.trim())
+        : [];
+      const selectableCount = Number(args.selectable_count) || 1;
+      const delayMs = Number(args.delay_ms);
+      if (!question) return JSON.stringify({ error: "La question du sondage est requise." });
+      if (options.length < 2) return JSON.stringify({ error: "Un sondage nécessite au moins 2 options." });
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@c.us")) {
+          const existing = await getContact(userId, chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({ error: "Ce contact est en STOP. Aucun envoi possible." });
+          }
+        }
+        const result = await sendWhatsAppPoll(userId, chatId, {
+          name: question,
+          values: options,
+          selectableCount,
+          delay: Number.isFinite(delayMs) && delayMs > 0 ? delayMs : undefined,
+        });
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          message: `📊 Sondage envoyé (${options.length} options) à ${nowFr()}. Les votes apparaîtront dans les messages entrants.`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ error: msg });
+      }
+    }
+
+    case "send_whatsapp_list": {
+      const recipient = String(args.recipient ?? "");
+      const title = String(args.title ?? "").trim();
+      const description = String(args.description ?? "").trim();
+      const buttonText = String(args.button_text ?? "").trim();
+      const footerText = args.footer_text ? String(args.footer_text) : undefined;
+      const delayMs = Number(args.delay_ms);
+      const sections = Array.isArray(args.sections)
+        ? (args.sections as Array<Record<string, unknown>>).map((s) => ({
+            title: String(s.title ?? ""),
+            rows: Array.isArray(s.rows)
+              ? (s.rows as Array<Record<string, unknown>>).map((r) => ({
+                  title: String(r.title ?? ""),
+                  description: r.description ? String(r.description) : undefined,
+                  rowId: r.rowId ? String(r.rowId) : undefined,
+                }))
+              : [],
+          }))
+        : [];
+      if (!title || !buttonText) return JSON.stringify({ error: "title et button_text sont requis." });
+      if (sections.length === 0) return JSON.stringify({ error: "Au moins une section est requise." });
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@c.us")) {
+          const existing = await getContact(userId, chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({ error: "Ce contact est en STOP. Aucun envoi possible." });
+          }
+        }
+        const result = await sendWhatsAppList(userId, chatId, {
+          title,
+          description,
+          buttonText,
+          footerText,
+          sections,
+          delay: Number.isFinite(delayMs) && delayMs > 0 ? delayMs : undefined,
+        });
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          note: "Liste interactive (expérimental) — le rendu dépend de la version WhatsApp du destinataire.",
+          message: `📋 Liste « ${title} » envoyée à ${nowFr()}.`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ error: msg });
+      }
+    }
+
+    case "send_whatsapp_sticker": {
+      const recipient = String(args.recipient ?? "");
+      const sticker = String(args.sticker ?? "").trim();
+      const delayMs = Number(args.delay_ms);
+      if (!sticker) return JSON.stringify({ error: "La source du sticker (URL ou base64) est requise." });
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@c.us")) {
+          const existing = await getContact(userId, chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({ error: "Ce contact est en STOP. Aucun envoi possible." });
+          }
+        }
+        const result = await sendWhatsAppSticker(userId, chatId, sticker, {
+          delay: Number.isFinite(delayMs) && delayMs > 0 ? delayMs : undefined,
+        });
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          message: `Sticker envoyé à ${nowFr()}.`,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -1389,14 +1636,39 @@ export async function executeTool(userId: number, name: string, args: Record<str
     case "send_whatsapp_status": {
       const message = String(args.message ?? "").trim();
       const backgroundColor = args.background_color ? String(args.background_color) : undefined;
+      const statusType = String(args.type ?? "text").toLowerCase();
+      const media = args.media ? String(args.media).trim() : "";
+      const font = args.font ? String(args.font) : undefined;
+      const participants = Array.isArray(args.participants)
+        ? (args.participants as unknown[]).map((p) => String(p)).filter(Boolean)
+        : undefined;
       try {
-        const result = await sendWhatsAppTextStatus(userId, message, { backgroundColor });
+        let result: { idMessage: string; audienceCount: number };
+        if (statusType === "image" || statusType === "video" || statusType === "audio") {
+          if (!media) {
+            return JSON.stringify({ error: `Le champ media (URL ou base64) est requis pour un statut ${statusType}.` });
+          }
+          result = await sendWhatsAppMediaStatus(userId, {
+            type: statusType,
+            content: media,
+            caption: message || undefined,
+            backgroundColor,
+            participants,
+          });
+        } else {
+          result = await sendWhatsAppTextStatus(userId, message, {
+            backgroundColor,
+            font,
+            participants,
+          });
+        }
+        const label = statusType === "text" ? `« ${message.slice(0, 80)}${message.length > 80 ? "…" : ""} »` : `statut ${statusType}`;
         return JSON.stringify({
           success: true,
           idMessage: result.idMessage,
           audienceCount: result.audienceCount,
           publishedAt: nowFr(),
-          message: `✅ Statut WhatsApp publié pour ${result.audienceCount} contact(s) : « ${message.slice(0, 80)}${message.length > 80 ? "…" : ""} »`,
+          message: `✅ Statut WhatsApp publié pour ${result.audienceCount} contact(s) : ${label}`,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

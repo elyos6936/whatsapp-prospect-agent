@@ -240,6 +240,8 @@ export interface TextSendOptions {
   mentionsEveryOne?: boolean;
   /** Afficher l'aperçu de lien (carte SEO) pour les URLs du message. */
   linkPreview?: boolean;
+  /** Délai (ms) pendant lequel « en train d'écrire… » s'affiche avant l'envoi. */
+  delay?: number;
 }
 
 function buildTextOptionsBody(options?: TextSendOptions): Record<string, unknown> {
@@ -262,6 +264,9 @@ function buildTextOptionsBody(options?: TextSendOptions): Record<string, unknown
   }
   if (options.mentionsEveryOne) extra.mentionsEveryOne = true;
   if (typeof options.linkPreview === "boolean") extra.linkPreview = options.linkPreview;
+  if (typeof options.delay === "number" && options.delay > 0) {
+    extra.delay = Math.min(Math.round(options.delay), 20_000);
+  }
   return extra;
 }
 
@@ -1066,6 +1071,147 @@ export async function sendWhatsAppContact(
   return { idMessage, chatId: normalized };
 }
 
+/** Envoie un SONDAGE (poll). Les votes reviennent via le webhook (best-effort). */
+export async function sendWhatsAppPoll(
+  userId: number,
+  chatId: string,
+  input: { name: string; values: string[]; selectableCount?: number; delay?: number },
+  opts: { countsTowardQuota?: boolean } = {}
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const values = input.values.map((v) => v.trim()).filter(Boolean);
+  if (!input.name.trim()) throw new EvolutionApiError("La question du sondage est requise.");
+  if (values.length < 2) throw new EvolutionApiError("Un sondage nécessite au moins 2 options.");
+
+  await assertCanSendTo(userId, chatId);
+  await waitOutboundSpacing();
+
+  const number = formatEvolutionSendNumber(chatId);
+  const selectableCount = Math.min(Math.max(input.selectableCount ?? 1, 1), values.length);
+  const data = await evolutionFetch<unknown>(creds, `/message/sendPoll/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      name: input.name.trim(),
+      selectableCount,
+      values,
+      ...(input.delay && input.delay > 0 ? { delay: Math.min(Math.round(input.delay), 20_000) } : {}),
+    },
+  });
+
+  markOutboundSent();
+  const idMessage = extractMessageId(data);
+  await saveWhatsAppMessage(userId, {
+    contactPhone: normalizeGroupParticipantId(chatId),
+    direction: "sortant",
+    body: `[sondage] ${input.name.trim()} — ${values.join(" / ")}`,
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
+  });
+
+  return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
+}
+
+/** Envoie une LISTE interactive (menu de sélection). Expérimental côté WhatsApp. */
+export async function sendWhatsAppList(
+  userId: number,
+  chatId: string,
+  input: {
+    title: string;
+    description: string;
+    buttonText: string;
+    footerText?: string;
+    sections: Array<{
+      title: string;
+      rows: Array<{ title: string; description?: string; rowId?: string }>;
+    }>;
+    delay?: number;
+  },
+  opts: { countsTowardQuota?: boolean } = {}
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  if (!input.sections?.length) throw new EvolutionApiError("La liste nécessite au moins une section.");
+
+  await assertCanSendTo(userId, chatId);
+  await waitOutboundSpacing();
+
+  const number = formatEvolutionSendNumber(chatId);
+  const sections = input.sections.map((s) => ({
+    title: s.title,
+    rows: s.rows.map((r, i) => ({
+      title: r.title,
+      description: r.description ?? "",
+      rowId: r.rowId ?? `row_${i + 1}`,
+    })),
+  }));
+
+  const data = await evolutionFetch<unknown>(creds, `/message/sendList/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      title: input.title,
+      description: input.description,
+      buttonText: input.buttonText,
+      footerText: input.footerText ?? "",
+      sections,
+      ...(input.delay && input.delay > 0 ? { delay: Math.min(Math.round(input.delay), 20_000) } : {}),
+    },
+  });
+
+  markOutboundSent();
+  const idMessage = extractMessageId(data);
+  await saveWhatsAppMessage(userId, {
+    contactPhone: normalizeGroupParticipantId(chatId),
+    direction: "sortant",
+    body: `[liste] ${input.title} — ${input.buttonText}`,
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
+  });
+
+  return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
+}
+
+/** Envoie un STICKER (image statique WebP/PNG/JPEG). `sticker` = URL ou base64. */
+export async function sendWhatsAppSticker(
+  userId: number,
+  chatId: string,
+  sticker: string,
+  opts: { countsTowardQuota?: boolean; delay?: number } = {}
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  await assertCanSendTo(userId, chatId);
+  await waitOutboundSpacing();
+
+  const number = formatEvolutionSendNumber(chatId);
+  const payload = sticker.startsWith("data:") ? sticker.slice(sticker.indexOf(",") + 1) : sticker;
+  const data = await evolutionFetch<unknown>(creds, `/message/sendSticker/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      sticker: payload,
+      ...(opts.delay && opts.delay > 0 ? { delay: Math.min(Math.round(opts.delay), 20_000) } : {}),
+    },
+  });
+
+  markOutboundSent();
+  const idMessage = extractMessageId(data);
+  await saveWhatsAppMessage(userId, {
+    contactPhone: normalizeGroupParticipantId(chatId),
+    direction: "sortant",
+    body: "[sticker]",
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
+  });
+
+  return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
+}
+
 export async function findGroupByNameOrId(
   userId: number,
   nameOrId: string
@@ -1360,6 +1506,57 @@ export async function sendWhatsAppTextStatus(
       `Les messages fonctionnent, mais sendStatus est instable sur cette version — mettez à jour Evolution sur Hostinger ou publiez depuis WhatsApp. ` +
       `Détail : ${lastErr?.message ?? "timeout"}`
   );
+}
+
+/**
+ * Publie un STATUT (story) média : image, vidéo ou audio.
+ * `content` = URL publique OU base64 (préfixe data: accepté).
+ * Audience : `participants` fournis = ciblée, sinon tous les contacts (statusJidList construit).
+ */
+export async function sendWhatsAppMediaStatus(
+  userId: number,
+  input: {
+    type: "image" | "video" | "audio";
+    content: string;
+    caption?: string;
+    backgroundColor?: string;
+    participants?: string[];
+  }
+): Promise<{ idMessage: string; audienceCount: number }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  if (!input.content?.trim()) throw new EvolutionApiError("Le contenu du statut (URL ou base64) est requis.");
+
+  const statusJidList = await buildStatusJidList(userId, input.participants);
+  if (statusJidList.length === 0) {
+    throw new EvolutionApiError(
+      "Aucun contact disponible pour publier le statut. Evolution API exige statusJidList (allContacts provoque un timeout sur v2.3.7)."
+    );
+  }
+
+  const content = input.content.startsWith("data:")
+    ? input.content.slice(input.content.indexOf(",") + 1)
+    : input.content;
+
+  const body: Record<string, unknown> = {
+    type: input.type,
+    content,
+    allContacts: false,
+    statusJidList,
+  };
+  if (input.caption) body.caption = input.caption;
+  if (input.backgroundColor && input.type !== "audio") body.backgroundColor = input.backgroundColor;
+
+  const data = await evolutionFetch<unknown>(creds, `/message/sendStatus/${creds.instanceName}`, {
+    method: "POST",
+    body,
+    timeoutMs: 60_000,
+  });
+
+  return {
+    idMessage: extractMessageId(data) || `status-${Date.now()}`,
+    audienceCount: statusJidList.length,
+  };
 }
 
 export async function listWhatsAppChats(userId: number, count = 100): Promise<

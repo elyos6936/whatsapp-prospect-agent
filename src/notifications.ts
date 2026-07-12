@@ -7,6 +7,7 @@ import {
   sendWhatsAppMessage,
   testEvolutionConnection,
   getLastIncomingMessages,
+  normalizeGroupParticipantId,
 } from "./evolutionapi.js";
 import {
   getAppSettings,
@@ -55,6 +56,46 @@ function extractEvolutionInboundText(message: unknown): string | null {
   return null;
 }
 
+/**
+ * Détecte un vote de sondage (pollUpdateMessage) et produit une note lisible.
+ * Note : WhatsApp chiffre les votes ; les options ne sont lisibles que si Evolution
+ * les a déjà déchiffrées et exposées dans le payload. Sinon on note un vote générique.
+ */
+function extractPollVoteNote(message: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
+  const m = message as Record<string, unknown>;
+  const pollUpdate = m.pollUpdateMessage as Record<string, unknown> | undefined;
+  if (!pollUpdate) return null;
+
+  const readSelected = (obj: unknown): string[] => {
+    if (!obj || typeof obj !== "object") return [];
+    const o = obj as Record<string, unknown>;
+    const opts = o.selectedOptions ?? o.selectedValues ?? o.votes;
+    if (Array.isArray(opts)) {
+      return opts
+        .map((v) =>
+          typeof v === "string"
+            ? v
+            : v && typeof v === "object"
+              ? String((v as { name?: string; optionName?: string }).name ?? (v as { optionName?: string }).optionName ?? "")
+              : ""
+        )
+        .filter(Boolean);
+    }
+    return [];
+  };
+
+  const selected = [
+    ...readSelected(pollUpdate.vote),
+    ...readSelected((pollUpdate as { pollVotes?: unknown }).pollVotes),
+    ...readSelected(m.pollUpdates),
+  ];
+
+  return selected.length > 0
+    ? `[Vote sondage] ${[...new Set(selected)].join(", ")}`
+    : "[Vote sondage reçu]";
+}
+
 /** Webhook Evolution API — MESSAGES_UPSERT */
 export async function handleEvolutionWebhook(payload: unknown): Promise<number> {
   if (!payload || typeof payload !== "object") return 0;
@@ -81,6 +122,28 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
 
     const rawChatId = key.remoteJid ?? "";
     if (isBroadcastOrStatusJid(rawChatId)) continue;
+
+    const pollNote = extractPollVoteNote(row.message);
+    if (pollNote) {
+      const voterName = String(row.pushName ?? chatIdToDisplay(rawChatId));
+      const voteId = key.id ?? `vote-${Date.now()}`;
+      try {
+        if (!(await whatsAppMessageExists(userId, voteId))) {
+          await saveWhatsAppMessage(userId, {
+            contactPhone: rawChatId.endsWith("@g.us") ? rawChatId : normalizeGroupParticipantId(rawChatId),
+            direction: "entrant",
+            body: `${pollNote} — ${voterName}`,
+            greenApiId: voteId,
+            senderName: voterName,
+          });
+          pollHealthFor(userId).lastIncomingAt = new Date().toISOString();
+          processed++;
+        }
+      } catch (err) {
+        console.error("Erreur enregistrement vote sondage:", err);
+      }
+      continue;
+    }
 
     const text = extractEvolutionInboundText(row.message);
     if (!text) continue;
