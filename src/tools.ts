@@ -23,6 +23,12 @@ import {
   fetchContactProfile,
   fetchContactBusinessProfile,
   updateWhatsAppBlockStatus,
+  updateProfileName,
+  updateProfileStatus,
+  updateProfilePicture,
+  removeProfilePicture,
+  fetchPrivacySettings,
+  updatePrivacySettings,
   messageGroupMembers,
   normalizePhoneToChatId,
   normalizeGroupParticipantId,
@@ -377,6 +383,76 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         type: "object",
         properties: {
           recipient: { type: "string", description: "Numéro (+229…) ou chatId (optionnel)" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_my_profile",
+      description:
+        "Modifie le profil DU COMPTE WhatsApp connecté (le nôtre, pas un contact) : nom affiché, statut/bio, photo de profil (URL ou base64), ou suppression de la photo. Renseigner uniquement les champs à changer.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nouveau nom affiché du profil" },
+          status: { type: "string", description: "Nouveau statut / bio (« À propos »)" },
+          picture: { type: "string", description: "Nouvelle photo de profil : URL publique ou base64" },
+          remove_picture: { type: "boolean", description: "true pour SUPPRIMER la photo de profil actuelle" },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_privacy_settings",
+      description: "Consulte les paramètres de confidentialité du compte WhatsApp connecté (accusés de lecture, photo, statut, en ligne, dernière connexion, ajout aux groupes).",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_privacy_settings",
+      description:
+        "Modifie les paramètres de confidentialité du compte connecté. Renseigner uniquement les champs à changer ; les autres restent inchangés.",
+      parameters: {
+        type: "object",
+        properties: {
+          readreceipts: {
+            type: "string",
+            enum: ["all", "none"],
+            description: "Accusés de lecture (coches bleues)",
+          },
+          profile: {
+            type: "string",
+            enum: ["all", "contacts", "contact_blacklist", "none"],
+            description: "Qui peut voir ma photo de profil",
+          },
+          status: {
+            type: "string",
+            enum: ["all", "contacts", "contact_blacklist", "none"],
+            description: "Qui peut voir mon statut/bio",
+          },
+          online: {
+            type: "string",
+            enum: ["all", "match_last_seen"],
+            description: "Qui peut voir quand je suis en ligne",
+          },
+          last: {
+            type: "string",
+            enum: ["all", "contacts", "contact_blacklist", "none"],
+            description: "Qui peut voir ma dernière connexion",
+          },
+          groupadd: {
+            type: "string",
+            enum: ["all", "contacts", "contact_blacklist"],
+            description: "Qui peut m'ajouter aux groupes",
+          },
         },
         additionalProperties: false,
       },
@@ -1637,6 +1713,75 @@ export async function executeTool(userId: number, name: string, args: Record<str
             presence: p.presence,
             updatedAt: p.updatedAt,
           })),
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "update_my_profile": {
+      const name = args.name ? String(args.name) : undefined;
+      const status = typeof args.status === "string" ? String(args.status) : undefined;
+      const picture = args.picture ? String(args.picture) : undefined;
+      const removePic = args.remove_picture === true;
+      if (!name && status === undefined && !picture && !removePic) {
+        return JSON.stringify({ error: "Rien à modifier : fournir name, status, picture ou remove_picture." });
+      }
+      const done: string[] = [];
+      try {
+        if (name) {
+          await updateProfileName(userId, name);
+          done.push(`nom → « ${name} »`);
+        }
+        if (status !== undefined) {
+          await updateProfileStatus(userId, status);
+          done.push(`statut → « ${status} »`);
+        }
+        if (removePic) {
+          await removeProfilePicture(userId);
+          done.push("photo de profil supprimée");
+        } else if (picture) {
+          await updateProfilePicture(userId, picture);
+          done.push("photo de profil mise à jour");
+        }
+        return JSON.stringify({
+          success: true,
+          updated: done,
+          message: `Profil mis à jour : ${done.join(", ")}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : String(err),
+          partiallyDone: done,
+        });
+      }
+    }
+
+    case "get_privacy_settings": {
+      try {
+        const settings = await fetchPrivacySettings(userId);
+        return JSON.stringify({ success: true, privacy: settings });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "update_privacy_settings": {
+      const keys = ["readreceipts", "profile", "status", "online", "last", "groupadd"] as const;
+      const settings: Record<string, string> = {};
+      for (const k of keys) {
+        if (typeof args[k] === "string" && args[k]) settings[k] = String(args[k]);
+      }
+      if (Object.keys(settings).length === 0) {
+        return JSON.stringify({ error: "Aucun paramètre fourni à modifier." });
+      }
+      try {
+        const merged = await updatePrivacySettings(userId, settings);
+        return JSON.stringify({
+          success: true,
+          changed: settings,
+          privacy: merged,
+          message: `Confidentialité mise à jour : ${Object.entries(settings).map(([k, v]) => `${k}=${v}`).join(", ")}.`,
         });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });

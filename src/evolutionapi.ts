@@ -2000,6 +2000,104 @@ export async function updateWhatsAppBlockStatus(
   return { blocked: block, chatId: normalizeGroupParticipantId(chatId) };
 }
 
+// ————————————————————————————————————————————————————————————————
+// Profil du compte WhatsApp connecté (le nôtre)
+// ————————————————————————————————————————————————————————————————
+
+/** Modifie le nom affiché du profil du compte connecté. */
+export async function updateProfileName(userId: number, name: string): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  if (!name.trim()) throw new EvolutionApiError("Le nom du profil est requis.");
+  await evolutionFetch(creds, `/chat/updateProfileName/${creds.instanceName}`, {
+    method: "POST",
+    body: { name: name.trim() },
+  });
+}
+
+/** Modifie le statut / bio (« À propos ») du profil du compte connecté. */
+export async function updateProfileStatus(userId: number, status: string): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  await evolutionFetch(creds, `/chat/updateProfileStatus/${creds.instanceName}`, {
+    method: "POST",
+    body: { status },
+  });
+}
+
+/** Modifie la photo de profil du compte connecté (URL publique ou base64). */
+export async function updateProfilePicture(userId: number, picture: string): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  if (!picture.trim()) throw new EvolutionApiError("L'image (URL ou base64) est requise.");
+  await evolutionFetch(creds, `/chat/updateProfilePicture/${creds.instanceName}`, {
+    method: "POST",
+    body: { picture },
+    timeoutMs: 60_000,
+  });
+}
+
+/** Supprime la photo de profil du compte connecté. */
+export async function removeProfilePicture(userId: number): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  await evolutionFetch(creds, `/chat/removeProfilePicture/${creds.instanceName}`, {
+    method: "DELETE",
+  });
+}
+
+export interface WhatsAppPrivacySettings {
+  readreceipts?: string;
+  profile?: string;
+  status?: string;
+  online?: string;
+  last?: string;
+  groupadd?: string;
+  [key: string]: unknown;
+}
+
+/** Récupère les paramètres de confidentialité du compte connecté. */
+export async function fetchPrivacySettings(userId: number): Promise<WhatsAppPrivacySettings> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const data = await evolutionFetch<WhatsAppPrivacySettings>(
+    creds,
+    `/chat/fetchPrivacySettings/${creds.instanceName}`,
+    { method: "GET" }
+  );
+  return data ?? {};
+}
+
+/**
+ * Met à jour les paramètres de confidentialité (seuls les champs fournis sont modifiés).
+ * Valeurs : readreceipts=all|none ; profile/status/last=all|contacts|contact_blacklist|none ;
+ * online=all|match_last_seen ; groupadd=all|contacts|contact_blacklist.
+ */
+export async function updatePrivacySettings(
+  userId: number,
+  settings: WhatsAppPrivacySettings
+): Promise<WhatsAppPrivacySettings> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  // Evolution attend l'ensemble des clés : on complète avec l'existant.
+  const current = await fetchPrivacySettings(userId).catch(() => ({}) as WhatsAppPrivacySettings);
+  const merged: WhatsAppPrivacySettings = {
+    readreceipts: settings.readreceipts ?? current.readreceipts ?? "all",
+    profile: settings.profile ?? current.profile ?? "all",
+    status: settings.status ?? current.status ?? "contacts",
+    online: settings.online ?? current.online ?? "all",
+    last: settings.last ?? current.last ?? "contacts",
+    groupadd: settings.groupadd ?? current.groupadd ?? "all",
+  };
+
+  await evolutionFetch(creds, `/chat/updatePrivacySettings/${creds.instanceName}`, {
+    method: "POST",
+    body: merged,
+  });
+  return merged;
+}
+
 function toStatusJid(chatId: string): string {
   const trimmed = chatId.trim();
   if (trimmed.endsWith("@s.whatsapp.net")) return trimmed;
