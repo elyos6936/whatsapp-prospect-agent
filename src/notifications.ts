@@ -42,6 +42,12 @@ import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
 import {
+  describeInboundMedia,
+  detectInboundMedia,
+  typeMessageToKind,
+  type InboundMediaKind,
+} from "./media-understanding.js";
+import {
   generateWhatsAppReply,
   getAdaptiveReplyDelay,
   getStopConfirmationReply,
@@ -172,10 +178,25 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
       continue;
     }
 
-    const text = extractEvolutionInboundText(row.message);
+    let text = extractEvolutionInboundText(row.message);
+    const isGroupChat = rawChatId.endsWith("@g.us");
+
+    // Média entrant (note vocale, image, document…) en DM : on le décode avec les
+    // modèles OpenAI (Whisper / vision) pour que la prospection puisse continuer.
+    if (!text && !isGroupChat) {
+      const media = detectInboundMedia(row.message);
+      if (media) {
+        const mediaMsgId = key.id ?? "";
+        if (mediaMsgId && (await whatsAppMessageExists(userId, mediaMsgId))) continue;
+        text =
+          (mediaMsgId ? await describeInboundMedia(userId, mediaMsgId, media) : null) ??
+          placeholderForKind(media.kind);
+      }
+    }
+
     if (!text) continue;
 
-    if (rawChatId.endsWith("@g.us")) {
+    if (isGroupChat) {
       const senderName = String(row.pushName ?? chatIdToDisplay(rawChatId));
       void runGroupAutoReply(userId, rawChatId, senderName, text);
       continue;
@@ -500,6 +521,23 @@ function placeholderForType(type: string): string | null {
       return "[Sticker reçu]";
     default:
       return null;
+  }
+}
+
+function placeholderForKind(kind: InboundMediaKind): string {
+  switch (kind) {
+    case "audio":
+      return "[Message vocal reçu]";
+    case "image":
+      return "[Image reçue]";
+    case "video":
+      return "[Vidéo reçue]";
+    case "document":
+      return "[Document reçu]";
+    case "sticker":
+      return "[Sticker reçu]";
+    default:
+      return "[Média reçu]";
   }
 }
 
@@ -1020,14 +1058,22 @@ async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
       const rawChatId = m.chatId ?? m.senderId ?? "";
       if (!rawChatId || rawChatId.endsWith("@g.us") || isBroadcastOrStatusJid(rawChatId)) continue;
 
-      const text =
-        m.textMessage?.trim() ||
-        m.extendedTextMessageData?.text?.trim() ||
-        placeholderForType(m.typeMessage);
-      if (!text) continue;
-
       const greenApiId = m.idMessage;
       if (!greenApiId) continue;
+
+      let text = m.textMessage?.trim() || m.extendedTextMessageData?.text?.trim() || "";
+
+      // Média sans texte : tenter de le décoder (Whisper / vision) avant de retomber
+      // sur un placeholder. On vérifie d'abord qu'il n'est pas déjà en base (coût OpenAI).
+      if (!text) {
+        const kind = typeMessageToKind(m.typeMessage);
+        if (kind && !(await whatsAppMessageExists(userId, greenApiId))) {
+          text = (await describeInboundMedia(userId, greenApiId, { kind })) ?? placeholderForType(m.typeMessage) ?? "";
+        } else {
+          text = placeholderForType(m.typeMessage) ?? "";
+        }
+      }
+      if (!text) continue;
 
       const senderName = m.senderName || m.senderContactName || chatIdToDisplay(rawChatId);
       if (

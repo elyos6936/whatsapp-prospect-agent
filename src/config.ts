@@ -14,6 +14,8 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
   openaiModel: process.env.OPENAI_MODEL?.trim() || "gpt-4o",
+  openaiTranscribeModel: process.env.OPENAI_TRANSCRIBE_MODEL?.trim() || "whisper-1",
+  openaiVisionModel: process.env.OPENAI_VISION_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "gpt-4o",
   defaultEvolutionBaseUrl: "http://localhost:8080",
   envOpenAiKey: process.env.OPENAI_API_KEY?.trim() || "",
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),
