@@ -48,11 +48,28 @@ async function failAutomationNoTargets(
   throw new Error(reason);
 }
 
+/** Nombre de premiers messages déjà envoyés aujourd'hui pour cette campagne. */
+async function countSentTodayForAutomation(userId: number, automationId: number): Promise<number> {
+  const today = formatLocalDateTime(new Date()).slice(0, 10);
+  const targets = await listAutomationTargets(userId, automationId, { limit: 1000 });
+  return targets.filter(
+    (t) => t.status !== "pending" && !!t.last_action_at && t.last_action_at.slice(0, 10) === today
+  ).length;
+}
+
 async function processGroupProspect(userId: number, auto: Automation): Promise<void> {
   const quota = await canSendOutbound(userId);
   if (!quota.ok) {
     await addAutomationLog(userId, auto.id, "warning", quota.reason ?? "Quota journalier atteint — envois en pause.");
     return;
+  }
+
+  // Plafond quotidien propre à la campagne (anti-blocage).
+  if (auto.config.maxPerDay && auto.config.maxPerDay > 0) {
+    const sentToday = await countSentTodayForAutomation(userId, auto.id);
+    if (sentToday >= auto.config.maxPerDay) {
+      return;
+    }
   }
 
   const target = await getNextPendingTarget(userId, auto.id);
@@ -61,17 +78,22 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     if (targets.length === 0) {
       // Campagne active sans cibles : tenter bootstrap (activation partielle ou groupe non résolu au draft)
       try {
-        const added = await bootstrapGroupProspectTargets(userId, auto.id);
+        const added =
+          auto.type === "contact_prospect"
+            ? await bootstrapContactProspectTargets(userId, auto.id)
+            : await bootstrapGroupProspectTargets(userId, auto.id);
         if (added === 0) {
           await failAutomationNoTargets(
             userId,
             auto.id,
-            "Aucun membre chargé — vérifiez la connexion WhatsApp et le groupe."
+            auto.type === "contact_prospect"
+              ? "Aucun contact chargé — vérifiez la connexion WhatsApp et la liste de contacts."
+              : "Aucun membre chargé — vérifiez la connexion WhatsApp et le groupe."
           );
         }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        await addAutomationLog(userId, auto.id, "error", `Bootstrap membres échoué : ${msg}`);
+        await addAutomationLog(userId, auto.id, "error", `Bootstrap cibles échoué : ${msg}`);
       }
       return;
     }
@@ -178,7 +200,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
 }
 
 async function processAutomation(userId: number, auto: Automation): Promise<void> {
-  if (auto.type === "group_prospect") {
+  if (auto.type === "group_prospect" || auto.type === "contact_prospect") {
     await processGroupProspect(userId, auto);
   }
 }
@@ -364,6 +386,78 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
 
   await updateAutomationStats(userId, automationId, {
     report: `Prospection lancée sur ${added} membre(s).`,
+    lastActionAt: new Date().toISOString(),
+  });
+  return added;
+}
+
+export async function bootstrapContactProspectTargets(
+  userId: number,
+  automationId: number
+): Promise<number> {
+  const auto = await getAutomation(userId, automationId);
+  if (!auto || auto.type !== "contact_prospect") return 0;
+
+  const contacts = auto.config.contactTargets ?? [];
+  if (!contacts.length) {
+    await failAutomationNoTargets(
+      userId,
+      automationId,
+      "Aucun contact dans la configuration — impossible de démarrer la prospection."
+    );
+  }
+
+  const alreadyEnrolled = await getActiveCampaignTargetIds(userId, automationId);
+
+  const eligible: Array<{ id: string; label?: string }> = [];
+  for (const c of contacts) {
+    if (await isContactBlocked(userId, c.id)) continue;
+    let dup = false;
+    for (const tid of alreadyEnrolled) {
+      if (chatIdsMatch(tid, c.id)) {
+        dup = true;
+        break;
+      }
+    }
+    if (!dup && !eligible.some((e) => chatIdsMatch(e.id, c.id))) {
+      eligible.push(c);
+    }
+  }
+
+  if (!eligible.length) {
+    await failAutomationNoTargets(
+      userId,
+      automationId,
+      "Aucun contact éligible (bloqués ou déjà enrôlés dans une autre campagne active)."
+    );
+  }
+
+  const added = await addAutomationTargets(
+    userId,
+    automationId,
+    eligible.map((c) => ({
+      targetId: c.id,
+      targetLabel: c.label ?? chatIdToDisplay(c.id),
+    }))
+  );
+
+  await addAutomationLog(
+    userId,
+    automationId,
+    "info",
+    `${added} contact(s) ajouté(s) à la prospection.`
+  );
+
+  if (added === 0) {
+    await failAutomationNoTargets(
+      userId,
+      automationId,
+      "Aucun nouveau contact ajouté (déjà présents dans cette campagne)."
+    );
+  }
+
+  await updateAutomationStats(userId, automationId, {
+    report: `Prospection lancée sur ${added} contact(s).`,
     lastActionAt: new Date().toISOString(),
   });
   return added;

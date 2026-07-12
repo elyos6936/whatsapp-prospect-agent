@@ -1059,7 +1059,12 @@ export async function getDailyBilan(userId: number, date?: string): Promise<Dail
   };
 }
 
-export const AUTOMATION_TYPES = ["group_prospect", "keyword_sales", "custom_followup"] as const;
+export const AUTOMATION_TYPES = [
+  "group_prospect",
+  "contact_prospect",
+  "keyword_sales",
+  "custom_followup",
+] as const;
 export type AutomationType = (typeof AUTOMATION_TYPES)[number];
 export const AUTOMATION_STATUSES = ["draft", "active", "paused", "completed", "failed"] as const;
 export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
@@ -1071,8 +1076,12 @@ export interface AutomationConfig {
   origin?: string;
   groupId?: string;
   groupName?: string;
+  contactTargets?: Array<{ id: string; label?: string }>;
   initialMessage?: string;
   maxMembers?: number;
+  maxPerDay?: number;
+  minDelaySeconds?: number;
+  maxDelaySeconds?: number;
   enableAutoReply?: boolean;
   conversationGuide?: string;
   keywords?: string[];

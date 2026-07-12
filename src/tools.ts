@@ -94,7 +94,10 @@ import {
   type AutomationConfig,
   unblockContact,
 } from "./db.js";
-import { bootstrapGroupProspectTargets } from "./automation-engine.js";
+import {
+  bootstrapGroupProspectTargets,
+  bootstrapContactProspectTargets,
+} from "./automation-engine.js";
 import { getContactPresence } from "./notifications.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -1217,14 +1220,32 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           name: { type: "string", description: "Nom court de la campagne" },
           type: {
             type: "string",
-            enum: ["group_prospect", "keyword_sales", "custom_followup"],
+            enum: ["group_prospect", "contact_prospect", "keyword_sales", "custom_followup"],
             description:
-              "group_prospect = prospection sortante groupe ; keyword_sales = closing entrant sur déclencheur exact",
+              "group_prospect = prospection sortante d'un groupe ; contact_prospect = prospection d'un ou plusieurs contacts précis (hors groupe) ; keyword_sales = closing entrant sur déclencheur exact",
           },
           summary: { type: "string", description: "Résumé en une phrase" },
-          group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom)" },
-          initial_message: { type: "string", description: "Premier message pour group_prospect" },
-          max_members: { type: "number", description: "Limite de membres (défaut 30)" },
+          group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom) — group_prospect" },
+          contacts: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "contact_prospect : liste des contacts à prospecter (numéros +229…, chatId, ou noms exacts présents dans les contacts). 1 ou plusieurs.",
+          },
+          initial_message: { type: "string", description: "Premier message pour group_prospect / contact_prospect" },
+          max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
+          max_per_day: {
+            type: "number",
+            description: "Nombre max de premiers messages envoyés par jour pour cette campagne (anti-blocage)",
+          },
+          min_delay_seconds: {
+            type: "number",
+            description: "Délai minimum entre deux envois, en secondes (anti-blocage, min 30)",
+          },
+          max_delay_seconds: {
+            type: "number",
+            description: "Délai maximum entre deux envois, en secondes (anti-blocage)",
+          },
           enable_auto_reply: {
             type: "boolean",
             description: "Réponses auto pour les prospects contactés (défaut true)",
@@ -1568,10 +1589,23 @@ function buildAutomationConfigFromArgs(
     ? args.relance_delays_days.map((d) => Number(d)).filter((n) => Number.isFinite(n) && n > 0)
     : [];
 
+  const isOutbound = type === "group_prospect" || type === "contact_prospect";
+  const clampSeconds = (v: unknown): number | undefined => {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return undefined;
+    return Math.max(30, Math.round(n));
+  };
+
   const config: AutomationConfig = {
-    mode: type === "group_prospect" ? "outbound_prospect" : type === "keyword_sales" ? "inbound_closing" : undefined,
+    mode: isOutbound ? "outbound_prospect" : type === "keyword_sales" ? "inbound_closing" : undefined,
     initialMessage: args.initial_message ? String(args.initial_message) : undefined,
     maxMembers: args.max_members ? Number(args.max_members) : 30,
+    maxPerDay:
+      args.max_per_day != null && Number.isFinite(Number(args.max_per_day)) && Number(args.max_per_day) > 0
+        ? Math.round(Number(args.max_per_day))
+        : undefined,
+    minDelaySeconds: clampSeconds(args.min_delay_seconds),
+    maxDelaySeconds: clampSeconds(args.max_delay_seconds),
     enableAutoReply: args.enable_auto_reply !== false,
     conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
     triggerPhrases,
@@ -2999,11 +3033,78 @@ export async function executeTool(userId: number, name: string, args: Record<str
 
     case "create_automation": {
       const type = String(args.type ?? "") as AutomationType;
-      if (!["group_prospect", "keyword_sales", "custom_followup"].includes(type)) {
+      if (!["group_prospect", "contact_prospect", "keyword_sales", "custom_followup"].includes(type)) {
         return JSON.stringify({ error: "type invalide." });
       }
 
       const config = buildAutomationConfigFromArgs(args, type);
+
+      if (type === "contact_prospect") {
+        if (!args.initial_message) {
+          return JSON.stringify({ error: "contact_prospect requiert initial_message." });
+        }
+        const rawContacts = Array.isArray(args.contacts)
+          ? args.contacts.map(String).map((s) => s.trim()).filter(Boolean)
+          : [];
+        if (!rawContacts.length) {
+          return JSON.stringify({
+            error: "contact_prospect requiert au moins un contact (numéro, chatId ou nom).",
+          });
+        }
+        try {
+          await requireEvolutionConnected(userId, "la création d'une campagne de prospection de contacts");
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return JSON.stringify({ error: msg });
+        }
+        const resolved: Array<{ id: string; label?: string }> = [];
+        const failed: string[] = [];
+        for (const raw of rawContacts) {
+          try {
+            const id = await resolveRecipient(userId, raw);
+            if (id.endsWith("@g.us")) {
+              failed.push(`${raw} (c'est un groupe — utilise group_prospect)`);
+              continue;
+            }
+            if (!resolved.some((r) => r.id === id)) {
+              resolved.push({ id, label: /^[\d+\s\-().]+$/.test(raw) ? undefined : raw });
+            }
+          } catch {
+            failed.push(raw);
+          }
+        }
+        if (!resolved.length) {
+          return JSON.stringify({
+            error: `Aucun contact résolu. Non trouvés : ${failed.join(", ")}. Donne des numéros (+229…) ou des noms exacts présents dans les contacts.`,
+          });
+        }
+        config.contactTargets = resolved;
+        if (failed.length) {
+          config.followUpInstructions = undefined;
+        }
+        const auto = await createAutomation(userId, {
+          name: String(args.name ?? "Prospection contacts"),
+          type,
+          config,
+          summary: args.summary ? String(args.summary) : undefined,
+          budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
+          status: "draft",
+        });
+        return JSON.stringify({
+          success: true,
+          automationId: auto.id,
+          name: auto.name,
+          type: auto.type,
+          status: auto.status,
+          config: auto.config,
+          resolvedContacts: resolved.length,
+          unresolved: failed,
+          message: `Campagne « ${auto.name} » créée en brouillon (#${auto.id}) avec ${resolved.length} contact(s).${failed.length ? ` Non résolus : ${failed.join(", ")}.` : ""} Prochaine étape : simulation puis activate_automation après confirmation.`,
+          simulationHint:
+            "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
+          completedAt: nowFr(),
+        });
+      }
 
       if (type === "group_prospect") {
         if (!args.group_id || !args.initial_message) {
@@ -3084,6 +3185,18 @@ export async function executeTool(userId: number, name: string, args: Record<str
           await requireEvolutionConnected(userId, "l'activation de la campagne");
           await updateAutomationStatus(userId, id, "active");
           targetsAdded = await bootstrapGroupProspectTargets(userId, id);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return JSON.stringify({ error: `Activation échouée : ${msg}`, automationId: id });
+        }
+      } else if (auto.type === "contact_prospect") {
+        if (!auto.config.initialMessage || !auto.config.contactTargets?.length) {
+          return JSON.stringify({ error: "initialMessage ou contacts manquants dans la config." });
+        }
+        try {
+          await requireEvolutionConnected(userId, "l'activation de la campagne");
+          await updateAutomationStatus(userId, id, "active");
+          targetsAdded = await bootstrapContactProspectTargets(userId, id);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({ error: `Activation échouée : ${msg}`, automationId: id });
