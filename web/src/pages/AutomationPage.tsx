@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   fetchAutomationDetail,
   fetchAutomations,
@@ -6,6 +6,7 @@ import {
   fetchRoiDashboard,
   reloadAutomationMembers,
   resolveHandoff,
+  sendChatMessage,
   updateAutomationStatus,
   type AutomationDetail,
   type AutomationSummary,
@@ -14,10 +15,12 @@ import {
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
+type AutoMode = 'manual' | 'auto';
 type AutoTab = 'list' | 'roi' | 'handoffs';
 
 const TYPE_LABELS: Record<string, string> = {
   group_prospect: 'Prospection groupe',
+  contact_prospect: 'Prospection contacts',
   keyword_sales: 'Vente sur mots-clés',
   custom_followup: 'Suivi personnalisé',
 };
@@ -46,6 +49,10 @@ function StatCard({ label, value, hint }: { label: string; value: string | numbe
   );
 }
 
+function isOutboundType(type: string): boolean {
+  return type === 'group_prospect' || type === 'contact_prospect';
+}
+
 function needsMemberReload(a: AutomationSummary): boolean {
   if (a.type !== 'group_prospect') return false;
   const contacted = (a.stats?.contacted as number) ?? 0;
@@ -53,7 +60,209 @@ function needsMemberReload(a: AutomationSummary): boolean {
   return a.status === 'failed' || (contacted === 0 && pending === 0);
 }
 
+function responseRate(stats?: Record<string, number | string>): number | null {
+  const contacted = Number(stats?.contacted ?? 0);
+  const replied = Number(stats?.replied ?? 0);
+  if (!contacted) return null;
+  return Math.round((replied / contacted) * 100);
+}
+
+function statusBadgeClass(status: string): string {
+  return cn(
+    'rounded-full px-2 py-0.5 text-xs',
+    status === 'active' && 'bg-emerald-500/20 text-emerald-400',
+    status === 'draft' && 'bg-blue-500/20 text-blue-400',
+    status === 'paused' && 'bg-amber-500/20 text-amber-400',
+    status === 'failed' && 'bg-red-500/20 text-red-400',
+    status === 'completed' && 'bg-bg-300 text-text-400',
+  );
+}
+
+// ─── Chat du builder manuel ─────────────────────────────────────────────────
+type ChatMsg = { role: 'user' | 'assistant'; content: string };
+
+function ManualBuilder({
+  automations,
+  onRefresh,
+  onOpenStats,
+}: {
+  automations: AutomationSummary[];
+  onRefresh: () => void;
+  onOpenStats: (id: number) => void;
+}) {
+  const [messages, setMessages] = useState<ChatMsg[]>([
+    {
+      role: 'assistant',
+      content:
+        "Qu'est-ce que tu veux automatiser ? Décris-le simplement, ex. « Lundi à 8h, envoie « Bonjour, on est ouvert ! » à +229… » ou « Prospecte ces 3 contacts pour ma formation ». Je m'occupe du reste et je te demande confirmation avant d'activer.",
+    },
+  ]);
+  const [input, setInput] = useState('');
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
+  }, [messages]);
+
+  const send = async () => {
+    const text = input.trim();
+    if (!text || sending) return;
+    setInput('');
+    setMessages((m) => [...m, { role: 'user', content: text }]);
+    setSending(true);
+    try {
+      const res = await sendChatMessage(text);
+      setMessages((m) => [...m, { role: 'assistant', content: res.reply }]);
+      // L'agent a pu créer / modifier / activer une automatisation → rafraîchir le volet droit.
+      onRefresh();
+    } catch (err) {
+      setMessages((m) => [
+        ...m,
+        { role: 'assistant', content: err instanceof Error ? err.message : 'Erreur, réessaie.' },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  return (
+    <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_360px]">
+      {/* Chat builder */}
+      <div className="flex h-[70vh] flex-col rounded-2xl border border-white/10 bg-bg-100">
+        <div className="border-b border-white/10 px-4 py-3">
+          <h3 className="text-sm font-medium text-text-100">Créer une automatisation</h3>
+          <p className="text-xs text-text-500">
+            Écris ce que tu veux, je le mets en place. Tu valides avant activation.
+          </p>
+        </div>
+        <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto custom-scrollbar p-4">
+          {messages.map((m, i) => (
+            <div
+              key={i}
+              className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}
+            >
+              <div
+                className={cn(
+                  'max-w-[85%] whitespace-pre-wrap rounded-2xl px-3.5 py-2 text-sm',
+                  m.role === 'user'
+                    ? 'bg-brand text-white'
+                    : 'border border-white/10 bg-bg-200 text-text-200',
+                )}
+              >
+                {m.content}
+              </div>
+            </div>
+          ))}
+          {sending && (
+            <div className="flex justify-start">
+              <div className="rounded-2xl border border-white/10 bg-bg-200 px-3.5 py-2 text-sm text-text-500">
+                L&apos;agent réfléchit…
+              </div>
+            </div>
+          )}
+        </div>
+        <div className="border-t border-white/10 p-3">
+          <div className="flex items-end gap-2">
+            <textarea
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey) {
+                  e.preventDefault();
+                  void send();
+                }
+              }}
+              rows={1}
+              placeholder="Ex. Mardi 9h, envoie « Promo -20% ! » à +22990000000"
+              className="max-h-32 flex-1 resize-none rounded-xl border border-white/10 bg-bg-0 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand-border"
+            />
+            <button
+              type="button"
+              onClick={() => void send()}
+              disabled={sending || !input.trim()}
+              className="rounded-xl bg-brand px-4 py-2 text-sm text-white disabled:opacity-50"
+            >
+              Envoyer
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Volet droit : automatisations, activation/désactivation */}
+      <div className="flex h-[70vh] flex-col rounded-2xl border border-white/10 bg-bg-100">
+        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+          <h3 className="text-sm font-medium text-text-100">Mes automatisations</h3>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="rounded-lg border border-white/10 px-2 py-1 text-[11px] text-text-400 hover:bg-bg-200"
+          >
+            Actualiser
+          </button>
+        </div>
+        <div className="flex-1 space-y-2 overflow-y-auto custom-scrollbar p-3">
+          {automations.length === 0 ? (
+            <p className="p-2 text-sm text-text-500">
+              Aucune automatisation pour l&apos;instant. Décris-en une dans le chat.
+            </p>
+          ) : (
+            automations.map((auto) => (
+              <div key={auto.id} className="rounded-xl border border-white/10 bg-bg-0 p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-medium text-text-100">{auto.name}</p>
+                    <span className="text-[11px] text-brand">
+                      {TYPE_LABELS[auto.type] || auto.type}
+                    </span>
+                  </div>
+                  <span className={statusBadgeClass(auto.status)}>
+                    {STATUS_LABELS[auto.status] || auto.status}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => onOpenStats(auto.id)}
+                    className="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] hover:bg-bg-200"
+                  >
+                    Statistiques
+                  </button>
+                  {auto.status === 'active' ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await updateAutomationStatus(auto.id, 'paused');
+                        onRefresh();
+                      }}
+                      className="rounded-lg border border-white/10 px-2.5 py-1 text-[11px] hover:bg-bg-200"
+                    >
+                      Désactiver
+                    </button>
+                  ) : (auto.status === 'paused' || auto.status === 'draft') ? (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await updateAutomationStatus(auto.id, 'active');
+                        onRefresh();
+                      }}
+                      className="rounded-lg bg-brand px-2.5 py-1 text-[11px] text-white"
+                    >
+                      {auto.status === 'draft' ? 'Activer' : 'Réactiver'}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AutomationPage() {
+  const [mode, setMode] = useState<AutoMode>('auto');
   const [tab, setTab] = useState<AutoTab>('list');
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
   const [detail, setDetail] = useState<AutomationDetail | null>(null);
@@ -108,10 +317,14 @@ export function AutomationPage() {
   }, []);
 
   useEffect(() => {
+    if (mode === 'manual') {
+      void loadAutomations();
+      return;
+    }
     if (tab === 'list' && !detail) void loadAutomations();
     if (tab === 'roi') void loadRoi();
     if (tab === 'handoffs') void loadHandoffs();
-  }, [tab, detail, loadAutomations, loadRoi, loadHandoffs]);
+  }, [mode, tab, detail, loadAutomations, loadRoi, loadHandoffs]);
 
   const handleReloadMembers = async (id: number, onDone?: () => void) => {
     if (
@@ -141,6 +354,7 @@ export function AutomationPage() {
   const stats = a?.stats ?? {};
   const targets = detail?.targets ?? [];
   const logs = detail?.logs ?? [];
+  const rate = responseRate(stats);
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -148,14 +362,18 @@ export function AutomationPage() {
         <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="font-serif text-2xl font-light text-text-100">Automatisation</h1>
-            <p className="mt-1 text-sm text-text-400">Campagnes, ROI et handoffs humains.</p>
+            <p className="mt-1 text-sm text-text-400">
+              Crée tes automatisations toi-même (Manuel) ou retrouve celles créées depuis le chat
+              (Automatique).
+            </p>
           </div>
           <button
             type="button"
             onClick={() => {
-              if (tab === 'list' && !detail) void loadAutomations();
-              if (tab === 'roi') void loadRoi();
-              if (tab === 'handoffs') void loadHandoffs();
+              if (mode === 'manual') void loadAutomations();
+              else if (tab === 'list' && !detail) void loadAutomations();
+              else if (tab === 'roi') void loadRoi();
+              else if (tab === 'handoffs') void loadHandoffs();
             }}
             className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-text-400 hover:bg-bg-200"
           >
@@ -163,35 +381,73 @@ export function AutomationPage() {
           </button>
         </div>
 
-        <div className="mt-4 flex flex-wrap gap-2">
-          {tabs.map((t) => (
+        {/* Sélecteur de mode Manuel / Automatique */}
+        <div className="mt-4 inline-flex rounded-xl border border-white/10 bg-bg-100 p-1">
+          {([
+            { id: 'manual', label: 'Manuel' },
+            { id: 'auto', label: 'Automatique' },
+          ] as { id: AutoMode; label: string }[]).map((m) => (
             <button
-              key={t.id}
+              key={m.id}
               type="button"
               onClick={() => {
-                setTab(t.id);
-                if (t.id === 'list') setDetail(null);
+                setMode(m.id);
+                setDetail(null);
+                setError(null);
               }}
               className={cn(
-                'rounded-lg px-3 py-1.5 text-xs font-medium transition',
-                tab === t.id
-                  ? 'bg-brand-muted text-brand border border-brand-border'
-                  : 'text-text-400 border border-white/10 hover:bg-bg-200',
+                'rounded-lg px-4 py-1.5 text-sm font-medium transition',
+                mode === m.id ? 'bg-brand text-white' : 'text-text-400 hover:bg-bg-200',
               )}
             >
-              {t.label}
+              {m.label}
             </button>
           ))}
         </div>
 
         {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
+
+        {/* ─── MODE MANUEL ─────────────────────────────────────────── */}
+        {mode === 'manual' && !detail && (
+          <ManualBuilder
+            automations={automations}
+            onRefresh={loadAutomations}
+            onOpenStats={(id) => void showDetail(id)}
+          />
+        )}
+
+        {/* ─── MODE AUTOMATIQUE (existant) ─────────────────────────── */}
+        {mode === 'auto' && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {tabs.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => {
+                  setTab(t.id);
+                  if (t.id === 'list') setDetail(null);
+                }}
+                className={cn(
+                  'rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                  tab === t.id
+                    ? 'bg-brand-muted text-brand border border-brand-border'
+                    : 'text-text-400 border border-white/10 hover:bg-bg-200',
+                )}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {loading && <p className="mt-4 text-sm text-text-500">Chargement…</p>}
 
-        {tab === 'list' && !detail && (
+        {mode === 'auto' && tab === 'list' && !detail && (
           <div className="mt-6 space-y-3">
             {automations.length === 0 ? (
               <p className="text-sm text-text-500">
-                Aucune automatisation. Demandez à l&apos;agent IA de lancer une campagne.
+                Aucune automatisation. Demandez à l&apos;agent IA de lancer une campagne, ou passez
+                en mode Manuel.
               </p>
             ) : (
               automations.map((auto) => {
@@ -199,10 +455,9 @@ export function AutomationPage() {
                 const pending = (auto.stats?.pending as number) ?? 0;
                 const replied = (auto.stats?.replied as number) ?? 0;
                 const handled = (auto.stats?.messagesHandled as number) ?? 0;
-                const progress =
-                  auto.type === 'group_prospect'
-                    ? `${contacted} contacté(s) · ${pending} restant(s) · ${replied} réponse(s)`
-                    : `${handled} message(s) traité(s)`;
+                const progress = isOutboundType(auto.type)
+                  ? `${contacted} contacté(s) · ${pending} restant(s) · ${replied} réponse(s)`
+                  : `${handled} message(s) traité(s)`;
 
                 return (
                   <article
@@ -217,16 +472,7 @@ export function AutomationPage() {
                           {TYPE_LABELS[auto.type] || auto.type}
                         </span>
                       </div>
-                      <span
-                        className={cn(
-                          'rounded-full px-2 py-0.5 text-xs',
-                          auto.status === 'active' && 'bg-emerald-500/20 text-emerald-400',
-                          auto.status === 'draft' && 'bg-blue-500/20 text-blue-400',
-                          auto.status === 'paused' && 'bg-amber-500/20 text-amber-400',
-                          auto.status === 'failed' && 'bg-red-500/20 text-red-400',
-                          auto.status === 'completed' && 'bg-bg-300 text-text-400',
-                        )}
-                      >
+                      <span className={statusBadgeClass(auto.status)}>
                         {STATUS_LABELS[auto.status] || auto.status}
                       </span>
                     </div>
@@ -241,7 +487,7 @@ export function AutomationPage() {
                         onClick={() => void showDetail(auto.id)}
                         className="rounded-lg border border-white/10 px-3 py-1 text-xs hover:bg-bg-200"
                       >
-                        Détail
+                        Statistiques
                       </button>
                       {needsMemberReload(auto) && (
                         <button
@@ -264,7 +510,7 @@ export function AutomationPage() {
                           Désactiver
                         </button>
                       )}
-                      {auto.status === 'paused' && (
+                      {(auto.status === 'paused' || auto.status === 'draft') && (
                         <button
                           type="button"
                           onClick={async () => {
@@ -273,7 +519,7 @@ export function AutomationPage() {
                           }}
                           className="rounded-lg bg-brand px-3 py-1 text-xs text-white"
                         >
-                          Réactiver
+                          {auto.status === 'draft' ? 'Activer' : 'Réactiver'}
                         </button>
                       )}
                     </div>
@@ -284,14 +530,15 @@ export function AutomationPage() {
           </div>
         )}
 
-        {tab === 'list' && detail && a && (
+        {/* Détail / statistiques d'une automatisation (partagé Manuel + Auto) */}
+        {detail && a && (
           <div className="mt-6 space-y-6">
             <button
               type="button"
               onClick={() => setDetail(null)}
               className="text-sm text-brand hover:underline"
             >
-              ← Retour à la liste
+              ← Retour
             </button>
 
             <header className="flex items-start justify-between gap-4">
@@ -301,24 +548,28 @@ export function AutomationPage() {
                   {TYPE_LABELS[a.type] || a.type} · Créée le {fmtTime(a.created_at)}
                 </p>
               </div>
-              <span className="text-sm text-text-400">
-                {STATUS_LABELS[a.status] || a.status}
-              </span>
+              <span className="text-sm text-text-400">{STATUS_LABELS[a.status] || a.status}</span>
             </header>
 
             <p className="text-text-300">{a.summary || '—'}</p>
 
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {a.type === 'group_prospect' ? (
+              {isOutboundType(a.type) ? (
                 <>
                   <StatCard label="Contactés" value={(stats.contacted as number) ?? 0} />
                   <StatCard label="Restants" value={(stats.pending as number) ?? 0} />
                   <StatCard label="Réponses" value={(stats.replied as number) ?? 0} />
-                  <StatCard label="Intéressés" value={(stats.interested as number) ?? 0} />
+                  <StatCard
+                    label="Taux de réponse"
+                    value={rate != null ? `${rate}%` : '—'}
+                    hint={`${(stats.interested as number) ?? 0} intéressé(s)`}
+                  />
                 </>
               ) : (
                 <>
                   <StatCard label="Messages traités" value={(stats.messagesHandled as number) ?? 0} />
+                  <StatCard label="Intéressés" value={(stats.interested as number) ?? 0} />
+                  <StatCard label="Conversions" value={(stats.conversions as number) ?? 0} />
                   <StatCard label="Budget" value={`${a.budget_fcfa || 0} FCFA`} />
                 </>
               )}
@@ -396,7 +647,7 @@ export function AutomationPage() {
                   Désactiver
                 </button>
               )}
-              {a.status === 'paused' && (
+              {(a.status === 'paused' || a.status === 'draft') && (
                 <button
                   type="button"
                   onClick={async () => {
@@ -405,14 +656,14 @@ export function AutomationPage() {
                   }}
                   className="rounded-xl bg-brand px-4 py-2 text-sm text-white"
                 >
-                  Réactiver
+                  {a.status === 'draft' ? 'Activer' : 'Réactiver'}
                 </button>
               )}
             </div>
           </div>
         )}
 
-        {tab === 'roi' && roi && (
+        {mode === 'auto' && tab === 'roi' && roi && !detail && (
           <div className="mt-6 space-y-6">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <StatCard label="Contactés" value={roi.totals?.contacted ?? 0} />
@@ -422,10 +673,7 @@ export function AutomationPage() {
               <StatCard label="Revenus" value={`${roi.totals?.revenueFcfa ?? 0} FCFA`} />
               <StatCard label="Budget" value={`${roi.totals?.budgetFcfa ?? 0} FCFA`} />
               <StatCard label="Leads chauds" value={roi.totals?.hotLeads ?? 0} />
-              <StatCard
-                label="Msgs sortants/jour"
-                value={roi.totals?.messagesToday ?? 0}
-              />
+              <StatCard label="Msgs sortants/jour" value={roi.totals?.messagesToday ?? 0} />
             </div>
             <section>
               <h3 className="text-sm font-medium text-text-200">Par campagne</h3>
@@ -448,7 +696,7 @@ export function AutomationPage() {
           </div>
         )}
 
-        {tab === 'handoffs' && (
+        {mode === 'auto' && tab === 'handoffs' && !detail && (
           <div className="mt-6 space-y-3">
             {handoffs.length === 0 ? (
               <p className="text-sm text-text-500">
@@ -457,9 +705,7 @@ export function AutomationPage() {
             ) : (
               handoffs.map((h) => (
                 <article key={h.id} className="rounded-2xl border border-white/10 bg-bg-100 p-5">
-                  <h4 className="font-medium text-text-200">
-                    {h.contact_name || h.contact_phone}
-                  </h4>
+                  <h4 className="font-medium text-text-200">{h.contact_name || h.contact_phone}</h4>
                   <p className="mt-1 text-sm font-medium text-brand">{h.reason}</p>
                   {h.summary && <p className="mt-2 text-sm text-text-400">{h.summary}</p>}
                   {h.suggested_reply && (

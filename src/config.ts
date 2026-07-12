@@ -1,5 +1,12 @@
 import "dotenv/config";
 
+// Fuseau horaire de l'application (par défaut Bénin / UTC+1, sans heure d'été).
+// Le serveur Hostinger tourne en UTC : on force le TZ pour que toutes les
+// heures « locales » (séquences, relances, rapports, planification) soient
+// correctes. Doit être défini AVANT toute opération sur les dates.
+const appTimezone = process.env.APP_TIMEZONE?.trim() || process.env.TZ?.trim() || "Africa/Porto-Novo";
+process.env.TZ = appTimezone;
+
 const portRaw = process.env.PORT?.trim() || "3000";
 const port = Number(portRaw);
 
@@ -10,6 +17,7 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 export const config = {
   port,
+  timezone: appTimezone,
   databaseUrl: process.env.DATABASE_URL?.trim() || "",
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
