@@ -1,8 +1,7 @@
-export type MainView = 'chat' | 'console' | 'automation' | 'settings';
+export type MainView = 'chat' | 'automation' | 'settings';
 
 export const MAIN_NAV: { id: MainView; label: string }[] = [
   { id: 'chat', label: 'Chat' },
-  { id: 'console', label: 'Console WhatsApp' },
   { id: 'automation', label: 'Automatisation' },
   { id: 'settings', label: 'Réglages' },
 ];

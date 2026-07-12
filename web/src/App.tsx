@@ -18,8 +18,6 @@ import { LoginPage } from '@/pages/LoginPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { RegisterPage } from '@/pages/RegisterPage';
 import { SettingsPage } from '@/pages/SettingsPage';
-import { WhatsAppConsolePage } from '@/pages/WhatsAppConsolePage';
-import type { HealthStatus } from '@/lib/api';
 
 type AuthScreen = 'login' | 'register';
 
@@ -42,16 +40,6 @@ export default function App() {
     const id = setInterval(() => void refreshUser(), 5000);
     return () => clearInterval(id);
   }, [user, refreshUser]);
-
-  const health: HealthStatus | null = user
-    ? {
-        ok: true,
-        openai: { configured: true },
-        whatsapp: user.whatsapp ?? { connected: false, state: 'unknown', message: '' },
-        autoReply: true,
-        outbound: { today: 0, limit: 30, bonus: 0 },
-      }
-    : null;
 
   const handleNavigate = useCallback(
     (view: MainView) => {
@@ -140,7 +128,6 @@ export default function App() {
         onToggleCollapsed={toggle}
         mainView={mainView}
         onNavigate={handleNavigate}
-        health={health}
         waConnected={waConnected}
       />
 
@@ -162,7 +149,6 @@ export default function App() {
           />
         )}
 
-        {mainView === 'console' && <WhatsAppConsolePage />}
         {mainView === 'automation' && <AutomationPage />}
         {mainView === 'settings' && <SettingsPage />}
       </div>

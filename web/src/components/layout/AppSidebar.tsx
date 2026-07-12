@@ -3,17 +3,14 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Settings,
-  Smartphone,
   Zap,
 } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import { MAIN_NAV, type MainView } from '@/lib/navigation';
-import type { HealthStatus } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 const NAV_ICONS = {
   chat: MessageSquare,
-  console: Smartphone,
   automation: Zap,
   settings: Settings,
 } as const;
@@ -23,41 +20,16 @@ type AppSidebarProps = {
   onToggleCollapsed: () => void;
   mainView: MainView;
   onNavigate: (view: MainView) => void;
-  health: HealthStatus | null;
   waConnected?: boolean;
 };
-
-function StatusDot({ ok, label }: { ok: boolean; label: string }) {
-  return (
-    <div
-      className={cn(
-        'flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs',
-        ok ? 'text-emerald-400' : 'text-amber-400',
-      )}
-      title={label}
-    >
-      <span
-        className={cn(
-          'h-2 w-2 shrink-0 rounded-full',
-          ok ? 'bg-emerald-500' : 'bg-amber-500',
-        )}
-      />
-      {!label ? null : <span className="truncate">{label}</span>}
-    </div>
-  );
-}
 
 export function AppSidebar({
   collapsed,
   onToggleCollapsed,
   mainView,
   onNavigate,
-  health,
   waConnected = true,
 }: AppSidebarProps) {
-  const openaiOk = health?.openai?.configured ?? false;
-  const waOk = health?.whatsapp?.connected ?? false;
-
   return (
     <aside
       className={cn(
@@ -124,43 +96,6 @@ export function AppSidebar({
           );
         })}
       </nav>
-
-      <div className="mt-auto border-t border-white/[0.06] px-2 py-3">
-        {!collapsed ? (
-          <div className="space-y-1 rounded-xl border border-white/[0.06] bg-bg-100 p-2.5">
-            <p className="px-1 text-[10px] font-medium uppercase tracking-wider text-text-500">
-              État
-            </p>
-            <StatusDot ok={openaiOk} label={openaiOk ? 'OpenAI OK' : 'OpenAI manquant'} />
-            <StatusDot
-              ok={waOk}
-              label={waOk ? 'WhatsApp connecté' : health?.whatsapp?.state || 'WhatsApp hors ligne'}
-            />
-            {health?.outbound && (
-              <p className="px-1 pt-1 text-[11px] text-text-500">
-                Quota : {health.outbound.today}/{health.outbound.limit}
-              </p>
-            )}
-          </div>
-        ) : (
-          <div className="flex flex-col items-center gap-1.5">
-            <span
-              className={cn(
-                'h-2.5 w-2.5 rounded-full',
-                openaiOk ? 'bg-emerald-500' : 'bg-amber-500',
-              )}
-              title={openaiOk ? 'OpenAI OK' : 'OpenAI manquant'}
-            />
-            <span
-              className={cn(
-                'h-2.5 w-2.5 rounded-full',
-                waOk ? 'bg-emerald-500' : 'bg-amber-500',
-              )}
-              title={waOk ? 'WhatsApp connecté' : 'WhatsApp hors ligne'}
-            />
-          </div>
-        )}
-      </div>
     </aside>
   );
 }

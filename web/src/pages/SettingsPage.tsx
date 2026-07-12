@@ -3,7 +3,6 @@ import {
   fetchEvolutionQr,
   fetchSettings,
   rebootEvolutionInstance,
-  resetOutboundQuota,
   saveBusinessProfile,
   setAutoReply,
 } from '@/lib/api';
@@ -40,7 +39,6 @@ export function SettingsPage() {
   const [businessFb, setBusinessFb] = useState('');
 
   const [autoReply, setAutoReplyLocal] = useState(true);
-  const [quotaFb, setQuotaFb] = useState('');
 
   const [qrData, setQrData] = useState<{
     connected: boolean;
@@ -191,24 +189,6 @@ export function SettingsPage() {
                 />
                 Réponses automatiques WhatsApp
               </label>
-            </div>
-
-            <div className="mt-4">
-              <button
-                type="button"
-                onClick={async () => {
-                  try {
-                    const r = await resetOutboundQuota();
-                    setQuotaFb(`Quota réinitialisé : ${r.outbound.limit} messages/jour`);
-                  } catch (err) {
-                    setQuotaFb(err instanceof Error ? err.message : 'Erreur');
-                  }
-                }}
-                className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-text-300 hover:bg-bg-200"
-              >
-                Réinitialiser quota du jour
-              </button>
-              <Feedback text={quotaFb} type={quotaFb.includes('Erreur') ? 'err' : 'ok'} />
             </div>
           </section>
         ) : (
