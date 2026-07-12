@@ -101,6 +101,9 @@ export async function describeInboundMedia(
     const result = await getMessageMediaBase64(userId, messageId);
     base64 = result.base64;
     mimetype = result.mimetype;
+    console.log(
+      `[media] Téléchargé ${media.kind} (${mimetype}, ${Math.round((base64.length * 3) / 4 / 1024)} Ko) pour ${messageId}`,
+    );
   } catch (err) {
     console.warn(
       `[media] Téléchargement impossible pour le message ${messageId}:`,
@@ -110,8 +113,16 @@ export async function describeInboundMedia(
   }
 
   try {
-    if (media.kind === "audio") return await transcribeAudio(apiKey, base64, mimetype);
-    if (media.kind === "image") return await describeImage(apiKey, base64, mimetype);
+    if (media.kind === "audio") {
+      const transcript = await transcribeAudio(apiKey, base64, mimetype);
+      console.log(`[media] Transcription audio ${messageId}: ${transcript ? `« ${transcript.slice(0, 80)} »` : "(vide)"}`);
+      return transcript;
+    }
+    if (media.kind === "image") {
+      const desc = await describeImage(apiKey, base64, mimetype);
+      console.log(`[media] Description image ${messageId}: ${desc ? `« ${desc.slice(0, 80)} »` : "(vide)"}`);
+      return desc;
+    }
   } catch (err) {
     console.warn(
       `[media] Interprétation (${media.kind}) échouée pour ${messageId}:`,
@@ -119,6 +130,11 @@ export async function describeInboundMedia(
     );
   }
   return null;
+}
+
+/** Retire les paramètres d'un mimetype (« audio/ogg; codecs=opus » → « audio/ogg »). */
+function baseMimetype(mimetype: string): string {
+  return mimetype.split(";")[0].trim().toLowerCase();
 }
 
 // ─── Implémentations OpenAI ───────────────────────────────────────────────────
@@ -129,9 +145,11 @@ async function transcribeAudio(
   mimetype: string,
 ): Promise<string | null> {
   const openai = new OpenAI({ apiKey });
-  const ext = mimeToExt(mimetype) ?? "ogg";
+  const clean = baseMimetype(mimetype);
+  const ext = mimeToExt(clean) ?? "ogg";
   const buffer = Buffer.from(base64, "base64");
-  const file = await toFile(buffer, `audio.${ext}`, { type: mimetype });
+  // Whisper attend un type MIME propre (sans « ; codecs=… ») et une extension cohérente.
+  const file = await toFile(buffer, `audio.${ext}`, { type: clean || "audio/ogg" });
 
   const result = await openai.audio.transcriptions.create({
     model: "whisper-1",
@@ -149,7 +167,8 @@ async function describeImage(
   mimetype: string,
 ): Promise<string | null> {
   const openai = new OpenAI({ apiKey });
-  const dataUrl = `data:${mimetype};base64,${base64}`;
+  const clean = baseMimetype(mimetype) || "image/jpeg";
+  const dataUrl = `data:${clean};base64,${base64}`;
 
   const response = await openai.chat.completions.create({
     model: "gpt-4o-mini",

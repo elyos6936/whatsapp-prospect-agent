@@ -1978,7 +1978,9 @@ export async function getMessageMediaBase64(
     method: "POST",
     body: {
       message: { key: { id: idMessage } },
-      ...(opts.convertToMp4 ? { convertToMp4: true } : {}),
+      // convertToMp4 est un champ REQUIS par l'API Evolution (spec OpenAPI v2).
+      // L'omettre provoque un rejet (400) et donc l'échec du téléchargement média.
+      convertToMp4: opts.convertToMp4 === true,
     },
     timeoutMs: 60_000,
   });
