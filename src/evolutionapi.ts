@@ -337,7 +337,14 @@ export async function createInstance(userId: number): Promise<void> {
           enabled: true,
           url: `${config.publicUrl}/api/evolution/webhook`,
           webhookByEvents: false,
-          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "PRESENCE_UPDATE"],
+          events: [
+            "MESSAGES_UPSERT",
+            "MESSAGES_UPDATE",
+            "PRESENCE_UPDATE",
+            "GROUPS_UPSERT",
+            "GROUP_UPDATE",
+            "GROUP_PARTICIPANTS_UPDATE",
+          ],
         },
       },
       timeoutMs: 60_000,
@@ -740,6 +747,212 @@ export async function getGroupMembers(userId: number, groupId: string): Promise<
     size: "size" in groupInfo && groupInfo.size != null ? groupInfo.size : participants.length,
     participants,
   };
+}
+
+/** Normalise un code d'invitation (extrait la partie après chat.whatsapp.com/). */
+function normalizeInviteCode(code: string): string {
+  const trimmed = code.trim();
+  const m = /chat\.whatsapp\.com\/([A-Za-z0-9_-]+)/i.exec(trimmed);
+  if (m) return m[1];
+  return trimmed.replace(/^https?:\/\//, "").replace(/.*\//, "");
+}
+
+async function resolveGroupJid(userId: number, groupIdOrName: string): Promise<string> {
+  const raw = groupIdOrName.trim();
+  if (raw.endsWith("@g.us")) return raw;
+  const found = await findGroupByNameOrId(userId, raw);
+  if (!found) throw new EvolutionApiError(`Groupe introuvable : « ${raw} »`);
+  return found.id;
+}
+
+/** Récupère les infos complètes d'un groupe par JID ou nom. */
+export async function getGroupInfo(userId: number, groupIdOrName: string): Promise<Record<string, unknown>> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  const data = await evolutionFetch<Record<string, unknown>>(
+    creds,
+    `/group/findGroupInfos/${creds.instanceName}`,
+    { query: { groupJid } }
+  );
+  return data ?? {};
+}
+
+export async function updateGroupSubject(userId: number, groupIdOrName: string, subject: string): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  await evolutionFetch(creds, `/group/updateGroupSubject/${creds.instanceName}`, {
+    method: "POST",
+    query: { groupJid },
+    body: { subject: subject.trim() },
+  });
+}
+
+export async function updateGroupDescription(userId: number, groupIdOrName: string, description: string): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  await evolutionFetch(creds, `/group/updateGroupDescription/${creds.instanceName}`, {
+    method: "POST",
+    query: { groupJid },
+    body: { description },
+  });
+}
+
+/** Modifie la photo du groupe (URL publique ou base64). */
+export async function updateGroupPicture(userId: number, groupIdOrName: string, image: string): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  const payload = image.startsWith("data:") ? image.slice(image.indexOf(",") + 1) : image;
+  await evolutionFetch(creds, `/group/updateGroupPicture/${creds.instanceName}`, {
+    method: "POST",
+    query: { groupJid },
+    body: { image: payload },
+    timeoutMs: 60_000,
+  });
+}
+
+/** Ajoute, retire, promeut ou rétrograde des participants. */
+export async function updateGroupParticipants(
+  userId: number,
+  groupIdOrName: string,
+  action: "add" | "remove" | "promote" | "demote",
+  participants: string[]
+): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  const nums = normalizeParticipantNumbers(participants);
+  if (nums.length === 0) throw new EvolutionApiError("Au moins un participant valide est requis.");
+  await evolutionFetch(creds, `/group/updateParticipant/${creds.instanceName}`, {
+    method: "POST",
+    query: { groupJid },
+    body: { action, participants: nums },
+  });
+}
+
+/**
+ * Modifie les paramètres du groupe :
+ * announcement (seuls admins envoient), not_announcement (tout le monde),
+ * locked (seuls admins modifient infos), unlocked (tout le monde).
+ */
+export async function updateGroupSetting(
+  userId: number,
+  groupIdOrName: string,
+  action: "announcement" | "not_announcement" | "locked" | "unlocked"
+): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  await evolutionFetch(creds, `/group/updateSetting/${creds.instanceName}`, {
+    method: "POST",
+    query: { groupJid },
+    body: { action },
+  });
+}
+
+/** Active/désactive les messages éphémères. expiration=0 pour désactiver, sinon secondes (86400=24h, 604800=7j, 7776000=90j). */
+export async function toggleGroupEphemeral(
+  userId: number,
+  groupIdOrName: string,
+  expirationSeconds: number
+): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  await evolutionFetch(creds, `/group/toggleEphemeral/${creds.instanceName}`, {
+    method: "POST",
+    query: { groupJid },
+    body: { expiration: expirationSeconds },
+  });
+}
+
+/** Obtient le code d'invitation du groupe. */
+export async function getGroupInviteCode(userId: number, groupIdOrName: string): Promise<string> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  const data = await evolutionFetch<{ inviteUrl?: string; code?: string; inviteCode?: string }>(
+    creds,
+    `/group/inviteCode/${creds.instanceName}`,
+    { query: { groupJid } }
+  );
+  if (data?.inviteUrl) return data.inviteUrl;
+  const code = data?.code ?? data?.inviteCode ?? "";
+  if (!code) throw new EvolutionApiError("Code d'invitation non disponible.");
+  return code.includes("chat.whatsapp.com") ? code : `https://chat.whatsapp.com/${code}`;
+}
+
+/** Révoque le code d'invitation actuel et en génère un nouveau. */
+export async function revokeGroupInviteCode(userId: number, groupIdOrName: string): Promise<string> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  await evolutionFetch(creds, `/group/revokeInviteCode/${creds.instanceName}`, {
+    method: "POST",
+    query: { groupJid },
+  });
+  return getGroupInviteCode(userId, groupJid);
+}
+
+/** Consulte les infos d'un groupe via son code d'invitation (sans rejoindre). */
+export async function getGroupInviteInfo(userId: number, inviteCode: string): Promise<Record<string, unknown>> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const code = normalizeInviteCode(inviteCode);
+  const data = await evolutionFetch<Record<string, unknown>>(
+    creds,
+    `/group/inviteInfo/${creds.instanceName}`,
+    { query: { inviteCode: code } }
+  );
+  return data ?? {};
+}
+
+/** Accepte une invitation de groupe par code (ou URL complète). */
+export async function acceptGroupInvite(
+  userId: number,
+  inviteCode: string
+): Promise<{ accepted: boolean; groupJid: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const code = normalizeInviteCode(inviteCode);
+  const data = await evolutionFetch<{ accepted?: boolean; groupJid?: string }>(
+    creds,
+    `/group/acceptInviteCode/${creds.instanceName}`,
+    { query: { inviteCode: code } }
+  );
+  return { accepted: Boolean(data?.accepted), groupJid: String(data?.groupJid ?? "") };
+}
+
+/** Envoie une invitation de groupe à des numéros par message privé. */
+export async function sendGroupInvite(
+  userId: number,
+  groupIdOrName: string,
+  numbers: string[],
+  description?: string
+): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  const nums = normalizeParticipantNumbers(numbers);
+  if (nums.length === 0) throw new EvolutionApiError("Au moins un numéro valide est requis.");
+  await evolutionFetch(creds, `/group/sendInvite/${creds.instanceName}`, {
+    method: "POST",
+    body: { groupJid, numbers: nums, description: description ?? "Rejoins notre groupe WhatsApp :" },
+  });
+}
+
+/** Quitte un groupe WhatsApp. */
+export async function leaveWhatsAppGroup(userId: number, groupIdOrName: string): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  const groupJid = await resolveGroupJid(userId, groupIdOrName);
+  await evolutionFetch(creds, `/group/leaveGroup/${creds.instanceName}`, {
+    method: "DELETE",
+    query: { groupJid },
+  });
 }
 
 let lastOutboundAt = 0;
@@ -2281,7 +2494,15 @@ export async function setEvolutionWebhook(userId: number, webhookUrl: string): P
         enabled: true,
         url: webhookUrl,
         webhookByEvents: false,
-        events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "PRESENCE_UPDATE", "CONNECTION_UPDATE"],
+        events: [
+          "MESSAGES_UPSERT",
+          "MESSAGES_UPDATE",
+          "PRESENCE_UPDATE",
+          "GROUPS_UPSERT",
+          "GROUP_UPDATE",
+          "GROUP_PARTICIPANTS_UPDATE",
+          "CONNECTION_UPDATE",
+        ],
       },
     },
   });

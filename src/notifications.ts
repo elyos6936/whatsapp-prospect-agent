@@ -96,7 +96,7 @@ function extractPollVoteNote(message: unknown): string | null {
     : "[Vote sondage reçu]";
 }
 
-/** Webhook Evolution API — MESSAGES_UPSERT + MESSAGES_UPDATE (receipts, suppressions, éditions) */
+/** Webhook Evolution API — messages, présence et groupes */
 export async function handleEvolutionWebhook(payload: unknown): Promise<number> {
   if (!payload || typeof payload !== "object") return 0;
   const body = payload as Record<string, unknown>;
@@ -104,7 +104,11 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
   const isUpsert = event.includes("MESSAGES_UPSERT");
   const isUpdate = event.includes("MESSAGES_UPDATE") || event.includes("MESSAGES_EDITED") || event.includes("SEND_MESSAGE_UPDATE");
   const isPresence = event.includes("PRESENCE_UPDATE");
-  if (!isUpsert && !isUpdate && !isPresence) return 0;
+  const isGroup =
+    event.includes("GROUPS_UPSERT") ||
+    event.includes("GROUP_UPDATE") ||
+    event.includes("GROUP_PARTICIPANTS");
+  if (!isUpsert && !isUpdate && !isPresence && !isGroup) return 0;
 
   const instance = String(body.instance ?? body.instanceName ?? "");
   const userId = await userIdFromInstanceName(instance);
@@ -115,6 +119,10 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
 
   const data = body.data;
   const items = Array.isArray(data) ? data : data ? [data] : [];
+
+  if (isGroup) {
+    return handleGroupWebhookEvent(userId, event, data);
+  }
 
   if (isPresence) {
     return handlePresenceUpdate(userId, data);
@@ -370,6 +378,50 @@ function handlePresenceUpdate(userId: number, data: unknown): number {
     updatedAt: new Date().toISOString(),
   });
   return 1;
+}
+
+/** Webhook groupes : création, mise à jour, participants add/remove/promote/demote. */
+function handleGroupWebhookEvent(userId: number, event: string, data: unknown): number {
+  const items = Array.isArray(data) ? data : data ? [data] : [];
+  let processed = 0;
+  const h = pollHealthFor(userId);
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const groupObj = row.group as Record<string, unknown> | undefined;
+    const groupId = String(
+      row.id ?? row.remoteJid ?? row.groupJid ?? groupObj?.id ?? groupObj?.remoteJid ?? ""
+    );
+    const subject = String(row.subject ?? groupObj?.subject ?? groupId);
+    const action = String(row.action ?? row.type ?? "");
+
+    let note = "";
+    if (event.includes("GROUPS_UPSERT")) {
+      note = `[Groupe créé/mis à jour] ${subject}`;
+    } else if (event.includes("GROUP_PARTICIPANTS")) {
+      const participants = row.participants ?? row.participant;
+      const list = Array.isArray(participants)
+        ? participants.map((p) => String((p as { id?: string }).id ?? p)).join(", ")
+        : "";
+      const labels: Record<string, string> = {
+        add: "ajout",
+        remove: "retrait",
+        promote: "promotion admin",
+        demote: "rétrogradation admin",
+      };
+      note = `[Groupe participants — ${labels[action] ?? action}] ${subject}${list ? ` : ${list}` : ""}`;
+    } else if (event.includes("GROUP_UPDATE")) {
+      note = `[Groupe modifié] ${subject}`;
+    }
+
+    if (note) {
+      console.log(`👥 ${note}`);
+      h.lastIncomingAt = new Date().toISOString();
+      processed++;
+    }
+  }
+  return processed;
 }
 
 export interface WhatsappPollHealth {

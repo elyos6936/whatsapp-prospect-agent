@@ -6,6 +6,19 @@ import {
   getLastIncomingMessages,
   createWhatsAppGroup,
   findGroupByNameOrId,
+  getGroupInfo,
+  updateGroupSubject,
+  updateGroupDescription,
+  updateGroupPicture,
+  updateGroupParticipants,
+  updateGroupSetting,
+  toggleGroupEphemeral,
+  getGroupInviteCode,
+  revokeGroupInviteCode,
+  getGroupInviteInfo,
+  acceptGroupInvite,
+  sendGroupInvite,
+  leaveWhatsAppGroup,
   listPersonalContacts,
   listWhatsAppChats,
   listWhatsAppGroups,
@@ -119,6 +132,123 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "string",
             description: "ID du groupe (xxx@g.us) OU nom du groupe (ex. Automax)",
           },
+        },
+        required: ["group_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_group_info",
+      description:
+        "Récupère les infos complètes d'un groupe WhatsApp (description, paramètres, taille…) par JID (@g.us) ou nom.",
+      parameters: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "ID du groupe (@g.us) ou nom (ex. Automax)" },
+        },
+        required: ["group_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_group",
+      description:
+        "Modifie un groupe WhatsApp : nom (subject), description, photo, paramètres (mode annonce/discussion, verrouillage), messages éphémères.",
+      parameters: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "ID du groupe (@g.us) ou nom" },
+          subject: { type: "string", description: "Nouveau nom du groupe" },
+          description: { type: "string", description: "Nouvelle description" },
+          picture: { type: "string", description: "Nouvelle photo : URL publique ou base64" },
+          setting: {
+            type: "string",
+            enum: ["announcement", "not_announcement", "locked", "unlocked"],
+            description:
+              "announcement=seuls admins envoient, not_announcement=tout le monde, locked=seuls admins modifient infos, unlocked=tout le monde",
+          },
+          ephemeral_seconds: {
+            type: "number",
+            description: "Messages éphémères en secondes (0=désactivé, 86400=24h, 604800=7j, 7776000=90j)",
+          },
+        },
+        required: ["group_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "manage_group_participants",
+      description: "Gère les participants d'un groupe : ajouter, retirer, promouvoir admin, rétrograder admin.",
+      parameters: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "ID du groupe (@g.us) ou nom" },
+          action: {
+            type: "string",
+            enum: ["add", "remove", "promote", "demote"],
+            description: "add=ajouter, remove=retirer, promote=admin, demote=retirer admin",
+          },
+          participants: {
+            type: "array",
+            items: { type: "string" },
+            description: "Numéros des participants (+229… ou international)",
+          },
+        },
+        required: ["group_id", "action", "participants"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "group_invite",
+      description:
+        "Gestion des invitations de groupe : obtenir le lien, révoquer le lien, consulter un groupe par code, accepter une invitation, envoyer une invitation à des numéros.",
+      parameters: {
+        type: "object",
+        properties: {
+          action: {
+            type: "string",
+            enum: ["get_code", "revoke_code", "info", "accept", "send"],
+            description:
+              "get_code=obtenir lien, revoke_code=révoquer+nouveau lien, info=infos via code, accept=rejoindre via code, send=envoyer invitation à des numéros",
+          },
+          group_id: { type: "string", description: "ID/nom du groupe (requis sauf info/accept)" },
+          invite_code: {
+            type: "string",
+            description: "Code ou URL d'invitation (pour info/accept, ex. https://chat.whatsapp.com/XXXX)",
+          },
+          numbers: {
+            type: "array",
+            items: { type: "string" },
+            description: "Numéros à inviter (action=send)",
+          },
+          description: { type: "string", description: "Message d'accompagnement de l'invitation (action=send)" },
+        },
+        required: ["action"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "leave_group",
+      description: "Quitte un groupe WhatsApp.",
+      parameters: {
+        type: "object",
+        properties: {
+          group_id: { type: "string", description: "ID du groupe (@g.us) ou nom" },
         },
         required: ["group_id"],
         additionalProperties: false,
@@ -1447,6 +1577,136 @@ export async function executeTool(userId: number, name: string, args: Record<str
           isAdmin: p.isAdmin ?? false,
         })),
       });
+    }
+
+    case "get_group_info": {
+      try {
+        const info = await getGroupInfo(userId, String(args.group_id ?? ""));
+        return JSON.stringify({ success: true, group: info });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "update_group": {
+      const groupId = String(args.group_id ?? "");
+      const done: string[] = [];
+      try {
+        if (args.subject) {
+          await updateGroupSubject(userId, groupId, String(args.subject));
+          done.push(`nom → « ${String(args.subject)} »`);
+        }
+        if (typeof args.description === "string") {
+          await updateGroupDescription(userId, groupId, args.description);
+          done.push("description mise à jour");
+        }
+        if (args.picture) {
+          await updateGroupPicture(userId, groupId, String(args.picture));
+          done.push("photo mise à jour");
+        }
+        if (args.setting) {
+          await updateGroupSetting(
+            userId,
+            groupId,
+            String(args.setting) as "announcement" | "not_announcement" | "locked" | "unlocked"
+          );
+          done.push(`paramètre → ${String(args.setting)}`);
+        }
+        if (typeof args.ephemeral_seconds === "number") {
+          await toggleGroupEphemeral(userId, groupId, args.ephemeral_seconds);
+          done.push(
+            args.ephemeral_seconds === 0
+              ? "messages éphémères désactivés"
+              : `messages éphémères → ${args.ephemeral_seconds}s`
+          );
+        }
+        if (done.length === 0) {
+          return JSON.stringify({ error: "Rien à modifier : fournir subject, description, picture, setting ou ephemeral_seconds." });
+        }
+        return JSON.stringify({ success: true, updated: done, message: `Groupe mis à jour : ${done.join(", ")}.` });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err), partiallyDone: done });
+      }
+    }
+
+    case "manage_group_participants": {
+      const action = String(args.action ?? "") as "add" | "remove" | "promote" | "demote";
+      const participants = Array.isArray(args.participants)
+        ? (args.participants as unknown[]).map((p) => String(p)).filter(Boolean)
+        : [];
+      if (!["add", "remove", "promote", "demote"].includes(action)) {
+        return JSON.stringify({ error: "action invalide (add/remove/promote/demote)." });
+      }
+      try {
+        await updateGroupParticipants(userId, String(args.group_id ?? ""), action, participants);
+        const labels = { add: "ajoutés", remove: "retirés", promote: "promus admin", demote: "rétrogradés" };
+        return JSON.stringify({
+          success: true,
+          action,
+          count: participants.length,
+          message: `${participants.length} participant(s) ${labels[action]}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "group_invite": {
+      const action = String(args.action ?? "");
+      try {
+        switch (action) {
+          case "get_code": {
+            const url = await getGroupInviteCode(userId, String(args.group_id ?? ""));
+            return JSON.stringify({ success: true, inviteUrl: url, message: `Lien d'invitation : ${url}` });
+          }
+          case "revoke_code": {
+            const url = await revokeGroupInviteCode(userId, String(args.group_id ?? ""));
+            return JSON.stringify({ success: true, inviteUrl: url, message: `Lien révoqué. Nouveau lien : ${url}` });
+          }
+          case "info": {
+            const info = await getGroupInviteInfo(userId, String(args.invite_code ?? ""));
+            return JSON.stringify({ success: true, group: info });
+          }
+          case "accept": {
+            const result = await acceptGroupInvite(userId, String(args.invite_code ?? ""));
+            return JSON.stringify({
+              success: result.accepted,
+              groupJid: result.groupJid,
+              message: result.accepted
+                ? `Invitation acceptée. Groupe rejoint : ${result.groupJid}`
+                : "Invitation non acceptée.",
+            });
+          }
+          case "send": {
+            const numbers = Array.isArray(args.numbers)
+              ? (args.numbers as unknown[]).map((n) => String(n)).filter(Boolean)
+              : [];
+            await sendGroupInvite(
+              userId,
+              String(args.group_id ?? ""),
+              numbers,
+              args.description ? String(args.description) : undefined
+            );
+            return JSON.stringify({
+              success: true,
+              message: `Invitation envoyée à ${numbers.length} numéro(s).`,
+            });
+          }
+          default:
+            return JSON.stringify({ error: "action invalide (get_code/revoke_code/info/accept/send)." });
+        }
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "leave_group": {
+      try {
+        await leaveWhatsAppGroup(userId, String(args.group_id ?? ""));
+        return JSON.stringify({ success: true, message: "Groupe quitté." });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
     }
 
     case "list_personal_contacts": {
