@@ -67,7 +67,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
 
-  if (res.status === 401) {
+  // Un 401 sur login/register = mauvais identifiants, PAS une session expirée :
+  // on laisse remonter le message réel du serveur (ex. « Email ou mot de passe incorrect. »).
+  const isAuthEndpoint = path.startsWith('/api/auth/');
+
+  if (res.status === 401 && !isAuthEndpoint) {
     emitAuthLogout();
     throw new ApiError('Session expirée. Reconnectez-vous.', 401);
   }
