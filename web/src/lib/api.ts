@@ -58,10 +58,14 @@ class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getStoredToken();
+  // N'ajouter Content-Type: application/json que s'il y a réellement un corps.
+  // Sinon Fastify essaie de parser un body JSON vide (ex. DELETE) et renvoie
+  // un 400 « Bad Request ».
+  const hasBody = init?.body != null;
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      'Content-Type': 'application/json',
+      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
