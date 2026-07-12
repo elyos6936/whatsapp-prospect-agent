@@ -1,7 +1,16 @@
-import { useCallback, useEffect, useState } from 'react';
-import { fetchEvolutionQr, rebootEvolutionInstance } from '@/lib/api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  fetchEvolutionQr,
+  fetchEvolutionState,
+  rebootEvolutionInstance,
+} from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
+import { qrImageSrc } from '@/lib/qr';
+
+// Un QR Evolution/Baileys reste valide ~30-60 s. On ne le régénère donc que
+// périodiquement (et non à chaque poll) pour laisser le temps de le scanner.
+const QR_REFRESH_MS = 30000;
 
 export function ConnectWhatsAppGate() {
   const { refreshUser } = useAuth();
@@ -12,28 +21,53 @@ export function ConnectWhatsAppGate() {
     pairingCode?: string;
   } | null>(null);
   const [loading, setLoading] = useState(true);
+  const lastQrAt = useRef(0);
 
-  const loadQr = useCallback(async () => {
-    setLoading(true);
-    try {
-      const data = await fetchEvolutionQr();
-      setQrData(data);
-      if (data.connected) void refreshUser();
-    } catch (err) {
-      setQrData({
-        connected: false,
-        message: err instanceof Error ? err.message : 'Erreur QR',
-      });
-    } finally {
-      setLoading(false);
-    }
-  }, [refreshUser]);
+  const loadQr = useCallback(
+    async (silent = false) => {
+      if (!silent) setLoading(true);
+      try {
+        const data = await fetchEvolutionQr();
+        setQrData(data);
+        lastQrAt.current = Date.now();
+        if (data.connected) void refreshUser();
+      } catch (err) {
+        if (!silent) {
+          setQrData({
+            connected: false,
+            message: err instanceof Error ? err.message : 'Erreur QR',
+          });
+        }
+      } finally {
+        if (!silent) setLoading(false);
+      }
+    },
+    [refreshUser],
+  );
 
   useEffect(() => {
     void loadQr();
-    const id = setInterval(() => void loadQr(), 5000);
+    // On poll uniquement l'ÉTAT de connexion (léger, ne régénère pas le QR).
+    // Le QR affiché reste stable ; on ne le rafraîchit qu'avant son expiration.
+    const id = setInterval(() => {
+      void (async () => {
+        try {
+          const state = await fetchEvolutionState();
+          if (state.connected) {
+            setQrData({ connected: true, message: state.message });
+            void refreshUser();
+            return;
+          }
+          if (Date.now() - lastQrAt.current > QR_REFRESH_MS) {
+            void loadQr(true);
+          }
+        } catch {
+          /* ignore poll errors */
+        }
+      })();
+    }, 3000);
     return () => clearInterval(id);
-  }, [loadQr]);
+  }, [loadQr, refreshUser]);
 
   return (
     <div className="flex min-h-full flex-col items-center justify-center bg-bg-0 px-4 py-10">
@@ -58,7 +92,7 @@ export function ConnectWhatsAppGate() {
             <div className="space-y-4">
               {qrData?.base64 && (
                 <img
-                  src={`data:image/png;base64,${qrData.base64}`}
+                  src={qrImageSrc(qrData.base64)}
                   alt="QR WhatsApp"
                   className="mx-auto max-w-[220px] rounded-lg border border-white/10 bg-white p-2"
                 />

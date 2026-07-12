@@ -1,4 +1,5 @@
 import { sql } from "./pg.js";
+import { userIdFromEvolutionInstance } from "./config.js";
 
 export interface UserRecord {
   id: number;
@@ -75,10 +76,7 @@ export async function getUserById(id: number): Promise<UserRecord | null> {
 }
 
 export async function userIdFromInstanceName(instance: string): Promise<number | null> {
-  const m = /^klanvio_(\d+)$/i.exec(String(instance ?? "").trim());
-  if (!m) return null;
-  const id = Number(m[1]);
-  return Number.isFinite(id) && id > 0 ? id : null;
+  return userIdFromEvolutionInstance(instance);
 }
 
 export async function listUserIds(): Promise<number[]> {

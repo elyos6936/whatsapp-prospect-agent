@@ -9,6 +9,7 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
+import { qrImageSrc } from '@/lib/qr';
 
 type SettingsTab = 'business' | 'connection';
 
@@ -148,7 +149,7 @@ export function SettingsPage() {
               <div className="space-y-3">
                 {qrData?.base64 && (
                   <img
-                    src={`data:image/png;base64,${qrData.base64}`}
+                    src={qrImageSrc(qrData.base64)}
                     alt="QR WhatsApp"
                     className="max-w-[220px] rounded-lg border border-white/10 bg-white p-2"
                   />

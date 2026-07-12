@@ -20,7 +20,28 @@ export const config = {
   envEvolutionApiKey: process.env.EVOLUTION_API_KEY?.trim() || "",
 } as const;
 
+/**
+ * Exceptions de nommage d'instance Evolution par utilisateur.
+ * Le compte opérateur historique (id=1) reste lié à l'instance déjà connectée
+ * « automax-prospection ». Tous les autres comptes suivent le schéma standard.
+ */
+const INSTANCE_NAME_OVERRIDES: Record<number, string> = {
+  1: "automax-prospection",
+};
+
 /** Instance Evolution dédiée par utilisateur (plateforme gérée). */
 export function evolutionInstanceName(userId: number): string {
-  return `klanvio_${userId}`;
+  return INSTANCE_NAME_OVERRIDES[userId] ?? `klanvio_${userId}`;
+}
+
+/** Résout l'userId à partir d'un nom d'instance (inverse d'evolutionInstanceName). */
+export function userIdFromEvolutionInstance(instance: string): number | null {
+  const name = String(instance ?? "").trim();
+  for (const [id, override] of Object.entries(INSTANCE_NAME_OVERRIDES)) {
+    if (override.toLowerCase() === name.toLowerCase()) return Number(id);
+  }
+  const m = /^klanvio_(\d+)$/i.exec(name);
+  if (!m) return null;
+  const id = Number(m[1]);
+  return Number.isFinite(id) && id > 0 ? id : null;
 }

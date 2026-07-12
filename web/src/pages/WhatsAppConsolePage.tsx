@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { evolutionApi, rebootEvolutionInstance } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { qrImageSrc } from '@/lib/qr';
 
 type ConsoleTab =
   | 'overview'
@@ -637,7 +638,7 @@ export function WhatsAppConsolePage() {
               <>
                 {qrData?.base64 && (
                   <img
-                    src={`data:image/png;base64,${qrData.base64}`}
+                    src={qrImageSrc(qrData.base64)}
                     alt="QR"
                     className="mx-auto max-w-[220px] rounded-xl"
                   />

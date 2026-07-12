@@ -251,6 +251,14 @@ export async function fetchEvolutionQr(): Promise<{
   return request('/api/evolution/instance/qr');
 }
 
+export async function fetchEvolutionState(): Promise<{
+  connected: boolean;
+  state: string;
+  message: string;
+}> {
+  return request('/api/evolution/instance/state');
+}
+
 export async function rebootEvolutionInstance(): Promise<{ message: string }> {
   return request('/api/evolution/instance/restart', { method: 'POST' });
 }
