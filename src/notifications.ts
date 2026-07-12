@@ -30,11 +30,6 @@ import {
   findUnansweredInboundMessages,
   hasOutboundReplyAfter,
   setContactWhatsappLid,
-  getContactChatHistory,
-  setContactAutoReply,
-  createHandoffEvent,
-  saveAgentMessage,
-  type AutomationConfig,
 } from "./db.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
 import { scoreIncomingMessage } from "./lead-scoring.js";
@@ -42,19 +37,11 @@ import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
 import {
-  describeInboundMedia,
-  detectInboundMedia,
-  typeMessageToKind,
-  type InboundMediaKind,
-} from "./media-understanding.js";
-import {
   generateWhatsAppReply,
   getAdaptiveReplyDelay,
   getStopConfirmationReply,
-  isDissatisfaction,
   isPromptInjection,
   isStopRequest,
-  replyLooksUncertain,
   nowFr,
 } from "./whatsapp-reply.js";
 
@@ -178,25 +165,10 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
       continue;
     }
 
-    let text = extractEvolutionInboundText(row.message);
-    const isGroupChat = rawChatId.endsWith("@g.us");
-
-    // Média entrant (note vocale, image, document…) en DM : on le décode avec les
-    // modèles OpenAI (Whisper / vision) pour que la prospection puisse continuer.
-    if (!text && !isGroupChat) {
-      const media = detectInboundMedia(row.message);
-      if (media) {
-        const mediaMsgId = key.id ?? "";
-        if (mediaMsgId && (await whatsAppMessageExists(userId, mediaMsgId))) continue;
-        text =
-          (mediaMsgId ? await describeInboundMedia(userId, mediaMsgId, media) : null) ??
-          placeholderForKind(media.kind);
-      }
-    }
-
+    const text = extractEvolutionInboundText(row.message);
     if (!text) continue;
 
-    if (isGroupChat) {
+    if (rawChatId.endsWith("@g.us")) {
       const senderName = String(row.pushName ?? chatIdToDisplay(rawChatId));
       void runGroupAutoReply(userId, rawChatId, senderName, text);
       continue;
@@ -524,23 +496,6 @@ function placeholderForType(type: string): string | null {
   }
 }
 
-function placeholderForKind(kind: InboundMediaKind): string {
-  switch (kind) {
-    case "audio":
-      return "[Message vocal reçu]";
-    case "image":
-      return "[Image reçue]";
-    case "video":
-      return "[Vidéo reçue]";
-    case "document":
-      return "[Document reçu]";
-    case "sticker":
-      return "[Sticker reçu]";
-    default:
-      return "[Média reçu]";
-  }
-}
-
 function isBroadcastOrStatusJid(jid: string): boolean {
   const j = jid.trim().toLowerCase();
   return j === "status@broadcast" || j.endsWith("@broadcast");
@@ -589,117 +544,6 @@ function findAutomationTarget(
   chatId: string
 ) {
   return targets.find((t) => chatIdsMatch(t.target_id, chatId));
-}
-
-function normalizeForMatch(s: string): string {
-  return s
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** Un message entrant matche-t-il un déclencheur de campagne (mots-clés / phrase exacte) ? */
-function matchesCampaignTrigger(config: AutomationConfig, text: string): boolean {
-  const norm = normalizeForMatch(text);
-  if (!norm) return false;
-  const phrases = (config.triggerPhrases ?? []).map(normalizeForMatch).filter(Boolean);
-  const keywords = (config.keywords ?? []).map(normalizeForMatch).filter(Boolean);
-  const mode = config.triggerMatchMode ?? "any_keyword";
-
-  if (mode === "exact_phrase") {
-    if (phrases.length) return phrases.some((p) => norm.includes(p));
-    return keywords.some((k) => norm.includes(k));
-  }
-  if (mode === "all_keywords") {
-    return keywords.length > 0 && keywords.every((k) => norm.includes(k));
-  }
-  const pool = [...keywords, ...phrases];
-  return pool.length > 0 && pool.some((k) => norm.includes(k));
-}
-
-/**
- * Gating strict des réponses entrantes (closing e-commerce / pub).
- * Si l'utilisateur a au moins une campagne active « reply_only_on_trigger », l'IA
- * ne répond à un NOUVEAU contact que si le message contient un déclencheur exact.
- * Les conversations déjà engagées et les prospects déjà ciblés gardent le fil.
- */
-async function passesInboundReplyGate(userId: number, chatId: string, text: string): Promise<boolean> {
-  const active = await listActiveAutomations(userId);
-  const strict = active.filter((a) => a.config.replyOnlyOnTrigger === true);
-  if (strict.length === 0) return true; // pas de cadre strict → comportement normal
-
-  // Conversation déjà engagée (on a déjà répondu) → garder le fil, ne pas re-gater.
-  const history = await getContactChatHistory(userId, chatId, 10);
-  if (history.some((m) => m.direction === "sortant")) return true;
-
-  // Prospect déjà ciblé par une prospection de groupe → garder le fil.
-  for (const auto of active) {
-    if (auto.type !== "group_prospect") continue;
-    const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
-    if (findAutomationTarget(targets, chatId)) return true;
-  }
-
-  // Sinon : autoriser uniquement si un déclencheur matche.
-  return strict.some((a) => matchesCampaignTrigger(a.config, text));
-}
-
-/** Politique d'arrêt automatique agrégée des campagnes actives de l'utilisateur. */
-async function getCampaignStopPolicy(
-  userId: number
-): Promise<{ dissatisfaction: boolean; unknownQuestion: boolean }> {
-  const active = await listActiveAutomations(userId);
-  return {
-    dissatisfaction: active.some((a) => a.config.stopOnDissatisfaction === true),
-    unknownQuestion: active.some((a) => a.config.stopOnUnknownQuestion === true),
-  };
-}
-
-/**
- * Arrête la conversation automatique avec un contact et prévient l'utilisateur
- * dans le chat de l'agent (+ crée un handoff pour reprise manuelle).
- */
-async function stopCampaignConversation(
-  userId: number,
-  chatId: string,
-  senderName: string,
-  reason: string,
-  incomingText: string
-): Promise<void> {
-  const display = chatIdToDisplay(chatId);
-  try {
-    await setContactAutoReply(userId, chatId, false);
-  } catch (err) {
-    console.error("stopCampaignConversation: setContactAutoReply", err);
-  }
-
-  try {
-    await createHandoffEvent(userId, {
-      contactPhone: chatId,
-      contactName: senderName,
-      reason,
-      summary: `Conversation mise en pause automatiquement. Dernier message de ${senderName} : ${incomingText.slice(0, 200)}`,
-      suggestedReply: "",
-    });
-  } catch (err) {
-    console.error("stopCampaignConversation: createHandoffEvent", err);
-  }
-
-  try {
-    await saveAgentMessage(
-      userId,
-      "assistant",
-      `🛑 J'ai mis en pause la conversation automatique avec **${senderName}** (${display}).\n` +
-        `Raison : ${reason}.\n` +
-        `Dernier message reçu : « ${incomingText.slice(0, 200)} »\n` +
-        `Je te laisse reprendre la main quand tu veux (l'échange est dans Console WhatsApp / Handoffs).`
-    );
-  } catch (err) {
-    console.error("stopCampaignConversation: saveAgentMessage", err);
-  }
-
-  console.log(`🛑 Conversation stoppée auto avec ${senderName} (${display}) — ${reason}`);
 }
 
 async function recordAutomationEngagement(
@@ -824,25 +668,6 @@ async function runAutoReply(
     return;
   }
 
-  // Cadre strict : si une campagne exige un déclencheur exact, ne pas répondre hors cadre.
-  if (!isStopRequest(text) && !(await passesInboundReplyGate(userId, chatId, text))) {
-    console.log(`🔒 ${senderName} hors cadre campagne (aucun déclencheur) — pas de réponse: ${text.slice(0, 40)}`);
-    return;
-  }
-
-  // Conditions d'arrêt automatique définies par les campagnes de l'utilisateur.
-  const stopPolicy = await getCampaignStopPolicy(userId);
-  if (!isStopRequest(text) && stopPolicy.dissatisfaction && isDissatisfaction(text)) {
-    await stopCampaignConversation(
-      userId,
-      chatId,
-      senderName,
-      "le prospect exprime du mécontentement / une insatisfaction",
-      text
-    );
-    return;
-  }
-
   try {
     let reply: string;
 
@@ -875,18 +700,6 @@ async function runAutoReply(
         incomingText: text,
         automationContext,
       });
-
-      // Question hors cadre / réponse incertaine → ne pas envoyer, arrêter et prévenir l'utilisateur.
-      if (stopPolicy.unknownQuestion && replyLooksUncertain(reply)) {
-        await stopCampaignConversation(
-          userId,
-          chatId,
-          senderName,
-          "une question sort de mon cadre / je n'ai pas de réponse fiable",
-          text
-        );
-        return;
-      }
     }
 
     const sent = await sendWhatsAppMessage(userId, chatId, reply, {
@@ -1058,22 +871,14 @@ async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
       const rawChatId = m.chatId ?? m.senderId ?? "";
       if (!rawChatId || rawChatId.endsWith("@g.us") || isBroadcastOrStatusJid(rawChatId)) continue;
 
+      const text =
+        m.textMessage?.trim() ||
+        m.extendedTextMessageData?.text?.trim() ||
+        placeholderForType(m.typeMessage);
+      if (!text) continue;
+
       const greenApiId = m.idMessage;
       if (!greenApiId) continue;
-
-      let text = m.textMessage?.trim() || m.extendedTextMessageData?.text?.trim() || "";
-
-      // Média sans texte : tenter de le décoder (Whisper / vision) avant de retomber
-      // sur un placeholder. On vérifie d'abord qu'il n'est pas déjà en base (coût OpenAI).
-      if (!text) {
-        const kind = typeMessageToKind(m.typeMessage);
-        if (kind && !(await whatsAppMessageExists(userId, greenApiId))) {
-          text = (await describeInboundMedia(userId, greenApiId, { kind })) ?? placeholderForType(m.typeMessage) ?? "";
-        } else {
-          text = placeholderForType(m.typeMessage) ?? "";
-        }
-      }
-      if (!text) continue;
 
       const senderName = m.senderName || m.senderContactName || chatIdToDisplay(rawChatId);
       if (
