@@ -1,5 +1,6 @@
 import { sql } from "./pg.js";
-import { config } from "./config.js";
+import { config, evolutionInstanceName } from "./config.js";
+import { getUserById } from "./users.js";
 
 export const DAILY_OUTBOUND_LIMIT = 30;
 export const CONTACT_STATUSES = ["nouveau", "en_conversation", "interesse", "stop"] as const;
@@ -33,30 +34,32 @@ function formatTsNullable(value: unknown): string | null {
   return formatTs(value);
 }
 
-async function getSettingRaw(key: string): Promise<string> {
-  const rows = await sql<{ value: string }[]>`SELECT value FROM settings WHERE key = ${key}`;
+async function getSettingRaw(userId: number, key: string): Promise<string> {
+  const rows = await sql<{ value: string }[]>`
+    SELECT value FROM settings WHERE user_id = ${userId} AND key = ${key}
+  `;
   return rows[0]?.value ?? "";
 }
 
-async function setSettingRaw(key: string, value: string): Promise<void> {
+async function setSettingRaw(userId: number, key: string, value: string): Promise<void> {
   await sql`
-    INSERT INTO settings (key, value, updated_at)
-    VALUES (${key}, ${value}, NOW())
-    ON CONFLICT (key) DO UPDATE SET
+    INSERT INTO settings (user_id, key, value, updated_at)
+    VALUES (${userId}, ${key}, ${value}, NOW())
+    ON CONFLICT (user_id, key) DO UPDATE SET
       value = EXCLUDED.value,
       updated_at = NOW()
   `;
 }
 
-async function getSetting(key: string): Promise<string> {
-  return getSettingRaw(key);
+async function getSetting(userId: number, key: string): Promise<string> {
+  return getSettingRaw(userId, key);
 }
 
-async function setSetting(key: string, value: string): Promise<void> {
-  await setSettingRaw(key, value);
+async function setSetting(userId: number, key: string, value: string): Promise<void> {
+  await setSettingRaw(userId, key, value);
 }
 
-async function upsertContactInternal(input: {
+async function upsertContactInternal(userId: number, input: {
   phone: string;
   name?: string | null;
   notes?: string | null;
@@ -64,7 +67,7 @@ async function upsertContactInternal(input: {
   autoReply?: boolean;
 }): Promise<void> {
   const existing = await sql<{ id: number }[]>`
-    SELECT id FROM contacts WHERE phone = ${input.phone}
+    SELECT id FROM contacts WHERE user_id = ${userId} AND phone = ${input.phone}
   `;
 
   const autoReply =
@@ -72,8 +75,9 @@ async function upsertContactInternal(input: {
 
   if (!existing.length) {
     await sql`
-      INSERT INTO contacts (phone, name, notes, status, auto_reply)
+      INSERT INTO contacts (user_id, phone, name, notes, status, auto_reply)
       VALUES (
+        ${userId},
         ${input.phone},
         ${input.name ?? null},
         ${input.notes ?? null},
@@ -91,7 +95,7 @@ async function upsertContactInternal(input: {
       status = COALESCE(${input.status ?? null}, status),
       auto_reply = COALESCE(${autoReply}, auto_reply),
       updated_at = NOW()
-    WHERE phone = ${input.phone}
+    WHERE user_id = ${userId} AND phone = ${input.phone}
   `;
 }
 
@@ -114,47 +118,46 @@ export interface AppSettings {
   business_price: string;
 }
 
-export async function getAppSettings(): Promise<AppSettings> {
+export async function getAppSettings(userId: number): Promise<AppSettings> {
+  const user = await getUserById(userId);
   return {
-    openai_api_key: (await getSetting("openai_api_key")) || config.envOpenAiKey,
-    evolution_api_base_url:
-      (await getSetting("evolution_api_base_url")) ||
-      config.envEvolutionBaseUrl ||
-      config.defaultEvolutionBaseUrl,
-    evolution_api_key: (await getSetting("evolution_api_key")) || config.envEvolutionApiKey,
-    evolution_instance_name:
-      (await getSetting("evolution_instance_name")) || config.envEvolutionInstance,
-    business_owner_name: (await getSetting("business_owner_name")) || "",
-    business_offer: (await getSetting("business_offer")) || "",
-    business_price: (await getSetting("business_price")) || "",
+    openai_api_key: config.envOpenAiKey,
+    evolution_api_base_url: config.envEvolutionBaseUrl || config.defaultEvolutionBaseUrl,
+    evolution_api_key: config.envEvolutionApiKey,
+    evolution_instance_name: evolutionInstanceName(userId),
+    business_owner_name: user?.business_owner_name ?? "",
+    business_offer: user?.business_offer ?? "",
+    business_price: user?.business_price ?? "",
   };
 }
 
-export async function saveOpenAiKey(key: string): Promise<void> {
-  await setSetting("openai_api_key", key.trim());
+/** @deprecated Clés gérées par la plateforme (env). */
+export async function saveOpenAiKey(_userId: number, _key: string): Promise<void> {
+  /* no-op: clé plateforme */
 }
 
-export async function saveEvolutionSettings(input: {
+/** @deprecated Evolution géré par la plateforme. */
+export async function saveEvolutionSettings(_input: {
   baseUrl: string;
   apiKey: string;
   instanceName: string;
 }): Promise<void> {
-  await setSetting(
-    "evolution_api_base_url",
-    (input.baseUrl.trim() || config.defaultEvolutionBaseUrl).replace(/\/$/, "")
-  );
-  await setSetting("evolution_api_key", input.apiKey.trim());
-  await setSetting("evolution_instance_name", input.instanceName.trim());
+  /* no-op */
 }
 
-export async function saveBusinessProfile(input: {
+export async function saveBusinessProfile(
+  userId: number,
+  input: {
   ownerName?: string;
   offer?: string;
   price?: string;
 }): Promise<void> {
-  if (input.ownerName !== undefined) await setSetting("business_owner_name", input.ownerName.trim());
-  if (input.offer !== undefined) await setSetting("business_offer", input.offer.trim());
-  if (input.price !== undefined) await setSetting("business_price", input.price.trim());
+  const { saveUserBusinessProfile } = await import("./users.js");
+  await saveUserBusinessProfile(userId, {
+    ownerName: input.ownerName,
+    offer: input.offer,
+    price: input.price,
+  });
 }
 
 export function maskSecret(value: string, visible = 4): string {
@@ -172,38 +175,39 @@ function mapAgentMessage(row: Record<string, unknown>): AgentMessage {
   };
 }
 
-export async function saveAgentMessage(role: AgentRole, content: string): Promise<AgentMessage> {
+export async function saveAgentMessage(userId: number, role: AgentRole, content: string): Promise<AgentMessage> {
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO agent_conversation (role, content)
-    VALUES (${role}, ${content})
+    INSERT INTO agent_conversation (user_id, role, content)
+    VALUES (${userId}, ${role}, ${content})
     RETURNING id, role, content, created_at
   `;
   return mapAgentMessage(rows[0]);
 }
 
-export async function getRecentAgentMessages(limit = 50): Promise<AgentMessage[]> {
+export async function getRecentAgentMessages(userId: number, limit = 50): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
+    WHERE user_id = ${userId}
     ORDER BY id DESC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage).reverse();
 }
 
-export async function getAgentMessagesSince(sinceId = 0, limit = 50): Promise<AgentMessage[]> {
+export async function getAgentMessagesSince(userId: number, sinceId = 0, limit = 50): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
-    WHERE id > ${sinceId}
+    WHERE user_id = ${userId} AND id > ${sinceId}
     ORDER BY id ASC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage);
 }
 
-export async function clearAgentConversation(): Promise<void> {
-  await sql`DELETE FROM agent_conversation`;
+export async function clearAgentConversation(userId: number): Promise<void> {
+  await sql`DELETE FROM agent_conversation WHERE user_id = ${userId}`;
 }
 
 export interface WhatsAppMessage {
@@ -228,7 +232,7 @@ function mapWhatsAppMessage(row: Record<string, unknown>): WhatsAppMessage {
   };
 }
 
-export async function saveWhatsAppMessage(input: {
+export async function saveWhatsAppMessage(userId: number, input: {
   contactPhone: string;
   direction: "entrant" | "sortant";
   body: string;
@@ -239,8 +243,9 @@ export async function saveWhatsAppMessage(input: {
   const countsTowardQuota =
     input.direction === "sortant" ? (input.countsTowardQuota !== false ? 1 : 0) : 1;
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO messages (contact_phone, sender_name, direction, body, green_api_id, counts_toward_quota)
+    INSERT INTO messages (user_id, contact_phone, sender_name, direction, body, green_api_id, counts_toward_quota)
     VALUES (
+      ${userId},
       ${input.contactPhone},
       ${input.senderName ?? null},
       ${input.direction},
@@ -253,38 +258,38 @@ export async function saveWhatsAppMessage(input: {
   return mapWhatsAppMessage(rows[0]);
 }
 
-export async function whatsAppMessageExists(greenApiId: string): Promise<boolean> {
-  const rows = await sql`SELECT 1 FROM messages WHERE green_api_id = ${greenApiId} LIMIT 1`;
+export async function whatsAppMessageExists(userId: number, greenApiId: string): Promise<boolean> {
+  const rows = await sql`SELECT 1 FROM messages WHERE user_id = ${userId} AND green_api_id = ${greenApiId} LIMIT 1`;
   return rows.length > 0;
 }
 
-export async function getIncomingMessagesSince(sinceId = 0, limit = 50): Promise<WhatsAppMessage[]> {
+export async function getIncomingMessagesSince(userId: number, sinceId = 0, limit = 50): Promise<WhatsAppMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
     FROM messages
-    WHERE direction = 'entrant' AND id > ${sinceId}
+    WHERE user_id = ${userId} AND direction = 'entrant' AND id > ${sinceId}
     ORDER BY id ASC
     LIMIT ${limit}
   `;
   return rows.map(mapWhatsAppMessage);
 }
 
-export async function getRecentIncomingMessages(limit = 30): Promise<WhatsAppMessage[]> {
+export async function getRecentIncomingMessages(userId: number, limit = 30): Promise<WhatsAppMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
     FROM messages
-    WHERE direction = 'entrant'
+    WHERE user_id = ${userId} AND direction = 'entrant'
     ORDER BY id DESC
     LIMIT ${limit}
   `;
   return rows.map(mapWhatsAppMessage).reverse();
 }
 
-export async function getWhatsAppMessagesSince(sinceId = 0, limit = 50): Promise<WhatsAppMessage[]> {
+export async function getWhatsAppMessagesSince(userId: number, sinceId = 0, limit = 50): Promise<WhatsAppMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
     FROM messages
-    WHERE id > ${sinceId}
+    WHERE user_id = ${userId} AND id > ${sinceId}
     ORDER BY id ASC
     LIMIT ${limit}
   `;
@@ -292,6 +297,7 @@ export async function getWhatsAppMessagesSince(sinceId = 0, limit = 50): Promise
 }
 
 export async function listIncomingMessages(
+  userId: number,
   options: { contactPhone?: string; todayOnly?: boolean; limit?: number } = {}
 ): Promise<WhatsAppMessage[]> {
   const limit = Math.min(Math.max(options.limit ?? 30, 1), 100);
@@ -303,7 +309,7 @@ export async function listIncomingMessages(
     rows = await sql<Record<string, unknown>[]>`
       SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
       FROM messages
-      WHERE direction = 'entrant' AND contact_phone = ${chatId} AND created_at::date = CURRENT_DATE
+      WHERE user_id = ${userId} AND direction = 'entrant' AND contact_phone = ${chatId} AND created_at::date = CURRENT_DATE
       ORDER BY id DESC
       LIMIT ${limit}
     `;
@@ -313,7 +319,7 @@ export async function listIncomingMessages(
     rows = await sql<Record<string, unknown>[]>`
       SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
       FROM messages
-      WHERE direction = 'entrant' AND contact_phone = ${chatId}
+      WHERE user_id = ${userId} AND direction = 'entrant' AND contact_phone = ${chatId}
       ORDER BY id DESC
       LIMIT ${limit}
     `;
@@ -321,7 +327,7 @@ export async function listIncomingMessages(
     rows = await sql<Record<string, unknown>[]>`
       SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
       FROM messages
-      WHERE direction = 'entrant' AND created_at::date = CURRENT_DATE
+      WHERE user_id = ${userId} AND direction = 'entrant' AND created_at::date = CURRENT_DATE
       ORDER BY id DESC
       LIMIT ${limit}
     `;
@@ -329,7 +335,7 @@ export async function listIncomingMessages(
     rows = await sql<Record<string, unknown>[]>`
       SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
       FROM messages
-      WHERE direction = 'entrant'
+      WHERE user_id = ${userId} AND direction = 'entrant'
       ORDER BY id DESC
       LIMIT ${limit}
     `;
@@ -338,25 +344,25 @@ export async function listIncomingMessages(
   return rows.map(mapWhatsAppMessage).reverse();
 }
 
-export async function getWhatsAppMessageStats(): Promise<{
+export async function getWhatsAppMessageStats(userId: number): Promise<{
   totalIncoming: number;
   totalOutgoing: number;
   incomingToday: number;
   outgoingToday: number;
 }> {
   const [totalIncomingRow] = await sql<{ c: number }[]>`
-    SELECT COUNT(*)::int as c FROM messages WHERE direction = 'entrant'
+    SELECT COUNT(*)::int as c FROM messages WHERE user_id = ${userId} AND direction = 'entrant'
   `;
   const [totalOutgoingRow] = await sql<{ c: number }[]>`
-    SELECT COUNT(*)::int as c FROM messages WHERE direction = 'sortant'
+    SELECT COUNT(*)::int as c FROM messages WHERE user_id = ${userId} AND direction = 'sortant'
   `;
   const [incomingTodayRow] = await sql<{ c: number }[]>`
     SELECT COUNT(*)::int as c FROM messages
-    WHERE direction = 'entrant' AND created_at::date = CURRENT_DATE
+    WHERE user_id = ${userId} AND direction = 'entrant' AND created_at::date = CURRENT_DATE
   `;
   const [outgoingTodayRow] = await sql<{ c: number }[]>`
     SELECT COUNT(*)::int as c FROM messages
-    WHERE direction = 'sortant' AND created_at::date = CURRENT_DATE
+    WHERE user_id = ${userId} AND direction = 'sortant' AND created_at::date = CURRENT_DATE
   `;
   return {
     totalIncoming: Number(totalIncomingRow?.c ?? 0),
@@ -366,42 +372,42 @@ export async function getWhatsAppMessageStats(): Promise<{
   };
 }
 
-export async function listAllIncomingMessages(limit = 100): Promise<WhatsAppMessage[]> {
+export async function listAllIncomingMessages(userId: number, limit = 100): Promise<WhatsAppMessage[]> {
   const safe = Math.min(Math.max(limit, 1), 500);
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
     FROM messages
-    WHERE direction = 'entrant'
+    WHERE user_id = ${userId} AND direction = 'entrant'
     ORDER BY id DESC
     LIMIT ${safe}
   `;
   return rows.map(mapWhatsAppMessage);
 }
 
-export async function getContactChatHistory(chatId: string, limit = 12): Promise<WhatsAppMessage[]> {
+export async function getContactChatHistory(userId: number, chatId: string, limit = 12): Promise<WhatsAppMessage[]> {
   const digits = chatId.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
     FROM messages
-    WHERE contact_phone = ${chatId}
+    WHERE user_id = ${userId} AND (contact_phone = ${chatId}
        OR (${digits} != '' AND (
          contact_phone = ${digits} || '@c.us'
          OR contact_phone = ${digits} || '@lid'
          OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
-       ))
+       )))
     ORDER BY id DESC
     LIMIT ${limit}
   `;
   return rows.map(mapWhatsAppMessage).reverse();
 }
 
-export async function isAutoReplyEnabled(): Promise<boolean> {
-  const v = await getSetting("whatsapp_auto_reply");
+export async function isAutoReplyEnabled(userId: number): Promise<boolean> {
+  const v = await getSetting(userId, "whatsapp_auto_reply");
   return v !== "0";
 }
 
-export async function setAutoReplyEnabled(enabled: boolean): Promise<void> {
-  await setSetting("whatsapp_auto_reply", enabled ? "1" : "0");
+export async function setAutoReplyEnabled(userId: number, enabled: boolean): Promise<void> {
+  await setSetting(userId, "whatsapp_auto_reply", enabled ? "1" : "0");
 }
 
 export interface Contact {
@@ -464,38 +470,39 @@ function mapContact(row: Record<string, unknown>): Contact {
   };
 }
 
-async function lookupContactRow(chatId: string): Promise<Contact | null> {
+async function lookupContactRow(userId: number, chatId: string): Promise<Contact | null> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, phone, name, notes, status, auto_reply,
            COALESCE(lead_score, 0) as lead_score,
            memory_summary, memory_updated_at, handoff_status,
            created_at, updated_at
-    FROM contacts WHERE phone = ${chatId} OR whatsapp_lid = ${chatId}
+    FROM contacts WHERE user_id = ${userId} AND (phone = ${chatId} OR whatsapp_lid = ${chatId})
   `;
   return rows[0] ? mapContact(rows[0]) : null;
 }
 
-async function findContactForChat(chatId: string): Promise<Contact | null> {
+async function findContactForChat(userId: number, chatId: string): Promise<Contact | null> {
   const trimmed = chatId.trim();
   try {
     const normalized = normalizeContactPhone(trimmed);
-    const direct = await lookupContactRow(normalized);
+    const direct = await lookupContactRow(userId, normalized);
     if (direct) return direct;
   } catch {
     /* try digit fallback */
   }
   const digits = trimmed.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
   if (digits.length < 8) return null;
-  return lookupContactRow(`${digits}@c.us`);
+  return lookupContactRow(userId, `${digits}@c.us`);
 }
 
-export async function getContact(phone: string): Promise<Contact | null> {
+export async function getContact(userId: number, phone: string): Promise<Contact | null> {
   const trimmed = phone.trim();
   if (trimmed.endsWith("@g.us")) return null;
-  return findContactForChat(trimmed);
+  return findContactForChat(userId, trimmed);
 }
 
 export async function listContacts(
+  userId: number,
   options: { status?: ContactStatus; limit?: number } = {}
 ): Promise<Contact[]> {
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 200);
@@ -505,7 +512,7 @@ export async function listContacts(
           COALESCE(lead_score, 0) as lead_score, memory_summary, memory_updated_at, handoff_status,
           created_at, updated_at
         FROM contacts
-        WHERE status = ${options.status}
+        WHERE user_id = ${userId} AND status = ${options.status}
         ORDER BY updated_at DESC
         LIMIT ${limit}
       `
@@ -514,42 +521,43 @@ export async function listContacts(
           COALESCE(lead_score, 0) as lead_score, memory_summary, memory_updated_at, handoff_status,
           created_at, updated_at
         FROM contacts
+        WHERE user_id = ${userId}
         ORDER BY updated_at DESC
         LIMIT ${limit}
       `;
   return rows.map(mapContact);
 }
 
-export async function updateContactLeadScore(phone: string, score: number): Promise<void> {
+export async function updateContactLeadScore(userId: number, phone: string, score: number): Promise<void> {
   const chatId = normalizeContactPhone(phone);
   const clamped = Math.max(0, Math.min(100, Math.round(score)));
   await sql`
-    UPDATE contacts SET lead_score = ${clamped}, updated_at = NOW() WHERE phone = ${chatId}
+    UPDATE contacts SET lead_score = ${clamped}, updated_at = NOW() WHERE user_id = ${userId} AND phone = ${chatId}
   `;
   if (clamped >= 70) {
     await sql`
       UPDATE contacts SET status = 'interesse', updated_at = NOW()
-      WHERE phone = ${chatId} AND status != 'stop'
+      WHERE user_id = ${userId} AND phone = ${chatId} AND status != 'stop'
     `;
   }
 }
 
-export async function updateContactMemory(phone: string, summary: string): Promise<void> {
+export async function updateContactMemory(userId: number, phone: string, summary: string): Promise<void> {
   const chatId = normalizeContactPhone(phone);
   await sql`
     UPDATE contacts SET memory_summary = ${summary.trim()}, memory_updated_at = NOW(),
-      updated_at = NOW() WHERE phone = ${chatId}
+      updated_at = NOW() WHERE user_id = ${userId} AND phone = ${chatId}
   `;
 }
 
-export async function setContactHandoff(phone: string, status: string | null): Promise<void> {
+export async function setContactHandoff(userId: number, phone: string, status: string | null): Promise<void> {
   const chatId = normalizeContactPhone(phone);
   await sql`
-    UPDATE contacts SET handoff_status = ${status}, updated_at = NOW() WHERE phone = ${chatId}
+    UPDATE contacts SET handoff_status = ${status}, updated_at = NOW() WHERE user_id = ${userId} AND phone = ${chatId}
   `;
 }
 
-export async function saveContact(input: {
+export async function saveContact(userId: number, input: {
   phone: string;
   name?: string | null;
   notes?: string | null;
@@ -561,7 +569,7 @@ export async function saveContact(input: {
     throw new Error(`Statut invalide. Attendu : ${CONTACT_STATUSES.join(", ")}`);
   }
 
-  await upsertContactInternal({
+  await upsertContactInternal(userId, {
     phone: chatId,
     name: input.name,
     notes: input.notes,
@@ -569,15 +577,15 @@ export async function saveContact(input: {
     autoReply: input.autoReply,
   });
 
-  const contact = await getContact(chatId);
+  const contact = await getContact(userId, chatId);
   if (!contact) throw new Error("Impossible d'enregistrer le contact.");
   return contact;
 }
 
-export async function touchIncomingContact(chatId: string, senderName?: string): Promise<Contact> {
-  const existing = await getContact(chatId);
+export async function touchIncomingContact(userId: number, chatId: string, senderName?: string): Promise<Contact> {
+  const existing = await getContact(userId, chatId);
   if (!existing) {
-    return saveContact({
+    return saveContact(userId, {
       phone: chatId,
       name: senderName || null,
       status: "en_conversation",
@@ -594,52 +602,53 @@ export async function touchIncomingContact(chatId: string, senderName?: string):
   if (senderName && !existing.name) updates.name = senderName;
   if (existing.status === "nouveau") updates.status = "en_conversation";
 
-  return saveContact(updates);
+  return saveContact(userId, updates);
 }
 
-export async function setContactAutoReply(phone: string, enabled: boolean): Promise<Contact> {
-  return saveContact({ phone, autoReply: enabled });
+export async function setContactAutoReply(userId: number, phone: string, enabled: boolean): Promise<Contact> {
+  return saveContact(userId, { phone, autoReply: enabled });
 }
 
-export async function blockContact(chatId: string): Promise<Contact> {
-  return saveContact({ phone: chatId, status: "stop", autoReply: false });
+export async function blockContact(userId: number, chatId: string): Promise<Contact> {
+  return saveContact(userId, { phone: chatId, status: "stop", autoReply: false });
 }
 
-export async function unblockContact(chatId: string): Promise<Contact> {
-  const existing = await getContact(chatId);
+export async function unblockContact(userId: number, chatId: string): Promise<Contact> {
+  const existing = await getContact(userId, chatId);
   const nextStatus: ContactStatus =
     existing && existing.status === "stop" ? "en_conversation" : existing?.status ?? "en_conversation";
-  return saveContact({ phone: chatId, status: nextStatus });
+  return saveContact(userId, { phone: chatId, status: nextStatus });
 }
 
-export async function isContactBlocked(chatId: string): Promise<boolean> {
-  const contact = await findContactForChat(chatId);
+export async function isContactBlocked(userId: number, chatId: string): Promise<boolean> {
+  const contact = await findContactForChat(userId, chatId);
   if (contact) return contact.status === "stop";
   try {
-    const list = JSON.parse((await getSetting("blocked_contacts")) || "[]") as string[];
+    const list = JSON.parse((await getSetting(userId, "blocked_contacts")) || "[]") as string[];
     return list.includes(chatId);
   } catch {
     return false;
   }
 }
 
-export async function shouldAutoReplyContact(chatId: string): Promise<boolean> {
-  if (!(await isAutoReplyEnabled())) return false;
-  if (await isContactBlocked(chatId)) return false;
-  const contact = await findContactForChat(chatId);
+export async function shouldAutoReplyContact(userId: number, chatId: string): Promise<boolean> {
+  if (!(await isAutoReplyEnabled(userId))) return false;
+  if (await isContactBlocked(userId, chatId)) return false;
+  const contact = await findContactForChat(userId, chatId);
   if (!contact) return false;
   return contact.auto_reply === 1;
 }
 
-export async function setContactWhatsappLid(phone: string, lid: string): Promise<void> {
+export async function setContactWhatsappLid(userId: number, phone: string, lid: string): Promise<void> {
   const chatId = normalizeContactPhone(phone);
   const lidNorm = lid.includes("@") ? lid.trim() : `${lid.replace(/\D/g, "")}@lid`;
   await sql`
-    UPDATE contacts SET whatsapp_lid = ${lidNorm}, updated_at = NOW() WHERE phone = ${chatId}
+    UPDATE contacts SET whatsapp_lid = ${lidNorm}, updated_at = NOW() WHERE user_id = ${userId} AND phone = ${chatId}
   `;
 }
 
 export async function findProspectPhoneForLidReply(
+  userId: number,
   lidOrPseudo: string,
   senderName?: string
 ): Promise<string | null> {
@@ -647,7 +656,8 @@ export async function findProspectPhoneForLidReply(
   const lid = lidOrPseudo.includes("@") ? lidOrPseudo.trim() : `${lidDigits}@lid`;
 
   const mapped = await sql<{ phone: string }[]>`
-    SELECT phone FROM contacts WHERE whatsapp_lid = ${lid} OR whatsapp_lid = ${`${lidDigits}@lid`}
+    SELECT phone FROM contacts
+    WHERE user_id = ${userId} AND (whatsapp_lid = ${lid} OR whatsapp_lid = ${`${lidDigits}@lid`})
     LIMIT 1
   `;
   if (mapped[0]?.phone) return mapped[0].phone;
@@ -655,7 +665,7 @@ export async function findProspectPhoneForLidReply(
   if (senderName?.trim()) {
     const byName = await sql<{ phone: string }[]>`
       SELECT phone FROM contacts
-      WHERE auto_reply = 1 AND status != 'stop' AND name = ${senderName.trim()}
+      WHERE user_id = ${userId} AND auto_reply = 1 AND status != 'stop' AND name = ${senderName.trim()}
       LIMIT 2
     `;
     if (byName.length === 1) return byName[0].phone;
@@ -664,8 +674,9 @@ export async function findProspectPhoneForLidReply(
   const recentOut = await sql<{ phone: string }[]>`
     SELECT m.contact_phone as phone
     FROM messages m
-    JOIN contacts c ON c.phone = m.contact_phone AND c.auto_reply = 1 AND c.status != 'stop'
-    WHERE m.direction = 'sortant'
+    JOIN contacts c ON c.user_id = m.user_id AND c.phone = m.contact_phone AND c.auto_reply = 1 AND c.status != 'stop'
+    WHERE m.user_id = ${userId}
+      AND m.direction = 'sortant'
       AND m.created_at >= NOW() - INTERVAL '15 minutes'
     ORDER BY m.created_at DESC
     LIMIT 2
@@ -675,11 +686,12 @@ export async function findProspectPhoneForLidReply(
   return null;
 }
 
-export async function findUnansweredInboundMessages(limit = 30): Promise<WhatsAppMessage[]> {
+export async function findUnansweredInboundMessages(userId: number, limit = 30): Promise<WhatsAppMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT m.id, m.contact_phone, m.sender_name, m.direction, m.body, m.green_api_id, m.created_at
     FROM messages m
-    WHERE m.direction = 'entrant'
+    WHERE m.user_id = ${userId}
+      AND m.direction = 'entrant'
       AND m.created_at >= NOW() - INTERVAL '24 hours'
     ORDER BY m.id DESC
     LIMIT ${limit}
@@ -688,6 +700,7 @@ export async function findUnansweredInboundMessages(limit = 30): Promise<WhatsAp
 }
 
 export async function hasOutboundReplyAfter(
+  userId: number,
   inboundId: number,
   ...phones: string[]
 ): Promise<boolean> {
@@ -695,14 +708,14 @@ export async function hasOutboundReplyAfter(
   if (ids.length === 0) return false;
   const rows = await sql`
     SELECT 1 FROM messages
-    WHERE direction = 'sortant' AND id > ${inboundId} AND contact_phone IN ${sql(ids)}
+    WHERE user_id = ${userId} AND direction = 'sortant' AND id > ${inboundId} AND contact_phone IN ${sql(ids)}
     LIMIT 1
   `;
   return rows.length > 0;
 }
 
-export async function getDailyOutboundLimit(): Promise<number> {
-  const raw = await getSetting("daily_outbound_limit");
+export async function getDailyOutboundLimit(userId: number): Promise<number> {
+  const raw = await getSetting(userId, "daily_outbound_limit");
   const n = Number(raw);
   if (Number.isFinite(n) && n >= 5) return Math.min(Math.floor(n), 500);
   return DAILY_OUTBOUND_LIMIT;
@@ -712,50 +725,51 @@ function outboundQuotaBonusKey(): string {
   return `outbound_quota_bonus_${formatLocalDateTime(new Date()).slice(0, 10)}`;
 }
 
-export async function getOutboundQuotaBonus(): Promise<number> {
-  const n = Number((await getSetting(outboundQuotaBonusKey())) || 0);
+export async function getOutboundQuotaBonus(userId: number): Promise<number> {
+  const n = Number((await getSetting(userId, outboundQuotaBonusKey())) || 0);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-export async function getEffectiveOutboundLimit(): Promise<number> {
-  return (await getDailyOutboundLimit()) + (await getOutboundQuotaBonus());
+export async function getEffectiveOutboundLimit(userId: number): Promise<number> {
+  return (await getDailyOutboundLimit(userId)) + (await getOutboundQuotaBonus(userId));
 }
 
-export async function setDailyOutboundLimit(limit: number): Promise<number> {
+export async function setDailyOutboundLimit(userId: number, limit: number): Promise<number> {
   const safe = Math.min(Math.max(Math.floor(limit), 5), 500);
-  await setSetting("daily_outbound_limit", String(safe));
+  await setSetting(userId, "daily_outbound_limit", String(safe));
   return safe;
 }
 
-export async function resetOutboundQuotaForToday(extra = 15): Promise<{
+export async function resetOutboundQuotaForToday(userId: number, extra = 15): Promise<{
   sent: number;
   limit: number;
   bonus: number;
   effectiveLimit: number;
 }> {
-  const sent = await countOutboundToday();
-  const limit = await getDailyOutboundLimit();
+  const sent = await countOutboundToday(userId);
+  const limit = await getDailyOutboundLimit(userId);
   const needed = Math.max(0, sent - limit);
   const bonus = needed + extra;
-  await setSetting(outboundQuotaBonusKey(), String(bonus));
+  await setSetting(userId, outboundQuotaBonusKey(), String(bonus));
   return { sent, limit, bonus, effectiveLimit: limit + bonus };
 }
 
-export async function countOutboundToday(): Promise<number> {
+export async function countOutboundToday(userId: number): Promise<number> {
   const [row] = await sql<{ n: number }[]>`
     SELECT COUNT(*)::int as n FROM messages
-    WHERE direction = 'sortant'
+    WHERE user_id = ${userId}
+      AND direction = 'sortant'
       AND COALESCE(counts_toward_quota, 1) = 1
       AND created_at::date = CURRENT_DATE
   `;
   return Number(row?.n ?? 0);
 }
 
-export async function canSendOutbound(): Promise<
+export async function canSendOutbound(userId: number): Promise<
   { ok: true } | { ok: false; reason: string; sent: number; limit: number }
 > {
-  const sent = await countOutboundToday();
-  const limit = (await getDailyOutboundLimit()) + (await getOutboundQuotaBonus());
+  const sent = await countOutboundToday(userId);
+  const limit = (await getDailyOutboundLimit(userId)) + (await getOutboundQuotaBonus(userId));
   if (sent >= limit) {
     return {
       ok: false,
@@ -767,13 +781,13 @@ export async function canSendOutbound(): Promise<
   return { ok: true };
 }
 
-export async function assertCanSendTo(chatId: string): Promise<void> {
-  if (!chatId.endsWith("@g.us") && (await isContactBlocked(chatId))) {
+export async function assertCanSendTo(userId: number, chatId: string): Promise<void> {
+  if (!chatId.endsWith("@g.us") && (await isContactBlocked(userId, chatId))) {
     throw new Error(
       `Contact ${chatId} est en statut STOP. Aucun envoi possible. Débloquez-le d'abord si vraiment nécessaire.`
     );
   }
-  const check = await canSendOutbound();
+  const check = await canSendOutbound(userId);
   if (!check.ok) throw new Error(check.reason);
 }
 
@@ -850,15 +864,16 @@ function mapScheduledMessage(row: Record<string, unknown>): ScheduledMessage {
   };
 }
 
-export async function scheduleMessage(input: {
+export async function scheduleMessage(userId: number, input: {
   recipient: string;
   recipientLabel?: string;
   message: string;
   sendAt: string;
 }): Promise<ScheduledMessage> {
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO scheduled_messages (recipient, recipient_label, message, send_at)
+    INSERT INTO scheduled_messages (user_id, recipient, recipient_label, message, send_at)
     VALUES (
+      ${userId},
       ${input.recipient},
       ${input.recipientLabel ?? null},
       ${input.message},
@@ -870,6 +885,7 @@ export async function scheduleMessage(input: {
 }
 
 export async function listScheduledMessages(
+  userId: number,
   options: { includeDone?: boolean; limit?: number } = {}
 ): Promise<ScheduledMessage[]> {
   const limit = Math.min(Math.max(options.limit ?? 50, 1), 100);
@@ -877,34 +893,35 @@ export async function listScheduledMessages(
     ? await sql<Record<string, unknown>[]>`
         SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
         FROM scheduled_messages
+        WHERE user_id = ${userId}
         ORDER BY send_at DESC
         LIMIT ${limit}
       `
     : await sql<Record<string, unknown>[]>`
         SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
         FROM scheduled_messages
-        WHERE status = 'pending'
+        WHERE user_id = ${userId} AND status = 'pending'
         ORDER BY send_at ASC
         LIMIT ${limit}
       `;
   return rows.map(mapScheduledMessage);
 }
 
-export async function getDueScheduledMessages(limit = 10): Promise<ScheduledMessage[]> {
+export async function getDueScheduledMessages(userId: number, limit = 10): Promise<ScheduledMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
     FROM scheduled_messages
-    WHERE status = 'pending' AND send_at <= NOW()
+    WHERE user_id = ${userId} AND status = 'pending' AND send_at <= NOW()
     ORDER BY send_at ASC
     LIMIT ${limit}
   `;
   return rows.map(mapScheduledMessage);
 }
 
-export async function cancelScheduledMessage(id: number): Promise<ScheduledMessage | null> {
+export async function cancelScheduledMessage(userId: number, id: number): Promise<ScheduledMessage | null> {
   const existing = await sql<Record<string, unknown>[]>`
     SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-    FROM scheduled_messages WHERE id = ${id}
+    FROM scheduled_messages WHERE user_id = ${userId} AND id = ${id}
   `;
   const row = existing[0];
   if (!row) return null;
@@ -913,35 +930,35 @@ export async function cancelScheduledMessage(id: number): Promise<ScheduledMessa
     throw new Error(`Impossible d'annuler : statut actuel = ${mapped.status}.`);
   }
 
-  await sql`UPDATE scheduled_messages SET status = 'cancelled' WHERE id = ${id}`;
+  await sql`UPDATE scheduled_messages SET status = 'cancelled' WHERE user_id = ${userId} AND id = ${id}`;
 
   const updated = await sql<Record<string, unknown>[]>`
     SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-    FROM scheduled_messages WHERE id = ${id}
+    FROM scheduled_messages WHERE user_id = ${userId} AND id = ${id}
   `;
   return mapScheduledMessage(updated[0]);
 }
 
-export async function markScheduledSent(id: number): Promise<void> {
+export async function markScheduledSent(userId: number, id: number): Promise<void> {
   await sql`
     UPDATE scheduled_messages
     SET status = 'sent', sent_at = NOW(), error = NULL
-    WHERE id = ${id}
+    WHERE user_id = ${userId} AND id = ${id}
   `;
 }
 
-export async function markScheduledFailed(id: number, error: string): Promise<void> {
+export async function markScheduledFailed(userId: number, id: number, error: string): Promise<void> {
   await sql`
     UPDATE scheduled_messages
     SET status = 'failed', error = ${error.slice(0, 500)}, sent_at = NOW()
-    WHERE id = ${id}
+    WHERE user_id = ${userId} AND id = ${id}
   `;
 }
 
-export async function getContactThread(phone: string, limit = 100): Promise<WhatsAppMessage[]> {
+export async function getContactThread(userId: number, phone: string, limit = 100): Promise<WhatsAppMessage[]> {
   const trimmed = phone.trim();
   const chatId = trimmed.includes("@") ? trimmed : `${trimmed.replace(/\D/g, "")}@c.us`;
-  return getContactChatHistory(chatId, limit);
+  return getContactChatHistory(userId, chatId, limit);
 }
 
 export interface DailyBilan {
@@ -961,7 +978,7 @@ export interface DailyBilan {
   }>;
 }
 
-export async function getDailyBilan(date?: string): Promise<DailyBilan> {
+export async function getDailyBilan(userId: number, date?: string): Promise<DailyBilan> {
   const day =
     date?.trim() ||
     formatLocalDateTime(new Date()).slice(0, 10);
@@ -974,11 +991,11 @@ export async function getDailyBilan(date?: string): Promise<DailyBilan> {
       SUM(CASE WHEN direction = 'sortant' THEN 1 ELSE 0 END)::int as outgoing,
       COUNT(DISTINCT contact_phone)::int as uniqueContacts
     FROM messages
-    WHERE created_at::date = ${day}::date
+    WHERE user_id = ${userId} AND created_at::date = ${day}::date
   `;
 
   const statusRows = await sql<Array<{ status: string; n: number }>>`
-    SELECT status, COUNT(*)::int as n FROM contacts GROUP BY status
+    SELECT status, COUNT(*)::int as n FROM contacts WHERE user_id = ${userId} GROUP BY status
   `;
 
   const contactsByStatus: Record<string, number> = {
@@ -992,12 +1009,12 @@ export async function getDailyBilan(date?: string): Promise<DailyBilan> {
   }
 
   const [scheduledPendingRow] = await sql<{ n: number }[]>`
-    SELECT COUNT(*)::int as n FROM scheduled_messages WHERE status = 'pending'
+    SELECT COUNT(*)::int as n FROM scheduled_messages WHERE user_id = ${userId} AND status = 'pending'
   `;
 
   const [scheduledSentTodayRow] = await sql<{ n: number }[]>`
     SELECT COUNT(*)::int as n FROM scheduled_messages
-    WHERE status = 'sent' AND COALESCE(sent_at, send_at)::date = ${day}::date
+    WHERE user_id = ${userId} AND status = 'sent' AND COALESCE(sent_at, send_at)::date = ${day}::date
   `;
 
   const topRows = await sql<
@@ -1010,14 +1027,14 @@ export async function getDailyBilan(date?: string): Promise<DailyBilan> {
     }>
   >`
     SELECT m.contact_phone as phone,
-           (SELECT name FROM contacts c WHERE c.phone = m.contact_phone) as name,
+           (SELECT name FROM contacts c WHERE c.user_id = ${userId} AND c.phone = m.contact_phone) as name,
            COUNT(*)::int as "messageCount",
            (SELECT body FROM messages m2
-              WHERE m2.contact_phone = m.contact_phone
+              WHERE m2.user_id = ${userId} AND m2.contact_phone = m.contact_phone
               ORDER BY m2.id DESC LIMIT 1) as "lastMessage",
            MAX(m.created_at) as "lastAt"
     FROM messages m
-    WHERE m.created_at::date = ${day}::date
+    WHERE m.user_id = ${userId} AND m.created_at::date = ${day}::date
     GROUP BY m.contact_phone
     ORDER BY "messageCount" DESC
     LIMIT 15
@@ -1181,10 +1198,10 @@ function mapAutomationLog(row: Record<string, unknown>): AutomationLog {
   };
 }
 
-async function recomputeAutomationStats(automationId: number): Promise<AutomationStats> {
+async function recomputeAutomationStats(userId: number, automationId: number): Promise<AutomationStats> {
   const rows = await sql<Array<{ status: string; n: number }>>`
     SELECT status, COUNT(*)::int as n FROM automation_targets
-    WHERE automation_id = ${automationId} GROUP BY status
+    WHERE user_id = ${userId} AND automation_id = ${automationId} GROUP BY status
   `;
 
   const stats: AutomationStats = {
@@ -1206,7 +1223,7 @@ async function recomputeAutomationStats(automationId: number): Promise<Automatio
     else if (row.status === "error") stats.errors = n;
   }
 
-  const auto = await getAutomation(automationId);
+  const auto = await getAutomation(userId, automationId);
   if (auto) {
     stats.messagesHandled = auto.stats.messagesHandled ?? 0;
     stats.outboundUsed = auto.stats.outboundUsed ?? 0;
@@ -1216,13 +1233,13 @@ async function recomputeAutomationStats(automationId: number): Promise<Automatio
 
   await sql`
     UPDATE automations SET stats_json = ${JSON.stringify(stats)}, updated_at = NOW()
-    WHERE id = ${automationId}
+    WHERE user_id = ${userId} AND id = ${automationId}
   `;
 
   return stats;
 }
 
-export async function createAutomation(input: {
+export async function createAutomation(userId: number, input: {
   name: string;
   type: AutomationType;
   config: AutomationConfig;
@@ -1233,8 +1250,9 @@ export async function createAutomation(input: {
   const rows = await sql<
     Array<Parameters<typeof parseAutomationRow>[0]>
   >`
-    INSERT INTO automations (name, type, status, config_json, stats_json, summary, budget_fcfa)
+    INSERT INTO automations (user_id, name, type, status, config_json, stats_json, summary, budget_fcfa)
     VALUES (
+      ${userId},
       ${input.name.trim()},
       ${input.type},
       ${input.status ?? "active"},
@@ -1247,19 +1265,20 @@ export async function createAutomation(input: {
   `;
 
   const id = rows[0].id;
-  await addAutomationLog(id, "info", `Automatisation créée : ${input.name}`);
-  return (await getAutomation(id))!;
+  await addAutomationLog(userId, id, "info", `Automatisation créée : ${input.name}`);
+  return (await getAutomation(userId, id))!;
 }
 
-export async function getAutomation(id: number): Promise<Automation | null> {
+export async function getAutomation(userId: number, id: number): Promise<Automation | null> {
   const rows = await sql<Array<Parameters<typeof parseAutomationRow>[0]>>`
     SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
-    FROM automations WHERE id = ${id}
+    FROM automations WHERE user_id = ${userId} AND id = ${id}
   `;
   return rows[0] ? parseAutomationRow(rows[0]) : null;
 }
 
 export async function listAutomations(
+  userId: number,
   options: { status?: AutomationStatus; limit?: number } = {}
 ): Promise<Automation[]> {
   const limit = options.limit ?? 100;
@@ -1267,64 +1286,69 @@ export async function listAutomations(
     ? await sql<Array<Parameters<typeof parseAutomationRow>[0]>>`
         SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
         FROM automations
-        WHERE status = ${options.status}
+        WHERE user_id = ${userId} AND status = ${options.status}
         ORDER BY id DESC
         LIMIT ${limit}
       `
     : await sql<Array<Parameters<typeof parseAutomationRow>[0]>>`
         SELECT id, name, type, status, config_json, stats_json, summary, budget_fcfa, created_at, updated_at
         FROM automations
+        WHERE user_id = ${userId}
         ORDER BY id DESC
         LIMIT ${limit}
       `;
   return rows.map(parseAutomationRow);
 }
 
-export async function listActiveAutomations(): Promise<Automation[]> {
-  return listAutomations({ status: "active", limit: 50 });
+export async function listActiveAutomations(userId: number): Promise<Automation[]> {
+  return listAutomations(userId, { status: "active", limit: 50 });
 }
 
 export async function updateAutomationStatus(
+  userId: number,
   id: number,
   status: AutomationStatus
 ): Promise<Automation | null> {
-  await sql`UPDATE automations SET status = ${status}, updated_at = NOW() WHERE id = ${id}`;
-  await addAutomationLog(id, "info", `Statut → ${status}`);
-  return getAutomation(id);
+  await sql`UPDATE automations SET status = ${status}, updated_at = NOW() WHERE user_id = ${userId} AND id = ${id}`;
+  await addAutomationLog(userId, id, "info", `Statut → ${status}`);
+  return getAutomation(userId, id);
 }
 
 export async function updateAutomationStats(
+  userId: number,
   id: number,
   patch: Partial<AutomationStats>
 ): Promise<Automation | null> {
-  const auto = await getAutomation(id);
+  const auto = await getAutomation(userId, id);
   if (!auto) return null;
   const stats = { ...auto.stats, ...patch };
   await sql`
     UPDATE automations SET stats_json = ${JSON.stringify(stats)}, updated_at = NOW()
-    WHERE id = ${id}
+    WHERE user_id = ${userId} AND id = ${id}
   `;
-  return getAutomation(id);
+  return getAutomation(userId, id);
 }
 
 export async function addAutomationTargets(
+  userId: number,
   automationId: number,
   targets: Array<{ targetId: string; targetLabel?: string }>
 ): Promise<number> {
   let added = 0;
   for (const t of targets) {
     const result = await sql`
-      INSERT INTO automation_targets (automation_id, target_id, target_label)
-      VALUES (${automationId}, ${t.targetId}, ${t.targetLabel ?? null})
+      INSERT INTO automation_targets (user_id, automation_id, target_id, target_label)
+      VALUES (${userId}, ${automationId}, ${t.targetId}, ${t.targetLabel ?? null})
       ON CONFLICT (automation_id, target_id) DO NOTHING
     `;
     if (result.count > 0) added++;
   }
-  await recomputeAutomationStats(automationId);
+  await recomputeAutomationStats(userId, automationId);
   return added;
 }
 
 export async function listAutomationTargets(
+  userId: number,
   automationId: number,
   options: { status?: TargetStatus; limit?: number } = {}
 ): Promise<AutomationTarget[]> {
@@ -1333,14 +1357,14 @@ export async function listAutomationTargets(
     ? await sql<Record<string, unknown>[]>`
         SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
         FROM automation_targets
-        WHERE automation_id = ${automationId} AND status = ${options.status}
+        WHERE user_id = ${userId} AND automation_id = ${automationId} AND status = ${options.status}
         ORDER BY id ASC
         LIMIT ${limit}
       `
     : await sql<Record<string, unknown>[]>`
         SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
         FROM automation_targets
-        WHERE automation_id = ${automationId}
+        WHERE user_id = ${userId} AND automation_id = ${automationId}
         ORDER BY id ASC
         LIMIT ${limit}
       `;
@@ -1348,6 +1372,7 @@ export async function listAutomationTargets(
 }
 
 export async function updateAutomationTarget(
+  userId: number,
   automationId: number,
   targetId: string,
   patch: { status?: TargetStatus; notes?: string }
@@ -1356,96 +1381,99 @@ export async function updateAutomationTarget(
     await sql`
       UPDATE automation_targets
       SET last_action_at = NOW(), status = ${patch.status}, notes = ${patch.notes}
-      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+      WHERE user_id = ${userId} AND automation_id = ${automationId} AND target_id = ${targetId}
     `;
   } else if (patch.status) {
     await sql`
       UPDATE automation_targets
       SET last_action_at = NOW(), status = ${patch.status}
-      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+      WHERE user_id = ${userId} AND automation_id = ${automationId} AND target_id = ${targetId}
     `;
   } else if (patch.notes !== undefined) {
     await sql`
       UPDATE automation_targets
       SET last_action_at = NOW(), notes = ${patch.notes}
-      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+      WHERE user_id = ${userId} AND automation_id = ${automationId} AND target_id = ${targetId}
     `;
   } else {
     await sql`
       UPDATE automation_targets
       SET last_action_at = NOW()
-      WHERE automation_id = ${automationId} AND target_id = ${targetId}
+      WHERE user_id = ${userId} AND automation_id = ${automationId} AND target_id = ${targetId}
     `;
   }
-  await recomputeAutomationStats(automationId);
+  await recomputeAutomationStats(userId, automationId);
 }
 
-export async function getNextPendingTarget(automationId: number): Promise<AutomationTarget | null> {
+export async function getNextPendingTarget(userId: number, automationId: number): Promise<AutomationTarget | null> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
     FROM automation_targets
-    WHERE automation_id = ${automationId} AND status = 'pending'
+    WHERE user_id = ${userId} AND automation_id = ${automationId} AND status = 'pending'
     ORDER BY id ASC LIMIT 1
   `;
   return rows[0] ? mapAutomationTarget(rows[0]) : null;
 }
 
 export async function addAutomationLog(
+  userId: number,
   automationId: number,
   level: AutomationLog["level"],
   message: string
 ): Promise<AutomationLog> {
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO automation_logs (automation_id, level, message)
-    VALUES (${automationId}, ${level}, ${message})
+    INSERT INTO automation_logs (user_id, automation_id, level, message)
+    VALUES (${userId}, ${automationId}, ${level}, ${message})
     RETURNING id, automation_id, level, message, created_at
   `;
   return mapAutomationLog(rows[0]);
 }
 
 export async function listAutomationLogs(
+  userId: number,
   automationId: number,
   limit = 50
 ): Promise<AutomationLog[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, automation_id, level, message, created_at
-    FROM automation_logs WHERE automation_id = ${automationId}
+    FROM automation_logs WHERE user_id = ${userId} AND automation_id = ${automationId}
     ORDER BY id DESC LIMIT ${limit}
   `;
   return rows.map(mapAutomationLog);
 }
 
-export async function getAutomationDetail(id: number): Promise<{
+export async function getAutomationDetail(userId: number, id: number): Promise<{
   automation: Automation;
   targets: AutomationTarget[];
   logs: AutomationLog[];
 } | null> {
-  const automation = await getAutomation(id);
+  const automation = await getAutomation(userId, id);
   if (!automation) return null;
-  const targets = await listAutomationTargets(id);
-  const logs = await listAutomationLogs(id, 30);
-  const stats = await recomputeAutomationStats(id);
+  const targets = await listAutomationTargets(userId, id);
+  const logs = await listAutomationLogs(userId, id, 30);
+  const stats = await recomputeAutomationStats(userId, id);
   automation.stats = stats;
   return { automation, targets, logs };
 }
 
 export async function updateAutomationConfig(
+  userId: number,
   id: number,
   config: AutomationConfig
 ): Promise<Automation | null> {
   await sql`
     UPDATE automations SET config_json = ${JSON.stringify(config)}, updated_at = NOW()
-    WHERE id = ${id}
+    WHERE user_id = ${userId} AND id = ${id}
   `;
-  return getAutomation(id);
+  return getAutomation(userId, id);
 }
 
-export async function findMatchingKeywordAutomations(text: string): Promise<Automation[]> {
+export async function findMatchingKeywordAutomations(userId: number, text: string): Promise<Automation[]> {
   const normalized = text
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}/gu, "");
-  const active = (await listActiveAutomations()).filter((a) => a.type === "keyword_sales");
+  const active = (await listActiveAutomations(userId)).filter((a) => a.type === "keyword_sales");
   return active.filter((a) => {
     const keywords = a.config.keywords ?? [];
     return keywords.some((kw) => {
@@ -1496,7 +1524,7 @@ function mapQueueItem(row: Record<string, unknown>): QueueItem {
   };
 }
 
-export async function enqueueSend(input: {
+export async function enqueueSend(userId: number, input: {
   recipient: string;
   recipientLabel?: string;
   message?: string;
@@ -1511,10 +1539,11 @@ export async function enqueueSend(input: {
   const sendAt = input.sendAt ?? formatLocalDateTime(new Date());
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO send_queue (
-      recipient, recipient_label, message, media_url, media_type, priority, send_at,
+      user_id, recipient, recipient_label, message, media_url, media_type, priority, send_at,
       automation_id, sequence_id, ab_variant
     )
     VALUES (
+      ${userId},
       ${input.recipient},
       ${input.recipientLabel ?? null},
       ${input.message ?? null},
@@ -1531,38 +1560,38 @@ export async function enqueueSend(input: {
   return mapQueueItem(rows[0]);
 }
 
-export async function getDueQueueItems(limit = 3): Promise<QueueItem[]> {
+export async function getDueQueueItems(userId: number, limit = 3): Promise<QueueItem[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT * FROM send_queue
-    WHERE status = 'pending' AND send_at <= NOW()
+    WHERE user_id = ${userId} AND status = 'pending' AND send_at <= NOW()
     ORDER BY priority DESC, send_at ASC LIMIT ${limit}
   `;
   return rows.map(mapQueueItem);
 }
 
-export async function markQueueSent(id: number): Promise<void> {
-  await sql`UPDATE send_queue SET status = 'sent', sent_at = NOW() WHERE id = ${id}`;
+export async function markQueueSent(userId: number, id: number): Promise<void> {
+  await sql`UPDATE send_queue SET status = 'sent', sent_at = NOW() WHERE user_id = ${userId} AND id = ${id}`;
 }
 
-export async function markQueueFailed(id: number, error: string): Promise<void> {
-  await sql`UPDATE send_queue SET status = 'failed', error = ${error} WHERE id = ${id}`;
+export async function markQueueFailed(userId: number, id: number, error: string): Promise<void> {
+  await sql`UPDATE send_queue SET status = 'failed', error = ${error} WHERE user_id = ${userId} AND id = ${id}`;
 }
 
-export async function rescheduleSendQueueItem(id: number, sendAt: string): Promise<void> {
-  await sql`UPDATE send_queue SET send_at = ${toTsParam(sendAt)} WHERE id = ${id}`;
+export async function rescheduleSendQueueItem(userId: number, id: number, sendAt: string): Promise<void> {
+  await sql`UPDATE send_queue SET send_at = ${toTsParam(sendAt)} WHERE user_id = ${userId} AND id = ${id}`;
 }
 
-export async function cancelPendingSendQueue(): Promise<number> {
+export async function cancelPendingSendQueue(userId: number): Promise<number> {
   const result = await sql`
     UPDATE send_queue SET status = 'cancelled', error = 'Annulé manuellement'
-    WHERE status = 'pending'
+    WHERE user_id = ${userId} AND status = 'pending'
   `;
   return Number(result.count);
 }
 
-export async function pauseAllActiveAutomations(): Promise<number> {
+export async function pauseAllActiveAutomations(userId: number): Promise<number> {
   const result = await sql`
-    UPDATE automations SET status = 'paused', updated_at = NOW() WHERE status = 'active'
+    UPDATE automations SET status = 'paused', updated_at = NOW() WHERE user_id = ${userId} AND status = 'active'
   `;
   return Number(result.count);
 }
@@ -1607,7 +1636,7 @@ function mapContactSequence(row: Record<string, unknown>): ContactSequence {
   };
 }
 
-export async function createContactSequence(input: {
+export async function createContactSequence(userId: number, input: {
   contactPhone: string;
   name: string;
   steps: SequenceStep[];
@@ -1618,8 +1647,9 @@ export async function createContactSequence(input: {
   const nextAt = new Date();
   nextAt.setDate(nextAt.getDate() + firstDelay);
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO contact_sequences (contact_phone, automation_id, name, steps_json, next_step_at)
+    INSERT INTO contact_sequences (user_id, contact_phone, automation_id, name, steps_json, next_step_at)
     VALUES (
+      ${userId},
       ${phone},
       ${input.automationId ?? null},
       ${input.name},
@@ -1631,29 +1661,29 @@ export async function createContactSequence(input: {
   return mapContactSequence(rows[0]);
 }
 
-export async function getContactSequence(id: number): Promise<ContactSequence | null> {
+export async function getContactSequence(userId: number, id: number): Promise<ContactSequence | null> {
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT * FROM contact_sequences WHERE id = ${id}
+    SELECT * FROM contact_sequences WHERE user_id = ${userId} AND id = ${id}
   `;
   return rows[0] ? mapContactSequence(rows[0]) : null;
 }
 
-export async function listDueSequences(limit = 20): Promise<ContactSequence[]> {
+export async function listDueSequences(userId: number, limit = 20): Promise<ContactSequence[]> {
   const rows = await sql<Array<{ id: number }>>`
     SELECT id FROM contact_sequences
-    WHERE status = 'active' AND next_step_at IS NOT NULL AND next_step_at <= NOW()
+    WHERE user_id = ${userId} AND status = 'active' AND next_step_at IS NOT NULL AND next_step_at <= NOW()
     ORDER BY next_step_at ASC LIMIT ${limit}
   `;
-  const sequences = await Promise.all(rows.map((r) => getContactSequence(r.id)));
+  const sequences = await Promise.all(rows.map((r) => getContactSequence(userId, r.id)));
   return sequences.filter(Boolean) as ContactSequence[];
 }
 
-export async function advanceSequence(id: number): Promise<void> {
-  const seq = await getContactSequence(id);
+export async function advanceSequence(userId: number, id: number): Promise<void> {
+  const seq = await getContactSequence(userId, id);
   if (!seq) return;
   const nextStep = seq.current_step + 1;
   if (nextStep >= seq.steps.length) {
-    await sql`UPDATE contact_sequences SET status = 'completed', next_step_at = NULL WHERE id = ${id}`;
+    await sql`UPDATE contact_sequences SET status = 'completed', next_step_at = NULL WHERE user_id = ${userId} AND id = ${id}`;
     return;
   }
   const delay = seq.steps[nextStep]?.delayDays ?? 1;
@@ -1661,15 +1691,15 @@ export async function advanceSequence(id: number): Promise<void> {
   nextAt.setDate(nextAt.getDate() + delay);
   await sql`
     UPDATE contact_sequences SET current_step = ${nextStep}, next_step_at = ${toTsParam(formatLocalDateTime(nextAt))}
-    WHERE id = ${id}
+    WHERE user_id = ${userId} AND id = ${id}
   `;
 }
 
-export async function cancelSequencesForContact(phone: string): Promise<void> {
+export async function cancelSequencesForContact(userId: number, phone: string): Promise<void> {
   const chatId = normalizeContactPhone(phone);
   await sql`
     UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
-    WHERE contact_phone = ${chatId} AND status = 'active'
+    WHERE user_id = ${userId} AND contact_phone = ${chatId} AND status = 'active'
   `;
 }
 
@@ -1703,7 +1733,7 @@ function mapGroupReplyRule(row: Record<string, unknown>): GroupReplyRule {
   };
 }
 
-export async function createGroupReplyRule(input: {
+export async function createGroupReplyRule(userId: number, input: {
   groupId: string;
   groupLabel?: string;
   keywords: string[];
@@ -1711,8 +1741,9 @@ export async function createGroupReplyRule(input: {
   automationId?: number;
 }): Promise<GroupReplyRule> {
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO group_reply_rules (group_id, group_label, keywords_json, reply_guide, automation_id)
+    INSERT INTO group_reply_rules (user_id, group_id, group_label, keywords_json, reply_guide, automation_id)
     VALUES (
+      ${userId},
       ${input.groupId},
       ${input.groupLabel ?? null},
       ${JSON.stringify(input.keywords)},
@@ -1724,27 +1755,27 @@ export async function createGroupReplyRule(input: {
   return mapGroupReplyRule(rows[0]);
 }
 
-export async function getGroupReplyRule(id: number): Promise<GroupReplyRule | null> {
+export async function getGroupReplyRule(userId: number, id: number): Promise<GroupReplyRule | null> {
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT * FROM group_reply_rules WHERE id = ${id}
+    SELECT * FROM group_reply_rules WHERE user_id = ${userId} AND id = ${id}
   `;
   return rows[0] ? mapGroupReplyRule(rows[0]) : null;
 }
 
-export async function listActiveGroupReplyRules(): Promise<GroupReplyRule[]> {
+export async function listActiveGroupReplyRules(userId: number): Promise<GroupReplyRule[]> {
   const rows = await sql<Array<{ id: number }>>`
-    SELECT id FROM group_reply_rules WHERE status = 'active'
+    SELECT id FROM group_reply_rules WHERE user_id = ${userId} AND status = 'active'
   `;
-  const rules = await Promise.all(rows.map((r) => getGroupReplyRule(r.id)));
+  const rules = await Promise.all(rows.map((r) => getGroupReplyRule(userId, r.id)));
   return rules.filter(Boolean) as GroupReplyRule[];
 }
 
-export async function findGroupReplyRule(groupId: string, text: string): Promise<GroupReplyRule | null> {
+export async function findGroupReplyRule(userId: number, groupId: string, text: string): Promise<GroupReplyRule | null> {
   const normalized = text
     .toLowerCase()
     .normalize("NFD")
     .replace(/\p{M}/gu, "");
-  for (const rule of await listActiveGroupReplyRules()) {
+  for (const rule of await listActiveGroupReplyRules(userId)) {
     if (rule.group_id !== groupId) continue;
     if (!rule.keywords.length) return rule;
     const match = rule.keywords.some((kw) => {
@@ -1785,7 +1816,7 @@ function mapHandoffEvent(row: Record<string, unknown>): HandoffEvent {
   };
 }
 
-export async function createHandoffEvent(input: {
+export async function createHandoffEvent(userId: number, input: {
   contactPhone: string;
   contactName?: string;
   reason: string;
@@ -1793,10 +1824,11 @@ export async function createHandoffEvent(input: {
   suggestedReply?: string;
 }): Promise<HandoffEvent> {
   const phone = normalizeContactPhone(input.contactPhone);
-  await setContactHandoff(phone, "pending");
+  await setContactHandoff(userId, phone, "pending");
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO handoff_events (contact_phone, contact_name, reason, summary, suggested_reply)
+    INSERT INTO handoff_events (user_id, contact_phone, contact_name, reason, summary, suggested_reply)
     VALUES (
+      ${userId},
       ${phone},
       ${input.contactName ?? null},
       ${input.reason},
@@ -1808,31 +1840,31 @@ export async function createHandoffEvent(input: {
   return mapHandoffEvent(rows[0]);
 }
 
-export async function listPendingHandoffs(limit = 30): Promise<HandoffEvent[]> {
+export async function listPendingHandoffs(userId: number, limit = 30): Promise<HandoffEvent[]> {
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT * FROM handoff_events WHERE status = 'pending' ORDER BY id DESC LIMIT ${limit}
+    SELECT * FROM handoff_events WHERE user_id = ${userId} AND status = 'pending' ORDER BY id DESC LIMIT ${limit}
   `;
   return rows.map(mapHandoffEvent);
 }
 
-export async function resolveHandoff(id: number, status: "resolved" | "dismissed"): Promise<void> {
+export async function resolveHandoff(userId: number, id: number, status: "resolved" | "dismissed"): Promise<void> {
   const rows = await sql<Array<{ contact_phone: string }>>`
-    SELECT contact_phone FROM handoff_events WHERE id = ${id}
+    SELECT contact_phone FROM handoff_events WHERE user_id = ${userId} AND id = ${id}
   `;
   await sql`
-    UPDATE handoff_events SET status = ${status}, resolved_at = NOW() WHERE id = ${id}
+    UPDATE handoff_events SET status = ${status}, resolved_at = NOW() WHERE user_id = ${userId} AND id = ${id}
   `;
-  if (rows[0]) await setContactHandoff(rows[0].contact_phone, null);
+  if (rows[0]) await setContactHandoff(userId, rows[0].contact_phone, null);
 }
 
 export async function updateAutomationTargetAb(
+  userId: number,
   automationId: number,
   targetId: string,
   abVariant: string
 ): Promise<void> {
   await sql`
     UPDATE automation_targets SET ab_variant = ${abVariant}, last_action_at = NOW()
-    WHERE automation_id = ${automationId} AND target_id = ${targetId}
+    WHERE user_id = ${userId} AND automation_id = ${automationId} AND target_id = ${targetId}
   `;
 }
-

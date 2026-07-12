@@ -71,7 +71,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
     : message.content;
 
   const bubbleClass = cn(
-    'min-w-0 max-w-full rounded-2xl px-4 py-3 text-[15px] leading-relaxed transition-all duration-200',
+    'min-w-0 max-w-full rounded-2xl px-3 py-2 text-[13px] leading-[1.45] transition-all duration-200',
     isUser && 'bg-brand text-white',
     isAssistant && !message.content.startsWith('❌') && 'border border-white/10 bg-bg-100 text-text-100',
     message.kind === 'error' && 'border border-red-500/30 bg-red-950/30 text-red-100',
@@ -84,31 +84,31 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   return (
     <div
       className={cn(
-        'animate-fade-in flex min-w-0 gap-3',
+        'animate-fade-in flex min-w-0 gap-2',
         isUser || isWaOut ? 'flex-row-reverse' : 'flex-row',
       )}
     >
       {!isUser && (
         <div
           className={cn(
-            'flex h-8 w-8 shrink-0 items-center justify-center rounded-full border',
+            'flex h-7 w-7 shrink-0 items-center justify-center rounded-full border',
             isWaIn || isWaOut
               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
               : 'border-brand-border bg-brand-muted text-brand',
           )}
         >
-          <Icon className="h-4 w-4" strokeWidth={1.75} />
+          <Icon className="h-3.5 w-3.5" strokeWidth={1.75} />
         </div>
       )}
 
       <div
         className={cn(
-          'flex min-w-0 max-w-[min(100%,42rem)] flex-col gap-1',
+          'flex min-w-0 max-w-[min(88%,34rem)] flex-col gap-0.5',
           (isUser || isWaOut) && 'items-end',
         )}
       >
         {message.label && (
-          <span className="px-1 text-[10px] uppercase tracking-wide text-text-500">
+          <span className="px-1 text-[9px] uppercase tracking-wide text-text-500">
             {message.label}
           </span>
         )}
@@ -122,7 +122,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
             )}
           </div>
         </div>
-        <time className="px-1 text-[11px] text-text-500" dateTime={message.created_at}>
+        <time className="px-1 text-[10px] text-text-500" dateTime={message.created_at}>
           {time}
         </time>
       </div>

@@ -1,0 +1,102 @@
+import type { FastifyInstance } from "fastify";
+import { hashPassword, verifyPassword, requireUserId } from "./auth.js";
+import { createUser, getUserByEmail, getUserById, completeOnboarding, publicUser } from "./users.js";
+import { testEvolutionConnection } from "./evolutionapi.js";
+
+export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
+  app.post<{ Body: { email?: string; password?: string; name?: string } }>(
+    "/api/auth/register",
+    async (request, reply) => {
+      const email = request.body?.email?.trim().toLowerCase();
+      const password = request.body?.password ?? "";
+      const name = request.body?.name?.trim() ?? "";
+
+      if (!email || !password || password.length < 6) {
+        return reply.status(400).send({ error: "Email et mot de passe (6 car. min.) requis." });
+      }
+      if (!name) {
+        return reply.status(400).send({ error: "Le prénom ou nom est requis." });
+      }
+
+      const existing = await getUserByEmail(email);
+      if (existing) {
+        return reply.status(409).send({ error: "Cet email est déjà utilisé." });
+      }
+
+      const user = await createUser({
+        email,
+        passwordHash: await hashPassword(password),
+        name,
+      });
+
+      const token = app.signUserToken(user.id);
+      return { token, user: publicUser(user) };
+    },
+  );
+
+  app.post<{ Body: { email?: string; password?: string } }>(
+    "/api/auth/login",
+    async (request, reply) => {
+      const email = request.body?.email?.trim().toLowerCase();
+      const password = request.body?.password ?? "";
+      if (!email || !password) {
+        return reply.status(400).send({ error: "Email et mot de passe requis." });
+      }
+
+      const row = await getUserByEmail(email);
+      if (!row || !(await verifyPassword(password, row.password_hash))) {
+        return reply.status(401).send({ error: "Email ou mot de passe incorrect." });
+      }
+
+      const { password_hash: _, ...user } = row;
+      const token = app.signUserToken(user.id);
+      return { token, user: publicUser(user) };
+    },
+  );
+
+  app.get("/api/me", async (request) => {
+    const userId = requireUserId(request);
+    const user = await getUserById(userId);
+    if (!user) return { error: "Utilisateur introuvable" };
+
+    let whatsapp = { connected: false, state: "not_configured", message: "Non configuré" };
+    try {
+      whatsapp = await testEvolutionConnection(userId);
+    } catch (err) {
+      whatsapp = {
+        connected: false,
+        state: "error",
+        message: err instanceof Error ? err.message : "Erreur Evolution API",
+      };
+    }
+
+    return {
+      ...publicUser(user),
+      whatsapp,
+    };
+  });
+
+  app.post<{
+    Body: {
+      answers?: Record<string, unknown>;
+      business_owner_name?: string;
+      business_offer?: string;
+      business_price?: string;
+    };
+  }>("/api/onboarding", async (request, reply) => {
+    const userId = requireUserId(request);
+    const answers = request.body?.answers;
+    if (!answers || typeof answers !== "object") {
+      return reply.status(400).send({ error: "Réponses onboarding requises." });
+    }
+
+    const user = await completeOnboarding(userId, {
+      answers,
+      business_owner_name: request.body?.business_owner_name,
+      business_offer: request.body?.business_offer,
+      business_price: request.body?.business_price,
+    });
+
+    return { ok: true, user: publicUser(user) };
+  });
+}

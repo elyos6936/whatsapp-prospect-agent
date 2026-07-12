@@ -2,7 +2,7 @@ import { createHandoffEvent } from "./db.js";
 import { generateWhatsAppReply } from "./whatsapp-reply.js";
 import type { ScoringResult } from "./lead-scoring.js";
 
-export async function maybeCreateHandoff(input: {
+export async function maybeCreateHandoff(userId: number, input: {
   chatId: string;
   senderName: string;
   incomingText: string;
@@ -13,7 +13,7 @@ export async function maybeCreateHandoff(input: {
 
   let suggestedReply = "";
   try {
-    suggestedReply = await generateWhatsAppReply({
+    suggestedReply = await generateWhatsAppReply(userId, {
       chatId: input.chatId,
       senderName: input.senderName,
       incomingText: input.incomingText,
@@ -23,7 +23,7 @@ export async function maybeCreateHandoff(input: {
     suggestedReply = "Bonjour, je reprends la conversation personnellement. Comment puis-je vous aider ?";
   }
 
-  await createHandoffEvent({
+  await createHandoffEvent(userId, {
     contactPhone: input.chatId,
     contactName: input.senderName,
     reason: input.scoring.handoffReason || "Intervention humaine recommandée",

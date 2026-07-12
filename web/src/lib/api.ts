@@ -1,7 +1,21 @@
 import { API_BASE_URL } from './config';
 import type { ChatAttachment } from './chat-attachments';
+import { emitAuthLogout, getStoredToken } from './auth-storage';
 
 export type MessageKind = 'user' | 'assistant' | 'whatsapp-in' | 'whatsapp-out' | 'error';
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  name: string;
+  onboarding_completed: boolean;
+  business: { ownerName: string; offer: string; price: string };
+  whatsapp?: { connected: boolean; state: string; message: string };
+}
+
+export interface MeResponse extends AuthUser {
+  whatsapp: { connected: boolean; state: string; message: string };
+}
 
 export interface ChatMessage {
   id: string;
@@ -9,6 +23,8 @@ export interface ChatMessage {
   content: string;
   created_at: string;
   label?: string;
+  /** Ordre d'arrivée côté client. Sert de clé de tri fiable (indépendante du fuseau). */
+  seq?: number;
 }
 
 export interface HealthStatus {
@@ -41,13 +57,20 @@ class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const token = getStoredToken();
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
   });
+
+  if (res.status === 401) {
+    emitAuthLogout();
+    throw new ApiError('Session expirée. Reconnectez-vous.', 401);
+  }
 
   if (!res.ok) {
     let message = res.statusText;
@@ -314,6 +337,43 @@ export async function resolveHandoff(
   await request(`/api/handoffs/${id}`, {
     method: 'PATCH',
     body: JSON.stringify({ status }),
+  });
+}
+
+export async function registerUser(input: {
+  email: string;
+  password: string;
+  name: string;
+}): Promise<{ token: string; user: AuthUser }> {
+  return request('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function loginUser(input: {
+  email: string;
+  password: string;
+}): Promise<{ token: string; user: AuthUser }> {
+  return request('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function fetchMe(): Promise<MeResponse> {
+  return request<MeResponse>('/api/me');
+}
+
+export async function saveOnboarding(input: {
+  answers: Record<string, unknown>;
+  business_owner_name?: string;
+  business_offer?: string;
+  business_price?: string;
+}): Promise<{ ok: boolean; user: AuthUser }> {
+  return request('/api/onboarding', {
+    method: 'POST',
+    body: JSON.stringify(input),
   });
 }
 

@@ -84,24 +84,25 @@ export function ChatWorkspace({
           </div>
         ) : (
           <div ref={scrollContainerRef} className="flex-1 overflow-y-auto custom-scrollbar">
-            <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-8 sm:px-6 sm:py-10">
+            <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 py-4 sm:px-6 sm:py-6">
               {messagesLoading && isEmpty ? (
-                <div className="space-y-8 py-4">
-                  <div className="h-20 max-w-lg rounded-2xl skeleton-shine" />
-                  <div className="ml-auto h-14 max-w-sm rounded-2xl skeleton-shine" />
+                <div className="space-y-4 py-2">
+                  <div className="h-16 max-w-lg rounded-2xl skeleton-shine" />
+                  <div className="ml-auto h-12 max-w-sm rounded-2xl skeleton-shine" />
                 </div>
               ) : (
-                <div className="flex min-w-0 flex-col gap-8 pb-6">
+                <div className="flex min-w-0 flex-col gap-3 pb-4">
                   {messages.map((msg) => (
                     <MessageBubble key={msg.id} message={msg} />
                   ))}
                   {isSending && (
-                    <div className="flex animate-fade-in gap-3">
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full border border-brand-border bg-brand-muted">
-                        <span className="text-xs text-brand">AI</span>
+                    <div className="flex animate-fade-in gap-2">
+                      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-border bg-brand-muted">
+                        <span className="text-[10px] font-medium text-brand">AI</span>
                       </div>
-                      <div className="rounded-2xl border border-white/10 bg-bg-100 px-4 py-3">
+                      <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-bg-100 px-3 py-2">
                         <TypingIndicator />
+                        <span className="text-[13px] text-text-400">L&apos;agent réfléchit…</span>
                       </div>
                     </div>
                   )}

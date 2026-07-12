@@ -701,7 +701,7 @@ const LOCAL_TOOLS = new Set([
   "create_group_rule",
 ]);
 
-async function resolveRecipient(recipient: string): Promise<string> {
+async function resolveRecipient(userId: number, recipient: string): Promise<string> {
   const trimmed = recipient.trim();
   if (!trimmed) throw new Error("Destinataire vide.");
 
@@ -718,7 +718,7 @@ async function resolveRecipient(recipient: string): Promise<string> {
   }
 
   // Nom de groupe (ex. Automax)
-  const group = await findGroupByNameOrId(trimmed);
+  const group = await findGroupByNameOrId(userId, trimmed);
   if (group) return group.id;
 
   throw new Error(
@@ -726,10 +726,10 @@ async function resolveRecipient(recipient: string): Promise<string> {
   );
 }
 
-async function resolveGroupId(groupIdOrName: string): Promise<string> {
+async function resolveGroupId(userId: number, groupIdOrName: string): Promise<string> {
   const trimmed = groupIdOrName.trim();
   if (trimmed.endsWith("@g.us")) return trimmed;
-  const group = await findGroupByNameOrId(trimmed);
+  const group = await findGroupByNameOrId(userId, trimmed);
   if (!group) {
     throw new Error(
       `Groupe introuvable : « ${trimmed} ». Vérifiez le nom avec list_whatsapp_groups.`
@@ -759,26 +759,34 @@ function formatContact(c: {
   };
 }
 
-export async function executeTool(name: string, args: Record<string, unknown>): Promise<string> {
-  if (!LOCAL_TOOLS.has(name) && !(await getEvolutionCredentials())) {
-    return JSON.stringify({
-      error:
-        "Evolution API non configurée. Demandez à l'utilisateur d'ouvrir « Connexions » et de renseigner URL, clé API et nom d'instance.",
-    });
+export async function executeTool(userId: number, name: string, args: Record<string, unknown>): Promise<string> {
+  if (!LOCAL_TOOLS.has(name)) {
+    if (!(await getEvolutionCredentials(userId))) {
+      return JSON.stringify({
+        error:
+          "Evolution API non configurée. Demandez à l'utilisateur d'ouvrir « Connexions » et de connecter WhatsApp.",
+      });
+    }
+    const connection = await testEvolutionConnection(userId);
+    if (!connection.connected) {
+      return JSON.stringify({
+        error: `WhatsApp non connecté (état : ${connection.state}). ${connection.message} Impossible d'exécuter « ${name} » tant que WhatsApp n'est pas connecté — invitez l'utilisateur à scanner le QR code dans « Connexions ».`,
+      });
+    }
   }
 
   switch (name) {
     case "check_whatsapp_connection": {
-      const result = await testEvolutionConnection();
+      const result = await testEvolutionConnection(userId);
       return JSON.stringify({
         ...result,
-        outboundToday: await countOutboundToday(),
-        outboundLimit: await getEffectiveOutboundLimit(),
+        outboundToday: await countOutboundToday(userId),
+        outboundLimit: await getEffectiveOutboundLimit(userId),
       });
     }
 
     case "list_whatsapp_groups": {
-      const groups = await listWhatsAppGroups();
+      const groups = await listWhatsAppGroups(userId);
       return JSON.stringify({
         count: groups.length,
         groups: groups.map((g) => ({
@@ -793,7 +801,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "list_whatsapp_channels": {
-      const channels = await listWhatsAppChannels();
+      const channels = await listWhatsAppChannels(userId);
       return JSON.stringify({
         count: channels.length,
         channels: channels.map((c) => ({
@@ -821,7 +829,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       }
 
       if (participants.length === 0) {
-        const contacts = await listContacts({ limit: 10 });
+        const contacts = await listContacts(userId, { limit: 10 });
         const pick = contacts.find((c) => c.status !== "stop");
         if (pick) participants = [pick.phone];
       }
@@ -834,7 +842,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       }
 
       try {
-        const result = await createWhatsAppGroup({
+        const result = await createWhatsAppGroup(userId, {
           subject,
           participants,
           description: args.description ? String(args.description) : undefined,
@@ -854,8 +862,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "get_group_members": {
-      const groupId = await resolveGroupId(String(args.group_id ?? ""));
-      const data = await getGroupMembers(groupId);
+      const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
+      const data = await getGroupMembers(userId, groupId);
       return JSON.stringify({
         groupId: data.groupId,
         name: data.subject,
@@ -871,14 +879,14 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "list_personal_contacts": {
       const limit = Math.min(Number(args.limit) || 50, 100);
-      const contacts = await listPersonalContacts(limit);
+      const contacts = await listPersonalContacts(userId, limit);
       return JSON.stringify({ count: contacts.length, contacts });
     }
 
     case "get_chat_history": {
       const recipient = String(args.recipient ?? "");
       const count = Math.min(Number(args.count) || 30, 100);
-      const data = await getChatHistory(recipient, count);
+      const data = await getChatHistory(userId, recipient, count);
       return JSON.stringify({
         chatId: data.chatId,
         display: data.display,
@@ -900,7 +908,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "list_incoming_messages": {
-      const messages = await listIncomingMessages({
+      const messages = await listIncomingMessages(userId, {
         contactPhone: args.contact_phone ? String(args.contact_phone) : undefined,
         todayOnly: Boolean(args.today_only),
         limit: Math.min(Number(args.limit) || 30, 100),
@@ -925,7 +933,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           error: `Statut invalide. Attendu : ${CONTACT_STATUSES.join(", ")}`,
         });
       }
-      const contact = await saveContact({
+      const contact = await saveContact(userId, {
         phone,
         name: args.name !== undefined ? String(args.name) : undefined,
         notes: args.notes !== undefined ? String(args.notes) : undefined,
@@ -945,7 +953,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         statusRaw && CONTACT_STATUSES.includes(statusRaw as ContactStatus)
           ? (statusRaw as ContactStatus)
           : undefined;
-      const contacts = await listContacts({
+      const contacts = await listContacts(userId, {
         status,
         limit: Math.min(Number(args.limit) || 50, 100),
       });
@@ -958,7 +966,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     case "set_auto_reply": {
       const phone = String(args.phone ?? "");
       const enabled = Boolean(args.enabled);
-      const contact = await setContactAutoReply(phone, enabled);
+      const contact = await setContactAutoReply(userId, phone, enabled);
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
@@ -970,7 +978,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "block_contact": {
       const phone = String(args.phone ?? "");
-      const contact = await blockContact(phone);
+      const contact = await blockContact(userId, phone);
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
@@ -980,7 +988,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "unblock_contact": {
       const phone = String(args.phone ?? "");
-      const contact = await unblockContact(phone);
+      const contact = await unblockContact(userId, phone);
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
@@ -992,10 +1000,10 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       const recipient = String(args.recipient ?? "");
       const message = String(args.message ?? "");
       try {
-        const chatId = await resolveRecipient(recipient);
+        const chatId = await resolveRecipient(userId, recipient);
 
         if (chatId.endsWith("@c.us")) {
-          const existing = await getContact(chatId);
+          const existing = await getContact(userId, chatId);
           if (existing?.status === "stop") {
             return JSON.stringify({
               error: `Ce contact est en STOP. Aucun message ne sera envoyé. Demandez à l'utilisateur de le débloquer si vraiment nécessaire.`,
@@ -1003,11 +1011,11 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           }
         }
 
-        const result = await sendWhatsAppMessage(chatId, message);
+        const result = await sendWhatsAppMessage(userId, chatId, message);
         if (chatId.endsWith("@c.us")) {
           try {
-            await setContactAutoReply(chatId, true);
-            await saveContact({
+            await setContactAutoReply(userId, chatId, true);
+            await saveContact(userId, {
               phone: chatId,
               status: "en_conversation",
               autoReply: true,
@@ -1024,8 +1032,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           isGroup,
           idMessage: result.idMessage,
           sentAt: nowFr(),
-          outboundToday: countOutboundToday(),
-          outboundLimit: getEffectiveOutboundLimit(),
+          outboundToday: await countOutboundToday(userId),
+          outboundLimit: await getEffectiveOutboundLimit(userId),
           message: isGroup
             ? `Message envoyé dans le groupe à ${nowFr()}`
             : `Message envoyé à ${chatIdToDisplay(result.chatId)} à ${nowFr()}`,
@@ -1040,7 +1048,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       const message = String(args.message ?? "").trim();
       const backgroundColor = args.background_color ? String(args.background_color) : undefined;
       try {
-        const result = await sendWhatsAppTextStatus(message, { backgroundColor });
+        const result = await sendWhatsAppTextStatus(userId, message, { backgroundColor });
         return JSON.stringify({
           success: true,
           idMessage: result.idMessage,
@@ -1060,7 +1068,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "list_whatsapp_chats": {
       const count = Math.min(Math.max(Number(args.count) || 50, 1), 200);
-      const chats = await listWhatsAppChats(count);
+      const chats = await listWhatsAppChats(userId, count);
       const typeLabel: Record<string, string> = {
         user: "contact",
         group: "groupe",
@@ -1080,9 +1088,9 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "mark_chat_read": {
-      const chatId = await resolveRecipient(String(args.chat_id ?? ""));
+      const chatId = await resolveRecipient(userId, String(args.chat_id ?? ""));
       const idMessage = args.id_message ? String(args.id_message) : undefined;
-      const result = await markChatRead(chatId, idMessage);
+      const result = await markChatRead(userId, chatId, idMessage);
       return JSON.stringify({
         success: true,
         chatId,
@@ -1092,7 +1100,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "list_green_incoming_messages": {
-      const raw = await getLastIncomingMessages();
+      const raw = await getLastIncomingMessages(userId);
       const messages = raw.map((m) => ({
         idMessage: m.idMessage,
         chatId: m.chatId,
@@ -1109,10 +1117,10 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "message_all_group_members": {
-      const groupId = await resolveGroupId(String(args.group_id ?? ""));
+      const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
       const message = String(args.message ?? "");
       const maxMembers = Math.min(Math.max(Number(args.max_members) || 30, 1), 50);
-      const result = await messageGroupMembers(groupId, message, { maxMembers, delayMs: 4000 });
+      const result = await messageGroupMembers(userId, groupId, message, { maxMembers, delayMs: 4000 });
       return JSON.stringify({
         groupName: result.groupName,
         sentCount: result.sent.length,
@@ -1120,8 +1128,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         skipped: result.skipped,
         sent: result.sent.map((s) => ({ ...s, display: chatIdToDisplay(s.chatId) })),
         errors: result.errors,
-        outboundToday: await countOutboundToday(),
-        outboundLimit: await getEffectiveOutboundLimit(),
+        outboundToday: await countOutboundToday(userId),
+        outboundLimit: await getEffectiveOutboundLimit(userId),
         completedAt: nowFr(),
       });
     }
@@ -1142,9 +1150,9 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         });
       }
 
-      const chatId = await resolveRecipient(recipientRaw);
+      const chatId = await resolveRecipient(userId, recipientRaw);
       if (chatId.endsWith("@c.us")) {
-        const existing = await getContact(chatId);
+        const existing = await getContact(userId, chatId);
         if (existing?.status === "stop") {
           return JSON.stringify({
             error: "Ce contact est en STOP. Impossible de programmer un envoi.",
@@ -1171,7 +1179,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           : recipientRaw.trim()
         : chatIdToDisplay(chatId);
 
-      const job = await scheduleMessage({
+      const job = await scheduleMessage(userId, {
         recipient: chatId,
         recipientLabel: label,
         message,
@@ -1191,7 +1199,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "list_scheduled_messages": {
-      const jobs = await listScheduledMessages({
+      const jobs = await listScheduledMessages(userId, {
         includeDone: Boolean(args.include_done),
         limit: 50,
       });
@@ -1216,7 +1224,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         return JSON.stringify({ error: "ID invalide." });
       }
       try {
-        const job = await cancelScheduledMessage(id);
+        const job = await cancelScheduledMessage(userId, id);
         if (!job) return JSON.stringify({ error: `Message programmé #${id} introuvable.` });
         return JSON.stringify({
           success: true,
@@ -1232,7 +1240,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "get_daily_bilan": {
-      const bilan = await getDailyBilan(args.date ? String(args.date) : undefined);
+      const bilan = await getDailyBilan(userId, args.date ? String(args.date) : undefined);
       return JSON.stringify({
         ...bilan,
         summary: `Bilan ${bilan.date} : ${bilan.incoming} entrant(s), ${bilan.outgoing} sortant(s), ${bilan.uniqueContacts} contact(s) actifs. Pipeline : ${bilan.contactsByStatus.nouveau} nouveau · ${bilan.contactsByStatus.en_conversation} en conversation · ${bilan.contactsByStatus.interesse} intéressé · ${bilan.contactsByStatus.stop} STOP. Programmés : ${bilan.scheduledSentToday} envoyé(s) ce jour, ${bilan.scheduledPending} en attente.`,
@@ -1245,8 +1253,9 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         return JSON.stringify({ error: "Le numéro / chatId est requis." });
       }
       const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200);
-      const thread = await getContactThread(phone, limit);
+      const thread = await getContactThread(userId, phone, limit);
       const contact = await getContact(
+        userId,
         phone.includes("@") ? phone.trim() : `${phone.replace(/\D/g, "")}@c.us`
       );
       return JSON.stringify({
@@ -1267,12 +1276,12 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "save_business_profile": {
-      await saveBusinessProfile({
+      await saveBusinessProfile(userId, {
         ownerName: args.owner_name !== undefined ? String(args.owner_name) : undefined,
         offer: args.offer !== undefined ? String(args.offer) : undefined,
         price: args.price !== undefined ? String(args.price) : undefined,
       });
-      const s = await getAppSettings();
+      const s = await getAppSettings(userId);
       return JSON.stringify({
         success: true,
         profile: {
@@ -1285,7 +1294,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "get_business_profile": {
-      const s = await getAppSettings();
+      const s = await getAppSettings(userId);
       return JSON.stringify({
         ownerName: s.business_owner_name || null,
         offer: s.business_offer || null,
@@ -1336,13 +1345,13 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
           });
         }
         try {
-          await requireEvolutionConnected("la création d'une campagne de prospection groupe");
+          await requireEvolutionConnected(userId, "la création d'une campagne de prospection groupe");
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({ error: msg });
         }
-        const groupId = await resolveGroupId(String(args.group_id));
-        const group = await findGroupByNameOrId(groupId);
+        const groupId = await resolveGroupId(userId, String(args.group_id));
+        const group = await findGroupByNameOrId(userId, groupId);
         config.groupId = groupId;
         config.groupName = group?.name ?? String(args.group_id);
       }
@@ -1355,10 +1364,10 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         config.keywords = keywords;
       }
 
-      const auto = await createAutomation({
+      const auto = await createAutomation(userId, {
         name: String(args.name ?? "Automatisation"),
         type,
-        config: config as Parameters<typeof createAutomation>[0]["config"],
+        config: config as Parameters<typeof createAutomation>[1]["config"],
         summary: args.summary ? String(args.summary) : undefined,
         budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
         status: "active",
@@ -1367,7 +1376,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       let targetsAdded = 0;
       if (type === "group_prospect" && config.groupId) {
         try {
-          targetsAdded = await bootstrapGroupProspectTargets(auto.id);
+          targetsAdded = await bootstrapGroupProspectTargets(userId, auto.id);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({
@@ -1377,7 +1386,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
         }
       }
 
-      const detail = await getAutomationDetail(auto.id);
+      const detail = await getAutomationDetail(userId, auto.id);
       return JSON.stringify({
         success: true,
         automationId: auto.id,
@@ -1395,7 +1404,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
 
     case "list_automations": {
       const status = args.status ? (String(args.status) as AutomationStatus) : undefined;
-      const list = await listAutomations(status ? { status, limit: 50 } : { limit: 50 });
+      const list = await listAutomations(userId, status ? { status, limit: 50 } : { limit: 50 });
       return JSON.stringify({
         count: list.length,
         automations: list.map((a) => ({
@@ -1416,7 +1425,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       if (!Number.isFinite(id)) {
         return JSON.stringify({ error: "automation_id invalide." });
       }
-      const detail = await getAutomationDetail(id);
+      const detail = await getAutomationDetail(userId, id);
       if (!detail) {
         return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
       }
@@ -1448,7 +1457,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       if (!Number.isFinite(id) || !["active", "paused", "completed"].includes(status)) {
         return JSON.stringify({ error: "Paramètres invalides." });
       }
-      const updated = await updateAutomationStatus(id, status);
+      const updated = await updateAutomationStatus(userId, id, status);
       if (!updated) {
         return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
       }
@@ -1461,7 +1470,7 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
     }
 
     case "create_group_rule": {
-      const groupId = await resolveGroupId(String(args.group_id ?? ""));
+      const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
       const keywords = Array.isArray(args.keywords)
         ? args.keywords.map((k) => String(k).trim()).filter(Boolean)
         : [];
@@ -1469,8 +1478,8 @@ export async function executeTool(name: string, args: Record<string, unknown>): 
       if (!keywords.length || !replyGuide) {
         return JSON.stringify({ error: "keywords et reply_guide requis." });
       }
-      const group = await findGroupByNameOrId(groupId);
-      const rule = await createGroupReplyRule({
+      const group = await findGroupByNameOrId(userId, groupId);
+      const rule = await createGroupReplyRule(userId, {
         groupId,
         groupLabel: group?.name,
         keywords,

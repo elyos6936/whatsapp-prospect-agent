@@ -27,8 +27,8 @@ export class EvolutionApiError extends Error {
   }
 }
 
-export async function getEvolutionCredentials(): Promise<EvolutionCredentials | null> {
-  const s = await getAppSettings();
+export async function getEvolutionCredentials(userId: number): Promise<EvolutionCredentials | null> {
+  const s = await getAppSettings(userId);
   if (!s.evolution_api_key?.trim() || !s.evolution_instance_name?.trim()) return null;
   return {
     baseUrl: (s.evolution_api_base_url || config.defaultEvolutionBaseUrl).replace(/\/$/, ""),
@@ -167,12 +167,13 @@ export function chatIdsMatch(a: string, b: string): boolean {
   return da.length >= 8 && da === db;
 }
 
-export async function resolveProspectChatId(rawChatId: string, sender?: string): Promise<string> {
-  return resolveInboundChatId(rawChatId, { participant: sender });
+export async function resolveProspectChatId(userId: number, rawChatId: string, sender?: string): Promise<string> {
+  return resolveInboundChatId(userId, rawChatId, { participant: sender });
 }
 
 /** Résout un JID entrant (@lid ou téléphone) vers le contact prospect réel. */
 export async function resolveInboundChatId(
+  userId: number,
   rawChatId: string,
   meta: InboundChatMeta = {}
 ): Promise<string> {
@@ -192,7 +193,7 @@ export async function resolveInboundChatId(
 
   if (isLidJid(raw) || (raw.endsWith("@c.us") && !isLikelyPhoneJid(raw))) {
     const lid = isLidJid(raw) ? raw : `${chatIdToNumber(raw)}@lid`;
-    const correlated = await findProspectPhoneForLidReply(lid, meta.senderName);
+    const correlated = await findProspectPhoneForLidReply(userId, lid, meta.senderName);
     if (correlated) return correlated;
     return lid;
   }
@@ -276,7 +277,43 @@ async function sendTextViaEvolution(
   throw lastErr ?? new EvolutionApiError("Impossible d'envoyer le message.");
 }
 
-export async function diagnoseEvolutionApi(): Promise<{
+/**
+ * Crée (si nécessaire) l'instance Evolution dédiée à l'utilisateur.
+ * Idempotent : ignore l'erreur si l'instance existe déjà.
+ */
+export async function createInstance(userId: number): Promise<void> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  try {
+    await evolutionFetch(creds, `/instance/create`, {
+      method: "POST",
+      body: {
+        instanceName: creds.instanceName,
+        integration: "WHATSAPP-BAILEYS",
+        qrcode: true,
+        webhook: {
+          enabled: true,
+          url: `${config.publicUrl}/api/evolution/webhook`,
+          webhookByEvents: false,
+          events: ["MESSAGES_UPSERT"],
+        },
+      },
+      timeoutMs: 60_000,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    const status = err instanceof EvolutionApiError ? err.status : undefined;
+    const alreadyExists =
+      status === 403 ||
+      status === 409 ||
+      /already|exists|in use|déjà/i.test(msg);
+    if (alreadyExists) return;
+    throw err;
+  }
+}
+
+export async function diagnoseEvolutionApi(userId: number): Promise<{
   configured: boolean;
   connection: Awaited<ReturnType<typeof testEvolutionConnection>>;
   outboundToday: number;
@@ -284,24 +321,24 @@ export async function diagnoseEvolutionApi(): Promise<{
   sendFormatHint: string;
   statusEndpoint: string;
 }> {
-  const creds = await getEvolutionCredentials();
-  const connection = await testEvolutionConnection();
+  const creds = await getEvolutionCredentials(userId);
+  const connection = await testEvolutionConnection(userId);
   return {
     configured: Boolean(creds),
     connection,
-    outboundToday: await countOutboundToday(),
-    outboundLimit: await getEffectiveOutboundLimit(),
+    outboundToday: await countOutboundToday(userId),
+    outboundLimit: await getEffectiveOutboundLimit(userId),
     sendFormatHint: "DM → {number: '229…@s.whatsapp.net', textMessage:{text}} | Groupe → @g.us",
     statusEndpoint: "/message/sendStatus (statut WhatsApp, pas la bio profil)",
   };
 }
 
-export async function testEvolutionConnection(): Promise<{
+export async function testEvolutionConnection(userId: number): Promise<{
   connected: boolean;
   state: string;
   message: string;
 }> {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) {
     return { connected: false, state: "not_configured", message: "Evolution API non configurée." };
   }
@@ -330,8 +367,8 @@ export async function testEvolutionConnection(): Promise<{
   }
 }
 
-export async function requireEvolutionConnected(context = "cette opération"): Promise<void> {
-  const state = await testEvolutionConnection();
+export async function requireEvolutionConnected(userId: number, context = "cette opération"): Promise<void> {
+  const state = await testEvolutionConnection(userId);
   if (!state.connected) {
     const hint =
       state.state === "connecting"
@@ -477,8 +514,8 @@ async function resolveChatDisplayName(
   return `Chat (…${id.slice(0, 14)})`;
 }
 
-export async function listWhatsAppGroups(): Promise<Array<{ id: string; name: string; type: string }>> {
-  const creds = await getEvolutionCredentials();
+export async function listWhatsAppGroups(userId: number): Promise<Array<{ id: string; name: string; type: string }>> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const groupNames = await fetchGroupNameMap(creds);
@@ -507,8 +544,8 @@ export async function listWhatsAppGroups(): Promise<Array<{ id: string; name: st
   return out;
 }
 
-export async function listWhatsAppChannels(): Promise<Array<{ id: string; name: string; type: string }>> {
-  const creds = await getEvolutionCredentials();
+export async function listWhatsAppChannels(userId: number): Promise<Array<{ id: string; name: string; type: string }>> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const channels: Array<{ id: string; name: string; type: string }> = [];
@@ -531,7 +568,7 @@ export async function listWhatsAppChannels(): Promise<Array<{ id: string; name: 
   }
 
   if (channels.length === 0) {
-    const chats = await listWhatsAppChats(300);
+    const chats = await listWhatsAppChats(userId, 300);
     for (const c of chats) {
       if (c.type === "channel") channels.push({ id: c.id, name: c.name, type: "channel" });
     }
@@ -568,16 +605,16 @@ function extractCreatedGroupId(data: unknown): string {
 }
 
 /** Crée un groupe WhatsApp via Evolution API (minimum 1 participant requis par WhatsApp). */
-export async function createWhatsAppGroup(input: {
+export async function createWhatsAppGroup(userId: number, input: {
   subject: string;
   participants: string[];
   description?: string;
   promoteParticipants?: boolean;
 }): Promise<{ groupId: string; subject: string; participantCount: number }> {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
-  await requireEvolutionConnected("la création de groupe");
+  await requireEvolutionConnected(userId, "la création de groupe");
 
   const subject = input.subject.trim().slice(0, 100);
   if (!subject) throw new EvolutionApiError("Le nom du groupe est requis.");
@@ -623,13 +660,13 @@ export async function createWhatsAppGroup(input: {
   return { groupId, subject, participantCount: participants.length };
 }
 
-export async function getGroupMembers(groupId: string): Promise<{
+export async function getGroupMembers(userId: number, groupId: string): Promise<{
   groupId: string;
   subject: string;
   size: number;
   participants: Array<{ id: string; name?: string; isAdmin?: boolean }>;
 }> {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const groupJid = groupId.trim();
@@ -693,14 +730,15 @@ function extractMessageId(data: unknown): string {
 }
 
 export async function sendWhatsAppMessage(
+  userId: number,
   chatId: string,
   message: string,
   opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
-  await assertCanSendTo(chatId);
+  await assertCanSendTo(userId, chatId);
   await waitOutboundSpacing();
 
   const data = await sendTextViaEvolution(creds, chatId, message);
@@ -708,7 +746,7 @@ export async function sendWhatsAppMessage(
   markOutboundSent();
   const idMessage = extractMessageId(data);
 
-  await saveWhatsAppMessage({
+  await saveWhatsAppMessage(userId, {
     contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
     direction: "sortant",
     body: message,
@@ -719,14 +757,14 @@ export async function sendWhatsAppMessage(
   const normalized = normalizeGroupParticipantId(chatId);
   if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
     try {
-      await saveContact({ phone: normalized, status: "en_conversation", autoReply: true });
+      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
     } catch {
       /* best effort */
     }
   } else if (normalized.endsWith("@c.us")) {
     try {
-      if (!(await getContact(normalized))) {
-        await saveContact({ phone: normalized, status: "en_conversation", autoReply: false });
+      if (!(await getContact(userId, normalized))) {
+        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: false });
       }
     } catch {
       /* best effort */
@@ -737,6 +775,7 @@ export async function sendWhatsAppMessage(
 }
 
 export async function sendWhatsAppMedia(
+  userId: number,
   chatId: string,
   input: {
     url: string;
@@ -746,10 +785,10 @@ export async function sendWhatsAppMedia(
   },
   opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
-  await assertCanSendTo(chatId);
+  await assertCanSendTo(userId, chatId);
   await waitOutboundSpacing();
 
   const number = formatEvolutionSendNumber(chatId);
@@ -768,7 +807,7 @@ export async function sendWhatsAppMedia(
   const idMessage = extractMessageId(data);
   const label = input.caption || `[${input.type}] ${input.url}`;
 
-  await saveWhatsAppMessage({
+  await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
     direction: "sortant",
     body: label,
@@ -779,7 +818,7 @@ export async function sendWhatsAppMedia(
   const normalized = normalizeGroupParticipantId(chatId);
   if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
     try {
-      await saveContact({ phone: normalized, status: "en_conversation", autoReply: true });
+      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
     } catch {
       /* best effort */
     }
@@ -789,12 +828,13 @@ export async function sendWhatsAppMedia(
 }
 
 export async function findGroupByNameOrId(
+  userId: number,
   nameOrId: string
 ): Promise<{ id: string; name: string } | null> {
   const raw = nameOrId.trim();
   if (raw.endsWith("@g.us")) return { id: raw, name: raw };
 
-  const groups = await listWhatsAppGroups();
+  const groups = await listWhatsAppGroups(userId);
   const normalize = (s: string) =>
     s
       .toLowerCase()
@@ -813,6 +853,7 @@ export async function findGroupByNameOrId(
 }
 
 export async function messageGroupMembers(
+  userId: number,
   groupId: string,
   message: string,
   options: { maxMembers?: number; delayMs?: number } = {}
@@ -822,7 +863,7 @@ export async function messageGroupMembers(
   skipped: number;
   errors: Array<{ chatId: string; error: string }>;
 }> {
-  const group = await getGroupMembers(groupId);
+  const group = await getGroupMembers(userId, groupId);
   const maxMembers = options.maxMembers ?? 30;
   const delayMs = options.delayMs ?? 4000;
 
@@ -831,7 +872,7 @@ export async function messageGroupMembers(
 
   const eligible: typeof group.participants = [];
   for (const p of group.participants) {
-    if (!(await isContactBlocked(p.id))) eligible.push(p);
+    if (!(await isContactBlocked(userId, p.id))) eligible.push(p);
   }
   const blockedSkipped = group.participants.length - eligible.length;
   const participants = eligible.slice(0, maxMembers);
@@ -840,7 +881,7 @@ export async function messageGroupMembers(
   for (let i = 0; i < participants.length; i++) {
     const p = participants[i];
     try {
-      const result = await sendWhatsAppMessage(p.id, message);
+      const result = await sendWhatsAppMessage(userId, p.id, message);
       sent.push({ chatId: p.id, idMessage: result.idMessage });
     } catch (err) {
       errors.push({
@@ -881,10 +922,11 @@ function extractEvolutionText(message: unknown): string {
 }
 
 export async function getChatHistory(
+  userId: number,
   recipient: string,
   count = 30
 ): Promise<{ chatId: string; display: string; messages: ChatHistoryEntry[] }> {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const chatId = recipient.includes("@") ? recipient.trim() : normalizePhoneToChatId(recipient);
@@ -940,8 +982,8 @@ export interface LastIncomingMessage {
   remoteJidAlt?: string;
 }
 
-export async function getLastIncomingMessages(): Promise<LastIncomingMessage[]> {
-  const creds = await getEvolutionCredentials();
+export async function getLastIncomingMessages(userId: number): Promise<LastIncomingMessage[]> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) return [];
 
   try {
@@ -996,17 +1038,18 @@ export async function getLastIncomingMessages(): Promise<LastIncomingMessage[]> 
 }
 
 export async function sendWhatsAppTextStatus(
+  userId: number,
   message: string,
   options: { backgroundColor?: string; font?: string; participants?: string[] } = {}
 ): Promise<{ idMessage: string; audienceCount: number }> {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const text = message.trim();
   if (!text) throw new EvolutionApiError("Le texte du statut est requis.");
   if (text.length > 500) throw new EvolutionApiError("Statut trop long (max 500 caractères).");
 
-  const statusJidList = await buildStatusJidList(options.participants);
+  const statusJidList = await buildStatusJidList(userId, options.participants);
   if (statusJidList.length === 0) {
     throw new EvolutionApiError(
       "Aucun contact disponible pour publier le statut. Evolution API exige statusJidList (allContacts provoque un timeout sur v2.3.7)."
@@ -1080,10 +1123,10 @@ export async function sendWhatsAppTextStatus(
   );
 }
 
-export async function listWhatsAppChats(count = 100): Promise<
+export async function listWhatsAppChats(userId: number, count = 100): Promise<
   Array<{ id: string; name: string; type: string; archive?: boolean }>
 > {
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const safe = Math.min(Math.max(count, 1), 500);
@@ -1121,8 +1164,8 @@ export async function listWhatsAppChats(count = 100): Promise<
   return out;
 }
 
-export async function markChatRead(chatId: string, idMessage?: string): Promise<{ setRead: boolean }> {
-  const creds = await getEvolutionCredentials();
+export async function markChatRead(userId: number, chatId: string, idMessage?: string): Promise<{ setRead: boolean }> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const remoteJid = toRemoteJid(chatId);
@@ -1141,8 +1184,8 @@ export async function markChatRead(chatId: string, idMessage?: string): Promise<
   return { setRead: true };
 }
 
-export async function listPersonalContacts(limit = 50): Promise<Array<{ id: string; name: string }>> {
-  const creds = await getEvolutionCredentials();
+export async function listPersonalContacts(userId: number, limit = 50): Promise<Array<{ id: string; name: string }>> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const data = await evolutionFetch<Array<{ id?: string; remoteJid?: string; pushName?: string; name?: string }>>(
@@ -1203,20 +1246,20 @@ async function getInstanceOwnerJid(creds: EvolutionCredentials): Promise<string 
 }
 
 /** Liste de JIDs pour statusJidList — allContacts:true provoque un timeout sur Evolution v2.3.7. */
-async function buildStatusJidList(participants?: string[]): Promise<string[]> {
+async function buildStatusJidList(userId: number, participants?: string[]): Promise<string[]> {
   if (participants?.length) {
     return [...new Set(participants.map(toStatusJid))];
   }
 
   const jids = new Set<string>();
-  const creds = await getEvolutionCredentials();
+  const creds = await getEvolutionCredentials(userId);
   if (creds) {
     const owner = await getInstanceOwnerJid(creds);
     if (owner) jids.add(owner);
   }
 
   try {
-    for (const c of await listPersonalContacts(500)) {
+    for (const c of await listPersonalContacts(userId, 500)) {
       jids.add(toStatusJid(c.id));
     }
   } catch {
@@ -1225,7 +1268,7 @@ async function buildStatusJidList(participants?: string[]): Promise<string[]> {
 
   if (jids.size <= 1) {
     try {
-      for (const c of await listWhatsAppChats(200)) {
+      for (const c of await listWhatsAppChats(userId, 200)) {
         if (c.type === "user") jids.add(toStatusJid(c.id));
       }
     } catch {
@@ -1235,9 +1278,9 @@ async function buildStatusJidList(participants?: string[]): Promise<string[]> {
 
   if (jids.size <= 1) {
     try {
-      const groups = await listWhatsAppGroups();
+      const groups = await listWhatsAppGroups(userId);
       for (const g of groups.slice(0, 8)) {
-        const members = await getGroupMembers(g.id);
+        const members = await getGroupMembers(userId, g.id);
         for (const p of members.participants) {
           jids.add(toStatusJid(p.id));
         }
@@ -1281,14 +1324,14 @@ export function parseConnectQrPayload(data: unknown): {
   return { base64, pairingCode };
 }
 
-export async function getInstanceQr(): Promise<{
+export async function getInstanceQr(userId: number): Promise<{
   base64: string | null;
   pairingCode: string | null;
   state: string;
   connected: boolean;
   message: string;
 }> {
-  const state = await testEvolutionConnection();
+  const state = await testEvolutionConnection(userId);
   if (state.connected) {
     return {
       base64: null,
@@ -1299,7 +1342,18 @@ export async function getInstanceQr(): Promise<{
     };
   }
 
-  const raw = await connectInstance();
+  // Assure l'existence de l'instance dédiée avant de demander le QR (idempotent).
+  await createInstance(userId);
+
+  // Garantit que le webhook pointe vers ce backend, même pour une instance
+  // pré-existante (ex. PUBLIC_URL modifiée). Le poller d'historique sert de repli.
+  try {
+    await setEvolutionWebhook(userId, `${config.publicUrl}/api/evolution/webhook`);
+  } catch (err) {
+    console.warn(`⚠️ Webhook non (re)configuré pour user ${userId}:`, err instanceof Error ? err.message : err);
+  }
+
+  const raw = await connectInstance(userId);
   const { base64, pairingCode } = parseConnectQrPayload(raw);
   return {
     base64,
@@ -1312,20 +1366,20 @@ export async function getInstanceQr(): Promise<{
   };
 }
 
-export async function connectInstance(): Promise<unknown> {
-  const creds = await getEvolutionCredentials();
+export async function connectInstance(userId: number): Promise<unknown> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
   return evolutionFetch(creds, `/instance/connect/${creds.instanceName}`);
 }
 
-export async function restartInstance(): Promise<unknown> {
-  const creds = await getEvolutionCredentials();
+export async function restartInstance(userId: number): Promise<unknown> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
   return evolutionFetch(creds, `/instance/restart/${creds.instanceName}`, { method: "POST" });
 }
 
-export async function setEvolutionWebhook(webhookUrl: string): Promise<unknown> {
-  const creds = await getEvolutionCredentials();
+export async function setEvolutionWebhook(userId: number, webhookUrl: string): Promise<unknown> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
   return evolutionFetch(creds, `/webhook/set/${creds.instanceName}`, {
     method: "POST",
@@ -1340,8 +1394,8 @@ export async function setEvolutionWebhook(webhookUrl: string): Promise<unknown> 
   });
 }
 
-export async function fetchAllInstances(): Promise<unknown> {
-  const creds = await getEvolutionCredentials();
+export async function fetchAllInstances(userId: number): Promise<unknown> {
+  const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
   return evolutionFetch(creds, `/instance/fetchInstances`, {
     query: { instanceName: creds.instanceName },

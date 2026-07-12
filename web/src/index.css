@@ -22,26 +22,35 @@
   --ease-silk: cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* Thème noir/bleu Klanvio */
+/* Thème noir pur / bleu Klanvio */
 :root {
-  --bg-0: #050a0f;
-  --bg-100: #0a1120;
-  --bg-200: #101827;
-  --bg-300: #162035;
-  --text-100: #e2eaf6;
-  --text-200: #c8d4e8;
-  --text-300: #9aabc4;
-  --text-400: #7a8fad;
-  --text-500: #5c6778;
-  --accent: #2057ce;
-  --accent-hover: #1845a8;
-  --brand: #2057ce;
-  --brand-dark: #1845a8;
-  --brand-muted: rgba(32, 87, 206, 0.15);
-  --brand-border: rgba(32, 87, 206, 0.42);
-  --brand-ring: rgba(32, 87, 206, 0.24);
-  --border: rgba(255, 255, 255, 0.08);
+  --bg-0: #000000;
+  --bg-100: #0b0b0d;
+  --bg-200: #141417;
+  --bg-300: #1f1f24;
+  --text-100: #ffffff;
+  --text-200: #eceef2;
+  --text-300: #c4c8d0;
+  --text-400: #9298a4;
+  --text-500: #6b7280;
+  --accent: #2f6bff;
+  --accent-hover: #1f52d6;
+  --brand: #2f6bff;
+  --brand-dark: #1f52d6;
+  --brand-muted: rgba(47, 107, 255, 0.16);
+  --brand-border: rgba(47, 107, 255, 0.5);
+  --brand-ring: rgba(47, 107, 255, 0.28);
+  --border: rgba(255, 255, 255, 0.1);
   --ease-silk: cubic-bezier(0.2, 0, 0, 1);
+}
+
+button:not(:disabled),
+a[href],
+[role='button']:not([aria-disabled='true']),
+label[for],
+summary,
+select:not(:disabled) {
+  cursor: pointer;
 }
 
 * {
@@ -86,13 +95,11 @@ body {
 @keyframes fadeIn {
   from {
     opacity: 0;
-    transform: translateY(6px);
-    filter: blur(3px);
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
     transform: translateY(0);
-    filter: blur(0);
   }
 }
 
@@ -102,7 +109,7 @@ body {
 }
 
 .animate-fade-in {
-  animation: fadeIn 0.35s var(--ease-silk) forwards;
+  animation: fadeIn 0.2s var(--ease-silk) forwards;
 }
 
 .skeleton-shine {
@@ -117,9 +124,10 @@ body {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
-.prose-klanvio p { margin: 0 0 0.75em; }
+.prose-klanvio p { margin: 0 0 0.5em; }
 .prose-klanvio p:last-child { margin-bottom: 0; }
-.prose-klanvio ul, .prose-klanvio ol { margin: 0 0 0.75em 1.25em; }
+.prose-klanvio ul, .prose-klanvio ol { margin: 0 0 0.5em 1.15em; }
+.prose-klanvio li { margin: 0.1em 0; }
 .prose-klanvio code:not(pre code) {
   font-size: 0.85em;
   padding: 0.15em 0.4em;

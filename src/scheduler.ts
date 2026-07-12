@@ -4,27 +4,39 @@ import {
   markScheduledSent,
 } from "./db.js";
 import { chatIdToDisplay, sendWhatsAppMessage } from "./evolutionapi.js";
+import { listActiveUserIds } from "./users.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
+
+async function processDueForUser(userId: number): Promise<void> {
+  const due = await getDueScheduledMessages(userId, 5);
+  for (const job of due) {
+    try {
+      await sendWhatsAppMessage(userId, job.recipient, job.message);
+      await markScheduledSent(userId, job.id);
+
+      const label = job.recipient_label || chatIdToDisplay(job.recipient);
+      console.log(`⏰ Scheduled #${job.id} envoyé → ${label}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      await markScheduledFailed(userId, job.id, msg);
+      console.error(`⏰ Scheduled #${job.id} échoué:`, msg);
+    }
+  }
+}
 
 async function processDue(): Promise<void> {
   if (running) return;
   running = true;
 
   try {
-    const due = await getDueScheduledMessages(5);
-    for (const job of due) {
+    const userIds = await listActiveUserIds();
+    for (const userId of userIds) {
       try {
-        await sendWhatsAppMessage(job.recipient, job.message);
-        await markScheduledSent(job.id);
-
-        const label = job.recipient_label || chatIdToDisplay(job.recipient);
-        console.log(`⏰ Scheduled #${job.id} envoyé → ${label}`);
+        await processDueForUser(userId);
       } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        await markScheduledFailed(job.id, msg);
-        console.error(`⏰ Scheduled #${job.id} échoué:`, msg);
+        console.error(`⏰ Scheduler user ${userId} échoué:`, err);
       }
     }
   } finally {

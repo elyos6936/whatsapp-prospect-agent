@@ -30,6 +30,7 @@ import {
   hasOutboundReplyAfter,
   setContactWhatsappLid,
 } from "./db.js";
+import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
 import { scoreIncomingMessage } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
@@ -61,6 +62,13 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
   const event = String(body.event ?? body.type ?? "").toUpperCase();
   if (!event.includes("MESSAGES_UPSERT") && !event.includes("MESSAGES.UPSERT")) return 0;
 
+  const instance = String(body.instance ?? body.instanceName ?? "");
+  const userId = await userIdFromInstanceName(instance);
+  if (!userId) {
+    console.warn(`⚠️ Webhook Evolution ignoré — instance inconnue « ${instance} »`);
+    return 0;
+  }
+
   const data = body.data;
   const items = Array.isArray(data) ? data : data ? [data] : [];
   let processed = 0;
@@ -79,12 +87,12 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
 
     if (rawChatId.endsWith("@g.us")) {
       const senderName = String(row.pushName ?? chatIdToDisplay(rawChatId));
-      void runGroupAutoReply(rawChatId, senderName, text);
+      void runGroupAutoReply(userId, rawChatId, senderName, text);
       continue;
     }
 
     const keyExtra = key as { senderPn?: string; remoteJidAlt?: string; participant?: string };
-    const chatId = await resolveInboundChatId(rawChatId, {
+    const chatId = await resolveInboundChatId(userId, rawChatId, {
       senderPn: keyExtra.senderPn,
       remoteJidAlt: keyExtra.remoteJidAlt,
       participant: keyExtra.participant,
@@ -92,7 +100,7 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
     });
     const msgId = key.id ?? `evo-${Date.now()}`;
     const senderName = String(row.pushName ?? chatIdToDisplay(chatId));
-    if (await ingestInboundMessage(chatId, senderName, text, msgId, "notification")) {
+    if (await ingestInboundMessage(userId, chatId, senderName, text, msgId, "notification")) {
       processed++;
     }
   }
@@ -110,19 +118,47 @@ export interface WhatsappPollHealth {
   syncTotal: number;
 }
 
-const pollHealth: WhatsappPollHealth = {
-  lastPollAt: null,
-  lastSyncAt: null,
-  lastIncomingAt: null,
-  lastError: null,
-  webhookBlocked: false,
-  authorized: true,
-  processedTotal: 0,
-  syncTotal: 0,
-};
+function newPollHealth(): WhatsappPollHealth {
+  return {
+    lastPollAt: null,
+    lastSyncAt: null,
+    lastIncomingAt: null,
+    lastError: null,
+    webhookBlocked: false,
+    authorized: true,
+    processedTotal: 0,
+    syncTotal: 0,
+  };
+}
 
-export function getWhatsappPollHealth(): WhatsappPollHealth {
-  return { ...pollHealth };
+/** État de santé du poller, isolé par tenant. */
+const pollHealthByUser = new Map<number, WhatsappPollHealth>();
+
+/** Horodatage global de dernière activité du poller (liveness, non lié à un tenant). */
+const pollerLiveness = { lastPollAt: null as string | null, lastSyncAt: null as string | null };
+
+function pollHealthFor(userId: number): WhatsappPollHealth {
+  let h = pollHealthByUser.get(userId);
+  if (!h) {
+    h = newPollHealth();
+    pollHealthByUser.set(userId, h);
+  }
+  return h;
+}
+
+/**
+ * Santé du poller. Avec un userId → l'état de ce tenant. Sans → un résumé de
+ * liveness du poller (utilisé par /api/health qui est public).
+ */
+export function getWhatsappPollHealth(userId?: number): WhatsappPollHealth {
+  if (typeof userId === "number") {
+    return { ...pollHealthFor(userId) };
+  }
+  return {
+    ...newPollHealth(),
+    lastPollAt: pollerLiveness.lastPollAt,
+    lastSyncAt: pollerLiveness.lastSyncAt,
+  };
 }
 
 function placeholderForType(type: string): string | null {
@@ -160,28 +196,30 @@ function isAutoReplyEligible(text: string, remoteJid: string): boolean {
 }
 
 const pendingReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const pendingReplyPayloads = new Map<string, { senderName: string; text: string }>();
+const pendingReplyPayloads = new Map<string, { userId: number; senderName: string; text: string }>();
 
-let lastAuthCheckMs = 0;
-let lastAuthOk = true;
+const authCache = new Map<number, { checkedAtMs: number; ok: boolean }>();
 
-async function ensureWhatsAppAuthorized(): Promise<boolean> {
+async function ensureWhatsAppAuthorized(userId: number): Promise<boolean> {
   const now = Date.now();
-  if (now - lastAuthCheckMs < 30_000) return lastAuthOk;
-  lastAuthCheckMs = now;
+  const cached = authCache.get(userId);
+  if (cached && now - cached.checkedAtMs < 30_000) return cached.ok;
+  const h = pollHealthFor(userId);
+  let ok = true;
   try {
-    const state = await testEvolutionConnection();
-    lastAuthOk = state.connected;
-    pollHealth.authorized = lastAuthOk;
-    if (!lastAuthOk) {
-      pollHealth.lastError = state.message;
+    const state = await testEvolutionConnection(userId);
+    ok = state.connected;
+    h.authorized = ok;
+    if (!ok) {
+      h.lastError = state.message;
     }
   } catch (err) {
-    lastAuthOk = false;
-    pollHealth.authorized = false;
-    pollHealth.lastError = err instanceof Error ? err.message : String(err);
+    ok = false;
+    h.authorized = false;
+    h.lastError = err instanceof Error ? err.message : String(err);
   }
-  return lastAuthOk;
+  authCache.set(userId, { checkedAtMs: now, ok });
+  return ok;
 }
 
 function findAutomationTarget(
@@ -192,40 +230,45 @@ function findAutomationTarget(
 }
 
 async function recordAutomationEngagement(
+  userId: number,
   chatId: string,
   text: string,
   interested: boolean
 ): Promise<void> {
-  const followups = (await listActiveAutomations()).filter(
+  const followups = (await listActiveAutomations(userId)).filter(
     (a) => a.type === "group_prospect" || a.type === "custom_followup"
   );
   for (const auto of followups) {
-    const targets = await listAutomationTargets(auto.id, { limit: 500 });
+    const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
     const target = findAutomationTarget(targets, chatId);
     if (auto.type === "group_prospect" && !target) continue;
     if (target) {
-      await updateAutomationTarget(auto.id, target.target_id, {
+      await updateAutomationTarget(userId, auto.id, target.target_id, {
         status: interested ? "interested" : "replied",
       });
       if (target.ab_variant) {
-        await recordAbReply(auto.id, target.ab_variant, interested);
+        await recordAbReply(userId, auto.id, target.ab_variant, interested);
       }
     }
   }
   void text;
 }
 
-async function buildAutomationContext(text: string, chatId: string): Promise<string | undefined> {
+async function buildAutomationContext(
+  userId: number,
+  text: string,
+  chatId: string
+): Promise<string | undefined> {
   const parts: string[] = [];
-  const memory = await getMemoryContextBlock(chatId);
+  const memory = await getMemoryContextBlock(userId, chatId);
   if (memory) parts.push(memory);
 
-  const contact = await getContact(chatId);
+  const contact = await getContact(userId, chatId);
   if (contact && contact.lead_score > 0) {
     parts.push(`Score prospect : ${contact.lead_score}/100`);
   }
 
-  const keywordAutos = await findMatchingKeywordAutomations(text);
+  const keywordAutos = await findMatchingKeywordAutomations(userId, text);
   for (const auto of keywordAutos) {
     const lines = [
       `Automatisation « ${auto.name} » (vente sur mots-clés)`,
@@ -235,19 +278,19 @@ async function buildAutomationContext(text: string, chatId: string): Promise<str
       auto.config.conversationGuide ? `Consignes : ${auto.config.conversationGuide}` : "",
     ].filter(Boolean);
     parts.push(lines.join("\n"));
-    await addAutomationLog(auto.id, "info", `Message entrant déclencheur de ${chatIdToDisplay(chatId)}`);
+    await addAutomationLog(userId, auto.id, "info", `Message entrant déclencheur de ${chatIdToDisplay(chatId)}`);
     const stats = auto.stats;
-    await updateAutomationStats(auto.id, {
+    await updateAutomationStats(userId, auto.id, {
       messagesHandled: (stats.messagesHandled ?? 0) + 1,
       lastActionAt: new Date().toISOString(),
     });
   }
 
-  const followups = (await listActiveAutomations()).filter(
+  const followups = (await listActiveAutomations(userId)).filter(
     (a) => a.type === "group_prospect" || a.type === "custom_followup"
   );
   for (const auto of followups) {
-    const targets = await listAutomationTargets(auto.id, { limit: 500 });
+    const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
     const target = findAutomationTarget(targets, chatId);
     if (auto.type === "group_prospect" && !target) continue;
     if (auto.config.conversationGuide) {
@@ -261,11 +304,12 @@ async function buildAutomationContext(text: string, chatId: string): Promise<str
 }
 
 async function runGroupAutoReply(
+  userId: number,
   groupId: string,
   senderName: string,
   text: string
 ): Promise<void> {
-  const rule = await findGroupReplyRule(groupId, text);
+  const rule = await findGroupReplyRule(userId, groupId, text);
   if (!rule) return;
 
   const automationContext = rule.reply_guide
@@ -273,24 +317,29 @@ async function runGroupAutoReply(
     : undefined;
 
   try {
-    const reply = await generateWhatsAppReply({
+    const reply = await generateWhatsAppReply(userId, {
       chatId: groupId,
       senderName,
       incomingText: text,
       automationContext,
     });
-    await sendWhatsAppMessage(groupId, reply, { enableAutoReply: false });
+    await sendWhatsAppMessage(userId, groupId, reply, { enableAutoReply: false });
     console.log(`✅ Réponse groupe → ${rule.group_label || groupId}`);
   } catch (err) {
     console.error("❌ Réponse groupe échouée:", err);
   }
 }
 
-async function runAutoReply(chatId: string, senderName: string, text: string): Promise<void> {
-  if (!(await shouldAutoReplyContact(chatId))) {
-    const reason = (await isContactBlocked(chatId))
+async function runAutoReply(
+  userId: number,
+  chatId: string,
+  senderName: string,
+  text: string
+): Promise<void> {
+  if (!(await shouldAutoReplyContact(userId, chatId))) {
+    const reason = (await isContactBlocked(userId, chatId))
       ? "STOP"
-      : !(await isAutoReplyEnabled())
+      : !(await isAutoReplyEnabled(userId))
         ? "auto globale OFF"
         : "auto contact OFF";
     console.log(`📩 ${senderName} (pas de réponse — ${reason}): ${text.slice(0, 40)}`);
@@ -307,17 +356,17 @@ async function runAutoReply(chatId: string, senderName: string, text: string): P
 
     if (isStopRequest(text)) {
       reply = getStopConfirmationReply();
-      await blockContact(chatId);
+      await blockContact(userId, chatId);
     } else if (text.startsWith("[") && text.includes("reçu")) {
       reply =
         "Merci pour votre message ! Pour que je puisse vous répondre précisément, pourriez-vous m'écrire votre question en texte ? 🙂";
     } else {
-      const scoring = await scoreIncomingMessage(text, chatId);
-      await recordAutomationEngagement(chatId, text, scoring.interested);
-      void refreshContactMemory(chatId).catch(() => {});
+      const scoring = await scoreIncomingMessage(userId, text, chatId);
+      await recordAutomationEngagement(userId, chatId, text, scoring.interested);
+      void refreshContactMemory(userId, chatId).catch(() => {});
 
-      const automationContext = await buildAutomationContext(text, chatId);
-      const handoff = await maybeCreateHandoff({
+      const automationContext = await buildAutomationContext(userId, text, chatId);
+      const handoff = await maybeCreateHandoff(userId, {
         chatId,
         senderName,
         incomingText: text,
@@ -328,7 +377,7 @@ async function runAutoReply(chatId: string, senderName: string, text: string): P
         console.log(`🙋 Handoff créé pour ${senderName} (score ${scoring.newScore})`);
       }
 
-      reply = await generateWhatsAppReply({
+      reply = await generateWhatsAppReply(userId, {
         chatId,
         senderName,
         incomingText: text,
@@ -336,7 +385,7 @@ async function runAutoReply(chatId: string, senderName: string, text: string): P
       });
     }
 
-    const sent = await sendWhatsAppMessage(chatId, reply, {
+    const sent = await sendWhatsAppMessage(userId, chatId, reply, {
       enableAutoReply: false,
       countsTowardQuota: false,
     });
@@ -344,46 +393,49 @@ async function runAutoReply(chatId: string, senderName: string, text: string): P
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`❌ Réponse auto échouée pour ${senderName}:`, msg);
-    pollHealth.lastError = `Auto-reply: ${msg}`;
+    pollHealthFor(userId).lastError = `Auto-reply: ${msg}`;
   }
 }
 
-function scheduleAutoReply(chatId: string, senderName: string, text: string): void {
-  pendingReplyPayloads.set(chatId, { senderName, text });
-  const existing = pendingReplyTimers.get(chatId);
+function scheduleAutoReply(userId: number, chatId: string, senderName: string, text: string): void {
+  const timerKey = `${userId}:${chatId}`;
+  pendingReplyPayloads.set(timerKey, { userId, senderName, text });
+  const existing = pendingReplyTimers.get(timerKey);
   if (existing) clearTimeout(existing);
 
   void (async () => {
-    const delay = await getAdaptiveReplyDelay(chatId);
+    const delay = await getAdaptiveReplyDelay(userId, chatId);
     console.log(`⏳ Réponse auto à ${senderName} dans ${Math.round(delay / 1000)}s…`);
 
     const timer = setTimeout(() => {
-      pendingReplyTimers.delete(chatId);
-      const payload = pendingReplyPayloads.get(chatId);
-      pendingReplyPayloads.delete(chatId);
+      pendingReplyTimers.delete(timerKey);
+      const payload = pendingReplyPayloads.get(timerKey);
+      pendingReplyPayloads.delete(timerKey);
       if (!payload) return;
-      void runAutoReply(chatId, payload.senderName, payload.text);
+      void runAutoReply(payload.userId, chatId, payload.senderName, payload.text);
     }, delay);
 
-    pendingReplyTimers.set(chatId, timer);
+    pendingReplyTimers.set(timerKey, timer);
   })();
 }
 
 async function resolveInboundForStorage(
+  userId: number,
   rawChatId: string,
   senderName?: string,
   meta: { senderPn?: string; remoteJidAlt?: string; participant?: string } = {}
 ): Promise<{ chatId: string; rawLid?: string }> {
   const raw = rawChatId.trim();
-  const chatId = await resolveInboundChatId(raw, { ...meta, senderName });
+  const chatId = await resolveInboundChatId(userId, raw, { ...meta, senderName });
   const rawLid = isLidJid(raw) ? raw : !isLikelyPhoneJid(raw) ? `${raw.replace(/@c\.us$/i, "").replace(/\D/g, "")}@lid` : undefined;
   if (rawLid && isLikelyPhoneJid(chatId)) {
-    await setContactWhatsappLid(chatId, rawLid);
+    await setContactWhatsappLid(userId, chatId, rawLid);
   }
   return { chatId, rawLid };
 }
 
 async function ingestInboundMessage(
+  userId: number,
   rawChatId: string,
   senderName: string,
   text: string,
@@ -392,13 +444,13 @@ async function ingestInboundMessage(
   meta: { senderPn?: string; remoteJidAlt?: string; participant?: string } = {}
 ): Promise<boolean> {
   if (rawChatId.endsWith("@g.us") || !text.trim()) return false;
-  if (await whatsAppMessageExists(greenApiId)) return false;
+  if (await whatsAppMessageExists(userId, greenApiId)) return false;
 
-  const { chatId } = await resolveInboundForStorage(rawChatId, senderName, meta);
+  const { chatId } = await resolveInboundForStorage(userId, rawChatId, senderName, meta);
   if (chatId === "inconnu") return false;
 
   try {
-    await saveWhatsAppMessage({
+    await saveWhatsAppMessage(userId, {
       contactPhone: chatId,
       direction: "entrant",
       body: text,
@@ -407,38 +459,39 @@ async function ingestInboundMessage(
     });
 
     try {
-      await touchIncomingContact(chatId, senderName);
+      await touchIncomingContact(userId, chatId, senderName);
     } catch (err) {
       console.error("Erreur upsert contact:", err);
     }
 
-    pollHealth.lastIncomingAt = new Date().toISOString();
+    const h = pollHealthFor(userId);
+    h.lastIncomingAt = new Date().toISOString();
     if (source === "history") {
-      pollHealth.syncTotal += 1;
+      h.syncTotal += 1;
     } else {
-      pollHealth.processedTotal += 1;
+      h.processedTotal += 1;
     }
 
     const tag = source === "history" ? "sync" : "notif";
     console.log(`📩 WhatsApp entrant [${tag}] de ${senderName} → ${chatIdToDisplay(chatId)}: ${text.slice(0, 60)}…`);
 
     if (isAutoReplyEligible(text, rawChatId)) {
-      scheduleAutoReply(chatId, senderName, text);
+      scheduleAutoReply(userId, chatId, senderName, text);
     } else {
       console.log(`   ↳ ignoré pour réponse auto (statut/média/broadcast)`);
     }
     return true;
   } catch (err) {
     console.error("Erreur enregistrement message entrant:", err);
-    pollHealth.lastError = err instanceof Error ? err.message : String(err);
+    pollHealthFor(userId).lastError = err instanceof Error ? err.message : String(err);
     return false;
   }
 }
 
-async function reprocessPendingAutoReplies(): Promise<number> {
-  if (!(await isAutoReplyEnabled())) return 0;
+async function reprocessPendingAutoRepliesForUser(userId: number): Promise<number> {
+  if (!(await isAutoReplyEnabled(userId))) return 0;
 
-  const pending = await findUnansweredInboundMessages(40);
+  const pending = await findUnansweredInboundMessages(userId, 40);
   let queued = 0;
 
   for (const msg of pending) {
@@ -447,19 +500,19 @@ async function reprocessPendingAutoReplies(): Promise<number> {
 
     if (isLidJid(chatId) || !isLikelyPhoneJid(chatId)) {
       const lid = isLidJid(chatId) ? chatId : `${digits}@lid`;
-      const resolved = await findProspectPhoneForLidReply(lid, msg.sender_name ?? undefined);
+      const resolved = await findProspectPhoneForLidReply(userId, lid, msg.sender_name ?? undefined);
       if (!resolved) continue;
       chatId = resolved;
-      await setContactWhatsappLid(resolved, lid);
+      await setContactWhatsappLid(userId, resolved, lid);
     }
 
-    if (!(await shouldAutoReplyContact(chatId))) continue;
-    if (await hasOutboundReplyAfter(msg.id, chatId, msg.contact_phone)) continue;
+    if (!(await shouldAutoReplyContact(userId, chatId))) continue;
+    if (await hasOutboundReplyAfter(userId, msg.id, chatId, msg.contact_phone)) continue;
     if (!isAutoReplyEligible(msg.body, chatId)) continue;
 
     const senderName = msg.sender_name || chatIdToDisplay(chatId);
     console.log(`🔄 Relance réponse auto → ${senderName} (${chatIdToDisplay(chatId)})`);
-    scheduleAutoReply(chatId, senderName, msg.body);
+    scheduleAutoReply(userId, chatId, senderName, msg.body);
     queued++;
   }
 
@@ -469,18 +522,32 @@ async function reprocessPendingAutoReplies(): Promise<number> {
   return queued;
 }
 
+async function reprocessPendingAutoReplies(userId?: number): Promise<number> {
+  if (typeof userId === "number") {
+    return reprocessPendingAutoRepliesForUser(userId);
+  }
+  const userIds = await listActiveUserIds();
+  let queued = 0;
+  for (const id of userIds) {
+    try {
+      queued += await reprocessPendingAutoRepliesForUser(id);
+    } catch (err) {
+      console.error(`Erreur reprocess auto-reply user ${id}:`, err);
+    }
+  }
+  return queued;
+}
+
 export { reprocessPendingAutoReplies };
 
-export async function syncIncomingFromHistory(): Promise<number> {
-  pollHealth.lastSyncAt = new Date().toISOString();
-
-  const settings = await getAppSettings();
+async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
+  const settings = await getAppSettings(userId);
   if (!settings.evolution_api_key || !settings.evolution_instance_name) return 0;
-  if (!(await ensureWhatsAppAuthorized())) return 0;
+  if (!(await ensureWhatsAppAuthorized(userId))) return 0;
 
   let added = 0;
   try {
-    const items = await getLastIncomingMessages();
+    const items = await getLastIncomingMessages(userId);
     for (const m of items) {
       if (m.typeMessage === "reactionMessage" || m.typeMessage === "deletedMessage") continue;
 
@@ -498,7 +565,7 @@ export async function syncIncomingFromHistory(): Promise<number> {
 
       const senderName = m.senderName || m.senderContactName || chatIdToDisplay(rawChatId);
       if (
-        await ingestInboundMessage(rawChatId, senderName, text, greenApiId, "history", {
+        await ingestInboundMessage(userId, rawChatId, senderName, text, greenApiId, "history", {
           senderPn: m.senderPn,
           remoteJidAlt: m.remoteJidAlt,
           participant: m.senderId,
@@ -508,19 +575,34 @@ export async function syncIncomingFromHistory(): Promise<number> {
       }
     }
     if (added > 0) {
-      pollHealth.lastError = null;
+      pollHealthFor(userId).lastError = null;
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    pollHealth.lastError = `Sync historique: ${msg}`;
-    console.error("❌ Sync lastIncomingMessages:", msg);
+    pollHealthFor(userId).lastError = `Sync historique: ${msg}`;
+    console.error(`❌ Sync lastIncomingMessages (user ${userId}):`, msg);
   }
 
   return added;
 }
 
+export async function syncIncomingFromHistory(): Promise<number> {
+  pollerLiveness.lastSyncAt = new Date().toISOString();
+
+  const userIds = await listActiveUserIds();
+  let added = 0;
+  for (const userId of userIds) {
+    try {
+      added += await syncIncomingFromHistoryForUser(userId);
+    } catch (err) {
+      console.error(`❌ Sync historique user ${userId}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  return added;
+}
+
 export async function pollOneNotification(): Promise<number> {
-  pollHealth.lastPollAt = new Date().toISOString();
+  pollerLiveness.lastPollAt = new Date().toISOString();
   return syncIncomingFromHistory();
 }
 
@@ -533,15 +615,7 @@ export function startNotificationPoller(intervalMs = 3000): void {
 
   console.log(`🔔 Sync messages entrants Evolution API (toutes les ${intervalMs / 1000}s)`);
   console.log(`📥 Webhook : POST /api/evolution/webhook (recommandé en production)`);
-  void (async () => {
-    const enabled = await isAutoReplyEnabled();
-    console.log(`🤖 Réponses automatiques : ${enabled ? "activées" : "DÉSACTIVÉES — activez le toggle dans l'interface"}`);
-    console.log(`📦 Conversations prospects → PostgreSQL, pas le chat agent`);
-
-    if (!enabled) {
-      console.warn(`⚠️  Réponses auto OFF : les messages entrants seront reçus mais pas de réponse automatique.`);
-    }
-  })();
+  console.log(`📦 Conversations prospects → PostgreSQL, pas le chat agent (multi-tenant)`);
 
   void syncIncomingFromHistory();
   void reprocessPendingAutoReplies();
@@ -560,7 +634,6 @@ export function startNotificationPoller(intervalMs = 3000): void {
       }
     } catch (err) {
       console.error("Erreur sync Evolution API:", err);
-      pollHealth.lastError = err instanceof Error ? err.message : String(err);
     } finally {
       polling = false;
     }

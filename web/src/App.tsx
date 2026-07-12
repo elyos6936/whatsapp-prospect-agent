@@ -1,8 +1,9 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
-import { useHealth } from '@/hooks/useHealth';
+import { ConnectWhatsAppGate } from '@/components/whatsapp/ConnectWhatsAppGate';
+import { useAuth } from '@/lib/auth';
 import { useMessages } from '@/hooks/useMessages';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
 import {
@@ -13,17 +14,52 @@ import {
 import { clearHistory, sendChatMessage } from '@/lib/api';
 import type { MainView } from '@/lib/navigation';
 import { AutomationPage } from '@/pages/AutomationPage';
+import { LoginPage } from '@/pages/LoginPage';
+import { OnboardingPage } from '@/pages/OnboardingPage';
+import { RegisterPage } from '@/pages/RegisterPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { WhatsAppConsolePage } from '@/pages/WhatsAppConsolePage';
+import type { HealthStatus } from '@/lib/api';
+
+type AuthScreen = 'login' | 'register';
 
 export default function App() {
+  const { user, loading: authLoading, refreshUser } = useAuth();
+  const [authScreen, setAuthScreen] = useState<AuthScreen>('login');
   const [mainView, setMainView] = useState<MainView>('chat');
   const [collapsed, toggle] = useSidebarCollapsed();
-  const { health, refresh: refreshHealth } = useHealth();
-  const chatEnabled = mainView === 'chat';
-  const { messages, loading, appendLocal, clear, loadHistory, poll } = useMessages(chatEnabled);
+  const chatEnabled = mainView === 'chat' && !!user?.whatsapp?.connected;
+  const { messages, loading, appendLocal, appendOptimisticUser, clear, loadHistory, poll } =
+    useMessages(chatEnabled);
   const [isSending, setIsSending] = useState(false);
   const [clearing, setClearing] = useState(false);
+
+  const waConnected = user?.whatsapp?.connected ?? false;
+
+  // Rafraîchir le statut WhatsApp toutes les 5s quand connecté à l'app
+  useEffect(() => {
+    if (!user) return;
+    const id = setInterval(() => void refreshUser(), 5000);
+    return () => clearInterval(id);
+  }, [user, refreshUser]);
+
+  const health: HealthStatus | null = user
+    ? {
+        ok: true,
+        openai: { configured: true },
+        whatsapp: user.whatsapp ?? { connected: false, state: 'unknown', message: '' },
+        autoReply: true,
+        outbound: { today: 0, limit: 30, bonus: 0 },
+      }
+    : null;
+
+  const handleNavigate = useCallback(
+    (view: MainView) => {
+      if (!waConnected && view !== 'settings') return;
+      setMainView(view);
+    },
+    [waConnected],
+  );
 
   const handleSend = useCallback(
     async (text: string, attachments: ChatAttachment[] = []) => {
@@ -31,14 +67,7 @@ export default function App() {
       const apiText = buildUserMessageApiText(text, attachments);
       if (!apiText.trim()) return;
 
-      const optimisticId = `local-${Date.now()}`;
-      appendLocal({
-        id: optimisticId,
-        kind: 'user',
-        content: displayText,
-        created_at: new Date().toISOString(),
-        label: 'Vous',
-      });
+      appendOptimisticUser(displayText, apiText);
 
       setIsSending(true);
       try {
@@ -51,7 +80,7 @@ export default function App() {
           label: 'Agent',
         });
         void poll();
-        void refreshHealth();
+        void refreshUser();
       } catch (err) {
         appendLocal({
           id: `err-${Date.now()}`,
@@ -64,7 +93,7 @@ export default function App() {
         setIsSending(false);
       }
     },
-    [appendLocal, poll, refreshHealth],
+    [appendLocal, appendOptimisticUser, poll, refreshUser],
   );
 
   const handleClearHistory = useCallback(async () => {
@@ -81,20 +110,45 @@ export default function App() {
     }
   }, [clear, loadHistory]);
 
+  if (authLoading) {
+    return (
+      <div className="flex h-full items-center justify-center bg-bg-0 text-sm text-text-500">
+        Chargement…
+      </div>
+    );
+  }
+
+  if (!user) {
+    return authScreen === 'login' ? (
+      <LoginPage onGoRegister={() => setAuthScreen('register')} />
+    ) : (
+      <RegisterPage onGoLogin={() => setAuthScreen('login')} />
+    );
+  }
+
+  if (!user.onboarding_completed) {
+    return <OnboardingPage />;
+  }
+
+  if (!waConnected) {
+    return <ConnectWhatsAppGate />;
+  }
+
   return (
     <div className="flex h-full overflow-hidden bg-bg-0">
       <AppSidebar
         collapsed={collapsed}
         onToggleCollapsed={toggle}
         mainView={mainView}
-        onNavigate={setMainView}
+        onNavigate={handleNavigate}
         health={health}
+        waConnected={waConnected}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
         <AppHeader
           mainView={mainView}
-          onGoToChat={() => setMainView('chat')}
+          onGoToChat={() => handleNavigate('chat')}
           onClearHistory={mainView === 'chat' ? handleClearHistory : undefined}
           clearing={clearing}
         />
@@ -111,9 +165,7 @@ export default function App() {
 
         {mainView === 'console' && <WhatsAppConsolePage />}
         {mainView === 'automation' && <AutomationPage />}
-        {mainView === 'settings' && (
-          <SettingsPage health={health} onRefreshHealth={() => void refreshHealth()} />
-        )}
+        {mainView === 'settings' && <SettingsPage />}
       </div>
     </div>
   );

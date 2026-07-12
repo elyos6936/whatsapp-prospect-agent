@@ -10,7 +10,6 @@ import {
   clearAgentConversation,
   cancelPendingSendQueue,
   countOutboundToday,
-  getDailyOutboundLimit,
   getEffectiveOutboundLimit,
   getOutboundQuotaBonus,
   resetOutboundQuotaForToday,
@@ -29,16 +28,16 @@ import {
   saveAgentMessage,
   saveBusinessProfile,
   saveContact,
-  saveEvolutionSettings,
-  saveOpenAiKey,
   setAutoReplyEnabled,
   CONTACT_STATUSES,
   type ContactStatus,
 } from "./db.js";
 import { chatWithAgent } from "./agent.js";
-import { chatIdToDisplay, diagnoseEvolutionApi, testEvolutionConnection, setEvolutionWebhook } from "./evolutionapi.js";
+import { chatIdToDisplay, diagnoseEvolutionApi, testEvolutionConnection } from "./evolutionapi.js";
 import { startNotificationPoller, getWhatsappPollHealth, handleEvolutionWebhook, reprocessPendingAutoReplies } from "./notifications.js";
 import { startScheduler } from "./scheduler.js";
+import { registerAuth, requireUserId } from "./auth.js";
+import { registerAuthRoutes } from "./auth-routes.js";
 import { registerEvolutionRoutes } from "./evolution-routes.js";
 import { registerAutomationRoutes } from "./automation-routes.js";
 import { registerFeatureRoutes } from "./feature-routes.js";
@@ -69,45 +68,24 @@ await app.register(fastifyStatic, {
   index: ["index.html"],
 });
 
+await registerAuth(app);
+await registerAuthRoutes(app);
+
 app.get("/", async (_request, reply) => {
   return reply.sendFile("index.html");
 });
 
 app.get("/api/health", async () => {
-  const settings = await getAppSettings();
-  const hasOpenAi = Boolean(settings.openai_api_key);
-  let whatsapp = { connected: false, state: "not_configured", message: "Non configuré" };
-
-  if (settings.evolution_api_key && settings.evolution_instance_name) {
-    try {
-      whatsapp = await testEvolutionConnection();
-    } catch (err) {
-      whatsapp = {
-        connected: false,
-        state: "error",
-        message: err instanceof Error ? err.message : "Erreur Evolution API",
-      };
-    }
-  }
-
   return {
     ok: true,
     model: config.openaiModel,
-    openai: { configured: hasOpenAi },
-    whatsapp,
     whatsappPoll: getWhatsappPollHealth(),
-    autoReply: await isAutoReplyEnabled(),
-    outbound: {
-      today: await countOutboundToday(),
-      limit: await getEffectiveOutboundLimit(),
-      baseLimit: await getDailyOutboundLimit(),
-      bonus: await getOutboundQuotaBonus(),
-    },
   };
 });
 
-app.get("/api/settings", async () => {
-  const s = await getAppSettings();
+app.get("/api/settings", async (request) => {
+  const userId = requireUserId(request);
+  const s = await getAppSettings(userId);
   return {
     openai: {
       configured: Boolean(s.openai_api_key),
@@ -124,19 +102,20 @@ app.get("/api/settings", async () => {
       offer: s.business_offer,
       price: s.business_price,
     },
-    autoReply: await isAutoReplyEnabled(),
+    autoReply: await isAutoReplyEnabled(userId),
   };
 });
 
 app.post<{
   Body: { ownerName?: string; offer?: string; price?: string };
 }>("/api/settings/business", async (request) => {
-  await saveBusinessProfile({
+  const userId = requireUserId(request);
+  await saveBusinessProfile(userId, {
     ownerName: request.body?.ownerName,
     offer: request.body?.offer,
     price: request.body?.price,
   });
-  const s = await getAppSettings();
+  const s = await getAppSettings(userId);
   return {
     ok: true,
     business: {
@@ -148,17 +127,19 @@ app.post<{
 });
 
 app.get("/api/reports/daily", async (request) => {
+  const userId = requireUserId(request);
   const date = (request.query as { date?: string }).date;
-  return await getDailyBilan(date);
+  return await getDailyBilan(userId, date);
 });
 
 app.get("/api/contacts/:phone/thread", async (request, reply) => {
+  const userId = requireUserId(request);
   const raw = decodeURIComponent((request.params as { phone: string }).phone || "");
   if (!raw.trim()) {
     return reply.status(400).send({ error: "Numéro requis." });
   }
   const limit = Math.min(Number((request.query as { limit?: string }).limit) || 100, 200);
-  const messages = await getContactThread(raw, limit);
+  const messages = await getContactThread(userId, raw, limit);
   return {
     phone: raw,
     display: chatIdToDisplay(raw.includes("@") ? raw : `${raw.replace(/\D/g, "")}@c.us`),
@@ -167,49 +148,20 @@ app.get("/api/contacts/:phone/thread", async (request, reply) => {
   };
 });
 
-app.post<{ Body: { apiKey?: string } }>("/api/settings/openai", async (request, reply) => {
-  const apiKey = request.body?.apiKey?.trim();
-  if (!apiKey) {
-    return reply.status(400).send({ error: "La clé API OpenAI est requise." });
-  }
-  if (!apiKey.startsWith("sk-")) {
-    return reply.status(400).send({ error: "Format de clé OpenAI invalide (doit commencer par sk-)." });
-  }
-
-  await saveOpenAiKey(apiKey);
-  return { ok: true, message: "Clé OpenAI enregistrée." };
+app.post("/api/settings/openai", async () => {
+  // Clé OpenAI gérée par la plateforme (variable d'environnement).
+  return { ok: true, message: "Clé OpenAI gérée par la plateforme." };
 });
 
-app.post<{
-  Body: { baseUrl?: string; apiKey?: string; instanceName?: string; webhookUrl?: string };
-}>("/api/settings/evolution", async (request, reply) => {
-  const baseUrl = request.body?.baseUrl?.trim() || config.defaultEvolutionBaseUrl;
-  const apiKey = request.body?.apiKey?.trim();
-  const instanceName = request.body?.instanceName?.trim();
-
-  if (!apiKey || !instanceName) {
-    return reply.status(400).send({ error: "Clé API et nom d'instance Evolution sont requis." });
-  }
-
-  await saveEvolutionSettings({ baseUrl, apiKey, instanceName });
-
-  try {
-    const result = await testEvolutionConnection();
-    if (request.body?.webhookUrl?.trim()) {
-      await setEvolutionWebhook(request.body.webhookUrl.trim());
-    }
-    return { ok: result.connected, ...result };
-  } catch (err) {
-    return reply.status(502).send({
-      ok: false,
-      error: err instanceof Error ? err.message : "Impossible de joindre Evolution API",
-    });
-  }
+app.post("/api/settings/evolution", async () => {
+  // Instance Evolution provisionnée automatiquement par la plateforme (klanvio_<userId>).
+  return { ok: true, message: "Connexion WhatsApp gérée par la plateforme." };
 });
 
-app.post("/api/settings/evolution/test", async (_request, reply) => {
+app.post("/api/settings/evolution/test", async (request, reply) => {
+  const userId = requireUserId(request);
   try {
-    return await testEvolutionConnection();
+    return await testEvolutionConnection(userId);
   } catch (err) {
     return reply.status(502).send({
       connected: false,
@@ -219,9 +171,10 @@ app.post("/api/settings/evolution/test", async (_request, reply) => {
   }
 });
 
-app.get("/api/evolution/diagnose", async (_request, reply) => {
+app.get("/api/evolution/diagnose", async (request, reply) => {
+  const userId = requireUserId(request);
   try {
-    return await diagnoseEvolutionApi();
+    return await diagnoseEvolutionApi(userId);
   } catch (err) {
     return reply.status(502).send({
       error: err instanceof Error ? err.message : "Diagnostic Evolution impossible",
@@ -247,41 +200,46 @@ app.post("/api/evolution/webhook", async (request) => {
   return { ok: true, processed };
 });
 
-app.get("/api/history", async () => ({
-  messages: await getRecentAgentMessages(100),
+app.get("/api/history", async (request) => ({
+  messages: await getRecentAgentMessages(requireUserId(request), 100),
 }));
 
 app.get("/api/incoming", async (request) => {
+  const userId = requireUserId(request);
   const since = Number((request.query as { since?: string }).since) || 0;
-  return { messages: await getIncomingMessagesSince(since) };
+  return { messages: await getIncomingMessagesSince(userId, since) };
 });
 
 app.get("/api/whatsapp", async (request) => {
+  const userId = requireUserId(request);
   const since = Number((request.query as { since?: string }).since) || 0;
   const limit = since === 0 ? 500 : 100;
-  return { messages: await getWhatsAppMessagesSince(since, limit) };
+  return { messages: await getWhatsAppMessagesSince(userId, since, limit) };
 });
 
 app.get("/api/history/since", async (request) => {
+  const userId = requireUserId(request);
   const since = Number((request.query as { since?: string }).since) || 0;
-  return { messages: await getAgentMessagesSince(since) };
+  return { messages: await getAgentMessagesSince(userId, since) };
 });
 
 app.post<{ Body: { enabled?: boolean } }>("/api/settings/auto-reply", async (request, reply) => {
+  const userId = requireUserId(request);
   if (typeof request.body?.enabled !== "boolean") {
     return reply.status(400).send({ error: "Le champ « enabled » (boolean) est requis." });
   }
-  await setAutoReplyEnabled(request.body.enabled);
+  await setAutoReplyEnabled(userId, request.body.enabled);
   return { ok: true, enabled: request.body.enabled };
 });
 
 app.post<{
   Body: { action?: "reset" | "setLimit"; extra?: number; limit?: number };
 }>("/api/settings/outbound-quota", async (request, reply) => {
+  const userId = requireUserId(request);
   const action = request.body?.action;
   if (action === "reset") {
     const extra = Number(request.body?.extra ?? 15);
-    const result = await resetOutboundQuotaForToday(Number.isFinite(extra) ? extra : 15);
+    const result = await resetOutboundQuotaForToday(userId, Number.isFinite(extra) ? extra : 15);
     return {
       ok: true,
       action: "reset",
@@ -299,15 +257,15 @@ app.post<{
     if (!Number.isFinite(limit) || limit < 5) {
       return reply.status(400).send({ error: "Le champ « limit » (nombre ≥ 5) est requis." });
     }
-    const saved = await setDailyOutboundLimit(limit);
+    const saved = await setDailyOutboundLimit(userId, limit);
     return {
       ok: true,
       action: "setLimit",
       outbound: {
-        today: await countOutboundToday(),
+        today: await countOutboundToday(userId),
         baseLimit: saved,
-        bonus: await getOutboundQuotaBonus(),
-        limit: await getEffectiveOutboundLimit(),
+        bonus: await getOutboundQuotaBonus(userId),
+        limit: await getEffectiveOutboundLimit(userId),
       },
       message: `Limite journalière fixée à ${saved} messages.`,
     };
@@ -317,16 +275,18 @@ app.post<{
   });
 });
 
-app.post("/api/settings/reprocess-auto-replies", async () => {
-  const queued = await reprocessPendingAutoReplies();
+app.post("/api/settings/reprocess-auto-replies", async (request) => {
+  const userId = requireUserId(request);
+  const queued = await reprocessPendingAutoReplies(userId);
   return { ok: true, queued, message: `${queued} réponse(s) auto remise(s) en file.` };
 });
 
 /** Arrêt d'urgence : annule la file d'envoi et met en pause les automatisations actives. */
-app.post("/api/emergency/stop-sending", async () => {
-  const cancelledQueue = await cancelPendingSendQueue();
-  const pausedAutomations = await pauseAllActiveAutomations();
-  await setAutoReplyEnabled(false);
+app.post("/api/emergency/stop-sending", async (request) => {
+  const userId = requireUserId(request);
+  const cancelledQueue = await cancelPendingSendQueue(userId);
+  const pausedAutomations = await pauseAllActiveAutomations(userId);
+  await setAutoReplyEnabled(userId, false);
   return {
     ok: true,
     cancelledQueue,
@@ -337,12 +297,13 @@ app.post("/api/emergency/stop-sending", async () => {
 });
 
 app.get("/api/contacts", async (request) => {
+  const userId = requireUserId(request);
   const statusRaw = (request.query as { status?: string }).status;
   const status =
     statusRaw && CONTACT_STATUSES.includes(statusRaw as ContactStatus)
       ? (statusRaw as ContactStatus)
       : undefined;
-  const contacts = await listContacts({ status, limit: 100 });
+  const contacts = await listContacts(userId, { status, limit: 100 });
   return {
     contacts: contacts.map((c) => ({
       ...c,
@@ -361,6 +322,7 @@ app.post<{
     autoReply?: boolean;
   };
 }>("/api/contacts", async (request, reply) => {
+  const userId = requireUserId(request);
   const phone = request.body?.phone?.trim();
   if (!phone) {
     return reply.status(400).send({ error: "Le champ « phone » est requis." });
@@ -372,7 +334,7 @@ app.post<{
     });
   }
   try {
-    const contact = await saveContact({
+    const contact = await saveContact(userId, {
       phone,
       name: request.body?.name,
       notes: request.body?.notes,
@@ -393,26 +355,27 @@ app.post<{
   }
 });
 
-app.delete("/api/history", async () => {
-  await clearAgentConversation();
+app.delete("/api/history", async (request) => {
+  await clearAgentConversation(requireUserId(request));
   return { ok: true };
 });
 
 app.post<{ Body: { message?: string } }>("/api/chat", async (request, reply) => {
+  const userId = requireUserId(request);
   const message = request.body?.message?.trim();
   if (!message) {
     return reply.status(400).send({ error: "Le champ « message » est requis." });
   }
 
-  await saveAgentMessage("user", message);
+  await saveAgentMessage(userId, "user", message);
 
   try {
-    const assistantReply = await chatWithAgent(message);
-    const saved = await saveAgentMessage("assistant", assistantReply);
+    const assistantReply = await chatWithAgent(userId, message);
+    const saved = await saveAgentMessage(userId, "assistant", assistantReply);
     return { id: saved.id, reply: saved.content, created_at: saved.created_at };
   } catch (err) {
     const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
-    const saved = await saveAgentMessage("assistant", `❌ ${errorText}`);
+    const saved = await saveAgentMessage(userId, "assistant", `❌ ${errorText}`);
     return {
       id: saved.id,
       reply: saved.content,
@@ -423,7 +386,7 @@ app.post<{ Body: { message?: string } }>("/api/chat", async (request, reply) => 
 });
 
 app.post<{ Body: { name?: string; type?: string; data?: string } }>("/api/upload", async (request, reply) => {
-  const { name, type, data } = request.body ?? {};
+  const { name, data } = request.body ?? {};
   if (!name || !data) return reply.status(400).send({ error: "name et data requis." });
   const ext = path.extname(name) || ".bin";
   const filename = `${crypto.randomUUID()}${ext}`;

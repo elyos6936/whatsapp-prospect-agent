@@ -2,13 +2,13 @@ import OpenAI from "openai";
 import { config } from "./config.js";
 import { getAppSettings } from "./db.js";
 
-export async function generatePersonalizedOpener(input: {
+export async function generatePersonalizedOpener(userId: number, input: {
   template: string;
   memberName: string;
   groupName: string;
   conversationGuide?: string;
 }): Promise<string> {
-  const key = (await getAppSettings()).openai_api_key;
+  const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) return personalizeFallback(input);
 
   const client = new OpenAI({ apiKey: key });

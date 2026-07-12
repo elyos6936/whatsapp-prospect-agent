@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { requireUserId } from "./auth.js";
 import {
   countOutboundToday,
   getEffectiveOutboundLimit,
@@ -38,14 +39,15 @@ function extractMessageText(m: Record<string, unknown>): string {
 }
 
 export async function registerEvolutionRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/evolution/dashboard", async (_request, reply) => {
-    if (!(await getEvolutionCredentials())) {
+  app.get("/api/evolution/dashboard", async (request, reply) => {
+    const userId = requireUserId(request);
+    if (!(await getEvolutionCredentials(userId))) {
       return reply.status(400).send({ error: "Evolution API non configurée." });
     }
 
     let instance: Awaited<ReturnType<typeof testEvolutionConnection>>;
     try {
-      instance = await testEvolutionConnection();
+      instance = await testEvolutionConnection(userId);
     } catch (err) {
       instance = {
         connected: false,
@@ -54,14 +56,14 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
       };
     }
 
-    const stats = await getWhatsAppMessageStats();
+    const stats = await getWhatsAppMessageStats(userId);
     let chatsCount = 0;
     let contactsCount = 0;
     let groupsCount = 0;
     try {
       const [groups, contacts] = await Promise.all([
-        listWhatsAppGroups(),
-        listPersonalContacts(200),
+        listWhatsAppGroups(userId),
+        listPersonalContacts(userId, 200),
       ]);
       groupsCount = groups.length;
       contactsCount = contacts.length;
@@ -74,26 +76,27 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
       instance,
       stats: {
         ...stats,
-        outboundToday: await countOutboundToday(),
-        outboundLimit: await getEffectiveOutboundLimit(),
+        outboundToday: await countOutboundToday(userId),
+        outboundLimit: await getEffectiveOutboundLimit(userId),
         chatsCount,
         contactsCount,
         groupsCount,
       },
-      poll: getWhatsappPollHealth(),
+      poll: getWhatsappPollHealth(userId),
     };
   });
 
   app.get<{ Querystring: { contact?: string; today?: string; limit?: string } }>(
     "/api/evolution/inbox/local",
     async (request) => {
+      const userId = requireUserId(request);
       const limit = Math.min(Math.max(Number(request.query.limit) || 200, 1), 500);
       const messages = await (
         request.query.today === "1"
-          ? listIncomingMessages({ todayOnly: true, limit })
+          ? listIncomingMessages(userId, { todayOnly: true, limit })
           : request.query.contact
-            ? listIncomingMessages({ contactPhone: request.query.contact, limit })
-            : getRecentIncomingMessages(limit)
+            ? listIncomingMessages(userId, { contactPhone: request.query.contact, limit })
+            : getRecentIncomingMessages(userId, limit)
       );
 
       return {
@@ -105,11 +108,12 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
     }
   );
 
-  app.get("/api/evolution/inbox/live", async (_request, reply) => {
-    if (!(await getEvolutionCredentials())) {
+  app.get("/api/evolution/inbox/live", async (request, reply) => {
+    const userId = requireUserId(request);
+    if (!(await getEvolutionCredentials(userId))) {
       return reply.status(400).send({ error: "Evolution API non configurée." });
     }
-    const raw = await getLastIncomingMessages();
+    const raw = await getLastIncomingMessages(userId);
     const messages = raw.map((m) => ({
       idMessage: m.idMessage,
       chatId: m.chatId,
@@ -123,43 +127,47 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
   });
 
   app.get<{ Querystring: { count?: string } }>("/api/evolution/chats", async (request, reply) => {
-    if (!(await getEvolutionCredentials())) {
+    const userId = requireUserId(request);
+    if (!(await getEvolutionCredentials(userId))) {
       return reply.status(400).send({ error: "Evolution API non configurée." });
     }
     const count = request.query.count || "100";
     const { listWhatsAppChats } = await import("./evolutionapi.js");
-    const chats = await listWhatsAppChats(Number(count));
+    const chats = await listWhatsAppChats(userId, Number(count));
     return { chats };
   });
 
   app.get<{ Querystring: { count?: string } }>("/api/evolution/contacts", async (request, reply) => {
-    if (!(await getEvolutionCredentials())) {
+    const userId = requireUserId(request);
+    if (!(await getEvolutionCredentials(userId))) {
       return reply.status(400).send({ error: "Evolution API non configurée." });
     }
     const limit = Math.min(Math.max(Number(request.query.count) || 200, 1), 500);
-    const contacts = await listPersonalContacts(limit);
+    const contacts = await listPersonalContacts(userId, limit);
     return { contacts };
   });
 
-  app.get("/api/evolution/groups", async (_request, reply) => {
-    if (!(await getEvolutionCredentials())) {
+  app.get("/api/evolution/groups", async (request, reply) => {
+    const userId = requireUserId(request);
+    if (!(await getEvolutionCredentials(userId))) {
       return reply.status(400).send({ error: "Evolution API non configurée." });
     }
-    const groups = await listWhatsAppGroups();
+    const groups = await listWhatsAppGroups(userId);
     return { groups };
   });
 
   app.post<{
     Body: { subject?: string; participants?: string[]; description?: string; promoteParticipants?: boolean };
   }>("/api/evolution/groups/create", async (request, reply) => {
-    if (!(await getEvolutionCredentials())) {
+    const userId = requireUserId(request);
+    if (!(await getEvolutionCredentials(userId))) {
       return reply.status(400).send({ error: "Evolution API non configurée." });
     }
     const subject = request.body?.subject?.trim();
     if (!subject) return reply.status(400).send({ error: "subject requis." });
     const participants = Array.isArray(request.body?.participants) ? request.body.participants : [];
     try {
-      const group = await createWhatsAppGroup({
+      const group = await createWhatsAppGroup(userId, {
         subject,
         participants,
         description: request.body?.description,
@@ -173,10 +181,11 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
   });
 
   app.get<{ Querystring: { groupId?: string } }>("/api/evolution/groups/members", async (request, reply) => {
+    const userId = requireUserId(request);
     const groupId = request.query.groupId?.trim();
     if (!groupId) return reply.status(400).send({ error: "groupId requis." });
     try {
-      const group = await getGroupMembers(groupId);
+      const group = await getGroupMembers(userId, groupId);
       return { group };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
@@ -187,11 +196,12 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
   app.get<{ Querystring: { chatId?: string; count?: string } }>(
     "/api/evolution/chat-history",
     async (request, reply) => {
+      const userId = requireUserId(request);
       const chatId = request.query.chatId?.trim();
       if (!chatId) return reply.status(400).send({ error: "chatId requis." });
       const count = Math.min(Math.max(Number(request.query.count) || 60, 1), 200);
       try {
-        return await getChatHistory(chatId, count);
+        return await getChatHistory(userId, chatId, count);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return reply.status(400).send({ error: msg });
@@ -202,13 +212,14 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
   app.post<{ Body: { chatId?: string; message?: string } }>(
     "/api/evolution/send-message",
     async (request, reply) => {
+      const userId = requireUserId(request);
       const chatId = request.body?.chatId?.trim();
       const message = request.body?.message?.trim();
       if (!chatId || !message) {
         return reply.status(400).send({ error: "chatId et message requis." });
       }
       try {
-        const result = await sendWhatsAppMessage(chatId, message);
+        const result = await sendWhatsAppMessage(userId, chatId, message);
         return { ok: true, ...result };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -218,11 +229,12 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
   );
 
   app.post<{ Body: Record<string, unknown> }>("/api/evolution/send-status", async (request, reply) => {
+    const userId = requireUserId(request);
     const body = request.body || {};
     const message = String(body.message ?? "").trim();
     if (!message) return reply.status(400).send({ error: "message requis." });
     try {
-      const result = await sendWhatsAppTextStatus(message, {
+      const result = await sendWhatsAppTextStatus(userId, message, {
         backgroundColor: body.backgroundColor ? String(body.backgroundColor) : undefined,
         font: body.font ? String(body.font) : undefined,
       });
@@ -236,10 +248,11 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
   app.post<{ Body: { chatId?: string; idMessage?: string } }>(
     "/api/evolution/read-chat",
     async (request, reply) => {
+      const userId = requireUserId(request);
       const { chatId, idMessage } = request.body || {};
       if (!chatId) return reply.status(400).send({ error: "chatId requis." });
       try {
-        const result = await markChatRead(chatId, idMessage);
+        const result = await markChatRead(userId, chatId, idMessage);
         return { ok: true, result };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -248,18 +261,20 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
     }
   );
 
-  app.get("/api/evolution/instance/state", async (_request, reply) => {
+  app.get("/api/evolution/instance/state", async (request, reply) => {
+    const userId = requireUserId(request);
     try {
-      return await testEvolutionConnection();
+      return await testEvolutionConnection(userId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(502).send({ connected: false, state: "error", message: msg });
     }
   });
 
-  app.get("/api/evolution/instance/qr", async (_request, reply) => {
+  app.get("/api/evolution/instance/qr", async (request, reply) => {
+    const userId = requireUserId(request);
     try {
-      const qr = await getInstanceQr();
+      const qr = await getInstanceQr(userId);
       return { ok: true, ...qr };
     } catch (err) {
       const msg = err instanceof EvolutionApiError ? err.message : err instanceof Error ? err.message : String(err);
@@ -267,9 +282,10 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
     }
   });
 
-  app.post("/api/evolution/instance/restart", async (_request, reply) => {
+  app.post("/api/evolution/instance/restart", async (request, reply) => {
+    const userId = requireUserId(request);
     try {
-      const result = await restartInstance();
+      const result = await restartInstance(userId);
       return { ok: true, result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

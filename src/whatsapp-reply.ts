@@ -74,18 +74,19 @@ export function isStopRequest(text: string): boolean {
   );
 }
 
-async function getOpenAiClient(): Promise<OpenAI> {
-  const key = (await getAppSettings()).openai_api_key;
+async function getOpenAiClient(userId: number): Promise<OpenAI> {
+  const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) throw new Error("Clé OpenAI manquante.");
   return new OpenAI({ apiKey: key });
 }
 
 async function formatHistory(
+  userId: number,
   chatId: string,
   senderName: string,
   excludeIncoming?: string
 ): Promise<{ text: string; messageCount: number; isOngoingConversation: boolean }> {
-  const history = await getContactChatHistory(chatId, 20);
+  const history = await getContactChatHistory(userId, chatId, 20);
 
   let filtered = history;
   if (excludeIncoming && history.length > 0) {
@@ -114,8 +115,8 @@ async function formatHistory(
 }
 
 /** Délai avant réponse auto : 30–90 s (premier contact) / 15–40 s (déjà engagé). */
-export async function getAdaptiveReplyDelay(chatId: string): Promise<number> {
-  const { isOngoingConversation } = await formatHistory(chatId, "", undefined);
+export async function getAdaptiveReplyDelay(userId: number, chatId: string): Promise<number> {
+  const { isOngoingConversation } = await formatHistory(userId, chatId, "", undefined);
   if (isOngoingConversation) {
     return 15_000 + Math.floor(Math.random() * 25_000);
   }
@@ -137,8 +138,8 @@ function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-async function businessContextBlock(): Promise<string> {
-  const s = await getAppSettings();
+async function businessContextBlock(userId: number): Promise<string> {
+  const s = await getAppSettings(userId);
   const lines = [
     `Prénom / nom à utiliser : ${s.business_owner_name || "(non configuré — ne pas inventer de prénom, te présenter comme l'équipe / la formation)"}`,
     `Offre / formation : ${s.business_offer || "(non configuré — rester général et proposer d'échanger)"}`,
@@ -147,15 +148,16 @@ async function businessContextBlock(): Promise<string> {
   return lines.join("\n");
 }
 
-export async function generateWhatsAppReply(input: {
+export async function generateWhatsAppReply(userId: number, input: {
   chatId: string;
   senderName: string;
   incomingText: string;
   automationContext?: string;
 }): Promise<string> {
-  const client = await getOpenAiClient();
+  const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
   const { text: historyText, messageCount, isOngoingConversation } = await formatHistory(
+    userId,
     input.chatId,
     input.senderName,
     input.incomingText
@@ -164,7 +166,7 @@ export async function generateWhatsAppReply(input: {
   const prospectStyle = analyzeProspectStyle(input.incomingText);
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
-${await businessContextBlock()}
+${await businessContextBlock(userId)}
 ${input.automationContext ? `\n## Automatisation active\n${input.automationContext}\n` : ""}
 
 ## Contact

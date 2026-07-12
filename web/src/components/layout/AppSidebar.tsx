@@ -24,6 +24,7 @@ type AppSidebarProps = {
   mainView: MainView;
   onNavigate: (view: MainView) => void;
   health: HealthStatus | null;
+  waConnected?: boolean;
 };
 
 function StatusDot({ ok, label }: { ok: boolean; label: string }) {
@@ -52,6 +53,7 @@ export function AppSidebar({
   mainView,
   onNavigate,
   health,
+  waConnected = true,
 }: AppSidebarProps) {
   const openaiOk = health?.openai?.configured ?? false;
   const waOk = health?.whatsapp?.connected ?? false;
@@ -97,15 +99,18 @@ export function AppSidebar({
         {MAIN_NAV.map((item) => {
           const Icon = NAV_ICONS[item.id];
           const active = mainView === item.id;
+          const disabled = !waConnected && item.id !== 'settings';
           return (
             <button
               key={item.id}
               type="button"
+              disabled={disabled}
               onClick={() => onNavigate(item.id)}
-              title={collapsed ? item.label : undefined}
+              title={collapsed ? item.label : disabled ? 'Connectez WhatsApp d\'abord' : undefined}
               className={cn(
                 'flex w-full items-center rounded-lg text-left text-sm transition-colors',
                 collapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5',
+                disabled && 'cursor-not-allowed opacity-40',
                 active
                   ? 'border border-brand-border bg-brand-muted font-medium text-brand'
                   : 'text-text-400 hover:bg-bg-200 hover:text-text-100',

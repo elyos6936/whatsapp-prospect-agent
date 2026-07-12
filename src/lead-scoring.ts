@@ -17,8 +17,8 @@ export interface ScoringResult {
   handoffReason?: string;
 }
 
-export async function scoreIncomingMessage(text: string, chatId: string): Promise<ScoringResult> {
-  const contact = await getContact(chatId);
+export async function scoreIncomingMessage(userId: number, text: string, chatId: string): Promise<ScoringResult> {
+  const contact = await getContact(userId, chatId);
   const current = contact?.lead_score ?? 0;
   let delta = 2;
 
@@ -29,7 +29,7 @@ export async function scoreIncomingMessage(text: string, chatId: string): Promis
   if (/\?/.test(text)) delta += 5;
 
   const newScore = Math.max(0, Math.min(100, current + delta));
-  await updateContactLeadScore(chatId, newScore);
+  await updateContactLeadScore(userId, chatId, newScore);
 
   const label = newScore >= 70 ? "chaud" : newScore >= 40 ? "tiède" : "froid";
   const interested = newScore >= 70;
@@ -50,13 +50,14 @@ export async function scoreIncomingMessage(text: string, chatId: string): Promis
 }
 
 export async function recordAutomationConversion(
+  userId: number,
   automationId: number,
   revenueFcfa = 0
 ): Promise<void> {
-  const auto = await getAutomation(automationId);
+  const auto = await getAutomation(userId, automationId);
   if (!auto) return;
   const stats = auto.stats;
-  await updateAutomationStats(automationId, {
+  await updateAutomationStats(userId, automationId, {
     conversions: (stats.conversions ?? 0) + 1,
     revenueFcfa: (stats.revenueFcfa ?? 0) + revenueFcfa,
   });

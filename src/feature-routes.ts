@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { requireUserId } from "./auth.js";
 import {
   createGroupReplyRule,
   listPendingHandoffs,
@@ -8,27 +9,29 @@ import {
 import { getRoiDashboard } from "./roi-dashboard.js";
 
 export async function registerFeatureRoutes(app: FastifyInstance): Promise<void> {
-  app.get("/api/roi/dashboard", async () => getRoiDashboard());
+  app.get("/api/roi/dashboard", async (request) => getRoiDashboard(requireUserId(request)));
 
-  app.get("/api/handoffs", async () => ({
-    handoffs: await listPendingHandoffs(50),
+  app.get("/api/handoffs", async (request) => ({
+    handoffs: await listPendingHandoffs(requireUserId(request), 50),
   }));
 
   app.patch<{ Params: { id: string }; Body: { status?: string } }>(
     "/api/handoffs/:id",
     async (req, reply) => {
+      const userId = requireUserId(req);
       const id = Number(req.params.id);
       const status = req.body?.status;
       if (!Number.isFinite(id) || (status !== "resolved" && status !== "dismissed")) {
         return reply.status(400).send({ error: "status doit être resolved ou dismissed." });
       }
-      await resolveHandoff(id, status);
+      await resolveHandoff(userId, id, status);
       return { ok: true };
     }
   );
 
-  app.get("/api/contacts/scored", async () => {
-    const contacts = await listContacts({ limit: 200 });
+  app.get("/api/contacts/scored", async (request) => {
+    const userId = requireUserId(request);
+    const contacts = await listContacts(userId, { limit: 200 });
     return {
       contacts: contacts
         .map((c) => ({
@@ -51,11 +54,12 @@ export async function registerFeatureRoutes(app: FastifyInstance): Promise<void>
       automationId?: number;
     };
   }>("/api/group-rules", async (req, reply) => {
+    const userId = requireUserId(req);
     const { groupId, groupLabel, keywords, replyGuide, automationId } = req.body ?? {};
     if (!groupId?.trim()) {
       return reply.status(400).send({ error: "groupId requis." });
     }
-    const rule = await createGroupReplyRule({
+    const rule = await createGroupReplyRule(userId, {
       groupId: groupId.trim(),
       groupLabel,
       keywords: keywords ?? [],

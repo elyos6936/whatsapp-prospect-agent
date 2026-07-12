@@ -227,7 +227,7 @@ export function KlanvioChatInput({
     <div
       className={cn(
         'relative mx-auto w-full',
-        isHero ? 'max-w-2xl px-0' : 'max-w-3xl px-6 pb-5 pt-3',
+        isHero ? 'max-w-2xl px-0' : 'max-w-3xl px-4 pb-3 pt-2',
         className,
       )}
     >
@@ -251,7 +251,7 @@ export function KlanvioChatInput({
           busy && 'opacity-70',
         )}
       >
-        <div className={cn('flex flex-col gap-2', isHero ? 'px-4 pb-3 pt-4' : 'px-3 pb-2 pt-3')}>
+        <div className={cn('flex flex-col gap-1.5', isHero ? 'px-4 pb-3 pt-4' : 'px-3 pb-1.5 pt-2')}>
           {isRecording && (
             <div className="flex items-center gap-2 px-1 text-xs text-red-400">
               <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
@@ -290,7 +290,7 @@ export function KlanvioChatInput({
             </div>
           )}
 
-          <div className={cn('pl-1', isHero ? 'min-h-[3.5rem]' : autoGrow ? 'min-h-[2.5rem]' : 'h-10')}>
+          <div className={cn('pl-1', isHero ? 'min-h-[3.5rem]' : autoGrow ? 'min-h-[2.25rem]' : 'h-9')}>
             <textarea
               ref={textareaRef}
               value={message}
@@ -303,8 +303,8 @@ export function KlanvioChatInput({
               className={cn(
                 'block w-full resize-none border-0 bg-transparent leading-relaxed text-text-100',
                 'placeholder:text-text-500 outline-none disabled:cursor-not-allowed',
-                isHero ? 'text-base' : 'text-[15px]',
-                !autoGrow && 'h-10 overflow-y-auto py-2 scrollbar-none',
+                isHero ? 'text-base' : 'text-[14px]',
+                !autoGrow && 'h-9 overflow-y-auto py-1.5 scrollbar-none',
               )}
             />
           </div>
@@ -361,7 +361,7 @@ export function KlanvioChatInput({
       </div>
 
       {!isHero && !hideHint && (
-        <p className="mt-2 text-center text-[11px] text-text-500">
+        <p className="mt-1.5 text-center text-[10px] text-text-500">
           <kbd className="rounded border border-bg-300 bg-bg-200 px-1.5 py-0.5 font-sans text-[10px]">Entrée</kbd>
           {` pour envoyer · `}
           <kbd className="rounded border border-bg-300 bg-bg-200 px-1.5 py-0.5 font-sans text-[10px]">Maj</kbd>
