@@ -1,16 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  CheckCircle2,
+  LogOut,
+  QrCode,
+  RefreshCw,
+  Smartphone,
+  Store,
+  Unplug,
+} from 'lucide-react';
+import {
+  disconnectWhatsApp,
   fetchEvolutionQr,
   fetchSettings,
-  rebootEvolutionInstance,
   saveBusinessProfile,
-  setAutoReply,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { qrImageSrc } from '@/lib/qr';
 
-type SettingsTab = 'business' | 'connection';
+type SettingsTab = 'connection' | 'business';
 
 function Feedback({ text, type }: { text: string; type?: 'ok' | 'err' }) {
   if (!text) return null;
@@ -37,8 +45,7 @@ export function SettingsPage() {
   const [offer, setOffer] = useState('');
   const [price, setPrice] = useState('');
   const [businessFb, setBusinessFb] = useState('');
-
-  const [autoReply, setAutoReplyLocal] = useState(true);
+  const [savingBusiness, setSavingBusiness] = useState(false);
 
   const [qrData, setQrData] = useState<{
     connected: boolean;
@@ -47,6 +54,9 @@ export function SettingsPage() {
     pairingCode?: string;
   } | null>(null);
   const [qrLoading, setQrLoading] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const connected = user?.whatsapp?.connected ?? false;
 
   const loadSettings = useCallback(async () => {
     setLoading(true);
@@ -55,7 +65,6 @@ export function SettingsPage() {
       setOwnerName(s.business.ownerName || user?.name || '');
       setOffer(s.business.offer || '');
       setPrice(s.business.price || '');
-      setAutoReplyLocal(s.autoReply);
     } catch {
       /* ignore */
     } finally {
@@ -83,167 +92,260 @@ export function SettingsPage() {
     }
   }, [refreshUser]);
 
+  // Charge un QR uniquement quand on est déconnecté et sur l'onglet WhatsApp.
   useEffect(() => {
-    if (tab === 'connection') void loadQr();
-  }, [tab, loadQr]);
+    if (tab !== 'connection' || connected) return;
+    void loadQr();
+    const id = setInterval(() => void loadQr(), 30000);
+    return () => clearInterval(id);
+  }, [tab, connected, loadQr]);
 
-  const tabs: { id: SettingsTab; label: string }[] = [
-    { id: 'connection', label: 'Connexion WhatsApp' },
-    { id: 'business', label: 'Profil business' },
+  // Quand déconnecté, on poll l'état pour basculer dès qu'un nouveau numéro se connecte.
+  useEffect(() => {
+    if (tab !== 'connection' || connected) return;
+    const id = setInterval(() => void refreshUser(), 4000);
+    return () => clearInterval(id);
+  }, [tab, connected, refreshUser]);
+
+  const handleDisconnect = async () => {
+    if (
+      !confirm(
+        'Déconnecter ce numéro WhatsApp ? Tu pourras ensuite en connecter un autre en scannant un nouveau QR code.',
+      )
+    ) {
+      return;
+    }
+    setDisconnecting(true);
+    try {
+      await disconnectWhatsApp();
+      setQrData(null);
+      await refreshUser();
+      await loadQr();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Échec de la déconnexion.');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const tabs: { id: SettingsTab; label: string; icon: typeof Smartphone }[] = [
+    { id: 'connection', label: 'WhatsApp', icon: Smartphone },
+    { id: 'business', label: 'Profil business', icon: Store },
   ];
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
-      <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
-        <div className="mb-6 flex items-start justify-between gap-4">
-          <div>
-            <h1 className="text-lg font-medium text-text-100">Réglages</h1>
-            <p className="mt-1 text-sm text-text-500">
-              Connecté en tant que {user?.email}
-            </p>
+      <div className="brand-radial">
+        <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+          {/* En-tête */}
+          <div className="mb-8 flex items-start justify-between gap-4">
+            <div>
+              <h1 className="font-serif text-2xl font-light text-text-100">Réglages</h1>
+              <p className="mt-1 text-sm text-text-400">{user?.email}</p>
+            </div>
+            <button
+              type="button"
+              onClick={logout}
+              className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-sm text-text-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300"
+            >
+              <LogOut className="h-4 w-4" />
+              Se déconnecter
+            </button>
           </div>
-          <button
-            type="button"
-            onClick={logout}
-            className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-text-400 hover:bg-bg-100 hover:text-red-400"
-          >
-            Déconnexion
-          </button>
-        </div>
 
-        <div className="mb-6 flex gap-2 border-b border-white/10 pb-2">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={cn(
-                'rounded-lg px-3 py-1.5 text-sm transition',
-                tab === t.id
-                  ? 'bg-brand-muted font-medium text-brand'
-                  : 'text-text-500 hover:text-text-200',
-              )}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+          {/* Onglets */}
+          <div className="mb-6 inline-flex rounded-xl border border-white/10 bg-bg-100 p-1">
+            {tabs.map((t) => {
+              const Icon = t.icon;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={cn(
+                    'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition',
+                    tab === t.id
+                      ? 'bg-brand text-white shadow-sm'
+                      : 'text-text-400 hover:bg-bg-200 hover:text-text-200',
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
 
-        {loading ? (
-          <p className="text-sm text-text-500">Chargement…</p>
-        ) : tab === 'connection' ? (
-          <section className="space-y-4 rounded-2xl border border-white/10 bg-bg-100 p-5">
-            <h2 className="text-sm font-medium text-text-200">Connexion WhatsApp</h2>
-            <p className="text-xs text-text-500">
-              Scannez le QR avec WhatsApp → Appareils connectés. Votre instance est provisionnée
-              automatiquement.
-            </p>
+          {loading ? (
+            <div className="panel h-40 animate-pulse" />
+          ) : tab === 'connection' ? (
+            <div className="space-y-4">
+              {/* Bandeau d'état */}
+              <div className="panel p-5">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={cn(
+                      'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl',
+                      connected
+                        ? 'bg-emerald-500/15 text-emerald-400'
+                        : 'bg-amber-500/15 text-amber-400',
+                    )}
+                  >
+                    <Smartphone className="h-5 w-5" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="status-dot"
+                        style={{ background: connected ? '#34d399' : '#fbbf24' }}
+                      />
+                      <h2 className="text-sm font-semibold text-text-100">
+                        {connected ? 'WhatsApp connecté' : 'WhatsApp non connecté'}
+                      </h2>
+                    </div>
+                    <p className="mt-0.5 text-xs text-text-400">
+                      {connected
+                        ? 'Ton compte est lié. L’agent peut envoyer et répondre aux messages.'
+                        : 'Scanne le QR code pour lier ton compte WhatsApp.'}
+                    </p>
+                  </div>
+                </div>
 
-            {qrLoading ? (
-              <p className="text-sm text-text-500">Chargement du QR…</p>
-            ) : qrData?.connected ? (
-              <p className="text-sm text-emerald-400">{qrData.message || 'WhatsApp connecté.'}</p>
-            ) : (
-              <div className="space-y-3">
-                {qrData?.base64 && (
-                  <img
-                    src={qrImageSrc(qrData.base64)}
-                    alt="QR WhatsApp"
-                    className="max-w-[220px] rounded-lg border border-white/10 bg-white p-2"
-                  />
+                {connected && (
+                  <div className="mt-5 border-t border-white/10 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs text-text-500">
+                        Pour utiliser un autre numéro, déconnecte celui-ci puis scanne un nouveau QR.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleDisconnect}
+                        disabled={disconnecting}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+                      >
+                        <Unplug className="h-4 w-4" />
+                        {disconnecting ? 'Déconnexion…' : 'Déconnecter'}
+                      </button>
+                    </div>
+                  </div>
                 )}
-                {qrData?.pairingCode && (
-                  <p className="font-mono text-sm text-text-200">Code : {qrData.pairingCode}</p>
-                )}
-                {qrData?.message && <p className="text-xs text-text-500">{qrData.message}</p>}
               </div>
-            )}
 
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                onClick={() => void loadQr()}
-                className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-text-300 hover:bg-bg-200"
-              >
-                Actualiser QR
-              </button>
-              <button
-                type="button"
-                onClick={() => void rebootEvolutionInstance().then(() => loadQr())}
-                className="rounded-lg border border-white/10 px-3 py-1.5 text-sm text-text-300 hover:bg-bg-200"
-              >
-                Redémarrer instance
-              </button>
+              {/* Panneau QR quand non connecté */}
+              {!connected && (
+                <div className="panel p-5">
+                  <div className="flex flex-col items-center text-center">
+                    {qrLoading && !qrData ? (
+                      <div className="flex h-[240px] w-[240px] items-center justify-center rounded-2xl border border-white/10 bg-bg-0">
+                        <RefreshCw className="h-6 w-6 animate-spin text-text-500" />
+                      </div>
+                    ) : qrData?.base64 ? (
+                      <img
+                        src={qrImageSrc(qrData.base64)}
+                        alt="QR WhatsApp"
+                        className="h-[240px] w-[240px] rounded-2xl border-4 border-white bg-white object-contain p-1 shadow-lg"
+                      />
+                    ) : (
+                      <div className="flex h-[240px] w-[240px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/15 bg-bg-0 text-text-500">
+                        <QrCode className="h-8 w-8" />
+                        <span className="text-xs">QR indisponible</span>
+                      </div>
+                    )}
+
+                    {qrData?.pairingCode && (
+                      <p className="mt-4 font-mono text-lg tracking-widest text-text-100">
+                        {qrData.pairingCode}
+                      </p>
+                    )}
+
+                    <div className="mt-4 max-w-sm text-xs leading-relaxed text-text-400">
+                      Ouvre <strong className="text-text-200">WhatsApp</strong> →{' '}
+                      <strong className="text-text-200">Appareils connectés</strong> →{' '}
+                      <strong className="text-text-200">Lier un appareil</strong>, puis scanne ce
+                      code.
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void loadQr()}
+                      disabled={qrLoading}
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-4 py-2 text-sm text-text-300 transition hover:bg-bg-200 disabled:opacity-50"
+                    >
+                      <RefreshCw className={cn('h-4 w-4', qrLoading && 'animate-spin')} />
+                      Actualiser le QR
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
+          ) : (
+            <div className="panel p-6">
+              <div className="mb-5 flex items-center gap-2">
+                <Store className="h-4 w-4 text-brand" />
+                <h2 className="text-sm font-semibold text-text-100">Profil business</h2>
+              </div>
+              <p className="-mt-2 mb-5 text-xs text-text-400">
+                Ces informations aident l’agent à personnaliser tes messages.
+              </p>
 
-            <div className="mt-6 border-t border-white/10 pt-4">
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-text-300">
-                <input
-                  type="checkbox"
-                  checked={autoReply}
-                  onChange={(e) => {
-                    setAutoReplyLocal(e.target.checked);
-                    void setAutoReply(e.target.checked);
+              <div className="space-y-4">
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-text-400">Ton nom</label>
+                  <input
+                    value={ownerName}
+                    onChange={(e) => setOwnerName(e.target.value)}
+                    placeholder="Ex. Awa"
+                    className="w-full rounded-xl border border-white/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-text-400">Offre</label>
+                  <textarea
+                    value={offer}
+                    onChange={(e) => setOffer(e.target.value)}
+                    rows={3}
+                    placeholder="Ex. Formation en marketing digital, coaching 1-1…"
+                    className="w-full resize-none rounded-xl border border-white/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                  />
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-text-400">
+                    Prix <span className="text-text-500">(optionnel)</span>
+                  </label>
+                  <input
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    placeholder="Ex. 25 000 FCFA"
+                    className="w-full rounded-xl border border-white/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                  />
+                </div>
+                <button
+                  type="button"
+                  disabled={savingBusiness}
+                  onClick={async () => {
+                    setSavingBusiness(true);
+                    try {
+                      await saveBusinessProfile({ ownerName, offer, price });
+                      setBusinessFb('Profil enregistré.');
+                    } catch (err) {
+                      setBusinessFb(err instanceof Error ? err.message : 'Erreur');
+                    } finally {
+                      setSavingBusiness(false);
+                    }
                   }}
-                  className="rounded border-white/20"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
+                >
+                  <CheckCircle2 className="h-4 w-4" />
+                  {savingBusiness ? 'Enregistrement…' : 'Enregistrer'}
+                </button>
+                <Feedback
+                  text={businessFb}
+                  type={businessFb.includes('Erreur') ? 'err' : 'ok'}
                 />
-                Réponses automatiques WhatsApp
-              </label>
+              </div>
             </div>
-
-          </section>
-        ) : (
-          <section className="space-y-4 rounded-2xl border border-white/10 bg-bg-100 p-5">
-            <h2 className="text-sm font-medium text-text-200">Profil business</h2>
-            <p className="text-xs text-text-500">
-              Ces informations sont utilisées par l&apos;agent pour personnaliser vos messages.
-            </p>
-            <div>
-              <label className="mb-1 block text-xs text-text-500">Votre nom</label>
-              <input
-                value={ownerName}
-                onChange={(e) => setOwnerName(e.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-bg-0 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-text-500">Offre</label>
-              <textarea
-                value={offer}
-                onChange={(e) => setOffer(e.target.value)}
-                rows={2}
-                className="w-full resize-none rounded-xl border border-white/10 bg-bg-0 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs text-text-500">Prix (optionnel)</label>
-              <input
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-bg-0 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
-              />
-            </div>
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  await saveBusinessProfile({
-                    ownerName,
-                    offer,
-                    price,
-                  });
-                  setBusinessFb('Profil enregistré.');
-                } catch (err) {
-                  setBusinessFb(err instanceof Error ? err.message : 'Erreur');
-                }
-              }}
-              className="rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark"
-            >
-              Enregistrer
-            </button>
-            <Feedback text={businessFb} type={businessFb.includes('Erreur') ? 'err' : 'ok'} />
-          </section>
-        )}
+          )}
+        </div>
       </div>
     </div>
   );

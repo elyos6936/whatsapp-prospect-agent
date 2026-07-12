@@ -118,6 +118,58 @@ body {
   animation: shimmer 1.4s ease-in-out infinite;
 }
 
+/* ── Surfaces & polish ─────────────────────────────────────────── */
+/* Carte avec léger dégradé + filet lumineux en haut (élévation par la couleur, pas par l'ombre). */
+.panel {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 40%),
+    var(--bg-100);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+}
+.panel-inset {
+  background: var(--bg-0);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 12px;
+}
+
+/* Halo atmosphérique de marque (à poser en fond, sans gêner la lisibilité). */
+.brand-radial {
+  background:
+    radial-gradient(60% 60% at 50% 0%, rgba(47, 107, 255, 0.14) 0%, rgba(47, 107, 255, 0) 70%);
+}
+
+/* Point de statut avec pulsation douce. */
+.status-dot {
+  position: relative;
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+}
+.status-dot::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  border-radius: 999px;
+  background: inherit;
+  opacity: 0.4;
+  animation: statusPulse 1.8s var(--ease-silk) infinite;
+}
+@keyframes statusPulse {
+  0% { transform: scale(1); opacity: 0.45; }
+  70% { transform: scale(2.2); opacity: 0; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* Petite entrée en fondu+montée, réutilisable pour les bulles de chat. */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-rise-in {
+  animation: riseIn 0.28s var(--ease-silk) both;
+}
+
 .prose-klanvio {
   min-width: 0;
   max-width: 100%;

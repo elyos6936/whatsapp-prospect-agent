@@ -2493,6 +2493,16 @@ export async function restartInstance(userId: number): Promise<unknown> {
   return evolutionFetch(creds, `/instance/restart/${creds.instanceName}`, { method: "POST" });
 }
 
+/**
+ * Déconnecte le téléphone lié (logout Baileys). Après ça, un nouveau QR peut
+ * être généré pour connecter un autre numéro. N'efface pas l'instance elle-même.
+ */
+export async function logoutInstance(userId: number): Promise<unknown> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  return evolutionFetch(creds, `/instance/logout/${creds.instanceName}`, { method: "DELETE" });
+}
+
 export async function setEvolutionWebhook(userId: number, webhookUrl: string): Promise<unknown> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");

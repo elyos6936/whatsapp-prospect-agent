@@ -20,6 +20,7 @@ import {
   listWhatsAppGroups,
   markChatRead,
   restartInstance,
+  logoutInstance,
   sendWhatsAppMessage,
   sendWhatsAppTextStatus,
   testEvolutionConnection,
@@ -286,6 +287,17 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
     const userId = requireUserId(request);
     try {
       const result = await restartInstance(userId);
+      return { ok: true, result };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return reply.status(400).send({ error: msg });
+    }
+  });
+
+  app.post("/api/evolution/instance/logout", async (request, reply) => {
+    const userId = requireUserId(request);
+    try {
+      const result = await logoutInstance(userId);
       return { ok: true, result };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

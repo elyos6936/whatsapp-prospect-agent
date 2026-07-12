@@ -264,6 +264,10 @@ export async function rebootEvolutionInstance(): Promise<{ message: string }> {
   return request('/api/evolution/instance/restart', { method: 'POST' });
 }
 
+export async function disconnectWhatsApp(): Promise<{ ok: boolean }> {
+  return request('/api/evolution/instance/logout', { method: 'POST' });
+}
+
 export async function evolutionApi<T>(path: string, init?: RequestInit): Promise<T> {
   return request<T>(path, init);
 }
