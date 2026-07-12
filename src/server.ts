@@ -1,3 +1,4 @@
+import { config } from "./config.js";
 import Fastify from "fastify";
 import fastifyCors from "@fastify/cors";
 import fastifyStatic from "@fastify/static";
@@ -5,7 +6,6 @@ import path from "node:path";
 import fs from "node:fs";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
-import { config } from "./config.js";
 import {
   clearAgentConversation,
   cancelPendingSendQueue,
@@ -405,6 +405,7 @@ await registerFeatureRoutes(app);
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   console.log(`\n🚀 WhatsApp Agent : http://localhost:${config.port}`);
+  console.log(`🕐 Fuseau horaire : ${config.timezone} (process.env.TZ=${process.env.TZ})`);
   console.log(`   Ouvrez l'app → Connexions → configurez OpenAI + Evolution API\n`);
   startNotificationPoller(3000);
   startScheduler(5000);

@@ -13,7 +13,11 @@ import { matchesAnyTriggerPhrase } from "./phrase-matching.js";
 const OUTBOUND_TARGET_STATUSES = new Set(["pending", "contacted", "replied", "interested"]);
 
 function isOutboundCampaign(auto: Automation): boolean {
-  return auto.type === "group_prospect" || auto.config.mode === "outbound_prospect";
+  return (
+    auto.type === "group_prospect" ||
+    auto.type === "contact_prospect" ||
+    auto.config.mode === "outbound_prospect"
+  );
 }
 
 function isInboundClosingCampaign(auto: Automation): boolean {

@@ -1501,13 +1501,15 @@ export async function findMatchingKeywordAutomations(userId: number, text: strin
   });
 }
 
-/** Calcule la prochaine date d'exécution d'une relance (jours + heure optionnelle). */
+/** Calcule la prochaine date d'exécution d'une relance (jours + heure locale APP_TIMEZONE). */
 export function computeSequenceNextAt(delayDays: number, sendHour?: number): Date {
-  const nextAt = new Date();
+  const now = new Date();
+  const nextAt = new Date(now);
   nextAt.setDate(nextAt.getDate() + delayDays);
   if (typeof sendHour === "number" && sendHour >= 0 && sendHour <= 23) {
     nextAt.setHours(sendHour, 0, 0, 0);
-    if (nextAt <= new Date()) {
+    // Si l'heure cible est déjà passée aujourd'hui, décaler au lendemain.
+    if (nextAt <= now) {
       nextAt.setDate(nextAt.getDate() + 1);
     }
   }

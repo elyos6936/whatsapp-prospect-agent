@@ -25,6 +25,7 @@ import {
   updateAutomationStats,
   updateAutomationTarget,
   getContact,
+  getContactChatHistory,
   findProspectPhoneForLidReply,
   findUnansweredInboundMessages,
   hasOutboundReplyAfter,
@@ -54,7 +55,8 @@ import {
   isStopRequest,
   nowFr,
 } from "./whatsapp-reply.js";
-import { shouldStopConversation, stopReasonLabel } from "./stop-policy.js";
+import { shouldStopConversation, stopReasonLabel, getStopFarewellReply } from "./stop-policy.js";
+import type { Automation } from "./db.js";
 
 function extractEvolutionInboundText(message: unknown): string | null {
   if (!message || typeof message !== "object") return null;
@@ -579,12 +581,15 @@ async function recordAutomationEngagement(
   interested: boolean
 ): Promise<void> {
   const followups = (await listActiveAutomations(userId)).filter(
-    (a) => a.type === "group_prospect" || a.type === "custom_followup"
+    (a) =>
+      a.type === "group_prospect" ||
+      a.type === "contact_prospect" ||
+      a.type === "custom_followup"
   );
   for (const auto of followups) {
     const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
     const target = findAutomationTarget(targets, chatId);
-    if (auto.type === "group_prospect" && !target) continue;
+    if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
     if (target) {
       await updateAutomationTarget(userId, auto.id, target.target_id, {
         status: interested ? "interested" : "replied",
@@ -597,12 +602,44 @@ async function recordAutomationEngagement(
   void text;
 }
 
+function buildActiveCampaignContext(auto: Automation): string {
+  const cfg = auto.config;
+  const goalLabels: Record<string, string> = {
+    payment: "obtenir le paiement",
+    delivery: "organiser la livraison",
+    link: "envoyer un lien",
+    appointment: "fixer un rendez-vous",
+  };
+  const goal = cfg.closingGoal ? goalLabels[cfg.closingGoal] ?? cfg.closingGoal : "engager le prospect vers une action concrète";
+
+  const lines = [
+    `=== CAMPAGNE ACTIVE : « ${auto.name} » (#${auto.id}) ===`,
+    `Type : ${auto.type}`,
+    `Objectif de la campagne : ${goal}`,
+    cfg.initialMessage ? `Premier message déjà envoyé au prospect : « ${cfg.initialMessage} »` : "",
+    cfg.conversationGuide
+      ? `TON & APPROCHE (suis à la lettre, c'est le cœur de la campagne) :\n${cfg.conversationGuide}`
+      : "",
+    cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
+    cfg.price ? `Prix : ${cfg.price}` : "",
+    cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
+    `RÈGLES DE RÉPONSE : messages COURTS (1-2 phrases max), ton WhatsApp naturel, va droit au but selon l'objectif. Ne re-pitche pas. Ne te re-présente pas.`,
+  ].filter(Boolean);
+  return lines.join("\n");
+}
+
 async function buildAutomationContext(
   userId: number,
   text: string,
-  chatId: string
+  chatId: string,
+  activeCampaign?: Automation
 ): Promise<string | undefined> {
   const parts: string[] = [];
+
+  if (activeCampaign) {
+    parts.push(buildActiveCampaignContext(activeCampaign));
+  }
+
   const memory = await getMemoryContextBlock(userId, chatId);
   if (memory) parts.push(memory);
 
@@ -613,6 +650,7 @@ async function buildAutomationContext(
 
   const keywordAutos = await findMatchingKeywordAutomations(userId, text);
   for (const auto of keywordAutos) {
+    if (activeCampaign && auto.id === activeCampaign.id) continue;
     const lines = [
       `Automatisation « ${auto.name} » (vente sur mots-clés)`,
       auto.config.productName ? `Produit : ${auto.config.productName}` : "",
@@ -629,17 +667,20 @@ async function buildAutomationContext(
     });
   }
 
-  const followups = (await listActiveAutomations(userId)).filter(
-    (a) => a.type === "group_prospect" || a.type === "custom_followup"
-  );
-  for (const auto of followups) {
-    const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
-    const target = findAutomationTarget(targets, chatId);
-    if (auto.type === "group_prospect" && !target) continue;
-    if (auto.config.conversationGuide) {
-      parts.push(
-        `Automatisation « ${auto.name} » (${auto.type}) — consignes : ${auto.config.conversationGuide}`
-      );
+  if (!activeCampaign) {
+    const followups = (await listActiveAutomations(userId)).filter(
+      (a) =>
+        a.type === "group_prospect" ||
+        a.type === "contact_prospect" ||
+        a.type === "custom_followup"
+    );
+    for (const auto of followups) {
+      const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
+      const target = findAutomationTarget(targets, chatId);
+      if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
+      if (auto.config.conversationGuide) {
+        parts.push(buildActiveCampaignContext(auto));
+      }
     }
   }
 
@@ -720,6 +761,7 @@ async function runAutoReply(
         "Merci pour votre message ! Pour que je puisse vous répondre précisément, pourriez-vous m'écrire votre question en texte ? 🙂";
     } else {
       const settings = await getAppSettings(userId);
+      const history = await getContactChatHistory(userId, chatId, 20);
       const stopReason = shouldStopConversation(
         text,
         {
@@ -727,10 +769,12 @@ async function runAutoReply(
           price: settings.business_price,
           ownerName: settings.business_owner_name,
         },
-        activeCampaign?.config
+        activeCampaign?.config,
+        history
       );
 
       if (stopReason && activeCampaign) {
+        reply = getStopFarewellReply(stopReason);
         await blockContact(userId, chatId);
         await setContactAutoReply(userId, chatId, false);
         const targets = await listAutomationTargets(userId, activeCampaign.id, { limit: 500 });
@@ -746,9 +790,15 @@ async function runAutoReply(
         await saveAgentMessage(
           userId,
           "assistant",
-          `⚠️ Conversation arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(stopReason)}. Campagne « ${activeCampaign.name} » (#${activeCampaign.id}).`
+          `⚠️ Prospection arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(stopReason)}. Campagne « ${activeCampaign.name} » (#${activeCampaign.id}). Relances annulées.`
         );
-        console.log(`🛑 Conversation arrêtée — ${stopReasonLabel(stopReason)} (${senderName})`);
+        console.log(`🛑 Prospection arrêtée — ${stopReasonLabel(stopReason)} (${senderName})`);
+
+        const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+          enableAutoReply: false,
+          countsTowardQuota: false,
+        });
+        console.log(`✅ Clôture envoyée → ${senderName} à ${nowFr()} (${sent.idMessage})`);
         return;
       }
 
@@ -756,7 +806,7 @@ async function runAutoReply(
       await recordAutomationEngagement(userId, chatId, text, scoring.interested);
       void refreshContactMemory(userId, chatId).catch(() => {});
 
-      const automationContext = await buildAutomationContext(userId, text, chatId);
+      const automationContext = await buildAutomationContext(userId, text, chatId, activeCampaign);
       const handoff = await maybeCreateHandoff(userId, {
         chatId,
         senderName,
