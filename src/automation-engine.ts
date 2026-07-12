@@ -28,6 +28,8 @@ import {
 import { generatePersonalizedOpener } from "./prospect-personalizer.js";
 import { startSequenceForContact } from "./sequences.js";
 import { listActiveUserIds } from "./users.js";
+import { getActiveCampaignTargetIds } from "./campaign-gating.js";
+import { chatIdsMatch } from "./evolutionapi.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -128,13 +130,27 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       autoReply: auto.config.enableAutoReply !== false,
     });
 
-    if (auto.config.sequenceSteps?.length) {
-      await startSequenceForContact(userId, {
-        contactPhone: target.target_id,
-        name: `Séquence — ${auto.name}`,
-        steps: auto.config.sequenceSteps as import("./db.js").SequenceStep[],
-        automationId: auto.id,
-      });
+    if (auto.config.sequenceSteps?.length || auto.config.relance?.enabled) {
+      const relance = auto.config.relance;
+      const steps =
+        relance?.enabled && relance.delaysDays?.length
+          ? relance.delaysDays.map((delayDays, i) => ({
+              delayDays,
+              message:
+                relance.messages?.[i] ??
+                auto.config.followUpInstructions ??
+                "Bonjour, je me permets de revenir vers vous 🙂",
+              condition: "no_reply" as const,
+            }))
+          : (auto.config.sequenceSteps as import("./db.js").SequenceStep[]);
+      if (steps?.length) {
+        await startSequenceForContact(userId, {
+          contactPhone: target.target_id,
+          name: `Séquence — ${auto.name}`,
+          steps,
+          automationId: auto.id,
+        });
+      }
     }
 
     await updateAutomationTarget(userId, auto.id, target.target_id, { status: "contacted" });
@@ -293,7 +309,17 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
     })
   );
 
-  const participants = eligible.filter((p) => !p.blocked).slice(0, maxMembers);
+  const alreadyEnrolled = await getActiveCampaignTargetIds(userId, automationId);
+
+  const participants = eligible
+    .filter((p) => {
+      if (p.blocked) return false;
+      for (const tid of alreadyEnrolled) {
+        if (chatIdsMatch(tid, p.id) || chatIdsMatch(tid, p.rawId)) return false;
+      }
+      return true;
+    })
+    .slice(0, maxMembers);
 
   if (!group.participants.length) {
     await failAutomationNoTargets(

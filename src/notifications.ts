@@ -14,7 +14,6 @@ import {
   saveWhatsAppMessage,
   whatsAppMessageExists,
   isAutoReplyEnabled,
-  shouldAutoReplyContact,
   isContactBlocked,
   blockContact,
   touchIncomingContact,
@@ -30,12 +29,17 @@ import {
   findUnansweredInboundMessages,
   hasOutboundReplyAfter,
   setContactWhatsappLid,
+  saveAgentMessage,
+  setContactAutoReply,
+  incrementAutoStopped,
+  cancelSequencesForContact,
 } from "./db.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
 import { scoreIncomingMessage } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
+import { passesReplyGate } from "./campaign-gating.js";
 import {
   detectInboundMedia,
   describeInboundMedia,
@@ -50,6 +54,7 @@ import {
   isStopRequest,
   nowFr,
 } from "./whatsapp-reply.js";
+import { shouldStopConversation, stopReasonLabel } from "./stop-policy.js";
 
 function extractEvolutionInboundText(message: unknown): string | null {
   if (!message || typeof message !== "object") return null;
@@ -674,13 +679,18 @@ async function runAutoReply(
   senderName: string,
   text: string
 ): Promise<void> {
-  if (!(await shouldAutoReplyContact(userId, chatId))) {
-    const reason = (await isContactBlocked(userId, chatId))
-      ? "STOP"
-      : !(await isAutoReplyEnabled(userId))
-        ? "auto globale OFF"
-        : "auto contact OFF";
-    console.log(`📩 ${senderName} (pas de réponse — ${reason}): ${text.slice(0, 40)}`);
+  if (!(await isAutoReplyEnabled(userId))) {
+    console.log(`📩 ${senderName} (pas de réponse — auto globale OFF): ${text.slice(0, 40)}`);
+    return;
+  }
+  if (await isContactBlocked(userId, chatId)) {
+    console.log(`📩 ${senderName} (pas de réponse — STOP): ${text.slice(0, 40)}`);
+    return;
+  }
+
+  const gate = await passesReplyGate(userId, chatId, text);
+  if (!gate.allow) {
+    console.log(`📩 ${senderName} (pas de réponse — ${gate.reason}): ${text.slice(0, 40)}`);
     return;
   }
 
@@ -689,16 +699,59 @@ async function runAutoReply(
     return;
   }
 
+  const activeCampaign = gate.outboundCampaign ?? gate.inboundCampaign;
+
   try {
     let reply: string;
 
     if (isStopRequest(text)) {
       reply = getStopConfirmationReply();
       await blockContact(userId, chatId);
+      if (activeCampaign) {
+        const targets = await listAutomationTargets(userId, activeCampaign.id, { limit: 500 });
+        const target = findAutomationTarget(targets, chatId);
+        if (target) {
+          await updateAutomationTarget(userId, activeCampaign.id, target.target_id, { status: "stopped" });
+        }
+        await cancelSequencesForContact(userId, chatId);
+      }
     } else if (text.startsWith("[") && text.includes("reçu")) {
       reply =
         "Merci pour votre message ! Pour que je puisse vous répondre précisément, pourriez-vous m'écrire votre question en texte ? 🙂";
     } else {
+      const settings = await getAppSettings(userId);
+      const stopReason = shouldStopConversation(
+        text,
+        {
+          offer: settings.business_offer,
+          price: settings.business_price,
+          ownerName: settings.business_owner_name,
+        },
+        activeCampaign?.config
+      );
+
+      if (stopReason && activeCampaign) {
+        await blockContact(userId, chatId);
+        await setContactAutoReply(userId, chatId, false);
+        const targets = await listAutomationTargets(userId, activeCampaign.id, { limit: 500 });
+        const target = findAutomationTarget(targets, chatId);
+        if (target) {
+          await updateAutomationTarget(userId, activeCampaign.id, target.target_id, {
+            status: "stopped",
+            notes: stopReasonLabel(stopReason),
+          });
+        }
+        await cancelSequencesForContact(userId, chatId);
+        await incrementAutoStopped(userId, activeCampaign.id);
+        await saveAgentMessage(
+          userId,
+          "assistant",
+          `⚠️ Conversation arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(stopReason)}. Campagne « ${activeCampaign.name} » (#${activeCampaign.id}).`
+        );
+        console.log(`🛑 Conversation arrêtée — ${stopReasonLabel(stopReason)} (${senderName})`);
+        return;
+      }
+
       const scoring = await scoreIncomingMessage(userId, text, chatId);
       await recordAutomationEngagement(userId, chatId, text, scoring.interested);
       void refreshContactMemory(userId, chatId).catch(() => {});
@@ -844,7 +897,8 @@ async function reprocessPendingAutoRepliesForUser(userId: number): Promise<numbe
       await setContactWhatsappLid(userId, resolved, lid);
     }
 
-    if (!(await shouldAutoReplyContact(userId, chatId))) continue;
+    const gate = await passesReplyGate(userId, chatId, msg.body);
+    if (!gate.allow) continue;
     if (await hasOutboundReplyAfter(userId, msg.id, chatId, msg.contact_phone)) continue;
     if (!isAutoReplyEligible(msg.body, chatId)) continue;
 

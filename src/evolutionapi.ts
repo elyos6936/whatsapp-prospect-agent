@@ -1606,11 +1606,14 @@ export async function getLastIncomingMessages(userId: number): Promise<LastIncom
       const r = row as Record<string, unknown>;
       const key = r.key as {
         id?: string;
+        fromMe?: boolean;
         remoteJid?: string;
         participant?: string;
         senderPn?: string;
         remoteJidAlt?: string;
       } | undefined;
+      // Evolution findMessages(where:{fromMe:false}) est peu fiable — re-filtrer côté serveur.
+      if (key?.fromMe) continue;
       const remoteJid = key?.remoteJid ?? "";
       if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid.includes("@broadcast")) continue;
 

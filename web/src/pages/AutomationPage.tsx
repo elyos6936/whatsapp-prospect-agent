@@ -23,6 +23,7 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 const STATUS_LABELS: Record<string, string> = {
+  draft: 'Brouillon',
   active: 'Active',
   paused: 'En pause',
   completed: 'Terminée',
@@ -220,6 +221,7 @@ export function AutomationPage() {
                         className={cn(
                           'rounded-full px-2 py-0.5 text-xs',
                           auto.status === 'active' && 'bg-emerald-500/20 text-emerald-400',
+                          auto.status === 'draft' && 'bg-blue-500/20 text-blue-400',
                           auto.status === 'paused' && 'bg-amber-500/20 text-amber-400',
                           auto.status === 'failed' && 'bg-red-500/20 text-red-400',
                           auto.status === 'completed' && 'bg-bg-300 text-text-400',

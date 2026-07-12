@@ -85,9 +85,13 @@ import {
   scheduleMessage,
   setContactAutoReply,
   updateAutomationStatus,
+  updateAutomationConfig,
+  deleteAutomation,
+  listProspectedContacts,
   type AutomationStatus,
   type AutomationType,
   type ContactStatus,
+  type AutomationConfig,
   unblockContact,
 } from "./db.js";
 import { bootstrapGroupProspectTargets } from "./automation-engine.js";
@@ -1206,52 +1210,80 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "create_automation",
       description:
-        "Crée une automatisation WhatsApp active (visible sur la page Automatisation). Utiliser quand l'utilisateur décrit un workflow récurrent : prospecter un groupe, vendre un produit sur mots-clés, etc. L'automatisation démarre immédiatement.",
+        "Crée une campagne WhatsApp en BROUILLON (draft) — visible sur Automatisation mais PAS active. Utiliser pour prospection groupe ou closing e-commerce. L'activation se fait via activate_automation après simulation validée et confirmation utilisateur.",
       parameters: {
         type: "object",
         properties: {
-          name: { type: "string", description: "Nom court de l'automatisation" },
+          name: { type: "string", description: "Nom court de la campagne" },
           type: {
             type: "string",
             enum: ["group_prospect", "keyword_sales", "custom_followup"],
             description:
-              "group_prospect = DM chaque membre d'un groupe ; keyword_sales = répondre/vendre quand un mot-clé est détecté ; custom_followup = suivi personnalisé",
+              "group_prospect = prospection sortante groupe ; keyword_sales = closing entrant sur déclencheur exact",
           },
-          summary: { type: "string", description: "Résumé en une phrase pour l'utilisateur" },
+          summary: { type: "string", description: "Résumé en une phrase" },
           group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom)" },
           initial_message: { type: "string", description: "Premier message pour group_prospect" },
           max_members: { type: "number", description: "Limite de membres (défaut 30)" },
           enable_auto_reply: {
             type: "boolean",
-            description: "Activer les réponses auto après le premier message (défaut true)",
+            description: "Réponses auto pour les prospects contactés (défaut true)",
           },
           conversation_guide: {
             type: "string",
-            description: "Instructions pour guider les échanges automatiques",
+            description: "Instructions pour guider les échanges (ton, style, objectif)",
+          },
+          closing_goal: {
+            type: "string",
+            enum: ["payment", "delivery", "link", "appointment"],
+            description: "Objectif final pour inbound_closing",
+          },
+          trigger_phrases: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Mots/phrases EXACTS déclencheurs pour keyword_sales (ex. « je suis intéressé par ce produit »)",
           },
           keywords: {
             type: "array",
             items: { type: "string" },
-            description: "Mots-clés déclencheurs pour keyword_sales (ex. commander, produit, prix)",
+            description: "Alias de trigger_phrases (rétrocompat)",
           },
-          product_name: { type: "string", description: "Nom du produit à vendre" },
+          product_name: { type: "string", description: "Nom du produit" },
           price: { type: "string", description: "Prix en FCFA" },
-          sales_script: { type: "string", description: "Script / argumentaire de vente" },
-          budget_fcfa: { type: "number", description: "Budget estimé en FCFA (optionnel)" },
-          personalize_messages: {
-            type: "boolean",
-            description: "Personnaliser chaque message avec l'IA selon le nom du membre (group_prospect)",
+          sales_script: { type: "string", description: "Script / argumentaire" },
+          relance_enabled: { type: "boolean", description: "Activer les relances si pas de réponse" },
+          relance_delays_days: {
+            type: "array",
+            items: { type: "number" },
+            description: "Délais de relance en jours (ex. [1, 2] = J+1 puis J+2)",
           },
+          relance_hour: {
+            type: "number",
+            description: "Heure d'envoi des relances (0-23, ex. 8 pour 8h)",
+          },
+          relance_messages: {
+            type: "array",
+            items: { type: "string" },
+            description: "Textes des relances (un par délai)",
+          },
+          stop_on_dissatisfaction: {
+            type: "boolean",
+            description: "Arrêter si mécontentement (défaut true)",
+          },
+          stop_on_unknown_question: {
+            type: "boolean",
+            description: "Arrêter si question sans réponse (défaut true)",
+          },
+          budget_fcfa: { type: "number", description: "Budget estimé FCFA (optionnel)" },
+          personalize_messages: { type: "boolean", description: "Personnaliser chaque DM (group_prospect)" },
           ab_variants: {
             type: "array",
             items: {
               type: "object",
-              properties: {
-                id: { type: "string" },
-                message: { type: "string" },
-              },
+              properties: { id: { type: "string" }, message: { type: "string" } },
             },
-            description: "Variantes A/B pour tester plusieurs accroches",
+            description: "Variantes A/B",
           },
           sequence_steps: {
             type: "array",
@@ -1263,9 +1295,9 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
                 condition: { type: "string", enum: ["no_reply", "always"] },
               },
             },
-            description: "Relances multi-étapes après le premier message",
+            description: "Relances (alternative à relance_*)",
           },
-          media_url: { type: "string", description: "URL image/document/audio à envoyer" },
+          media_url: { type: "string" },
           media_type: { type: "string", enum: ["image", "document", "audio"] },
         },
         required: ["name", "type"],
@@ -1283,7 +1315,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         properties: {
           status: {
             type: "string",
-            enum: ["active", "paused", "completed", "failed"],
+            enum: ["draft", "active", "paused", "completed", "failed"],
             description: "Filtrer par statut (optionnel)",
           },
         },
@@ -1302,6 +1334,79 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           automation_id: { type: "number", description: "ID de l'automatisation" },
         },
         required: ["automation_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "activate_automation",
+      description:
+        "Active une campagne en brouillon (draft) après confirmation utilisateur. Pour group_prospect : charge les membres et démarre l'envoi. Pour keyword_sales : commence à écouter les déclencheurs.",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: { type: "number", description: "ID de la campagne à activer" },
+        },
+        required: ["automation_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "update_automation_config",
+      description: "Modifie la configuration d'une campagne (brouillon ou active).",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: { type: "number" },
+          initial_message: { type: "string" },
+          conversation_guide: { type: "string" },
+          trigger_phrases: { type: "array", items: { type: "string" } },
+          product_name: { type: "string" },
+          price: { type: "string" },
+          sales_script: { type: "string" },
+          closing_goal: { type: "string", enum: ["payment", "delivery", "link", "appointment"] },
+          relance_enabled: { type: "boolean" },
+          relance_delays_days: { type: "array", items: { type: "number" } },
+          relance_hour: { type: "number" },
+          relance_messages: { type: "array", items: { type: "string" } },
+          max_members: { type: "number" },
+        },
+        required: ["automation_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_automation",
+      description: "Supprime une campagne et toutes ses données (cibles, logs, relances en attente).",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: { type: "number" },
+        },
+        required: ["automation_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_prospected_contacts",
+      description: "Liste les personnes déjà contactées par une ou toutes les campagnes de prospection.",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: { type: "number", description: "Filtrer par campagne (optionnel)" },
+          limit: { type: "number", description: "Max résultats (défaut 200)" },
+        },
         additionalProperties: false,
       },
     },
@@ -1400,6 +1505,10 @@ const LOCAL_TOOLS = new Set([
   "list_automations",
   "get_automation_report",
   "set_automation_status",
+  "activate_automation",
+  "update_automation_config",
+  "delete_automation",
+  "list_prospected_contacts",
   "create_group_rule",
 ]);
 
@@ -1442,6 +1551,74 @@ async function resolveGroupId(userId: number, groupIdOrName: string): Promise<st
 
 function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+}
+
+function buildAutomationConfigFromArgs(
+  args: Record<string, unknown>,
+  type: AutomationType
+): AutomationConfig {
+  const triggerPhrases = Array.isArray(args.trigger_phrases)
+    ? args.trigger_phrases.map(String).filter(Boolean)
+    : Array.isArray(args.keywords)
+      ? args.keywords.map(String).filter(Boolean)
+      : undefined;
+
+  const relanceEnabled = args.relance_enabled === true;
+  const relanceDelays = Array.isArray(args.relance_delays_days)
+    ? args.relance_delays_days.map((d) => Number(d)).filter((n) => Number.isFinite(n) && n > 0)
+    : [];
+
+  const config: AutomationConfig = {
+    mode: type === "group_prospect" ? "outbound_prospect" : type === "keyword_sales" ? "inbound_closing" : undefined,
+    initialMessage: args.initial_message ? String(args.initial_message) : undefined,
+    maxMembers: args.max_members ? Number(args.max_members) : 30,
+    enableAutoReply: args.enable_auto_reply !== false,
+    conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
+    triggerPhrases,
+    keywords: triggerPhrases,
+    productName: args.product_name ? String(args.product_name) : undefined,
+    price: args.price ? String(args.price) : undefined,
+    salesScript: args.sales_script ? String(args.sales_script) : undefined,
+    closingGoal: args.closing_goal
+      ? (String(args.closing_goal) as AutomationConfig["closingGoal"])
+      : undefined,
+    stopOnDissatisfaction: args.stop_on_dissatisfaction !== false,
+    stopOnUnknownQuestion: args.stop_on_unknown_question !== false,
+    personalizeMessages: args.personalize_messages === true,
+    abVariants: Array.isArray(args.ab_variants)
+      ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
+          id: v.id || `v${i + 1}`,
+          message: String(v.message ?? ""),
+        }))
+      : undefined,
+    sequenceSteps: Array.isArray(args.sequence_steps)
+      ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>).map(
+          (s) => ({
+            delayDays: Number(s.delayDays ?? 1),
+            message: String(s.message ?? ""),
+            condition: (s.condition as "no_reply" | "always") || "no_reply",
+          })
+        )
+      : undefined,
+    mediaUrl: args.media_url ? String(args.media_url) : undefined,
+    mediaType: args.media_type ? (String(args.media_type) as "image" | "document" | "audio") : undefined,
+  };
+
+  if (relanceEnabled && relanceDelays.length) {
+    config.relance = {
+      enabled: true,
+      delaysDays: relanceDelays,
+      hour:
+        args.relance_hour != null && Number.isFinite(Number(args.relance_hour))
+          ? Number(args.relance_hour)
+          : undefined,
+      messages: Array.isArray(args.relance_messages)
+        ? args.relance_messages.map(String).filter(Boolean)
+        : undefined,
+    };
+  }
+
+  return config;
 }
 
 function formatContact(c: {
@@ -2826,34 +3003,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
         return JSON.stringify({ error: "type invalide." });
       }
 
-      const config: Record<string, unknown> = {
-        initialMessage: args.initial_message ? String(args.initial_message) : undefined,
-        maxMembers: args.max_members ? Number(args.max_members) : 30,
-        enableAutoReply: args.enable_auto_reply !== false,
-        conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
-        keywords: Array.isArray(args.keywords) ? args.keywords.map(String) : undefined,
-        productName: args.product_name ? String(args.product_name) : undefined,
-        price: args.price ? String(args.price) : undefined,
-        salesScript: args.sales_script ? String(args.sales_script) : undefined,
-        personalizeMessages: args.personalize_messages === true,
-        abVariants: Array.isArray(args.ab_variants)
-          ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
-              id: v.id || `v${i + 1}`,
-              message: String(v.message ?? ""),
-            }))
-          : undefined,
-        sequenceSteps: Array.isArray(args.sequence_steps)
-          ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>).map(
-              (s) => ({
-                delayDays: Number(s.delayDays ?? 1),
-                message: String(s.message ?? ""),
-                condition: (s.condition as "no_reply" | "always") || "no_reply",
-              })
-            )
-          : undefined,
-        mediaUrl: args.media_url ? String(args.media_url) : undefined,
-        mediaType: args.media_type ? (String(args.media_type) as "image" | "document" | "audio") : undefined,
-      };
+      const config = buildAutomationConfigFromArgs(args, type);
 
       if (type === "group_prospect") {
         if (!args.group_id || !args.initial_message) {
@@ -2874,48 +3024,173 @@ export async function executeTool(userId: number, name: string, args: Record<str
       }
 
       if (type === "keyword_sales") {
-        const keywords = Array.isArray(args.keywords) ? args.keywords.map(String) : [];
-        if (!keywords.length) {
-          return JSON.stringify({ error: "keyword_sales requiert au moins un mot-clé." });
-        }
-        config.keywords = keywords;
-      }
-
-      const auto = await createAutomation(userId, {
-        name: String(args.name ?? "Automatisation"),
-        type,
-        config: config as Parameters<typeof createAutomation>[1]["config"],
-        summary: args.summary ? String(args.summary) : undefined,
-        budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
-        status: "active",
-      });
-
-      let targetsAdded = 0;
-      if (type === "group_prospect" && config.groupId) {
-        try {
-          targetsAdded = await bootstrapGroupProspectTargets(userId, auto.id);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
+        const phrases = config.triggerPhrases ?? [];
+        if (!phrases.length) {
           return JSON.stringify({
-            error: `Automatisation créée (#${auto.id}) mais échec chargement membres : ${msg}`,
-            automationId: auto.id,
+            error: "keyword_sales requiert trigger_phrases (mot/phrase exact).",
           });
         }
       }
 
-      const detail = await getAutomationDetail(userId, auto.id);
+      const auto = await createAutomation(userId, {
+        name: String(args.name ?? "Campagne"),
+        type,
+        config,
+        summary: args.summary ? String(args.summary) : undefined,
+        budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
+        status: "draft",
+      });
+
       return JSON.stringify({
         success: true,
         automationId: auto.id,
         name: auto.name,
         type: auto.type,
         status: auto.status,
-        targetsAdded,
+        config: auto.config,
         summary: auto.summary,
-        stats: detail?.automation.stats,
-        message: `Automatisation « ${auto.name} » créée et active. Visible sur la page Automatisation.`,
-        pageHint: "L'utilisateur peut ouvrir Automatisation (bouton en haut) pour suivre les stats.",
+        message: `Campagne « ${auto.name} » créée en brouillon (#${auto.id}). Prochaine étape : simulation puis activate_automation après confirmation.`,
+        simulationHint:
+          "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
         completedAt: nowFr(),
+      });
+    }
+
+    case "activate_automation": {
+      const id = Number(args.automation_id);
+      if (!Number.isFinite(id)) {
+        return JSON.stringify({ error: "automation_id invalide." });
+      }
+      const detail = await getAutomationDetail(userId, id);
+      if (!detail) {
+        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+      }
+      if (detail.automation.status === "active") {
+        return JSON.stringify({ error: "Campagne déjà active.", automationId: id });
+      }
+      if (!["draft", "paused"].includes(detail.automation.status)) {
+        return JSON.stringify({
+          error: `Impossible d'activer depuis le statut « ${detail.automation.status} ».`,
+        });
+      }
+
+      const auto = detail.automation;
+      let targetsAdded = 0;
+      if (auto.type === "group_prospect") {
+        if (!auto.config.groupId || !auto.config.initialMessage) {
+          return JSON.stringify({ error: "groupId ou initialMessage manquant dans la config." });
+        }
+        try {
+          await requireEvolutionConnected(userId, "l'activation de la campagne");
+          await updateAutomationStatus(userId, id, "active");
+          targetsAdded = await bootstrapGroupProspectTargets(userId, id);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return JSON.stringify({ error: `Activation échouée : ${msg}`, automationId: id });
+        }
+      } else {
+        await updateAutomationStatus(userId, id, "active");
+      }
+
+      const fresh = await getAutomationDetail(userId, id);
+      return JSON.stringify({
+        success: true,
+        automationId: id,
+        status: "active",
+        targetsAdded,
+        stats: fresh?.automation.stats,
+        message: `Campagne #${id} « ${auto.name} » activée.${targetsAdded ? ` ${targetsAdded} membre(s) chargé(s).` : ""}`,
+        completedAt: nowFr(),
+      });
+    }
+
+    case "update_automation_config": {
+      const id = Number(args.automation_id);
+      if (!Number.isFinite(id)) {
+        return JSON.stringify({ error: "automation_id invalide." });
+      }
+      const detail = await getAutomationDetail(userId, id);
+      if (!detail) {
+        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+      }
+
+      const current = detail.automation.config;
+      const merged: AutomationConfig = { ...current };
+
+      if (args.initial_message) merged.initialMessage = String(args.initial_message);
+      if (args.conversation_guide) merged.conversationGuide = String(args.conversation_guide);
+      if (Array.isArray(args.trigger_phrases)) {
+        merged.triggerPhrases = args.trigger_phrases.map(String);
+        merged.keywords = merged.triggerPhrases;
+      }
+      if (args.product_name) merged.productName = String(args.product_name);
+      if (args.price) merged.price = String(args.price);
+      if (args.sales_script) merged.salesScript = String(args.sales_script);
+      if (args.closing_goal) {
+        merged.closingGoal = String(args.closing_goal) as AutomationConfig["closingGoal"];
+      }
+      if (args.max_members != null) merged.maxMembers = Number(args.max_members);
+
+      if (args.relance_enabled != null || args.relance_delays_days != null) {
+        const enabled = args.relance_enabled === true;
+        const delays = Array.isArray(args.relance_delays_days)
+          ? args.relance_delays_days.map((d) => Number(d))
+          : current.relance?.delaysDays ?? [];
+        merged.relance = enabled
+          ? {
+              enabled: true,
+              delaysDays: delays,
+              hour: args.relance_hour != null ? Number(args.relance_hour) : current.relance?.hour,
+              messages: Array.isArray(args.relance_messages)
+                ? args.relance_messages.map(String)
+                : current.relance?.messages,
+            }
+          : { enabled: false, delaysDays: [] };
+      }
+
+      const updated = await updateAutomationConfig(userId, id, merged);
+      return JSON.stringify({
+        success: true,
+        automationId: id,
+        config: updated?.config,
+        message: `Campagne #${id} mise à jour.`,
+      });
+    }
+
+    case "delete_automation": {
+      const id = Number(args.automation_id);
+      if (!Number.isFinite(id)) {
+        return JSON.stringify({ error: "automation_id invalide." });
+      }
+      const ok = await deleteAutomation(userId, id);
+      if (!ok) {
+        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+      }
+      return JSON.stringify({
+        success: true,
+        automationId: id,
+        message: `Campagne #${id} supprimée.`,
+      });
+    }
+
+    case "list_prospected_contacts": {
+      const automationId = args.automation_id != null ? Number(args.automation_id) : undefined;
+      const limit = args.limit != null ? Number(args.limit) : 200;
+      const contacts = await listProspectedContacts(userId, {
+        automationId: Number.isFinite(automationId) ? automationId : undefined,
+        limit,
+      });
+      return JSON.stringify({
+        count: contacts.length,
+        contacts: contacts.map((c) => ({
+          campaignId: c.automationId,
+          campaignName: c.automationName,
+          phone: c.targetId,
+          display: chatIdToDisplay(c.targetId),
+          name: c.targetLabel,
+          status: c.status,
+          lastActionAt: c.lastActionAt,
+        })),
       });
     }
 

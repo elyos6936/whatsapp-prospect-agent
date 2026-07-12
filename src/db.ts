@@ -1,6 +1,7 @@
 import { sql } from "./pg.js";
 import { config, evolutionInstanceName } from "./config.js";
 import { getUserById } from "./users.js";
+import { matchesAnyTriggerPhrase } from "./phrase-matching.js";
 
 export const DAILY_OUTBOUND_LIMIT = 30;
 export const CONTACT_STATUSES = ["nouveau", "en_conversation", "interesse", "stop"] as const;
@@ -1060,12 +1061,14 @@ export async function getDailyBilan(userId: number, date?: string): Promise<Dail
 
 export const AUTOMATION_TYPES = ["group_prospect", "keyword_sales", "custom_followup"] as const;
 export type AutomationType = (typeof AUTOMATION_TYPES)[number];
-export const AUTOMATION_STATUSES = ["active", "paused", "completed", "failed"] as const;
+export const AUTOMATION_STATUSES = ["draft", "active", "paused", "completed", "failed"] as const;
 export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
 export const TARGET_STATUSES = ["pending", "contacted", "replied", "interested", "stopped", "error"] as const;
 export type TargetStatus = (typeof TARGET_STATUSES)[number];
 
 export interface AutomationConfig {
+  mode?: "outbound_prospect" | "inbound_closing";
+  origin?: string;
   groupId?: string;
   groupName?: string;
   initialMessage?: string;
@@ -1073,10 +1076,15 @@ export interface AutomationConfig {
   enableAutoReply?: boolean;
   conversationGuide?: string;
   keywords?: string[];
+  triggerPhrases?: string[];
   productName?: string;
   price?: string;
   salesScript?: string;
   followUpInstructions?: string;
+  closingGoal?: "payment" | "delivery" | "link" | "appointment";
+  relance?: { enabled: boolean; delaysDays: number[]; hour?: number; messages?: string[] };
+  stopOnDissatisfaction?: boolean;
+  stopOnUnknownQuestion?: boolean;
   personalizeMessages?: boolean;
   abVariants?: Array<{ id: string; message: string }>;
   sequenceSteps?: Array<{ delayDays: number; message: string; condition?: string }>;
@@ -1096,9 +1104,11 @@ export interface AutomationStats {
   messagesHandled?: number;
   outboundUsed?: number;
   lastActionAt?: string;
+  lastReportDate?: string;
   report?: string;
   conversions?: number;
   revenueFcfa?: number;
+  autoStopped?: number;
   abResults?: Record<string, { sent: number; replied: number; interested: number }>;
   openAiCostEstimateFcfa?: number;
 }
@@ -1229,6 +1239,10 @@ async function recomputeAutomationStats(userId: number, automationId: number): P
     stats.outboundUsed = auto.stats.outboundUsed ?? 0;
     stats.report = auto.stats.report;
     stats.lastActionAt = auto.stats.lastActionAt;
+    stats.autoStopped = auto.stats.autoStopped;
+    stats.lastReportDate = auto.stats.lastReportDate;
+    stats.conversions = auto.stats.conversions;
+    stats.revenueFcfa = auto.stats.revenueFcfa;
   }
 
   await sql`
@@ -1469,21 +1483,106 @@ export async function updateAutomationConfig(
 }
 
 export async function findMatchingKeywordAutomations(userId: number, text: string): Promise<Automation[]> {
-  const normalized = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "");
-  const active = (await listActiveAutomations(userId)).filter((a) => a.type === "keyword_sales");
+  const active = (await listActiveAutomations(userId)).filter(
+    (a) => a.type === "keyword_sales" || a.config.mode === "inbound_closing"
+  );
   return active.filter((a) => {
-    const keywords = a.config.keywords ?? [];
-    return keywords.some((kw) => {
-      const k = kw
-        .toLowerCase()
-        .normalize("NFD")
-        .replace(/\p{M}/gu, "");
-      return k && normalized.includes(k);
-    });
+    const phrases = a.config.triggerPhrases ?? a.config.keywords ?? [];
+    return matchesAnyTriggerPhrase(text, phrases);
   });
+}
+
+/** Calcule la prochaine date d'exécution d'une relance (jours + heure optionnelle). */
+export function computeSequenceNextAt(delayDays: number, sendHour?: number): Date {
+  const nextAt = new Date();
+  nextAt.setDate(nextAt.getDate() + delayDays);
+  if (typeof sendHour === "number" && sendHour >= 0 && sendHour <= 23) {
+    nextAt.setHours(sendHour, 0, 0, 0);
+    if (nextAt <= new Date()) {
+      nextAt.setDate(nextAt.getDate() + 1);
+    }
+  }
+  return nextAt;
+}
+
+export async function getRelanceHourForAutomation(
+  userId: number,
+  automationId: number | null | undefined
+): Promise<number | undefined> {
+  if (!automationId) return undefined;
+  const auto = await getAutomation(userId, automationId);
+  return auto?.config.relance?.hour;
+}
+
+export async function incrementAutoStopped(userId: number, automationId: number): Promise<void> {
+  const auto = await getAutomation(userId, automationId);
+  if (!auto) return;
+  await updateAutomationStats(userId, automationId, {
+    autoStopped: (auto.stats.autoStopped ?? 0) + 1,
+    lastActionAt: new Date().toISOString(),
+  });
+}
+
+export async function deleteAutomation(userId: number, id: number): Promise<boolean> {
+  const auto = await getAutomation(userId, id);
+  if (!auto) return false;
+  await sql`DELETE FROM automation_logs WHERE user_id = ${userId} AND automation_id = ${id}`;
+  await sql`DELETE FROM automation_targets WHERE user_id = ${userId} AND automation_id = ${id}`;
+  await sql`
+    UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
+    WHERE user_id = ${userId} AND automation_id = ${id} AND status = 'active'
+  `;
+  await sql`
+    DELETE FROM send_queue
+    WHERE user_id = ${userId} AND automation_id = ${id} AND status = 'pending'
+  `;
+  await sql`DELETE FROM automations WHERE user_id = ${userId} AND id = ${id}`;
+  return true;
+}
+
+export async function listProspectedContacts(
+  userId: number,
+  options: { automationId?: number; limit?: number } = {}
+): Promise<
+  Array<{
+    automationId: number;
+    automationName: string;
+    targetId: string;
+    targetLabel: string | null;
+    status: TargetStatus;
+    lastActionAt: string | null;
+  }>
+> {
+  const limit = options.limit ?? 200;
+  const autos = options.automationId
+    ? [await getAutomation(userId, options.automationId)].filter(Boolean) as Automation[]
+    : await listAutomations(userId, { limit: 50 });
+
+  const out: Array<{
+    automationId: number;
+    automationName: string;
+    targetId: string;
+    targetLabel: string | null;
+    status: TargetStatus;
+    lastActionAt: string | null;
+  }> = [];
+
+  for (const auto of autos) {
+    if (!auto || auto.type !== "group_prospect") continue;
+    const targets = await listAutomationTargets(userId, auto.id, { limit });
+    for (const t of targets) {
+      if (t.status === "pending") continue;
+      out.push({
+        automationId: auto.id,
+        automationName: auto.name,
+        targetId: t.target_id,
+        targetLabel: t.target_label,
+        status: t.status,
+        lastActionAt: t.last_action_at,
+      });
+    }
+  }
+  return out;
 }
 
 export interface QueueItem {
@@ -1644,8 +1743,8 @@ export async function createContactSequence(userId: number, input: {
 }): Promise<ContactSequence> {
   const phone = normalizeContactPhone(input.contactPhone);
   const firstDelay = input.steps[0]?.delayDays ?? 0;
-  const nextAt = new Date();
-  nextAt.setDate(nextAt.getDate() + firstDelay);
+  const sendHour = await getRelanceHourForAutomation(userId, input.automationId);
+  const nextAt = computeSequenceNextAt(firstDelay, sendHour);
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO contact_sequences (user_id, contact_phone, automation_id, name, steps_json, next_step_at)
     VALUES (
@@ -1687,8 +1786,8 @@ export async function advanceSequence(userId: number, id: number): Promise<void>
     return;
   }
   const delay = seq.steps[nextStep]?.delayDays ?? 1;
-  const nextAt = new Date();
-  nextAt.setDate(nextAt.getDate() + delay);
+  const sendHour = await getRelanceHourForAutomation(userId, seq.automation_id);
+  const nextAt = computeSequenceNextAt(delay, sendHour);
   await sql`
     UPDATE contact_sequences SET current_step = ${nextStep}, next_step_at = ${toTsParam(formatLocalDateTime(nextAt))}
     WHERE user_id = ${userId} AND id = ${id}
