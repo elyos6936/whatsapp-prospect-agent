@@ -20,6 +20,7 @@ import {
   sendWhatsAppVoice,
   sendWhatsAppLocation,
   sendWhatsAppContact,
+  sendWhatsAppReaction,
   sendWhatsAppTextStatus,
   testEvolutionConnection,
   chatIdToDisplay,
@@ -265,7 +266,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "send_whatsapp_message",
       description:
-        "Envoie UN message texte WhatsApp. Destinataire : numéro personnel (+229…), chatId (@c.us), ID de groupe (@g.us), OU nom de groupe (ex. Automax). Pour poster DANS un groupe, utiliser cet outil — PAS message_all_group_members.",
+        "Envoie UN message texte WhatsApp. Destinataire : numéro personnel (+229…), chatId (@c.us), ID de groupe (@g.us), OU nom de groupe (ex. Automax). Pour poster DANS un groupe, utiliser cet outil — PAS message_all_group_members. Supporte aussi : répondre en citant un message (reply_to_message_id), mentionner des membres (mentions + @numéro dans le texte), mentionner tout le monde (mention_everyone, groupes), et l'aperçu de lien (link_preview).",
       parameters: {
         type: "object",
         properties: {
@@ -274,9 +275,53 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description:
               "Numéro (+229…), chatId personnel, ID groupe (@g.us), ou nom de groupe WhatsApp",
           },
-          message: { type: "string", description: "Texte du message" },
+          message: { type: "string", description: "Texte du message (gras *…*, italique _…_, barré ~…~, code ```…```, emojis)" },
+          reply_to_message_id: {
+            type: "string",
+            description:
+              "ID du message à citer/répondre (ex. idMessage via list_green_incoming_messages). Affiche la carte de citation WhatsApp.",
+          },
+          mentions: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Numéros à mentionner (chiffres, ex. 22990000000). IMPORTANT : inclure aussi @numéro dans le texte pour chaque personne (ex. « Salut @22990000000 »). Groupes uniquement.",
+          },
+          mention_everyone: {
+            type: "boolean",
+            description: "true pour mentionner TOUS les membres du groupe (@everyone). Groupes uniquement.",
+          },
+          link_preview: {
+            type: "boolean",
+            description: "true pour afficher l'aperçu de lien (carte) des URLs du message. Défaut : comportement natif.",
+          },
         },
         required: ["recipient", "message"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_whatsapp_reaction",
+      description:
+        "Réagit à un message WhatsApp avec un emoji (👍❤️😂🔥…). Pour retirer une réaction déjà posée, laisser emoji vide. Récupérer message_id via list_green_incoming_messages.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: {
+            type: "string",
+            description: "chatId (@c.us / @g.us), numéro (+229…) ou nom de groupe où se trouve le message",
+          },
+          message_id: { type: "string", description: "ID du message ciblé (idMessage)" },
+          emoji: { type: "string", description: "Emoji de réaction (ex. 👍). Vide = retirer la réaction." },
+          from_me: {
+            type: "boolean",
+            description: "true si le message ciblé a été envoyé par nous. Défaut : false (message reçu).",
+          },
+        },
+        required: ["recipient", "message_id"],
         additionalProperties: false,
       },
     },
@@ -1110,6 +1155,13 @@ export async function executeTool(userId: number, name: string, args: Record<str
     case "send_whatsapp_message": {
       const recipient = String(args.recipient ?? "");
       const message = String(args.message ?? "");
+      const replyTo = args.reply_to_message_id ? String(args.reply_to_message_id) : undefined;
+      const mentions = Array.isArray(args.mentions)
+        ? (args.mentions as unknown[]).map((m) => String(m)).filter(Boolean)
+        : undefined;
+      const mentionEveryone = args.mention_everyone === true;
+      const linkPreview =
+        typeof args.link_preview === "boolean" ? (args.link_preview as boolean) : undefined;
       try {
         const chatId = await resolveRecipient(userId, recipient);
 
@@ -1122,7 +1174,20 @@ export async function executeTool(userId: number, name: string, args: Record<str
           }
         }
 
-        const result = await sendWhatsAppMessage(userId, chatId, message);
+        const textOptions: {
+          quoted?: { id: string; remoteJid?: string; fromMe?: boolean };
+          mentioned?: string[];
+          mentionsEveryOne?: boolean;
+          linkPreview?: boolean;
+        } = {};
+        if (replyTo) textOptions.quoted = { id: replyTo, remoteJid: chatId, fromMe: false };
+        if (mentions && mentions.length > 0) textOptions.mentioned = mentions;
+        if (mentionEveryone) textOptions.mentionsEveryOne = true;
+        if (typeof linkPreview === "boolean") textOptions.linkPreview = linkPreview;
+
+        const result = await sendWhatsAppMessage(userId, chatId, message, {
+          textOptions: Object.keys(textOptions).length > 0 ? textOptions : undefined,
+        });
         if (chatId.endsWith("@c.us")) {
           try {
             await setContactAutoReply(userId, chatId, true);
@@ -1148,6 +1213,33 @@ export async function executeTool(userId: number, name: string, args: Record<str
           message: isGroup
             ? `Message envoyé dans le groupe à ${nowFr()}`
             : `Message envoyé à ${chatIdToDisplay(result.chatId)} à ${nowFr()}`,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({ error: msg });
+      }
+    }
+
+    case "send_whatsapp_reaction": {
+      const recipient = String(args.recipient ?? "");
+      const messageId = String(args.message_id ?? "").trim();
+      const emoji = String(args.emoji ?? "");
+      const fromMe = args.from_me === true;
+      if (!messageId) return JSON.stringify({ error: "message_id requis." });
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        const result = await sendWhatsAppReaction(userId, chatId, messageId, emoji, { fromMe });
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          idMessage: result.idMessage,
+          reaction: emoji,
+          sentAt: nowFr(),
+          message: emoji
+            ? `Réaction ${emoji} envoyée à ${nowFr()}`
+            : `Réaction retirée à ${nowFr()}`,
         });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

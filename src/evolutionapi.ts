@@ -231,23 +231,59 @@ function formatEvolutionSendNumber(chatId: string): string {
   return toRemoteJid(chatId);
 }
 
+export interface TextSendOptions {
+  /** Répondre en citant un message existant (carte de citation WhatsApp). */
+  quoted?: { id: string; remoteJid?: string; fromMe?: boolean; conversation?: string };
+  /** Numéros à mentionner (chiffres uniquement, ex. "22990000000"). Le texte doit contenir @numéro. */
+  mentioned?: string[];
+  /** Mentionner tous les membres du groupe (@everyone). */
+  mentionsEveryOne?: boolean;
+  /** Afficher l'aperçu de lien (carte SEO) pour les URLs du message. */
+  linkPreview?: boolean;
+}
+
+function buildTextOptionsBody(options?: TextSendOptions): Record<string, unknown> {
+  if (!options) return {};
+  const extra: Record<string, unknown> = {};
+  if (options.quoted?.id) {
+    extra.quoted = {
+      key: {
+        id: options.quoted.id,
+        ...(options.quoted.remoteJid ? { remoteJid: options.quoted.remoteJid } : {}),
+        ...(typeof options.quoted.fromMe === "boolean" ? { fromMe: options.quoted.fromMe } : {}),
+      },
+      ...(options.quoted.conversation
+        ? { message: { conversation: options.quoted.conversation } }
+        : {}),
+    };
+  }
+  if (Array.isArray(options.mentioned) && options.mentioned.length > 0) {
+    extra.mentioned = options.mentioned.map((n) => n.replace(/\D/g, "")).filter(Boolean);
+  }
+  if (options.mentionsEveryOne) extra.mentionsEveryOne = true;
+  if (typeof options.linkPreview === "boolean") extra.linkPreview = options.linkPreview;
+  return extra;
+}
+
 async function sendTextViaEvolution(
   creds: EvolutionCredentials,
   chatId: string,
-  message: string
+  message: string,
+  options?: TextSendOptions
 ): Promise<unknown> {
   const number = formatEvolutionSendNumber(chatId);
   const digits = chatIdToNumber(chatId);
+  const extra = buildTextOptionsBody(options);
   const attempts: Array<Record<string, unknown>> = isLidJid(chatId)
     ? [
-        { number, textMessage: { text: message } },
-        { number, text: message },
+        { number, textMessage: { text: message }, ...extra },
+        { number, text: message, ...extra },
       ]
     : [
-        { number, textMessage: { text: message } },
-        { number: digits, textMessage: { text: message } },
-        { number, text: message },
-        { number: digits, text: message },
+        { number, textMessage: { text: message }, ...extra },
+        { number: digits, textMessage: { text: message }, ...extra },
+        { number, text: message, ...extra },
+        { number: digits, text: message, ...extra },
       ];
 
   let lastErr: Error | null = null;
@@ -733,7 +769,11 @@ export async function sendWhatsAppMessage(
   userId: number,
   chatId: string,
   message: string,
-  opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
+  opts: {
+    enableAutoReply?: boolean;
+    countsTowardQuota?: boolean;
+    textOptions?: TextSendOptions;
+  } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
@@ -741,7 +781,7 @@ export async function sendWhatsAppMessage(
   await assertCanSendTo(userId, chatId);
   await waitOutboundSpacing();
 
-  const data = await sendTextViaEvolution(creds, chatId, message);
+  const data = await sendTextViaEvolution(creds, chatId, message, opts.textOptions);
 
   markOutboundSent();
   const idMessage = extractMessageId(data);
@@ -772,6 +812,34 @@ export async function sendWhatsAppMessage(
   }
 
   return { idMessage, chatId: normalized.endsWith("@g.us") ? chatId : normalized };
+}
+
+/**
+ * Réagit à un message avec un emoji (ou le retire si `reaction` est vide).
+ * `messageId` = id du message ciblé (ex. via list_green_incoming_messages).
+ * `fromMe` = true si on réagit à un message qu'on a soi-même envoyé.
+ */
+export async function sendWhatsAppReaction(
+  userId: number,
+  chatId: string,
+  messageId: string,
+  reaction: string,
+  opts: { fromMe?: boolean } = {}
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const remoteJid = formatEvolutionSendNumber(chatId);
+  const data = await evolutionFetch<unknown>(creds, `/message/sendReaction/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      key: { remoteJid, fromMe: opts.fromMe ?? false, id: messageId },
+      reaction,
+    },
+  });
+
+  const idMessage = extractMessageId(data);
+  return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
 }
 
 export async function sendWhatsAppMedia(
