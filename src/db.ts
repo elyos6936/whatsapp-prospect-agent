@@ -1534,6 +1534,16 @@ export async function incrementAutoStopped(userId: number, automationId: number)
   });
 }
 
+/** Incrémente le compteur « messages traités » d'une campagne (réponse IA à un prospect). */
+export async function incrementMessagesHandled(userId: number, automationId: number): Promise<void> {
+  const auto = await getAutomation(userId, automationId);
+  if (!auto) return;
+  await updateAutomationStats(userId, automationId, {
+    messagesHandled: (auto.stats.messagesHandled ?? 0) + 1,
+    lastActionAt: new Date().toISOString(),
+  });
+}
+
 export async function deleteAutomation(userId: number, id: number): Promise<boolean> {
   const auto = await getAutomation(userId, id);
   if (!auto) return false;

@@ -1618,13 +1618,17 @@ export async function getLastIncomingMessages(userId: number): Promise<LastIncom
       if (!remoteJid || remoteJid.endsWith("@g.us") || remoteJid.includes("@broadcast")) continue;
 
       const text = extractEvolutionText(r.message);
-      if (!text) continue;
+      const messageType = String(r.messageType ?? "textMessage");
+      // Message média sans texte (vocal, image, sticker, vidéo, document) : on le
+      // conserve pour que le pipeline de compréhension média (Whisper/Vision) le traite.
+      const isMedia = /audio|voice|ptt|image|video|document|sticker/i.test(messageType);
+      if (!text && !isMedia) continue;
 
       out.push({
         idMessage: key?.id ?? `evo-${Date.now()}`,
         chatId: remoteJid,
         senderId: key?.participant || remoteJid,
-        typeMessage: String(r.messageType ?? "textMessage"),
+        typeMessage: messageType,
         textMessage: text,
         timestamp: Number(r.messageTimestamp ?? 0),
         senderName: String(r.pushName ?? ""),

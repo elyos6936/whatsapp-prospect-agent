@@ -33,6 +33,7 @@ import {
   saveAgentMessage,
   setContactAutoReply,
   incrementAutoStopped,
+  incrementMessagesHandled,
   cancelSequencesForContact,
 } from "./db.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
@@ -534,9 +535,9 @@ function isAutoReplyEligible(text: string, remoteJid: string): boolean {
   if (isBroadcastOrStatusJid(remoteJid)) return false;
   const trimmed = text.trim();
   if (!trimmed) return false;
-  if (trimmed.startsWith("[") && /reçu|reçue|Message vocal|Image|Vidéo|Document|Sticker|Audio|Photo|Video/i.test(trimmed)) {
-    return false;
-  }
+  // Les placeholders média ([Message vocal reçu], [Sticker reçu]…) restent éligibles :
+  // le portier de campagne (passesReplyGate) filtre déjà les non-prospects, et l'IA
+  // doit pouvoir répondre à un prospect actif (ex. lui demander d'écrire en texte).
   return true;
 }
 
@@ -757,8 +758,11 @@ async function runAutoReply(
         await cancelSequencesForContact(userId, chatId);
       }
     } else if (text.startsWith("[") && text.includes("reçu")) {
-      reply =
-        "Merci pour votre message ! Pour que je puisse vous répondre précisément, pourriez-vous m'écrire votre question en texte ? 🙂";
+      // Média non interprétable (transcription/vision indisponible ou sticker/vidéo).
+      const isVoice = /vocal|audio/i.test(text);
+      reply = isVoice
+        ? "Merci pour ton vocal ! Je n'ai pas pu l'écouter correctement de mon côté — tu peux m'écrire en quelques mots ? 🙂"
+        : "Merci ! Tu peux m'en dire un mot en texte pour que je te réponde au mieux ? 🙂";
     } else {
       const settings = await getAppSettings(userId);
       const history = await getContactChatHistory(userId, chatId, 20);
@@ -830,6 +834,9 @@ async function runAutoReply(
       enableAutoReply: false,
       countsTowardQuota: false,
     });
+    if (activeCampaign) {
+      await incrementMessagesHandled(userId, activeCampaign.id);
+    }
     console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
