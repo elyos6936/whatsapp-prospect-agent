@@ -17,6 +17,12 @@ import {
   deleteWhatsAppMessage,
   getMessageMediaBase64,
   searchWhatsAppMessages,
+  sendWhatsAppPresence,
+  checkWhatsAppNumbers,
+  fetchProfilePictureUrl,
+  fetchContactProfile,
+  fetchContactBusinessProfile,
+  updateWhatsAppBlockStatus,
   messageGroupMembers,
   normalizePhoneToChatId,
   normalizeGroupParticipantId,
@@ -66,6 +72,7 @@ import {
   unblockContact,
 } from "./db.js";
 import { bootstrapGroupProspectTargets } from "./automation-engine.js";
+import { getContactPresence } from "./notifications.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -260,13 +267,117 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "unblock_contact",
-      description: "Retire le statut STOP d'un contact (remet en_conversation).",
+      description: "Retire le statut STOP d'un contact (remet en_conversation) et le débloque aussi sur WhatsApp.",
       parameters: {
         type: "object",
         properties: {
           phone: { type: "string", description: "Numéro (+229…) ou chatId" },
         },
         required: ["phone"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_presence",
+      description:
+        "Affiche une présence à un contact/groupe : « en train d'écrire » (composing), « en train d'enregistrer un vocal » (recording), « en ligne » (available), « hors ligne » (unavailable), ou « en pause » (paused).",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…), chatId (@c.us / @g.us) ou nom de groupe" },
+          presence: {
+            type: "string",
+            enum: ["composing", "recording", "available", "unavailable", "paused"],
+            description: "Type de présence à afficher",
+          },
+          duration_ms: { type: "number", description: "Durée d'affichage en ms (défaut 3000, max 20000)" },
+        },
+        required: ["recipient", "presence"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "check_whatsapp_number",
+      description:
+        "Vérifie si un ou plusieurs numéros sont enregistrés sur WhatsApp. Renvoie pour chacun exists (true/false) et le jid WhatsApp.",
+      parameters: {
+        type: "object",
+        properties: {
+          numbers: {
+            type: "array",
+            items: { type: "string" },
+            description: "Numéros à vérifier (format +229… ou international)",
+          },
+        },
+        required: ["numbers"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_contact_profile_picture",
+      description: "Récupère l'URL de la photo de profil d'un contact (null si masquée ou absente).",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…) ou chatId" },
+        },
+        required: ["recipient"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_contact_profile",
+      description:
+        "Récupère le profil d'un contact WhatsApp (nom, statut/bio, photo, indicateur business le cas échéant).",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…) ou chatId" },
+        },
+        required: ["recipient"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_contact_business_profile",
+      description:
+        "Récupère le profil BUSINESS d'un contact (description, catégorie, email, adresse, site web). Null si ce n'est pas un compte WhatsApp Business.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…) ou chatId" },
+        },
+        required: ["recipient"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_contact_presence",
+      description:
+        "Consulte la dernière présence connue d'un contact (en ligne, en train d'écrire, d'enregistrer, hors ligne…), reçue via le webhook. Sans recipient : liste toutes les présences connues. Astuce : appeler d'abord send_presence pour t'abonner à sa présence.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "Numéro (+229…) ou chatId (optionnel)" },
+        },
         additionalProperties: false,
       },
     },
@@ -1364,21 +1475,172 @@ export async function executeTool(userId: number, name: string, args: Record<str
     case "block_contact": {
       const phone = String(args.phone ?? "");
       const contact = await blockContact(userId, phone);
+      let waNote = "";
+      try {
+        await updateWhatsAppBlockStatus(userId, contact.phone, true);
+        waNote = " Bloqué aussi sur WhatsApp.";
+      } catch (err) {
+        waNote = ` (blocage WhatsApp non appliqué : ${err instanceof Error ? err.message : String(err)})`;
+      }
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
-        message: `⛔ Contact ${chatIdToDisplay(contact.phone)} passé en STOP. Aucun envoi possible vers lui.`,
+        message: `⛔ Contact ${chatIdToDisplay(contact.phone)} passé en STOP. Aucun envoi possible vers lui.${waNote}`,
       });
     }
 
     case "unblock_contact": {
       const phone = String(args.phone ?? "");
       const contact = await unblockContact(userId, phone);
+      let waNote = "";
+      try {
+        await updateWhatsAppBlockStatus(userId, contact.phone, false);
+        waNote = " Débloqué aussi sur WhatsApp.";
+      } catch (err) {
+        waNote = ` (déblocage WhatsApp non appliqué : ${err instanceof Error ? err.message : String(err)})`;
+      }
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
-        message: `Contact ${chatIdToDisplay(contact.phone)} débloqué (statut : ${contact.status}).`,
+        message: `Contact ${chatIdToDisplay(contact.phone)} débloqué (statut : ${contact.status}).${waNote}`,
       });
+    }
+
+    case "send_presence": {
+      const recipient = String(args.recipient ?? "");
+      const presence = String(args.presence ?? "composing") as
+        | "composing"
+        | "recording"
+        | "available"
+        | "unavailable"
+        | "paused";
+      const durationMs = Number(args.duration_ms) || 3000;
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        await sendWhatsAppPresence(userId, chatId, presence, durationMs);
+        const labels: Record<string, string> = {
+          composing: "en train d'écrire",
+          recording: "en train d'enregistrer",
+          available: "en ligne",
+          unavailable: "hors ligne",
+          paused: "en pause",
+        };
+        return JSON.stringify({
+          success: true,
+          chatId,
+          presence,
+          message: `Présence « ${labels[presence] ?? presence} » envoyée à ${chatIdToDisplay(chatId)}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "check_whatsapp_number": {
+      const numbers = Array.isArray(args.numbers)
+        ? (args.numbers as unknown[]).map((n) => String(n)).filter(Boolean)
+        : [];
+      if (numbers.length === 0) return JSON.stringify({ error: "Fournir au moins un numéro." });
+      try {
+        const results = await checkWhatsAppNumbers(userId, numbers);
+        return JSON.stringify({
+          success: true,
+          results: results.map((r) => ({
+            number: r.number,
+            exists: r.exists,
+            jid: r.jid,
+            display: r.jid ? chatIdToDisplay(r.jid) : `+${r.number}`,
+          })),
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "get_contact_profile_picture": {
+      try {
+        const chatId = await resolveRecipient(userId, String(args.recipient ?? ""));
+        const { url } = await fetchProfilePictureUrl(userId, chatId);
+        return JSON.stringify({
+          success: true,
+          chatId,
+          display: chatIdToDisplay(chatId),
+          profilePictureUrl: url,
+          message: url
+            ? `Photo de profil de ${chatIdToDisplay(chatId)} récupérée.`
+            : `Aucune photo de profil accessible pour ${chatIdToDisplay(chatId)} (masquée ou absente).`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "get_contact_profile": {
+      try {
+        const chatId = await resolveRecipient(userId, String(args.recipient ?? ""));
+        const profile = await fetchContactProfile(userId, chatId);
+        return JSON.stringify({
+          success: true,
+          chatId,
+          display: chatIdToDisplay(chatId),
+          profile,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "get_contact_business_profile": {
+      try {
+        const chatId = await resolveRecipient(userId, String(args.recipient ?? ""));
+        const profile = await fetchContactBusinessProfile(userId, chatId);
+        return JSON.stringify({
+          success: true,
+          chatId,
+          display: chatIdToDisplay(chatId),
+          isBusiness: profile != null,
+          businessProfile: profile,
+          message: profile
+            ? `Profil business de ${chatIdToDisplay(chatId)} récupéré.`
+            : `${chatIdToDisplay(chatId)} n'est pas un compte WhatsApp Business (ou profil non accessible).`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "get_contact_presence": {
+      try {
+        if (args.recipient) {
+          const chatId = await resolveRecipient(userId, String(args.recipient));
+          const p = getContactPresence(userId, chatId);
+          const presence = Array.isArray(p) ? null : p;
+          return JSON.stringify({
+            success: true,
+            chatId,
+            display: chatIdToDisplay(chatId),
+            presence: presence?.presence ?? null,
+            updatedAt: presence?.updatedAt ?? null,
+            message: presence
+              ? `Dernière présence de ${chatIdToDisplay(chatId)} : ${presence.presence}.`
+              : `Aucune présence connue pour ${chatIdToDisplay(chatId)}. Envoie d'abord send_presence pour t'abonner, puis réessaie.`,
+          });
+        }
+        const all = getContactPresence(userId);
+        const list = Array.isArray(all) ? all : all ? [all] : [];
+        return JSON.stringify({
+          success: true,
+          count: list.length,
+          presences: list.map((p) => ({
+            chatId: p.chatId,
+            display: chatIdToDisplay(p.chatId),
+            presence: p.presence,
+            updatedAt: p.updatedAt,
+          })),
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
     }
 
     case "send_whatsapp_message": {

@@ -337,7 +337,7 @@ export async function createInstance(userId: number): Promise<void> {
           enabled: true,
           url: `${config.publicUrl}/api/evolution/webhook`,
           webhookByEvents: false,
-          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE"],
+          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "PRESENCE_UPDATE"],
         },
       },
       timeoutMs: 60_000,
@@ -1856,6 +1856,150 @@ export async function listPersonalContacts(userId: number, limit = 50): Promise<
     });
 }
 
+/**
+ * Envoie une présence à un contact/groupe : « en train d'écrire » (composing),
+ * « en train d'enregistrer » (recording), « en ligne » (available), etc.
+ * `durationMs` = durée d'affichage de la présence.
+ */
+export async function sendWhatsAppPresence(
+  userId: number,
+  chatId: string,
+  presence: "composing" | "recording" | "available" | "unavailable" | "paused",
+  durationMs = 3000
+): Promise<{ presence: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const number = formatEvolutionSendNumber(chatId);
+  const delay = Math.min(Math.max(Math.round(durationMs), 500), 20_000);
+  await evolutionFetch(creds, `/chat/sendPresence/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      delay,
+      presence,
+      options: { delay, presence, number },
+    },
+  });
+  return { presence, chatId: normalizeGroupParticipantId(chatId) };
+}
+
+export interface WhatsAppNumberCheck {
+  number: string;
+  exists: boolean;
+  jid: string | null;
+}
+
+/** Vérifie si un ou plusieurs numéros sont enregistrés sur WhatsApp. */
+export async function checkWhatsAppNumbers(
+  userId: number,
+  numbers: string[]
+): Promise<WhatsAppNumberCheck[]> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const digits = numbers.map((n) => chatIdToNumber(n)).filter(Boolean);
+  if (digits.length === 0) throw new EvolutionApiError("Aucun numéro valide fourni.");
+
+  const data = await evolutionFetch<unknown>(creds, `/chat/whatsappNumbers/${creds.instanceName}`, {
+    method: "POST",
+    body: { numbers: digits },
+  });
+
+  const rows = Array.isArray(data) ? data : [];
+  return rows.map((row) => {
+    const r = (row ?? {}) as Record<string, unknown>;
+    const jid = r.jid ? String(r.jid) : null;
+    return {
+      number: String(r.number ?? (jid ? chatIdToNumber(jid) : "")),
+      exists: Boolean(r.exists),
+      jid,
+    };
+  });
+}
+
+/** Récupère l'URL de la photo de profil d'un contact (null si masquée/absente). */
+export async function fetchProfilePictureUrl(
+  userId: number,
+  chatId: string
+): Promise<{ url: string | null; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const number = formatEvolutionSendNumber(chatId);
+  try {
+    const data = await evolutionFetch<Record<string, unknown>>(
+      creds,
+      `/chat/fetchProfilePictureUrl/${creds.instanceName}`,
+      { method: "POST", body: { number } }
+    );
+    const url = data?.profilePictureUrl ?? data?.profilePicUrl ?? data?.url ?? null;
+    return { url: url ? String(url) : null, chatId: normalizeGroupParticipantId(chatId) };
+  } catch (err) {
+    if (err instanceof EvolutionApiError && (err.status === 400 || err.status === 404)) {
+      return { url: null, chatId: normalizeGroupParticipantId(chatId) };
+    }
+    throw err;
+  }
+}
+
+/** Récupère le profil complet d'un contact (nom, statut, photo, business…). */
+export async function fetchContactProfile(
+  userId: number,
+  chatId: string
+): Promise<Record<string, unknown>> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const number = formatEvolutionSendNumber(chatId);
+  const data = await evolutionFetch<Record<string, unknown>>(
+    creds,
+    `/chat/fetchProfile/${creds.instanceName}`,
+    { method: "POST", body: { number } }
+  );
+  return data ?? {};
+}
+
+/** Récupère le profil BUSINESS d'un contact (description, catégorie, email, site…). */
+export async function fetchContactBusinessProfile(
+  userId: number,
+  chatId: string
+): Promise<Record<string, unknown> | null> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const number = formatEvolutionSendNumber(chatId);
+  try {
+    const data = await evolutionFetch<unknown>(
+      creds,
+      `/chat/fetchBusinessProfile/${creds.instanceName}`,
+      { method: "POST", body: { number } }
+    );
+    if (Array.isArray(data)) return (data[0] as Record<string, unknown>) ?? null;
+    return (data as Record<string, unknown>) ?? null;
+  } catch (err) {
+    if (err instanceof EvolutionApiError && (err.status === 400 || err.status === 404)) return null;
+    throw err;
+  }
+}
+
+/** Bloque ou débloque un contact au niveau WhatsApp (pas seulement en base locale). */
+export async function updateWhatsAppBlockStatus(
+  userId: number,
+  chatId: string,
+  block: boolean
+): Promise<{ blocked: boolean; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const number = formatEvolutionSendNumber(chatId);
+  await evolutionFetch(creds, `/message/updateBlockStatus/${creds.instanceName}`, {
+    method: "POST",
+    body: { number, status: block ? "block" : "unblock" },
+  });
+  return { blocked: block, chatId: normalizeGroupParticipantId(chatId) };
+}
+
 function toStatusJid(chatId: string): string {
   const trimmed = chatId.trim();
   if (trimmed.endsWith("@s.whatsapp.net")) return trimmed;
@@ -2039,7 +2183,7 @@ export async function setEvolutionWebhook(userId: number, webhookUrl: string): P
         enabled: true,
         url: webhookUrl,
         webhookByEvents: false,
-        events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"],
+        events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "PRESENCE_UPDATE", "CONNECTION_UPDATE"],
       },
     },
   });

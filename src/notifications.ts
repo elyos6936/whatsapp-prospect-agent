@@ -103,7 +103,8 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
   const event = String(body.event ?? body.type ?? "").toUpperCase().replace(/\./g, "_");
   const isUpsert = event.includes("MESSAGES_UPSERT");
   const isUpdate = event.includes("MESSAGES_UPDATE") || event.includes("MESSAGES_EDITED") || event.includes("SEND_MESSAGE_UPDATE");
-  if (!isUpsert && !isUpdate) return 0;
+  const isPresence = event.includes("PRESENCE_UPDATE");
+  if (!isUpsert && !isUpdate && !isPresence) return 0;
 
   const instance = String(body.instance ?? body.instanceName ?? "");
   const userId = await userIdFromInstanceName(instance);
@@ -114,6 +115,10 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
 
   const data = body.data;
   const items = Array.isArray(data) ? data : data ? [data] : [];
+
+  if (isPresence) {
+    return handlePresenceUpdate(userId, data);
+  }
 
   if (isUpdate) {
     return handleMessagesUpdate(userId, items);
@@ -303,6 +308,68 @@ function hasRevokeProtocol(message: unknown): boolean {
   if (!proto) return false;
   const type = proto.type;
   return type === 0 || String(type).toUpperCase() === "REVOKE";
+}
+
+export interface ContactPresence {
+  chatId: string;
+  /** available | unavailable | composing | recording | paused */
+  presence: string;
+  updatedAt: string;
+}
+
+/** Dernière présence connue par contact, par utilisateur (éphémère, en mémoire). */
+const presenceStore = new Map<number, Map<string, ContactPresence>>();
+
+function presenceStoreFor(userId: number): Map<string, ContactPresence> {
+  let m = presenceStore.get(userId);
+  if (!m) {
+    m = new Map();
+    presenceStore.set(userId, m);
+  }
+  return m;
+}
+
+/** Présence connue d'un contact (ou toutes si chatId omis). */
+export function getContactPresence(userId: number, chatId?: string): ContactPresence | ContactPresence[] | null {
+  const store = presenceStoreFor(userId);
+  if (chatId) {
+    const key = normalizeGroupParticipantId(chatId);
+    return store.get(key) ?? store.get(chatId) ?? null;
+  }
+  return [...store.values()];
+}
+
+/** Webhook PRESENCE_UPDATE : mémorise la présence des contacts (en ligne, typing, recording…). */
+function handlePresenceUpdate(userId: number, data: unknown): number {
+  if (!data || typeof data !== "object") return 0;
+  const d = data as Record<string, unknown>;
+  const rawId = String(d.id ?? d.remoteJid ?? d.chatId ?? "");
+  if (!rawId) return 0;
+
+  // presences: { "<jid>": { lastKnownPresence: "composing" } }
+  const presences = d.presences as Record<string, unknown> | undefined;
+  let presence = "";
+  if (presences && typeof presences === "object") {
+    for (const val of Object.values(presences)) {
+      if (val && typeof val === "object") {
+        const p = (val as Record<string, unknown>).lastKnownPresence;
+        if (p) {
+          presence = String(p);
+          break;
+        }
+      }
+    }
+  }
+  if (!presence && d.presence) presence = String(d.presence);
+  if (!presence) return 0;
+
+  const chatId = normalizeGroupParticipantId(rawId);
+  presenceStoreFor(userId).set(chatId, {
+    chatId,
+    presence,
+    updatedAt: new Date().toISOString(),
+  });
+  return 1;
 }
 
 export interface WhatsappPollHealth {
