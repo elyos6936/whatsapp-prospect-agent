@@ -10,10 +10,12 @@ import {
   saveContact,
   setContactAutoReply,
   isContactBlocked,
+  saveAgentMessage,
   updateAutomationStats,
   updateAutomationStatus,
   updateAutomationTarget,
   updateAutomationTargetAb,
+  formatLocalDateTime,
   type Automation,
 } from "./db.js";
 import { pickAbVariant, recordAbSent } from "./ab-testing.js";
@@ -151,11 +153,76 @@ async function processAutomation(userId: number, auto: Automation): Promise<void
   }
 }
 
+/** Heure locale (0-23) à partir de laquelle le rapport quotidien est posté. */
+const DAILY_REPORT_HOUR = 20;
+
+function todayLocal(): string {
+  return formatLocalDateTime(new Date()).slice(0, 10);
+}
+
+/** Construit le texte du rapport quotidien d'une campagne (prospection ou closing e-commerce). */
+async function buildDailyReportText(userId: number, auto: Automation): Promise<string> {
+  const stats = auto.stats ?? {};
+  const today = todayLocal();
+  const targets = await listAutomationTargets(userId, auto.id, { limit: 1000 });
+
+  const isToday = (ts: string | null) => !!ts && ts.slice(0, 10) === today;
+  const nonPending = targets.filter((t) => t.status !== "pending");
+  const sentToday = nonPending.filter((t) => isToday(t.last_action_at)).length;
+  const replied = targets.filter((t) => t.status === "replied" || t.status === "interested").length;
+  const interested = targets.filter((t) => t.status === "interested").length;
+  const pending = targets.filter((t) => t.status === "pending").length;
+
+  const lines: string[] = [
+    `📊 Rapport du jour — Campagne « ${auto.name} » (#${auto.id}) · statut : ${auto.status}`,
+  ];
+
+  if (auto.config.mode === "inbound_closing" || auto.type === "keyword_sales") {
+    lines.push(
+      `• Clients ayant écrit / échangé : ${stats.messagesHandled ?? 0}`,
+      `• Intéressés : ${interested || stats.interested || 0}`,
+      `• Conversions : ${stats.conversions ?? 0}`
+    );
+  } else {
+    lines.push(
+      `• Messages envoyés aujourd'hui : ${sentToday}`,
+      `• Total contactés : ${nonPending.length}${pending ? ` (restants à contacter : ${pending})` : ""}`,
+      `• Réponses reçues : ${replied} · intéressés : ${interested}`
+    );
+  }
+
+  if (stats.autoStopped) {
+    lines.push(`• Conversations arrêtées automatiquement : ${stats.autoStopped}`);
+  }
+  lines.push("Ouvre Automatisation pour le détail.");
+  return lines.join("\n");
+}
+
+/** Poste un rapport quotidien dans le chat de l'agent, au plus une fois par jour et par campagne. */
+async function maybeSendDailyReport(userId: number, auto: Automation): Promise<void> {
+  if (new Date().getHours() < DAILY_REPORT_HOUR) return;
+  const today = todayLocal();
+  if (auto.stats?.lastReportDate === today) return;
+
+  try {
+    const text = await buildDailyReportText(userId, auto);
+    await saveAgentMessage(userId, "assistant", text);
+    await updateAutomationStats(userId, auto.id, {
+      lastReportDate: today,
+      lastActionAt: new Date().toISOString(),
+    });
+    console.log(`📊 Rapport quotidien posté — campagne #${auto.id} (user ${userId})`);
+  } catch (err) {
+    console.error(`📊 Rapport quotidien campagne #${auto.id} échoué:`, err);
+  }
+}
+
 async function processTickForUser(userId: number): Promise<void> {
   const active = await listActiveAutomations(userId);
   for (const auto of active) {
     try {
       await processAutomation(userId, auto);
+      await maybeSendDailyReport(userId, auto);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await addAutomationLog(userId, auto.id, "error", `Erreur moteur : ${msg}`);

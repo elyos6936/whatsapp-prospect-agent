@@ -1065,6 +1065,19 @@ export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
 export const TARGET_STATUSES = ["pending", "contacted", "replied", "interested", "stopped", "error"] as const;
 export type TargetStatus = (typeof TARGET_STATUSES)[number];
 
+export interface CampaignFollowUpPolicy {
+  /** Activer les relances automatiques des non-répondeurs. */
+  enabled: boolean;
+  /** Nombre maximum de relances (ex. 1 = une seule relance). */
+  maxFollowUps: number;
+  /** Intervalle en jours entre chaque relance (ex. 2 = deux jours après). */
+  intervalDays: number;
+  /** Heure locale d'envoi préférée (0-23, ex. 8 = 8h). Optionnel. */
+  timeOfDayHour?: number;
+  /** Messages de relance personnalisés (un par étape). Si absent, l'IA en génère. */
+  messages?: string[];
+}
+
 export interface AutomationConfig {
   groupId?: string;
   groupName?: string;
@@ -1084,6 +1097,30 @@ export interface AutomationConfig {
   mediaType?: "image" | "document" | "audio";
   quietHoursStart?: number;
   quietHoursEnd?: number;
+
+  // --- Campagnes avancées (prospection & closing e-commerce) ---
+  /** prospection = on contacte des membres de groupe ; inbound_closing = on répond aux prospects qui écrivent (pub/e-commerce). */
+  mode?: "prospection" | "inbound_closing";
+  /** Objectif final de la campagne (ex. envoyer un lien, fixer un RDV, faire payer, proposer une livraison). */
+  objective?: string;
+  /** Ce que l'utilisateur vend / propose (produit, offre, service). */
+  sellingWhat?: string;
+  /** Style / ton d'échange souhaité avec les gens (comment l'IA doit parler). */
+  conversationStyle?: string;
+  /** Comment matcher les messages entrants déclencheurs (closing e-commerce). */
+  triggerMatchMode?: "any_keyword" | "all_keywords" | "exact_phrase";
+  /** Phrases exactes déclencheuses (ex. « je suis intéressé par ce produit »). */
+  triggerPhrases?: string[];
+  /** Si vrai : ne JAMAIS répondre à un entrant hors cadre (uniquement si un déclencheur matche). */
+  replyOnlyOnTrigger?: boolean;
+  /** Politique de relance des non-répondeurs, décidée par l'utilisateur. */
+  followUp?: CampaignFollowUpPolicy;
+  /** Arrêter la conversation et prévenir l'utilisateur si le prospect exprime du mécontentement. */
+  stopOnDissatisfaction?: boolean;
+  /** Arrêter et prévenir l'utilisateur si une question sort du cadre / sans réponse connue. */
+  stopOnUnknownQuestion?: boolean;
+  /** La simulation a été validée par l'utilisateur (garde-fou avant activation). */
+  simulationApproved?: boolean;
 }
 
 export interface AutomationStats {
@@ -1101,6 +1138,10 @@ export interface AutomationStats {
   revenueFcfa?: number;
   abResults?: Record<string, { sent: number; replied: number; interested: number }>;
   openAiCostEstimateFcfa?: number;
+  /** Date locale (YYYY-MM-DD) du dernier rapport quotidien posté, pour éviter les doublons. */
+  lastReportDate?: string;
+  /** Nb de conversations arrêtées automatiquement (mécontentement / hors cadre). */
+  autoStopped?: number;
 }
 
 export interface Automation {
@@ -1602,6 +1643,22 @@ export interface SequenceStep {
   condition?: "no_reply" | "always";
   mediaUrl?: string;
   mediaType?: string;
+  /** Heure locale préférée d'envoi (0-23). Si absent, envoi dès l'échéance du délai. */
+  hourOfDay?: number;
+}
+
+/** Calcule la prochaine échéance d'une étape de séquence, en respectant une heure fixe si fournie. */
+function computeNextStepAt(delayDays: number, hourOfDay?: number): Date {
+  const nextAt = new Date();
+  nextAt.setDate(nextAt.getDate() + Math.max(0, delayDays));
+  if (hourOfDay != null && Number.isFinite(hourOfDay)) {
+    nextAt.setHours(Math.max(0, Math.min(23, hourOfDay)), 0, 0, 0);
+    // Délai 0 mais l'heure est déjà passée aujourd'hui → repousser au lendemain.
+    if (nextAt.getTime() <= Date.now()) {
+      nextAt.setDate(nextAt.getDate() + 1);
+    }
+  }
+  return nextAt;
 }
 
 export interface ContactSequence {
@@ -1644,8 +1701,7 @@ export async function createContactSequence(userId: number, input: {
 }): Promise<ContactSequence> {
   const phone = normalizeContactPhone(input.contactPhone);
   const firstDelay = input.steps[0]?.delayDays ?? 0;
-  const nextAt = new Date();
-  nextAt.setDate(nextAt.getDate() + firstDelay);
+  const nextAt = computeNextStepAt(firstDelay, input.steps[0]?.hourOfDay);
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO contact_sequences (user_id, contact_phone, automation_id, name, steps_json, next_step_at)
     VALUES (
@@ -1687,8 +1743,7 @@ export async function advanceSequence(userId: number, id: number): Promise<void>
     return;
   }
   const delay = seq.steps[nextStep]?.delayDays ?? 1;
-  const nextAt = new Date();
-  nextAt.setDate(nextAt.getDate() + delay);
+  const nextAt = computeNextStepAt(delay, seq.steps[nextStep]?.hourOfDay);
   await sql`
     UPDATE contact_sequences SET current_step = ${nextStep}, next_step_at = ${toTsParam(formatLocalDateTime(nextAt))}
     WHERE user_id = ${userId} AND id = ${id}
