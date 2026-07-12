@@ -7,6 +7,15 @@ import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 
 const MAX_TOOL_ROUNDS = 8;
 
+/**
+ * Détecte une réponse « amorce vide » : le modèle annonce un contenu
+ * (phrase se terminant par «\u00A0:\u00A0») puis s'arrête sans le fournir.
+ */
+function isDanglingAnnouncement(text: string): boolean {
+  const t = text.replace(/\s+$/u, "");
+  return /[:：]$/u.test(t);
+}
+
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) {
@@ -152,6 +161,19 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
     if (!text) {
       return "Je n'ai pas pu générer de réponse. Réessayez.";
     }
+
+    // Garde-fou : le modèle a annoncé un contenu (« … : ») puis s'est arrêté
+    // sans le fournir. On le relance une fois pour qu'il écrive le message complet.
+    if (isDanglingAnnouncement(text) && rounds < MAX_TOOL_ROUNDS) {
+      messages.push({ role: "assistant", content: text });
+      messages.push({
+        role: "system",
+        content:
+          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète : reprends l'annonce PUIS le texte annoncé en entier (le message de prospection, la suggestion, etc.), dans un seul message. Ne termine pas sur «\u00A0:\u00A0».",
+      });
+      continue;
+    }
+
     return text;
   }
 
