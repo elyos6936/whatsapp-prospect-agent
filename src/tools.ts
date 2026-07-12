@@ -16,6 +16,10 @@ import {
   normalizeGroupParticipantId,
   isLikelyPhoneJid,
   sendWhatsAppMessage,
+  sendWhatsAppMedia,
+  sendWhatsAppVoice,
+  sendWhatsAppLocation,
+  sendWhatsAppContact,
   sendWhatsAppTextStatus,
   testEvolutionConnection,
   chatIdToDisplay,
@@ -273,6 +277,113 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           message: { type: "string", description: "Texte du message" },
         },
         required: ["recipient", "message"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_whatsapp_media",
+      description:
+        "Envoie un MÉDIA WhatsApp (image, vidéo ou document) à un contact ou un groupe. La source peut être une URL publique OU du base64 (préfixe data: accepté). Utiliser pour « envoie cette image/vidéo/ce PDF à … ».",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: {
+            type: "string",
+            description: "Numéro (+229…), chatId (@c.us), ID groupe (@g.us) ou nom de groupe",
+          },
+          media: {
+            type: "string",
+            description: "URL publique du fichier OU chaîne base64 (data:...;base64,... accepté)",
+          },
+          type: {
+            type: "string",
+            enum: ["image", "video", "document"],
+            description: "Type de média",
+          },
+          caption: { type: "string", description: "Légende / texte accompagnant (optionnel)" },
+          file_name: {
+            type: "string",
+            description: "Nom du fichier (recommandé pour les documents, ex. devis.pdf)",
+          },
+          mimetype: {
+            type: "string",
+            description: "MIME explicite si base64 (ex. video/mp4, application/pdf, image/jpeg)",
+          },
+        },
+        required: ["recipient", "media", "type"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_whatsapp_voice",
+      description:
+        "Envoie une VRAIE note vocale WhatsApp (PTT, avec forme d'onde). La source audio peut être une URL publique OU du base64. Utiliser pour « envoie un message vocal / une note audio à … ».",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: {
+            type: "string",
+            description: "Numéro (+229…), chatId (@c.us), ID groupe (@g.us) ou nom de groupe",
+          },
+          audio: {
+            type: "string",
+            description: "URL publique du fichier audio OU base64 (data:...;base64,... accepté)",
+          },
+        },
+        required: ["recipient", "audio"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_location",
+      description:
+        "Envoie une LOCALISATION (épingle carte) avec nom et adresse. Utiliser pour « partage ma position / l'adresse de … ». Fournir latitude et longitude.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: {
+            type: "string",
+            description: "Numéro (+229…), chatId (@c.us), ID groupe (@g.us) ou nom de groupe",
+          },
+          latitude: { type: "number", description: "Latitude (ex. 6.3703)" },
+          longitude: { type: "number", description: "Longitude (ex. 2.3912)" },
+          name: { type: "string", description: "Nom du lieu (ex. Bureau Klanvio)" },
+          address: { type: "string", description: "Adresse / description (optionnel)" },
+        },
+        required: ["recipient", "latitude", "longitude"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_contact",
+      description:
+        "Envoie une CARTE CONTACT (vCard) : nom, entreprise, téléphone, email, URL. Utiliser pour « partage le contact de … ».",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: {
+            type: "string",
+            description: "Numéro (+229…), chatId (@c.us), ID groupe (@g.us) ou nom de groupe",
+          },
+          full_name: { type: "string", description: "Nom complet du contact partagé" },
+          phone: { type: "string", description: "Téléphone du contact (ex. +229…)" },
+          organization: { type: "string", description: "Entreprise (optionnel)" },
+          email: { type: "string", description: "Email (optionnel)" },
+          url: { type: "string", description: "Site web / lien (optionnel)" },
+        },
+        required: ["recipient", "full_name", "phone"],
         additionalProperties: false,
       },
     },
@@ -1041,6 +1152,145 @@ export async function executeTool(userId: number, name: string, args: Record<str
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return JSON.stringify({ error: msg });
+      }
+    }
+
+    case "send_whatsapp_media": {
+      const recipient = String(args.recipient ?? "");
+      const media = String(args.media ?? "").trim();
+      const type = String(args.type ?? "") as "image" | "video" | "document";
+      if (!media) return JSON.stringify({ error: "La source du média (URL ou base64) est requise." });
+      if (!["image", "video", "document"].includes(type)) {
+        return JSON.stringify({ error: "type invalide (image, video ou document)." });
+      }
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@c.us")) {
+          const existing = await getContact(userId, chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({ error: "Ce contact est en STOP. Aucun envoi possible." });
+          }
+        }
+        const result = await sendWhatsAppMedia(userId, chatId, {
+          url: media,
+          type,
+          caption: args.caption ? String(args.caption) : undefined,
+          fileName: args.file_name ? String(args.file_name) : undefined,
+          mimetype: args.mimetype ? String(args.mimetype) : undefined,
+        });
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          isGroup,
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          message: `${type === "image" ? "Image" : type === "video" ? "Vidéo" : "Document"} envoyé(e) ${isGroup ? "dans le groupe" : `à ${chatIdToDisplay(result.chatId)}`} à ${nowFr()}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "send_whatsapp_voice": {
+      const recipient = String(args.recipient ?? "");
+      const audio = String(args.audio ?? "").trim();
+      if (!audio) return JSON.stringify({ error: "La source audio (URL ou base64) est requise." });
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@c.us")) {
+          const existing = await getContact(userId, chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({ error: "Ce contact est en STOP. Aucun envoi possible." });
+          }
+        }
+        const result = await sendWhatsAppVoice(userId, chatId, audio);
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          isGroup,
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          message: `Note vocale envoyée ${isGroup ? "dans le groupe" : `à ${chatIdToDisplay(result.chatId)}`} à ${nowFr()}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "send_location": {
+      const recipient = String(args.recipient ?? "");
+      const latitude = Number(args.latitude);
+      const longitude = Number(args.longitude);
+      if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        return JSON.stringify({ error: "latitude et longitude valides requises." });
+      }
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@c.us")) {
+          const existing = await getContact(userId, chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({ error: "Ce contact est en STOP. Aucun envoi possible." });
+          }
+        }
+        const result = await sendWhatsAppLocation(userId, chatId, {
+          latitude,
+          longitude,
+          name: args.name ? String(args.name) : undefined,
+          address: args.address ? String(args.address) : undefined,
+        });
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          isGroup,
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          message: `Localisation envoyée ${isGroup ? "dans le groupe" : `à ${chatIdToDisplay(result.chatId)}`} à ${nowFr()}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "send_contact": {
+      const recipient = String(args.recipient ?? "");
+      const fullName = String(args.full_name ?? "").trim();
+      const phone = String(args.phone ?? "").trim();
+      if (!fullName || !phone) {
+        return JSON.stringify({ error: "full_name et phone sont requis." });
+      }
+      try {
+        const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@c.us")) {
+          const existing = await getContact(userId, chatId);
+          if (existing?.status === "stop") {
+            return JSON.stringify({ error: "Ce contact est en STOP. Aucun envoi possible." });
+          }
+        }
+        const result = await sendWhatsAppContact(userId, chatId, {
+          fullName,
+          phone,
+          organization: args.organization ? String(args.organization) : undefined,
+          email: args.email ? String(args.email) : undefined,
+          url: args.url ? String(args.url) : undefined,
+        });
+        const isGroup = chatId.endsWith("@g.us");
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          display: isGroup ? chatId : chatIdToDisplay(result.chatId),
+          isGroup,
+          idMessage: result.idMessage,
+          sentAt: nowFr(),
+          message: `Contact « ${fullName} » envoyé ${isGroup ? "dans le groupe" : `à ${chatIdToDisplay(result.chatId)}`} à ${nowFr()}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
       }
     }
 

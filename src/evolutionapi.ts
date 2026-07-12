@@ -778,10 +778,13 @@ export async function sendWhatsAppMedia(
   userId: number,
   chatId: string,
   input: {
+    /** URL publique OU chaîne base64 (avec ou sans préfixe data:) du média. */
     url: string;
-    type: "image" | "document" | "audio";
+    type: "image" | "video" | "document" | "audio";
     caption?: string;
     fileName?: string;
+    /** MIME explicite (ex. video/mp4, application/pdf). Requis pour certains base64. */
+    mimetype?: string;
   },
   opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
@@ -792,20 +795,188 @@ export async function sendWhatsAppMedia(
   await waitOutboundSpacing();
 
   const number = formatEvolutionSendNumber(chatId);
+  // Evolution accepte l'URL ou le base64 dans le même champ `media`. On retire un
+  // éventuel préfixe data:...;base64, car l'API attend le base64 nu.
+  const media = input.url.startsWith("data:")
+    ? input.url.slice(input.url.indexOf(",") + 1)
+    : input.url;
+
   const data = await evolutionFetch<unknown>(creds, `/message/sendMedia/${creds.instanceName}`, {
     method: "POST",
     body: {
       number,
       mediatype: input.type,
-      media: input.url,
+      media,
       caption: input.caption,
       fileName: input.fileName,
+      ...(input.mimetype ? { mimetype: input.mimetype } : {}),
     },
   });
 
   markOutboundSent();
   const idMessage = extractMessageId(data);
-  const label = input.caption || `[${input.type}] ${input.url}`;
+  const source = input.url.startsWith("data:") ? "[base64]" : input.url;
+  const label = input.caption || `[${input.type}] ${source}`;
+
+  await saveWhatsAppMessage(userId, {
+    contactPhone: normalizeGroupParticipantId(chatId),
+    direction: "sortant",
+    body: label,
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
+  });
+
+  const normalized = normalizeGroupParticipantId(chatId);
+  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+    try {
+      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+    } catch {
+      /* best effort */
+    }
+  }
+
+  return { idMessage, chatId: normalized };
+}
+
+/**
+ * Envoie une vraie note vocale WhatsApp (PTT). Différent d'un fichier audio :
+ * WhatsApp l'affiche avec la forme d'onde et le bouton lecture.
+ * `audio` = URL publique OU base64 (préfixe data: accepté).
+ */
+export async function sendWhatsAppVoice(
+  userId: number,
+  chatId: string,
+  audio: string,
+  opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  await assertCanSendTo(userId, chatId);
+  await waitOutboundSpacing();
+
+  const number = formatEvolutionSendNumber(chatId);
+  const payload = audio.startsWith("data:") ? audio.slice(audio.indexOf(",") + 1) : audio;
+
+  const data = await evolutionFetch<unknown>(creds, `/message/sendWhatsAppAudio/${creds.instanceName}`, {
+    method: "POST",
+    body: { number, audio: payload },
+  });
+
+  markOutboundSent();
+  const idMessage = extractMessageId(data);
+
+  await saveWhatsAppMessage(userId, {
+    contactPhone: normalizeGroupParticipantId(chatId),
+    direction: "sortant",
+    body: "[note vocale]",
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
+  });
+
+  const normalized = normalizeGroupParticipantId(chatId);
+  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+    try {
+      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+    } catch {
+      /* best effort */
+    }
+  }
+
+  return { idMessage, chatId: normalized };
+}
+
+/** Envoie une localisation (épingle carte) avec nom et adresse/description. */
+export async function sendWhatsAppLocation(
+  userId: number,
+  chatId: string,
+  input: { latitude: number; longitude: number; name?: string; address?: string },
+  opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  await assertCanSendTo(userId, chatId);
+  await waitOutboundSpacing();
+
+  const number = formatEvolutionSendNumber(chatId);
+  const data = await evolutionFetch<unknown>(creds, `/message/sendLocation/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      name: input.name,
+      address: input.address,
+      latitude: input.latitude,
+      longitude: input.longitude,
+    },
+  });
+
+  markOutboundSent();
+  const idMessage = extractMessageId(data);
+  const label = `[localisation] ${input.name || ""} (${input.latitude}, ${input.longitude})`.trim();
+
+  await saveWhatsAppMessage(userId, {
+    contactPhone: normalizeGroupParticipantId(chatId),
+    direction: "sortant",
+    body: label,
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
+  });
+
+  const normalized = normalizeGroupParticipantId(chatId);
+  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+    try {
+      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+    } catch {
+      /* best effort */
+    }
+  }
+
+  return { idMessage, chatId: normalized };
+}
+
+/** Envoie une carte contact (vCard) : nom, entreprise, téléphone, email, URL. */
+export async function sendWhatsAppContact(
+  userId: number,
+  chatId: string,
+  contact: {
+    fullName: string;
+    phone: string;
+    organization?: string;
+    email?: string;
+    url?: string;
+  },
+  opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  await assertCanSendTo(userId, chatId);
+  await waitOutboundSpacing();
+
+  const number = formatEvolutionSendNumber(chatId);
+  const wuid = contact.phone.replace(/\D/g, "");
+
+  const data = await evolutionFetch<unknown>(creds, `/message/sendContact/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      contact: [
+        {
+          fullName: contact.fullName,
+          wuid,
+          phoneNumber: contact.phone,
+          organization: contact.organization,
+          email: contact.email,
+          url: contact.url,
+        },
+      ],
+    },
+  });
+
+  markOutboundSent();
+  const idMessage = extractMessageId(data);
+  const label = `[contact] ${contact.fullName} — ${contact.phone}`;
 
   await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
