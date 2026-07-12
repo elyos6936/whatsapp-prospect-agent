@@ -5,10 +5,31 @@ import ReactMarkdown from 'react-markdown';
 import { Bot, MessageCircle } from 'lucide-react';
 import { LazyCodeBlock } from './LazyCodeBlock';
 import { ChatMedia } from './ChatMedia';
+import { QuestionsCard, type QuestionsPayload } from './QuestionsCard';
 import { cn } from '@/lib/utils';
 import { sanitizeAssistantText } from '@/lib/sanitize-assistant-text';
 import { classifyMediaUrl, isProxiableMediaUrl, normalizeMediaUrl } from '@/lib/media';
 import type { ChatMessage } from '@/lib/api';
+
+const QUESTIONS_RE = /```klanvio-questions\s*\n([\s\S]*?)\n?```/;
+
+/** Extrait un bloc de questions interactives du contenu brut d'un message. */
+function extractQuestions(
+  raw: string,
+): { intro: string; payload: QuestionsPayload } | null {
+  const match = QUESTIONS_RE.exec(raw);
+  if (!match) return null;
+  try {
+    const payload = JSON.parse(match[1]) as QuestionsPayload;
+    if (!payload || !Array.isArray(payload.questions) || payload.questions.length === 0) {
+      return null;
+    }
+    const intro = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim();
+    return { intro, payload };
+  } catch {
+    return null;
+  }
+}
 
 const markdownComponents = {
   code({ className, children, ...props }: ComponentProps<'code'> & { className?: string }) {
@@ -53,9 +74,13 @@ const markdownComponents = {
 interface MessageBubbleProps {
   message: ChatMessage;
   isStreaming?: boolean;
+  /** Envoie un message (utilisé par les cartes de questions interactives). */
+  onSend?: (text: string) => void;
+  /** Dernier message de la liste (les cartes ne sont interactives que sur le dernier). */
+  isLast?: boolean;
 }
 
-export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, onSend, isLast }: MessageBubbleProps) {
   const isUser = message.kind === 'user';
   const isAssistant = message.kind === 'assistant' || message.kind === 'error';
   const isWaIn = message.kind === 'whatsapp-in';
@@ -66,9 +91,13 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
     { locale: fr },
   );
 
-  const displayContent = isAssistant
-    ? sanitizeAssistantText(message.content)
-    : message.content;
+  const questions = isAssistant ? extractQuestions(message.content) : null;
+
+  const displayContent = questions
+    ? sanitizeAssistantText(questions.intro)
+    : isAssistant
+      ? sanitizeAssistantText(message.content)
+      : message.content;
 
   const bubbleClass = cn(
     'min-w-0 max-w-full rounded-2xl px-3 py-2 text-[13px] leading-[1.45] transition-all duration-200',
@@ -113,14 +142,23 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
           </span>
         )}
         <div className={bubbleClass}>
-          <div className="prose-klanvio">
-            <ReactMarkdown components={markdownComponents}>
-              {displayContent || (isStreaming ? ' ' : '')}
-            </ReactMarkdown>
-            {isStreaming && message.content && (
-              <span className="ml-0.5 inline-block animate-pulse text-text-300">▍</span>
-            )}
-          </div>
+          {(displayContent || !questions) && (
+            <div className="prose-klanvio">
+              <ReactMarkdown components={markdownComponents}>
+                {displayContent || (isStreaming ? ' ' : '')}
+              </ReactMarkdown>
+              {isStreaming && message.content && (
+                <span className="ml-0.5 inline-block animate-pulse text-text-300">▍</span>
+              )}
+            </div>
+          )}
+          {questions && (
+            <QuestionsCard
+              payload={questions.payload}
+              onSubmit={onSend}
+              disabled={!isLast || !onSend}
+            />
+          )}
         </div>
         <time className="px-1 text-[10px] text-text-500" dateTime={message.created_at}>
           {time}

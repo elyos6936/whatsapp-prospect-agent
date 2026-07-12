@@ -104,6 +104,52 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "ask_user_choices",
+      description:
+        "Poser à l'utilisateur une ou plusieurs questions stratégiques sous forme de CARTE avec des options cliquables, au lieu d'écrire un long pavé de texte. À privilégier dès que tu dois cadrer quelque chose (objectif, cible, style de conversation, volume/cadence, tarif, canal…). L'utilisateur sélectionne ses réponses et valide ; ses choix te reviennent comme un message. N'utilise PAS ce tool pour de simples confirmations oui/non triviales — réserve-le aux vrais choix de cadrage.",
+      parameters: {
+        type: "object",
+        properties: {
+          intro: {
+            type: "string",
+            description:
+              "Courte phrase (1 ligne) affichée au-dessus de la carte pour donner le contexte. Optionnel.",
+          },
+          questions: {
+            type: "array",
+            description: "1 à 5 questions à poser. Chaque question a des options prédéfinies.",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string", description: "Identifiant court optionnel (ex. 'objectif')." },
+                prompt: { type: "string", description: "La question posée." },
+                options: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Les choix proposés (2 à 6, courts et clairs).",
+                },
+                allow_multiple: {
+                  type: "boolean",
+                  description: "true si l'utilisateur peut choisir plusieurs options.",
+                },
+                allow_other: {
+                  type: "boolean",
+                  description: "true pour proposer un champ « Autre » de saisie libre.",
+                },
+              },
+              required: ["prompt", "options"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["questions"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "check_whatsapp_connection",
       description: "Vérifie si WhatsApp est connecté via Evolution API.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
@@ -1559,6 +1605,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
 
 /** Outils qui n'ont pas besoin d'Evolution API immédiatement */
 const LOCAL_TOOLS = new Set([
+  "ask_user_choices",
   "save_contact",
   "list_contacts",
   "set_auto_reply",
@@ -1773,6 +1820,15 @@ export async function executeTool(
   }
 
   switch (name) {
+    case "ask_user_choices": {
+      // Normalement intercepté par l'agent (chatWithAgent) qui transforme cet
+      // appel en carte de questions. Ce cas ne se produit que si l'appel est
+      // invalide (pas de questions valides) : on guide le modèle à recommencer.
+      return JSON.stringify({
+        note: "Fournis un tableau 'questions' avec, pour chaque question, un 'prompt' et au moins 2 'options'.",
+      });
+    }
+
     case "check_whatsapp_connection": {
       const result = await testEvolutionConnection(userId);
       return JSON.stringify({

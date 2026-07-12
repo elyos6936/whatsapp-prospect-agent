@@ -14,6 +14,47 @@ import { executeTool, TOOL_DEFINITIONS, type ToolContext } from "./tools.js";
 
 const MAX_TOOL_ROUNDS = 8;
 
+const CHOICES_TOOL = "ask_user_choices";
+
+/**
+ * Transforme les arguments d'un appel `ask_user_choices` en réponse texte
+ * contenant un bloc `klanvio-questions` que le frontend rend comme une carte
+ * de questions à options cliquables. Renvoie null si aucune question valide.
+ */
+function buildChoicesReply(
+  rawArgs: Record<string, unknown>,
+  assistantText?: string | null
+): string | null {
+  const questionsRaw = Array.isArray(rawArgs.questions) ? rawArgs.questions : [];
+  const questions = questionsRaw
+    .map((q) => {
+      const qo = (q ?? {}) as Record<string, unknown>;
+      const prompt = typeof qo.prompt === "string" ? qo.prompt.trim() : "";
+      const options = Array.isArray(qo.options)
+        ? qo.options.map((o) => String(o).trim()).filter((o) => o.length > 0)
+        : [];
+      if (!prompt || options.length === 0) return null;
+      return {
+        id: typeof qo.id === "string" && qo.id.trim() ? qo.id.trim() : undefined,
+        prompt,
+        options,
+        allowMultiple: qo.allow_multiple === true || qo.allowMultiple === true,
+        allowOther: qo.allow_other === true || qo.allowOther === true,
+      };
+    })
+    .filter((q): q is NonNullable<typeof q> => q !== null);
+
+  if (questions.length === 0) return null;
+
+  const intro =
+    (typeof rawArgs.intro === "string" && rawArgs.intro.trim()) ||
+    (assistantText && assistantText.trim()) ||
+    "";
+
+  const block = "```klanvio-questions\n" + JSON.stringify({ questions }) + "\n```";
+  return intro ? `${intro}\n\n${block}` : block;
+}
+
 export interface ChatAgentOptions {
   /** Canal de conversation (historique isolé). Défaut : 'main'. */
   channel?: AgentChannel;
@@ -136,6 +177,23 @@ export async function chatWithAgent(
     const assistantMsg = choice.message;
 
     if (assistantMsg.tool_calls?.length) {
+      // Interception : si le modèle demande une carte de questions, on la
+      // renvoie directement (les arguments SONT la structure à afficher),
+      // sans repasser par le modèle — ça garantit un bloc exact.
+      const choicesCall = assistantMsg.tool_calls.find(
+        (tc) => tc.type === "function" && tc.function.name === CHOICES_TOOL
+      );
+      if (choicesCall && choicesCall.type === "function") {
+        let choiceArgs: Record<string, unknown> = {};
+        try {
+          choiceArgs = JSON.parse(choicesCall.function.arguments || "{}") as Record<string, unknown>;
+        } catch {
+          choiceArgs = {};
+        }
+        const reply = buildChoicesReply(choiceArgs, assistantMsg.content);
+        if (reply) return reply;
+      }
+
       messages.push({
         role: "assistant",
         content: assistantMsg.content ?? null,
