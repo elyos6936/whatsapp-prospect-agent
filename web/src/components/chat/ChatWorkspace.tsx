@@ -92,13 +92,8 @@ export function ChatWorkspace({
                 </div>
               ) : (
                 <div className="flex min-w-0 flex-col gap-3 pb-4">
-                  {messages.map((msg, index) => (
-                    <MessageBubble
-                      key={msg.id}
-                      message={msg}
-                      onSend={(text) => void onSend(text)}
-                      isLast={index === messages.length - 1 && !isSending}
-                    />
+                  {messages.map((msg) => (
+                    <MessageBubble key={msg.id} message={msg} />
                   ))}
                   {isSending && (
                     <div className="flex animate-fade-in gap-2">

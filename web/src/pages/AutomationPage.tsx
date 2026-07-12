@@ -1,26 +1,49 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Plus, RefreshCw, Zap } from 'lucide-react';
-import { AutomationListCard } from '@/components/automation/AutomationListCard';
-import { AutomationStatsView } from '@/components/automation/AutomationStatsView';
-import { BuilderSplitView } from '@/components/automation/BuilderSplitView';
 import {
-  cancelScheduledMessage,
+  fetchAutomationDetail,
   fetchAutomations,
-  fetchAutomationStats,
   fetchHandoffs,
-  fetchScheduledMessages,
+  fetchRoiDashboard,
   reloadAutomationMembers,
   resolveHandoff,
   updateAutomationStatus,
-  type AutomationStats,
+  type AutomationDetail,
   type AutomationSummary,
   type HandoffItem,
-  type ScheduledMessageItem,
+  type RoiDashboard,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-type Section = 'manual' | 'automatic';
-type View = 'list' | 'builder' | 'stats';
+type AutoTab = 'list' | 'roi' | 'handoffs';
+
+const TYPE_LABELS: Record<string, string> = {
+  group_prospect: 'Prospection groupe',
+  keyword_sales: 'Vente sur mots-clés',
+  custom_followup: 'Suivi personnalisé',
+};
+
+const STATUS_LABELS: Record<string, string> = {
+  active: 'Active',
+  paused: 'En pause',
+  completed: 'Terminée',
+  failed: 'Échouée',
+};
+
+function fmtTime(iso?: string): string {
+  if (!iso) return '—';
+  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T'));
+  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('fr-FR');
+}
+
+function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+  return (
+    <div className="rounded-xl border border-white/10 bg-bg-100 p-4">
+      <span className="text-xs text-text-500">{label}</span>
+      <p className="mt-1 text-xl font-semibold text-text-100">{value}</p>
+      {hint && <p className="mt-0.5 text-[11px] text-text-500">{hint}</p>}
+    </div>
+  );
+}
 
 function needsMemberReload(a: AutomationSummary): boolean {
   if (a.type !== 'group_prospect') return false;
@@ -29,104 +52,53 @@ function needsMemberReload(a: AutomationSummary): boolean {
   return a.status === 'failed' || (contacted === 0 && pending === 0);
 }
 
-function fmtTime(iso?: string): string {
-  if (!iso) return '—';
-  const d = new Date(iso.includes('T') ? iso : iso.replace(' ', 'T'));
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('fr-FR');
-}
-
-function ScheduledCard({
-  item,
-  onCancel,
-  cancelling,
-}: {
-  item: ScheduledMessageItem;
-  onCancel?: () => void;
-  cancelling?: boolean;
-}) {
-  return (
-    <article className="rounded-2xl border border-white/10 bg-bg-100 p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="font-medium text-text-100">
-            {item.recipient_label || item.recipient}
-          </p>
-          <p className="mt-1 line-clamp-2 text-sm text-text-400">{item.message}</p>
-          <p className="mt-2 text-xs text-text-500">Prévu : {fmtTime(item.send_at)}</p>
-        </div>
-        <span
-          className={cn(
-            'shrink-0 rounded-full px-2 py-0.5 text-xs',
-            item.status === 'pending' && 'bg-amber-500/20 text-amber-400',
-            item.status === 'sent' && 'bg-emerald-500/20 text-emerald-400',
-            item.status === 'failed' && 'bg-red-500/20 text-red-400',
-            item.status === 'cancelled' && 'bg-bg-300 text-text-500',
-          )}
-        >
-          {item.status}
-        </span>
-      </div>
-      {item.status === 'pending' && onCancel && (
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={cancelling}
-          className="mt-3 rounded-lg border border-white/10 px-3 py-1 text-xs hover:bg-bg-200 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {cancelling ? 'Annulation…' : 'Annuler'}
-        </button>
-      )}
-    </article>
-  );
-}
-
 export function AutomationPage() {
-  const [section, setSection] = useState<Section>('automatic');
-  const [view, setView] = useState<View>('list');
-  const [statsData, setStatsData] = useState<AutomationStats | null>(null);
+  const [tab, setTab] = useState<AutoTab>('list');
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
-  const [scheduled, setScheduled] = useState<ScheduledMessageItem[]>([]);
+  const [detail, setDetail] = useState<AutomationDetail | null>(null);
+  const [roi, setRoi] = useState<RoiDashboard | null>(null);
   const [handoffs, setHandoffs] = useState<HandoffItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [cancellingId, setCancellingId] = useState<number | null>(null);
 
-  const handleCancelScheduled = useCallback(
-    async (id: number) => {
-      setCancellingId(id);
-      setError(null);
-      const previous = scheduled;
-      setScheduled((prev) =>
-        prev.map((m) => (m.id === id ? { ...m, status: 'cancelled' } : m)),
-      );
-      try {
-        await cancelScheduledMessage(id);
-        const sched = await fetchScheduledMessages();
-        setScheduled(sched);
-      } catch (err) {
-        setScheduled(previous);
-        setError(
-          err instanceof Error ? err.message : "Impossible d'annuler cet envoi.",
-        );
-      } finally {
-        setCancellingId(null);
-      }
-    },
-    [scheduled],
-  );
-
-  const loadAll = useCallback(async () => {
+  const loadAutomations = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [autos, sched, ho] = await Promise.all([
-        fetchAutomations(),
-        fetchScheduledMessages(),
-        fetchHandoffs(),
-      ]);
-      setAutomations(autos);
-      setScheduled(sched);
-      setHandoffs(ho);
+      setAutomations(await fetchAutomations());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadRoi = useCallback(async () => {
+    setLoading(true);
+    try {
+      setRoi(await fetchRoiDashboard());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadHandoffs = useCallback(async () => {
+    setLoading(true);
+    try {
+      setHandoffs(await fetchHandoffs());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const showDetail = useCallback(async (id: number) => {
+    setLoading(true);
+    try {
+      setDetail(await fetchAutomationDetail(id));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erreur');
     } finally {
@@ -135,34 +107,12 @@ export function AutomationPage() {
   }, []);
 
   useEffect(() => {
-    if (view === 'list') void loadAll();
-  }, [view, section, loadAll]);
+    if (tab === 'list' && !detail) void loadAutomations();
+    if (tab === 'roi') void loadRoi();
+    if (tab === 'handoffs') void loadHandoffs();
+  }, [tab, detail, loadAutomations, loadRoi, loadHandoffs]);
 
-  const chatAutomations = automations.filter(
-    (a) => ((a.config?.origin as string) ?? 'chat') === 'chat',
-  );
-  const manualAutomations = automations.filter(
-    (a) => (a.config?.origin as string) === 'manual',
-  );
-
-  const openStats = async (id: number) => {
-    setLoading(true);
-    try {
-      setStatsData(await fetchAutomationStats(id));
-      setView('stats');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const toggleStatus = async (id: number, status: 'active' | 'paused') => {
-    await updateAutomationStatus(id, status);
-    await loadAll();
-  };
-
-  const handleReloadMembers = async (id: number) => {
+  const handleReloadMembers = async (id: number, onDone?: () => void) => {
     if (
       !confirm(
         'Recharger les membres du groupe depuis Evolution API ? WhatsApp doit être connecté.',
@@ -173,88 +123,57 @@ export function AutomationPage() {
     try {
       const data = await reloadAutomationMembers(id);
       alert(`${data.targetsAdded ?? 0} membre(s) ajouté(s).`);
-      await loadAll();
+      if (onDone) await onDone();
+      else await loadAutomations();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Échec');
     }
   };
 
-  if (view === 'builder') {
-    return (
-      <div className="flex min-h-0 flex-1 flex-col">
-        <BuilderSplitView
-          onBack={() => {
-            setView('list');
-            setSection('manual');
-          }}
-          onStats={(id) => void openStats(id)}
-        />
-      </div>
-    );
-  }
+  const tabs: { id: AutoTab; label: string }[] = [
+    { id: 'list', label: 'Campagnes' },
+    { id: 'roi', label: 'ROI' },
+    { id: 'handoffs', label: 'Handoffs' },
+  ];
 
-  if (view === 'stats' && statsData) {
-    return (
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
-          <AutomationStatsView
-            data={statsData}
-            onBack={() => {
-              setStatsData(null);
-              setView('list');
-            }}
-          />
-        </div>
-      </div>
-    );
-  }
+  const a = detail?.automation;
+  const stats = a?.stats ?? {};
+  const targets = detail?.targets ?? [];
+  const logs = detail?.logs ?? [];
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
       <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
-        <div className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex items-center justify-between gap-4">
           <div>
             <h1 className="font-serif text-2xl font-light text-text-100">Automatisation</h1>
-            <p className="mt-1 text-sm text-text-400">
-              Créez, suivez et contrôlez vos automatisations WhatsApp.
-            </p>
+            <p className="mt-1 text-sm text-text-400">Campagnes, ROI et handoffs humains.</p>
           </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => void loadAll()}
-              className="inline-flex items-center gap-1 rounded-xl border border-white/10 px-3 py-1.5 text-xs text-text-400 hover:bg-bg-200"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Actualiser
-            </button>
-            {section === 'manual' && (
-              <button
-                type="button"
-                onClick={() => setView('builder')}
-                className="inline-flex items-center gap-1 rounded-xl bg-brand px-4 py-1.5 text-xs font-medium text-white"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                Créer
-              </button>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => {
+              if (tab === 'list' && !detail) void loadAutomations();
+              if (tab === 'roi') void loadRoi();
+              if (tab === 'handoffs') void loadHandoffs();
+            }}
+            className="rounded-xl border border-white/10 px-3 py-1.5 text-xs text-text-400 hover:bg-bg-200"
+          >
+            Actualiser
+          </button>
         </div>
 
-        <div className="mt-4 flex gap-2">
-          {(
-            [
-              { id: 'automatic' as const, label: 'Automatique' },
-              { id: 'manual' as const, label: 'Manuel' },
-            ] as const
-          ).map((t) => (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {tabs.map((t) => (
             <button
               key={t.id}
               type="button"
-              onClick={() => setSection(t.id)}
+              onClick={() => {
+                setTab(t.id);
+                if (t.id === 'list') setDetail(null);
+              }}
               className={cn(
-                'rounded-lg px-4 py-2 text-sm font-medium transition',
-                section === t.id
+                'rounded-lg px-3 py-1.5 text-xs font-medium transition',
+                tab === t.id
                   ? 'bg-brand-muted text-brand border border-brand-border'
                   : 'text-text-400 border border-white/10 hover:bg-bg-200',
               )}
@@ -267,161 +186,309 @@ export function AutomationPage() {
         {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
         {loading && <p className="mt-4 text-sm text-text-500">Chargement…</p>}
 
-        {section === 'automatic' && (
-          <div className="mt-6 space-y-8">
-            <section>
-              <div className="mb-3 flex items-center gap-2">
-                <Zap className="h-4 w-4 text-brand" />
-                <h2 className="text-sm font-medium text-text-200">
-                  Campagnes créées depuis le chat ({chatAutomations.length})
-                </h2>
-              </div>
-              <p className="mb-4 text-xs text-text-500">
-                Automatisations lancées par l&apos;agent dans le chat principal. Vous pouvez les
-                désactiver ou les réactiver ici.
+        {tab === 'list' && !detail && (
+          <div className="mt-6 space-y-3">
+            {automations.length === 0 ? (
+              <p className="text-sm text-text-500">
+                Aucune automatisation. Demandez à l&apos;agent IA de lancer une campagne.
               </p>
-              {chatAutomations.length === 0 ? (
-                <p className="text-sm text-text-500">
-                  Aucune campagne automatique. Demandez à l&apos;agent dans le chat : « Prospecte le
-                  groupe X » ou « Quand quelqu&apos;un dit … ».
-                </p>
-              ) : (
-                <div className="space-y-3">
-                  {chatAutomations.map((auto) => (
-                    <div key={auto.id}>
-                      <AutomationListCard
-                        auto={auto}
-                        onStats={() => void openStats(auto.id)}
-                        onToggleStatus={() =>
-                          void toggleStatus(
-                            auto.id,
-                            auto.status === 'active' ? 'paused' : 'active',
-                          )
-                        }
-                      />
+            ) : (
+              automations.map((auto) => {
+                const contacted = (auto.stats?.contacted as number) ?? 0;
+                const pending = (auto.stats?.pending as number) ?? 0;
+                const replied = (auto.stats?.replied as number) ?? 0;
+                const handled = (auto.stats?.messagesHandled as number) ?? 0;
+                const progress =
+                  auto.type === 'group_prospect'
+                    ? `${contacted} contacté(s) · ${pending} restant(s) · ${replied} réponse(s)`
+                    : `${handled} message(s) traité(s)`;
+
+                return (
+                  <article
+                    key={auto.id}
+                    className="cursor-pointer rounded-2xl border border-white/10 bg-bg-100 p-5 transition hover:border-brand-border"
+                    onClick={() => void showDetail(auto.id)}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <h3 className="font-medium text-text-100">{auto.name}</h3>
+                        <span className="text-xs text-brand">
+                          {TYPE_LABELS[auto.type] || auto.type}
+                        </span>
+                      </div>
+                      <span
+                        className={cn(
+                          'rounded-full px-2 py-0.5 text-xs',
+                          auto.status === 'active' && 'bg-emerald-500/20 text-emerald-400',
+                          auto.status === 'paused' && 'bg-amber-500/20 text-amber-400',
+                          auto.status === 'failed' && 'bg-red-500/20 text-red-400',
+                          auto.status === 'completed' && 'bg-bg-300 text-text-400',
+                        )}
+                      >
+                        {STATUS_LABELS[auto.status] || auto.status}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm text-text-400">{auto.summary || '—'}</p>
+                    <p className="mt-1 text-xs text-text-500">{progress}</p>
+                    <div
+                      className="mt-3 flex flex-wrap gap-2"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => void showDetail(auto.id)}
+                        className="rounded-lg border border-white/10 px-3 py-1 text-xs hover:bg-bg-200"
+                      >
+                        Détail
+                      </button>
                       {needsMemberReload(auto) && (
                         <button
                           type="button"
                           onClick={() => void handleReloadMembers(auto.id)}
-                          className="mt-2 text-xs text-brand hover:underline"
-                        >
-                          Recharger les membres du groupe
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </section>
-
-            <section>
-              <h2 className="mb-3 text-sm font-medium text-text-200">
-                Envois programmés ({scheduled.filter((s) => s.status === 'pending').length} en
-                attente)
-              </h2>
-              <p className="mb-4 text-xs text-text-500">
-                Messages planifiés depuis le chat (ex. « envoie dans 10 minutes »). Exécution
-                garantie côté serveur.
-              </p>
-              {scheduled.length === 0 ? (
-                <p className="text-sm text-text-500">Aucun envoi programmé.</p>
-              ) : (
-                <div className="space-y-3">
-                  {scheduled.slice(0, 30).map((item) => (
-                    <ScheduledCard
-                      key={item.id}
-                      item={item}
-                      cancelling={cancellingId === item.id}
-                      onCancel={
-                        item.status === 'pending'
-                          ? () => void handleCancelScheduled(item.id)
-                          : undefined
-                      }
-                    />
-                  ))}
-                </div>
-              )}
-            </section>
-
-            {handoffs.length > 0 && (
-              <section>
-                <h2 className="mb-3 text-sm font-medium text-text-200">
-                  Handoffs ({handoffs.length})
-                </h2>
-                <div className="space-y-3">
-                  {handoffs.map((h) => (
-                    <article
-                      key={h.id}
-                      className="rounded-2xl border border-white/10 bg-bg-100 p-4"
-                    >
-                      <h4 className="font-medium text-text-200">
-                        {h.contact_name || h.contact_phone}
-                      </h4>
-                      <p className="mt-1 text-sm text-brand">{h.reason}</p>
-                      {h.summary && <p className="mt-2 text-sm text-text-400">{h.summary}</p>}
-                      <div className="mt-3 flex gap-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await resolveHandoff(h.id, 'resolved');
-                            await loadAll();
-                          }}
                           className="rounded-lg bg-brand px-3 py-1 text-xs text-white"
                         >
-                          Traité
+                          Recharger membres
                         </button>
+                      )}
+                      {auto.status === 'active' && (
                         <button
                           type="button"
                           onClick={async () => {
-                            await resolveHandoff(h.id, 'dismissed');
-                            await loadAll();
+                            await updateAutomationStatus(auto.id, 'paused');
+                            await loadAutomations();
                           }}
                           className="rounded-lg border border-white/10 px-3 py-1 text-xs hover:bg-bg-200"
                         >
-                          Ignorer
+                          Désactiver
                         </button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-              </section>
+                      )}
+                      {auto.status === 'paused' && (
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await updateAutomationStatus(auto.id, 'active');
+                            await loadAutomations();
+                          }}
+                          className="rounded-lg bg-brand px-3 py-1 text-xs text-white"
+                        >
+                          Réactiver
+                        </button>
+                      )}
+                    </div>
+                  </article>
+                );
+              })
             )}
           </div>
         )}
 
-        {section === 'manual' && (
+        {tab === 'list' && detail && a && (
           <div className="mt-6 space-y-6">
-            <p className="text-sm text-text-400">
-              Créez une automatisation via le chat constructeur. L&apos;aperçu se met à jour en
-              direct ; validez avant activation.
-            </p>
+            <button
+              type="button"
+              onClick={() => setDetail(null)}
+              className="text-sm text-brand hover:underline"
+            >
+              ← Retour à la liste
+            </button>
 
-            {manualAutomations.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-white/10 p-8 text-center">
-                <p className="text-sm text-text-400">Aucune automatisation manuelle.</p>
+            <header className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-xl font-medium text-text-100">{a.name}</h2>
+                <p className="text-sm text-text-500">
+                  {TYPE_LABELS[a.type] || a.type} · Créée le {fmtTime(a.created_at)}
+                </p>
+              </div>
+              <span className="text-sm text-text-400">
+                {STATUS_LABELS[a.status] || a.status}
+              </span>
+            </header>
+
+            <p className="text-text-300">{a.summary || '—'}</p>
+
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {a.type === 'group_prospect' ? (
+                <>
+                  <StatCard label="Contactés" value={(stats.contacted as number) ?? 0} />
+                  <StatCard label="Restants" value={(stats.pending as number) ?? 0} />
+                  <StatCard label="Réponses" value={(stats.replied as number) ?? 0} />
+                  <StatCard label="Intéressés" value={(stats.interested as number) ?? 0} />
+                </>
+              ) : (
+                <>
+                  <StatCard label="Messages traités" value={(stats.messagesHandled as number) ?? 0} />
+                  <StatCard label="Budget" value={`${a.budget_fcfa || 0} FCFA`} />
+                </>
+              )}
+            </div>
+
+            {typeof stats.report === 'string' && stats.report && (
+              <section>
+                <h3 className="text-sm font-medium text-text-200">Rapport</h3>
+                <p className="mt-2 text-sm text-text-400">{stats.report}</p>
+              </section>
+            )}
+
+            {targets.length > 0 && (
+              <section>
+                <h3 className="text-sm font-medium text-text-200">Cibles ({targets.length})</h3>
+                <div className="mt-2 space-y-1">
+                  {targets.slice(0, 30).map((t) => (
+                    <div
+                      key={t.target_id}
+                      className="flex justify-between rounded-lg bg-bg-100 px-3 py-2 text-sm"
+                    >
+                      <span>{t.target_label || t.target_id}</span>
+                      <span className="text-text-500">{t.status}</span>
+                    </div>
+                  ))}
+                  {targets.length > 30 && (
+                    <p className="text-xs text-text-500">… et {targets.length - 30} autre(s)</p>
+                  )}
+                </div>
+              </section>
+            )}
+
+            <section>
+              <h3 className="text-sm font-medium text-text-200">Journal récent</h3>
+              <div className="mt-2 space-y-1">
+                {logs.length === 0 ? (
+                  <p className="text-sm text-text-500">Aucun événement.</p>
+                ) : (
+                  logs.map((l, i) => (
+                    <div
+                      key={i}
+                      className={cn(
+                        'rounded-lg px-3 py-2 text-sm',
+                        l.level === 'error' && 'bg-red-500/10 text-red-300',
+                        l.level !== 'error' && 'bg-bg-100 text-text-300',
+                      )}
+                    >
+                      <span className="mr-2 text-xs text-text-500">{fmtTime(l.created_at)}</span>
+                      {l.message}
+                    </div>
+                  ))
+                )}
+              </div>
+            </section>
+
+            <div className="flex flex-wrap gap-2">
+              {needsMemberReload(a) && (
                 <button
                   type="button"
-                  onClick={() => setView('builder')}
-                  className="mt-4 inline-flex items-center gap-1 rounded-xl bg-brand px-4 py-2 text-sm text-white"
+                  onClick={() => void handleReloadMembers(a.id, () => showDetail(a.id))}
+                  className="rounded-xl bg-brand px-4 py-2 text-sm text-white"
                 >
-                  <Plus className="h-4 w-4" />
-                  Créer une automatisation
+                  Recharger les membres
                 </button>
+              )}
+              {a.status === 'active' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await updateAutomationStatus(a.id, 'paused');
+                    await showDetail(a.id);
+                  }}
+                  className="rounded-xl border border-white/10 px-4 py-2 text-sm hover:bg-bg-200"
+                >
+                  Désactiver
+                </button>
+              )}
+              {a.status === 'paused' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await updateAutomationStatus(a.id, 'active');
+                    await showDetail(a.id);
+                  }}
+                  className="rounded-xl bg-brand px-4 py-2 text-sm text-white"
+                >
+                  Réactiver
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab === 'roi' && roi && (
+          <div className="mt-6 space-y-6">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <StatCard label="Contactés" value={roi.totals?.contacted ?? 0} />
+              <StatCard label="Réponses" value={roi.totals?.replied ?? 0} />
+              <StatCard label="Intéressés" value={roi.totals?.interested ?? 0} />
+              <StatCard label="Conversions" value={roi.totals?.conversions ?? 0} />
+              <StatCard label="Revenus" value={`${roi.totals?.revenueFcfa ?? 0} FCFA`} />
+              <StatCard label="Budget" value={`${roi.totals?.budgetFcfa ?? 0} FCFA`} />
+              <StatCard label="Leads chauds" value={roi.totals?.hotLeads ?? 0} />
+              <StatCard
+                label="Msgs sortants/jour"
+                value={roi.totals?.messagesToday ?? 0}
+              />
+            </div>
+            <section>
+              <h3 className="text-sm font-medium text-text-200">Par campagne</h3>
+              <div className="mt-3 space-y-2">
+                {(roi.automations ?? []).length === 0 ? (
+                  <p className="text-sm text-text-500">Aucune campagne.</p>
+                ) : (
+                  roi.automations!.map((item, i) => (
+                    <div key={i} className="rounded-xl border border-white/10 bg-bg-100 p-4">
+                      <h4 className="font-medium text-text-200">{item.name}</h4>
+                      <p className="text-sm text-text-500">
+                        ROI: {item.roiPercent != null ? `${item.roiPercent}%` : '—'} · Coût/réponse:{' '}
+                        {item.costPerReply != null ? `${item.costPerReply} FCFA` : '—'}
+                      </p>
+                    </div>
+                  ))
+                )}
               </div>
+            </section>
+          </div>
+        )}
+
+        {tab === 'handoffs' && (
+          <div className="mt-6 space-y-3">
+            {handoffs.length === 0 ? (
+              <p className="text-sm text-text-500">
+                Aucun handoff en attente. L&apos;IA vous alertera quand un humain doit reprendre.
+              </p>
             ) : (
-              <div className="space-y-3">
-                {manualAutomations.map((auto) => (
-                  <AutomationListCard
-                    key={auto.id}
-                    auto={auto}
-                    onOpen={() => setView('builder')}
-                    onStats={() => void openStats(auto.id)}
-                    onToggleStatus={() =>
-                      void toggleStatus(auto.id, auto.status === 'active' ? 'paused' : 'active')
-                    }
-                  />
-                ))}
-              </div>
+              handoffs.map((h) => (
+                <article key={h.id} className="rounded-2xl border border-white/10 bg-bg-100 p-5">
+                  <h4 className="font-medium text-text-200">
+                    {h.contact_name || h.contact_phone}
+                  </h4>
+                  <p className="mt-1 text-sm font-medium text-brand">{h.reason}</p>
+                  {h.summary && <p className="mt-2 text-sm text-text-400">{h.summary}</p>}
+                  {h.suggested_reply && (
+                    <pre className="mt-3 overflow-x-auto rounded-lg bg-bg-0 p-3 text-xs text-text-300">
+                      {h.suggested_reply}
+                    </pre>
+                  )}
+                  <div className="mt-4 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await resolveHandoff(h.id, 'resolved');
+                        await loadHandoffs();
+                      }}
+                      className="rounded-lg bg-brand px-3 py-1.5 text-xs text-white"
+                    >
+                      Traité
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        await resolveHandoff(h.id, 'dismissed');
+                        await loadHandoffs();
+                      }}
+                      className="rounded-lg border border-white/10 px-3 py-1.5 text-xs hover:bg-bg-200"
+                    >
+                      Ignorer
+                    </button>
+                  </div>
+                </article>
+              ))
             )}
           </div>
         )}

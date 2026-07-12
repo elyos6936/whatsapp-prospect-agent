@@ -1,12 +1,5 @@
 import "dotenv/config";
 
-// Fuseau horaire de l'application. Les envois programmés (« à 13h50 ») sont
-// interprétés dans CE fuseau. Sans ça, un serveur en UTC (Hostinger, cloud…)
-// décale toutes les heures par rapport à l'utilisateur (ex. Bénin = UTC+1).
-// Doit être défini AVANT toute utilisation de Date. Défaut : Africa/Lagos (WAT, UTC+1).
-const appTimezone = process.env.APP_TIMEZONE?.trim() || "Africa/Lagos";
-process.env.TZ = appTimezone;
-
 const portRaw = process.env.PORT?.trim() || "3000";
 const port = Number(portRaw);
 
@@ -17,13 +10,10 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 export const config = {
   port,
-  appTimezone,
   databaseUrl: process.env.DATABASE_URL?.trim() || "",
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
   openaiModel: process.env.OPENAI_MODEL?.trim() || "gpt-4o",
-  openaiTranscribeModel: process.env.OPENAI_TRANSCRIBE_MODEL?.trim() || "whisper-1",
-  openaiVisionModel: process.env.OPENAI_VISION_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "gpt-4o",
   defaultEvolutionBaseUrl: "http://localhost:8080",
   envOpenAiKey: process.env.OPENAI_API_KEY?.trim() || "",
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),

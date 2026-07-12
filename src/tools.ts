@@ -66,19 +66,16 @@ import {
   CONTACT_STATUSES,
   blockContact,
   cancelScheduledMessage,
-  cancelPendingScheduledForRecipient,
   countOutboundToday,
   createAutomation,
   createGroupReplyRule,
   getEffectiveOutboundLimit,
-  getAutomation,
   getAutomationDetail,
   getAppSettings,
   getContact,
   getContactThread,
   getDailyBilan,
   listAutomations,
-  listAutomationTargets,
   listContacts,
   listIncomingMessages,
   listScheduledMessages,
@@ -87,14 +84,9 @@ import {
   saveContact,
   scheduleMessage,
   setContactAutoReply,
-  updateScheduledMessage,
-  updateAutomationConfig,
   updateAutomationStatus,
-  deleteAutomation,
-  type AutomationConfig,
   type AutomationStatus,
   type AutomationType,
-  type CampaignFollowUpPolicy,
   type ContactStatus,
   unblockContact,
 } from "./db.js";
@@ -102,52 +94,6 @@ import { bootstrapGroupProspectTargets } from "./automation-engine.js";
 import { getContactPresence } from "./notifications.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
-  {
-    type: "function",
-    function: {
-      name: "ask_user_choices",
-      description:
-        "Poser une question de cadrage sous forme de CARTE à options cliquables (avec un champ « Autre » possible via allow_other), au lieu d'un pavé de texte. C'EST TOI QUI DÉCIDES d'utiliser cette carte ou une simple question courte en texte — choisis ce qui rend l'échange le plus fluide. Règles : la carte ne doit contenir QU'UNE SEULE question (tableau questions de longueur 1), options courtes, et n'utilise PAS ce tool pour un oui/non trivial. L'utilisateur sélectionne et valide ; ses choix te reviennent comme un message.",
-      parameters: {
-        type: "object",
-        properties: {
-          intro: {
-            type: "string",
-            description:
-              "Courte phrase (1 ligne) affichée au-dessus de la carte pour donner le contexte. Optionnel.",
-          },
-          questions: {
-            type: "array",
-            description: "1 à 5 questions à poser. Chaque question a des options prédéfinies.",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string", description: "Identifiant court optionnel (ex. 'objectif')." },
-                prompt: { type: "string", description: "La question posée." },
-                options: {
-                  type: "array",
-                  items: { type: "string" },
-                  description: "Les choix proposés (2 à 6, courts et clairs).",
-                },
-                allow_multiple: {
-                  type: "boolean",
-                  description: "true si l'utilisateur peut choisir plusieurs options.",
-                },
-                allow_other: {
-                  type: "boolean",
-                  description: "true pour proposer un champ « Autre » de saisie libre.",
-                },
-              },
-              required: ["prompt", "options"],
-              additionalProperties: false,
-            },
-          },
-        },
-        required: ["questions"],
-        additionalProperties: false,
-      },
-    },
-  },
   {
     type: "function",
     function: {
@@ -873,70 +819,6 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
-      name: "schedule_whatsapp_messages_batch",
-      description:
-        "Programme plusieurs messages WhatsApp en une seule opération (idéal pour 2+ envois au même groupe à des heures différentes). Option replace_pending_for_recipient : annule d'abord les envois en attente pour ce destinataire avant de programmer les nouveaux (utile pour modifier des messages déjà planifiés).",
-      parameters: {
-        type: "object",
-        properties: {
-          replace_pending_for_recipient: {
-            type: "string",
-            description:
-              "Optionnel — nom de groupe, @g.us ou numéro : annule les envois pending existants pour ce destinataire avant de créer les nouveaux.",
-          },
-          messages: {
-            type: "array",
-            description: "Liste des messages à programmer.",
-            items: {
-              type: "object",
-              properties: {
-                recipient: {
-                  type: "string",
-                  description: "Numéro, chatId, ID groupe (@g.us) ou nom de groupe",
-                },
-                message: { type: "string", description: "Texte exact à envoyer" },
-                delay_minutes: {
-                  type: "number",
-                  description: "Envoi dans N minutes. Mutuellement exclusif avec send_at_local.",
-                },
-                send_at_local: {
-                  type: "string",
-                  description: "Heure locale HH:MM ou HHhMM (ex. 13:30). Si déjà passée → demain.",
-                },
-              },
-              required: ["recipient", "message"],
-            },
-          },
-        },
-        required: ["messages"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_scheduled_message",
-      description:
-        "Modifie un message programmé encore en attente (texte et/ou heure). Préférer schedule_whatsapp_messages_batch avec replace_pending_for_recipient pour remplacer plusieurs envois d'un coup.",
-      parameters: {
-        type: "object",
-        properties: {
-          id: { type: "number", description: "ID du message programmé" },
-          message: { type: "string", description: "Nouveau texte (optionnel)" },
-          send_at_local: {
-            type: "string",
-            description: "Nouvelle heure locale HH:MM (optionnel)",
-          },
-        },
-        required: ["id"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
       name: "list_scheduled_messages",
       description: "Liste les messages WhatsApp programmés (en attente par défaut).",
       parameters: {
@@ -1324,7 +1206,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "create_automation",
       description:
-        "Crée une automatisation WhatsApp (visible sur la page Automatisation). Utiliser pour prospecter un groupe, vendre sur mots-clés, etc. Par défaut crée un BROUILLON (activate_now=false, statut paused) pour simuler avant d'activer ; passer activate_now=true UNIQUEMENT après validation explicite de la simulation par l'utilisateur.",
+        "Crée une automatisation WhatsApp active (visible sur la page Automatisation). Utiliser quand l'utilisateur décrit un workflow récurrent : prospecter un groupe, vendre un produit sur mots-clés, etc. L'automatisation démarre immédiatement.",
       parameters: {
         type: "object",
         properties: {
@@ -1385,113 +1267,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
           media_url: { type: "string", description: "URL image/document/audio à envoyer" },
           media_type: { type: "string", enum: ["image", "document", "audio"] },
-          mode: {
-            type: "string",
-            enum: ["prospection", "inbound_closing"],
-            description:
-              "prospection = on contacte activement des membres d'un groupe ; inbound_closing = e-commerce/pub, on répond aux prospects qui écrivent quand un déclencheur exact matche.",
-          },
-          objective: {
-            type: "string",
-            description: "Objectif final (ex. envoyer un lien, fixer un RDV, faire payer, proposer la livraison)",
-          },
-          selling_what: { type: "string", description: "Ce que l'utilisateur vend / propose" },
-          conversation_style: {
-            type: "string",
-            description: "Comment l'IA doit échanger avec les gens (ton, do/don't) — dicté par l'utilisateur",
-          },
-          trigger_match_mode: {
-            type: "string",
-            enum: ["any_keyword", "all_keywords", "exact_phrase"],
-            description:
-              "Closing e-commerce : comment reconnaître un message déclencheur. exact_phrase = la phrase doit être présente telle quelle.",
-          },
-          trigger_phrases: {
-            type: "array",
-            items: { type: "string" },
-            description: "Phrases exactes déclencheuses (ex. « je suis intéressé par ce produit »).",
-          },
-          reply_only_on_trigger: {
-            type: "boolean",
-            description:
-              "Si true : l'IA ne répond JAMAIS à un entrant hors cadre — uniquement quand un mot-clé/phrase déclencheur matche. Obligatoire pour le closing e-commerce.",
-          },
-          follow_up: {
-            type: "object",
-            description: "Politique de relance des non-répondeurs, décidée par l'utilisateur.",
-            properties: {
-              enabled: { type: "boolean" },
-              max_follow_ups: { type: "number", description: "Nombre de relances (ex. 1 = une seule)" },
-              interval_days: { type: "number", description: "Jours entre chaque relance (ex. 2)" },
-              time_of_day_hour: { type: "number", description: "Heure locale préférée 0-23 (ex. 8)" },
-              messages: {
-                type: "array",
-                items: { type: "string" },
-                description: "Textes de relance (un par étape). Optionnel.",
-              },
-            },
-          },
-          stop_on_dissatisfaction: {
-            type: "boolean",
-            description: "Arrêter la conversation et prévenir l'utilisateur si le prospect est mécontent/insatisfait.",
-          },
-          stop_on_unknown_question: {
-            type: "boolean",
-            description: "Arrêter et prévenir l'utilisateur si une question sort du cadre / sans réponse connue.",
-          },
-          activate_now: {
-            type: "boolean",
-            description:
-              "false (défaut) = créer en BROUILLON (statut paused) pour simuler avant d'activer ; true = activer immédiatement (uniquement après validation explicite de la simulation).",
-          },
         },
         required: ["name", "type"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "update_automation",
-      description:
-        "Modifie la configuration d'une campagne/automatisation existante SANS la recréer. À utiliser pendant l'itération de simulation (« je retravaille tout ça ») ou pour ajuster une campagne. Ne change pas le statut.",
-      parameters: {
-        type: "object",
-        properties: {
-          automation_id: { type: "number" },
-          name: { type: "string" },
-          summary: { type: "string" },
-          initial_message: { type: "string" },
-          conversation_guide: { type: "string" },
-          objective: { type: "string" },
-          selling_what: { type: "string" },
-          conversation_style: { type: "string" },
-          keywords: { type: "array", items: { type: "string" } },
-          trigger_match_mode: { type: "string", enum: ["any_keyword", "all_keywords", "exact_phrase"] },
-          trigger_phrases: { type: "array", items: { type: "string" } },
-          reply_only_on_trigger: { type: "boolean" },
-          product_name: { type: "string" },
-          price: { type: "string" },
-          sales_script: { type: "string" },
-          follow_up: {
-            type: "object",
-            properties: {
-              enabled: { type: "boolean" },
-              max_follow_ups: { type: "number" },
-              interval_days: { type: "number" },
-              time_of_day_hour: { type: "number" },
-              messages: { type: "array", items: { type: "string" } },
-            },
-          },
-          stop_on_dissatisfaction: { type: "boolean" },
-          stop_on_unknown_question: { type: "boolean" },
-          simulation_approved: {
-            type: "boolean",
-            description: "Passe à true UNIQUEMENT quand l'utilisateur valide explicitement la simulation.",
-          },
-        },
-        required: ["automation_id"],
         additionalProperties: false,
       },
     },
@@ -1545,22 +1322,6 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
         },
         required: ["automation_id", "status"],
-        additionalProperties: false,
-      },
-    },
-  },
-  {
-    type: "function",
-    function: {
-      name: "delete_automation",
-      description:
-        "Supprime DÉFINITIVEMENT une automatisation/campagne et ses données liées (cibles, logs, envois programmés en attente). Action irréversible. À n'utiliser que si l'utilisateur demande explicitement de SUPPRIMER (pas juste mettre en pause ou terminer).",
-      parameters: {
-        type: "object",
-        properties: {
-          automation_id: { type: "number", description: "ID de la campagne à supprimer." },
-        },
-        required: ["automation_id"],
         additionalProperties: false,
       },
     },
@@ -1622,7 +1383,6 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
 
 /** Outils qui n'ont pas besoin d'Evolution API immédiatement */
 const LOCAL_TOOLS = new Set([
-  "ask_user_choices",
   "save_contact",
   "list_contacts",
   "set_auto_reply",
@@ -1632,58 +1392,16 @@ const LOCAL_TOOLS = new Set([
   "check_whatsapp_connection",
   "list_scheduled_messages",
   "cancel_scheduled_message",
-  "update_scheduled_message",
-  "schedule_whatsapp_messages_batch",
   "get_daily_bilan",
   "get_contact_conversation",
   "save_business_profile",
   "get_business_profile",
   "create_automation",
-  "update_automation",
   "list_automations",
   "get_automation_report",
   "set_automation_status",
-  "delete_automation",
   "create_group_rule",
 ]);
-
-/** Convertit un follow_up (snake_case, côté tool) en CampaignFollowUpPolicy. */
-function parseFollowUp(raw: unknown): CampaignFollowUpPolicy | undefined {
-  if (!raw || typeof raw !== "object") return undefined;
-  const f = raw as Record<string, unknown>;
-  const enabled = f.enabled !== false;
-  const maxFollowUps = Math.max(0, Math.min(Number(f.max_follow_ups ?? 1) || 1, 5));
-  const intervalDays = Math.max(1, Math.min(Number(f.interval_days ?? 2) || 2, 30));
-  const hourRaw = f.time_of_day_hour;
-  const timeOfDayHour =
-    hourRaw != null && Number.isFinite(Number(hourRaw))
-      ? Math.max(0, Math.min(Number(hourRaw), 23))
-      : undefined;
-  const messages = Array.isArray(f.messages)
-    ? f.messages.map((m) => String(m)).filter(Boolean)
-    : undefined;
-  return { enabled, maxFollowUps, intervalDays, timeOfDayHour, messages };
-}
-
-/** Génère des sequenceSteps (relances) à partir d'une politique de relance. */
-function followUpToSequenceSteps(
-  policy: CampaignFollowUpPolicy | undefined
-): Array<{ delayDays: number; message: string; condition: "no_reply"; hourOfDay?: number }> | undefined {
-  if (!policy || !policy.enabled || policy.maxFollowUps <= 0) return undefined;
-  const steps: Array<{ delayDays: number; message: string; condition: "no_reply"; hourOfDay?: number }> = [];
-  for (let i = 0; i < policy.maxFollowUps; i++) {
-    const custom = policy.messages?.[i];
-    steps.push({
-      delayDays: policy.intervalDays,
-      message:
-        custom ||
-        "Bonjour 🙂 je reviens vers vous au cas où mon précédent message vous aurait échappé. Est-ce que ça vous intéresse toujours ?",
-      condition: "no_reply",
-      hourOfDay: policy.timeOfDayHour,
-    });
-  }
-  return steps;
-}
 
 async function resolveRecipient(userId: number, recipient: string): Promise<string> {
   const trimmed = recipient.trim();
@@ -1726,74 +1444,6 @@ function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-interface ScheduleOneInput {
-  recipientRaw: string;
-  message: string;
-  delayMinutes?: number;
-  sendAtLocal?: string;
-}
-
-async function scheduleOneMessage(
-  userId: number,
-  input: ScheduleOneInput
-): Promise<
-  | { ok: true; job: Awaited<ReturnType<typeof scheduleMessage>>; label: string; isGroup: boolean }
-  | { ok: false; error: string }
-> {
-  const message = input.message.trim();
-  if (!message) return { ok: false, error: "Le texte du message est requis." };
-
-  const hasDelay = input.delayMinutes !== undefined && input.delayMinutes !== null;
-  const hasTime = Boolean(input.sendAtLocal?.trim());
-
-  if (hasDelay === hasTime) {
-    return {
-      ok: false,
-      error: "Indiquez UNIQUEMENT delay_minutes (ex. 2) OU send_at_local (ex. 13:30), pas les deux ni aucun.",
-    };
-  }
-
-  let chatId: string;
-  try {
-    chatId = await resolveRecipient(userId, input.recipientRaw);
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  if (chatId.endsWith("@c.us")) {
-    const existing = await getContact(userId, chatId);
-    if (existing?.status === "stop") {
-      return { ok: false, error: "Ce contact est en STOP. Impossible de programmer un envoi." };
-    }
-  }
-
-  let sendAt: string;
-  try {
-    sendAt = resolveLocalSendAt({
-      delayMinutes: hasDelay ? Number(input.delayMinutes) : undefined,
-      sendAtLocal: hasTime ? String(input.sendAtLocal) : undefined,
-    });
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : String(err) };
-  }
-
-  const isGroup = chatId.endsWith("@g.us");
-  const label = isGroup
-    ? input.recipientRaw.trim().endsWith("@g.us")
-      ? chatId
-      : input.recipientRaw.trim()
-    : chatIdToDisplay(chatId);
-
-  const job = await scheduleMessage(userId, {
-    recipient: chatId,
-    recipientLabel: label,
-    message,
-    sendAt,
-  });
-
-  return { ok: true, job, label, isGroup };
-}
-
 function formatContact(c: {
   phone: string;
   name: string | null;
@@ -1811,17 +1461,7 @@ function formatContact(c: {
   };
 }
 
-export interface ToolContext {
-  /** Origine d'une automatisation créée par un tool ('chat' = chat principal, 'manual' = constructeur). */
-  origin?: "chat" | "manual";
-}
-
-export async function executeTool(
-  userId: number,
-  name: string,
-  args: Record<string, unknown>,
-  ctx: ToolContext = {}
-): Promise<string> {
+export async function executeTool(userId: number, name: string, args: Record<string, unknown>): Promise<string> {
   if (!LOCAL_TOOLS.has(name)) {
     if (!(await getEvolutionCredentials(userId))) {
       return JSON.stringify({
@@ -1838,15 +1478,6 @@ export async function executeTool(
   }
 
   switch (name) {
-    case "ask_user_choices": {
-      // Normalement intercepté par l'agent (chatWithAgent) qui transforme cet
-      // appel en carte de questions. Ce cas ne se produit que si l'appel est
-      // invalide (pas de questions valides) : on guide le modèle à recommencer.
-      return JSON.stringify({
-        note: "Fournis un tableau 'questions' avec, pour chaque question, un 'prompt' et au moins 2 'options'.",
-      });
-    }
-
     case "check_whatsapp_connection": {
       const result = await testEvolutionConnection(userId);
       return JSON.stringify({
@@ -3021,160 +2652,67 @@ export async function executeTool(
     }
 
     case "schedule_whatsapp_message": {
-      const result = await scheduleOneMessage(userId, {
-        recipientRaw: String(args.recipient ?? ""),
-        message: String(args.message ?? ""),
-        delayMinutes:
-          args.delay_minutes !== undefined && args.delay_minutes !== null && args.delay_minutes !== ""
-            ? Number(args.delay_minutes)
-            : undefined,
-        sendAtLocal: args.send_at_local ? String(args.send_at_local) : undefined,
-      });
-
-      if (!result.ok) {
-        return JSON.stringify({ error: result.error });
+      const recipientRaw = String(args.recipient ?? "");
+      const message = String(args.message ?? "").trim();
+      if (!message) {
+        return JSON.stringify({ error: "Le texte du message est requis." });
       }
 
-      const { job, label, isGroup } = result;
-      return JSON.stringify({
-        success: true,
-        id: job.id,
-        recipient: job.recipient,
-        label,
-        isGroup,
-        message: job.message,
-        sendAt: job.send_at,
-        confirmation: `⏰ Message #${job.id} programmé pour ${label} à ${job.send_at} (heure locale).`,
-      });
-    }
+      const hasDelay = args.delay_minutes !== undefined && args.delay_minutes !== null && args.delay_minutes !== "";
+      const hasTime = Boolean(args.send_at_local);
 
-    case "schedule_whatsapp_messages_batch": {
-      const rawList = args.messages;
-      if (!Array.isArray(rawList) || rawList.length === 0) {
-        return JSON.stringify({ error: "La liste messages est requise (au moins 1 entrée)." });
-      }
-      if (rawList.length > 20) {
-        return JSON.stringify({ error: "Maximum 20 messages par lot." });
-      }
-
-      let cancelled = 0;
-      const replaceRaw = String(args.replace_pending_for_recipient ?? "").trim();
-      if (replaceRaw) {
-        try {
-          const chatId = await resolveRecipient(userId, replaceRaw);
-          cancelled = await cancelPendingScheduledForRecipient(userId, chatId);
-        } catch (err) {
-          return JSON.stringify({
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
-      }
-
-      const scheduled: Array<{
-        id: number;
-        recipient: string;
-        label: string;
-        message: string;
-        sendAt: string;
-      }> = [];
-      const errors: Array<{ index: number; error: string }> = [];
-
-      for (let i = 0; i < rawList.length; i++) {
-        const item = rawList[i];
-        if (!item || typeof item !== "object") {
-          errors.push({ index: i, error: "Entrée invalide." });
-          continue;
-        }
-        const row = item as Record<string, unknown>;
-        const result = await scheduleOneMessage(userId, {
-          recipientRaw: String(row.recipient ?? ""),
-          message: String(row.message ?? ""),
-          delayMinutes:
-            row.delay_minutes !== undefined && row.delay_minutes !== null && row.delay_minutes !== ""
-              ? Number(row.delay_minutes)
-              : undefined,
-          sendAtLocal: row.send_at_local ? String(row.send_at_local) : undefined,
-        });
-        if (!result.ok) {
-          errors.push({ index: i, error: result.error });
-          continue;
-        }
-        scheduled.push({
-          id: result.job.id,
-          recipient: result.job.recipient,
-          label: result.label,
-          message: result.job.message,
-          sendAt: result.job.send_at,
-        });
-      }
-
-      if (!scheduled.length) {
+      if (hasDelay === hasTime) {
         return JSON.stringify({
-          success: false,
-          cancelled,
-          errors,
-          error: "Aucun message n'a pu être programmé.",
+          error: "Indiquez UNIQUEMENT delay_minutes (ex. 2) OU send_at_local (ex. 06:30), pas les deux ni aucun.",
         });
       }
 
-      const lines = scheduled.map(
-        (s) => `• #${s.id} → ${s.label} à ${s.sendAt} : « ${s.message.slice(0, 80)} »`
-      );
-
-      return JSON.stringify({
-        success: errors.length === 0,
-        cancelled,
-        scheduledCount: scheduled.length,
-        errorCount: errors.length,
-        scheduled,
-        errors: errors.length ? errors : undefined,
-        confirmation:
-          (cancelled > 0 ? `🗑️ ${cancelled} envoi(s) en attente annulé(s).\n` : "") +
-          `⏰ ${scheduled.length} message(s) programmé(s) :\n${lines.join("\n")}`,
-      });
-    }
-
-    case "update_scheduled_message": {
-      const id = Number(args.id);
-      if (!Number.isInteger(id) || id < 1) {
-        return JSON.stringify({ error: "ID invalide." });
-      }
-
-      const newMessage = args.message != null ? String(args.message).trim() : undefined;
-      const newTime = args.send_at_local ? String(args.send_at_local).trim() : undefined;
-      if (!newMessage && !newTime) {
-        return JSON.stringify({ error: "Indiquez message et/ou send_at_local à modifier." });
-      }
-
-      let sendAt: string | undefined;
-      if (newTime) {
-        try {
-          sendAt = resolveLocalSendAt({ sendAtLocal: newTime });
-        } catch (err) {
+      const chatId = await resolveRecipient(userId, recipientRaw);
+      if (chatId.endsWith("@c.us")) {
+        const existing = await getContact(userId, chatId);
+        if (existing?.status === "stop") {
           return JSON.stringify({
-            error: err instanceof Error ? err.message : String(err),
+            error: "Ce contact est en STOP. Impossible de programmer un envoi.",
           });
         }
       }
 
+      let sendAt: string;
       try {
-        const job = await updateScheduledMessage(userId, id, {
-          message: newMessage,
-          sendAt,
-        });
-        return JSON.stringify({
-          success: true,
-          id: job.id,
-          message: job.message,
-          sendAt: job.send_at,
-          label: job.recipient_label || chatIdToDisplay(job.recipient),
-          confirmation: `✏️ Message #${job.id} mis à jour — envoi prévu à ${job.send_at}.`,
+        sendAt = resolveLocalSendAt({
+          delayMinutes: hasDelay ? Number(args.delay_minutes) : undefined,
+          sendAtLocal: hasTime ? String(args.send_at_local) : undefined,
         });
       } catch (err) {
         return JSON.stringify({
           error: err instanceof Error ? err.message : String(err),
         });
       }
+
+      const isGroup = chatId.endsWith("@g.us");
+      const label = isGroup
+        ? recipientRaw.endsWith("@g.us")
+          ? chatId
+          : recipientRaw.trim()
+        : chatIdToDisplay(chatId);
+
+      const job = await scheduleMessage(userId, {
+        recipient: chatId,
+        recipientLabel: label,
+        message,
+        sendAt,
+      });
+
+      return JSON.stringify({
+        success: true,
+        id: job.id,
+        recipient: chatId,
+        label,
+        isGroup,
+        message: job.message,
+        sendAt: job.send_at,
+        confirmation: `⏰ Message #${job.id} programmé pour ${label} à ${job.send_at} (heure locale).`,
+      });
     }
 
     case "list_scheduled_messages": {
@@ -3288,15 +2826,6 @@ export async function executeTool(
         return JSON.stringify({ error: "type invalide." });
       }
 
-      const followUp = parseFollowUp(args.follow_up);
-      const explicitSteps = Array.isArray(args.sequence_steps)
-        ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>).map((s) => ({
-            delayDays: Number(s.delayDays ?? 1),
-            message: String(s.message ?? ""),
-            condition: (s.condition as "no_reply" | "always") || "no_reply",
-          }))
-        : undefined;
-
       const config: Record<string, unknown> = {
         initialMessage: args.initial_message ? String(args.initial_message) : undefined,
         maxMembers: args.max_members ? Number(args.max_members) : 30,
@@ -3313,29 +2842,18 @@ export async function executeTool(
               message: String(v.message ?? ""),
             }))
           : undefined,
-        sequenceSteps: explicitSteps ?? followUpToSequenceSteps(followUp),
+        sequenceSteps: Array.isArray(args.sequence_steps)
+          ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>).map(
+              (s) => ({
+                delayDays: Number(s.delayDays ?? 1),
+                message: String(s.message ?? ""),
+                condition: (s.condition as "no_reply" | "always") || "no_reply",
+              })
+            )
+          : undefined,
         mediaUrl: args.media_url ? String(args.media_url) : undefined,
         mediaType: args.media_type ? (String(args.media_type) as "image" | "document" | "audio") : undefined,
-        // Champs campagne avancée
-        mode: args.mode ? (String(args.mode) as "prospection" | "inbound_closing") : undefined,
-        objective: args.objective ? String(args.objective) : undefined,
-        sellingWhat: args.selling_what ? String(args.selling_what) : undefined,
-        conversationStyle: args.conversation_style ? String(args.conversation_style) : undefined,
-        triggerMatchMode: args.trigger_match_mode
-          ? (String(args.trigger_match_mode) as "any_keyword" | "all_keywords" | "exact_phrase")
-          : undefined,
-        triggerPhrases: Array.isArray(args.trigger_phrases)
-          ? args.trigger_phrases.map(String).filter(Boolean)
-          : undefined,
-        replyOnlyOnTrigger: args.reply_only_on_trigger === true,
-        followUp,
-        stopOnDissatisfaction: args.stop_on_dissatisfaction !== false,
-        stopOnUnknownQuestion: args.stop_on_unknown_question !== false,
-        simulationApproved: false,
-        origin: ctx.origin ?? "chat",
       };
-
-      const activateNow = args.activate_now === true;
 
       if (type === "group_prospect") {
         if (!args.group_id || !args.initial_message) {
@@ -3343,38 +2861,16 @@ export async function executeTool(
             error: "group_prospect requiert group_id et initial_message.",
           });
         }
-        // Validation stricte (WhatsApp connecté + groupe résolvable) UNIQUEMENT
-        // à l'activation. Pour un BROUILLON, on reste tolérant : on tente de
-        // résoudre le groupe pour un joli libellé, mais on n'échoue jamais —
-        // le nom brut est conservé et sera validé au moment de l'activation.
-        // Ça évite de bloquer la création + la simulation sur une résolution.
-        if (activateNow) {
-          try {
-            await requireEvolutionConnected(userId, "la création d'une campagne de prospection groupe");
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return JSON.stringify({ error: msg });
-          }
-          const groupId = await resolveGroupId(userId, String(args.group_id));
-          const group = await findGroupByNameOrId(userId, groupId);
-          config.groupId = groupId;
-          config.groupName = group?.name ?? String(args.group_id);
-        } else {
-          const raw = String(args.group_id);
-          let resolvedId = raw;
-          let resolvedName = raw;
-          try {
-            const group = await findGroupByNameOrId(userId, raw);
-            if (group) {
-              resolvedId = group.id;
-              resolvedName = group.name ?? raw;
-            }
-          } catch {
-            // Best-effort : on garde la valeur brute pour le brouillon.
-          }
-          config.groupId = resolvedId;
-          config.groupName = resolvedName;
+        try {
+          await requireEvolutionConnected(userId, "la création d'une campagne de prospection groupe");
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return JSON.stringify({ error: msg });
         }
+        const groupId = await resolveGroupId(userId, String(args.group_id));
+        const group = await findGroupByNameOrId(userId, groupId);
+        config.groupId = groupId;
+        config.groupName = group?.name ?? String(args.group_id);
       }
 
       if (type === "keyword_sales") {
@@ -3384,25 +2880,24 @@ export async function executeTool(
         }
         config.keywords = keywords;
       }
+
       const auto = await createAutomation(userId, {
         name: String(args.name ?? "Automatisation"),
         type,
         config: config as Parameters<typeof createAutomation>[1]["config"],
         summary: args.summary ? String(args.summary) : undefined,
         budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
-        // Par défaut : BROUILLON (paused) pour permettre la simulation avant activation.
-        status: activateNow ? "active" : "paused",
+        status: "active",
       });
 
-      // On ne charge les membres du groupe et ne démarre l'envoi qu'à l'activation réelle.
       let targetsAdded = 0;
-      if (activateNow && type === "group_prospect" && config.groupId) {
+      if (type === "group_prospect" && config.groupId) {
         try {
           targetsAdded = await bootstrapGroupProspectTargets(userId, auto.id);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({
-            error: `Campagne créée (#${auto.id}) mais échec chargement membres : ${msg}`,
+            error: `Automatisation créée (#${auto.id}) mais échec chargement membres : ${msg}`,
             automationId: auto.id,
           });
         }
@@ -3415,62 +2910,12 @@ export async function executeTool(
         name: auto.name,
         type: auto.type,
         status: auto.status,
-        isDraft: !activateNow,
         targetsAdded,
         summary: auto.summary,
         stats: detail?.automation.stats,
-        message: activateNow
-          ? `Campagne « ${auto.name} » créée et ACTIVE. Visible sur la page Automatisation.`
-          : `Campagne « ${auto.name} » créée en BROUILLON (#${auto.id}). Propose une SIMULATION à l'utilisateur (joue le prospect), itère avec update_automation, puis active seulement après son accord explicite via set_automation_status(active).`,
-        nextStep: activateNow
-          ? undefined
-          : "Ne PAS envoyer de vrais messages. Lancer la simulation dans le chat, puis attendre la validation avant d'activer.",
+        message: `Automatisation « ${auto.name} » créée et active. Visible sur la page Automatisation.`,
         pageHint: "L'utilisateur peut ouvrir Automatisation (bouton en haut) pour suivre les stats.",
         completedAt: nowFr(),
-      });
-    }
-
-    case "update_automation": {
-      const id = Number(args.automation_id);
-      if (!Number.isFinite(id)) {
-        return JSON.stringify({ error: "automation_id invalide." });
-      }
-      const existing = await getAutomation(userId, id);
-      if (!existing) {
-        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
-      }
-
-      const cfg: AutomationConfig = { ...existing.config };
-      if (args.initial_message !== undefined) cfg.initialMessage = String(args.initial_message);
-      if (args.conversation_guide !== undefined) cfg.conversationGuide = String(args.conversation_guide);
-      if (args.objective !== undefined) cfg.objective = String(args.objective);
-      if (args.selling_what !== undefined) cfg.sellingWhat = String(args.selling_what);
-      if (args.conversation_style !== undefined) cfg.conversationStyle = String(args.conversation_style);
-      if (Array.isArray(args.keywords)) cfg.keywords = args.keywords.map(String).filter(Boolean);
-      if (args.trigger_match_mode !== undefined)
-        cfg.triggerMatchMode = String(args.trigger_match_mode) as AutomationConfig["triggerMatchMode"];
-      if (Array.isArray(args.trigger_phrases)) cfg.triggerPhrases = args.trigger_phrases.map(String).filter(Boolean);
-      if (args.reply_only_on_trigger !== undefined) cfg.replyOnlyOnTrigger = args.reply_only_on_trigger === true;
-      if (args.product_name !== undefined) cfg.productName = String(args.product_name);
-      if (args.price !== undefined) cfg.price = String(args.price);
-      if (args.sales_script !== undefined) cfg.salesScript = String(args.sales_script);
-      if (args.stop_on_dissatisfaction !== undefined) cfg.stopOnDissatisfaction = args.stop_on_dissatisfaction === true;
-      if (args.stop_on_unknown_question !== undefined) cfg.stopOnUnknownQuestion = args.stop_on_unknown_question === true;
-      if (args.simulation_approved !== undefined) cfg.simulationApproved = args.simulation_approved === true;
-      if (args.follow_up !== undefined) {
-        const fu = parseFollowUp(args.follow_up);
-        cfg.followUp = fu;
-        cfg.sequenceSteps = followUpToSequenceSteps(fu);
-      }
-
-      await updateAutomationConfig(userId, id, cfg);
-
-      return JSON.stringify({
-        success: true,
-        automationId: id,
-        status: existing.status,
-        config: cfg,
-        message: `Campagne #${id} mise à jour. Si tu itères une simulation, relance un test dans le chat puis attends la validation.`,
       });
     }
 
@@ -3529,87 +2974,15 @@ export async function executeTool(
       if (!Number.isFinite(id) || !["active", "paused", "completed"].includes(status)) {
         return JSON.stringify({ error: "Paramètres invalides." });
       }
-      const before = await getAutomation(userId, id);
-      if (!before) {
-        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
-      }
-
-      // À l'activation d'une prospection de groupe : si le brouillon a stocké
-      // un NOM de groupe (pas un id @g.us), on le résout maintenant. C'est ici,
-      // et non à la création du brouillon, qu'on exige un groupe valide.
-      if (status === "active" && before.type === "group_prospect") {
-        const rawGroup = before.config.groupId;
-        if (rawGroup && !rawGroup.endsWith("@g.us")) {
-          try {
-            await requireEvolutionConnected(userId, "l'activation d'une campagne de prospection groupe");
-            const resolvedId = await resolveGroupId(userId, rawGroup);
-            const group = await findGroupByNameOrId(userId, resolvedId);
-            await updateAutomationConfig(userId, id, {
-              ...before.config,
-              groupId: resolvedId,
-              groupName: group?.name ?? before.config.groupName ?? rawGroup,
-            });
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return JSON.stringify({
-              error: `Impossible d'activer : ${msg} Corrige le groupe (update_automation) puis réessaie.`,
-            });
-          }
-        }
-      }
-
       const updated = await updateAutomationStatus(userId, id, status);
       if (!updated) {
-        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+        return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
       }
-
-      // À l'activation d'une prospection de groupe encore vide (brouillon), on charge les membres.
-      let targetsAdded = 0;
-      if (status === "active" && updated.type === "group_prospect" && updated.config.groupId) {
-        const existingTargets = await listAutomationTargets(userId, id, { limit: 1 });
-        if (existingTargets.length === 0) {
-          try {
-            targetsAdded = await bootstrapGroupProspectTargets(userId, id);
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            return JSON.stringify({
-              error: `Campagne activée (#${id}) mais échec chargement des membres : ${msg}`,
-              automationId: id,
-              status: updated.status,
-            });
-          }
-        }
-      }
-
       return JSON.stringify({
         success: true,
         automationId: id,
         status: updated.status,
-        targetsAdded,
-        message:
-          status === "active"
-            ? `Campagne #${id} activée${targetsAdded ? ` — ${targetsAdded} cible(s) chargée(s)` : ""}. Les envois démarrent côté serveur.`
-            : `Campagne #${id} → ${status}.`,
-      });
-    }
-
-    case "delete_automation": {
-      const id = Number(args.automation_id);
-      if (!Number.isFinite(id)) {
-        return JSON.stringify({ error: "automation_id invalide." });
-      }
-      const existing = await getAutomation(userId, id);
-      if (!existing) {
-        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
-      }
-      const deleted = await deleteAutomation(userId, id);
-      if (!deleted) {
-        return JSON.stringify({ error: `Campagne #${id} introuvable ou déjà supprimée.` });
-      }
-      return JSON.stringify({
-        success: true,
-        automationId: id,
-        message: `Campagne « ${existing.name} » (#${id}) supprimée définitivement.`,
+        message: `Automatisation #${id} → ${status}.`,
       });
     }
 

@@ -190,6 +190,7 @@ export function SettingsPage() {
                 Réponses automatiques WhatsApp
               </label>
             </div>
+
           </section>
         ) : (
           <section className="space-y-4 rounded-2xl border border-white/10 bg-bg-100 p-5">

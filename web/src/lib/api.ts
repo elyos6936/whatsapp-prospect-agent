@@ -58,24 +58,16 @@ class ApiError extends Error {
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getStoredToken();
-  // N'ajouter Content-Type: application/json que s'il y a réellement un corps.
-  // Sinon Fastify essaie de parser un body JSON vide (ex. DELETE) et renvoie
-  // un 400 « Bad Request ».
-  const hasBody = init?.body != null;
   const res = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
-      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+      'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
   });
 
-  // Un 401 sur login/register = mauvais identifiants, PAS une session expirée :
-  // on laisse remonter le message réel du serveur (ex. « Email ou mot de passe incorrect. »).
-  const isAuthEndpoint = path.startsWith('/api/auth/');
-
-  if (res.status === 401 && !isAuthEndpoint) {
+  if (res.status === 401) {
     emitAuthLogout();
     throw new ApiError('Session expirée. Reconnectez-vous.', 401);
   }
@@ -354,88 +346,6 @@ export async function resolveHandoff(
     method: 'PATCH',
     body: JSON.stringify({ status }),
   });
-}
-
-// --- Constructeur d'automatisation (page Automatisation → Manuel) ---
-export interface BuilderMessage {
-  id: number;
-  role: 'user' | 'assistant';
-  content: string;
-  created_at: string;
-}
-
-export async function fetchBuilderHistory(): Promise<BuilderMessage[]> {
-  const data = await request<{ messages: BuilderMessage[] }>('/api/automations/builder/history');
-  return data.messages ?? [];
-}
-
-export async function sendBuilderMessage(message: string): Promise<{
-  id: number;
-  reply: string;
-  created_at: string;
-  error?: boolean;
-}> {
-  return request('/api/automations/builder/chat', {
-    method: 'POST',
-    body: JSON.stringify({ message }),
-  });
-}
-
-export async function clearBuilderHistory(): Promise<void> {
-  await request('/api/automations/builder/history', { method: 'DELETE' });
-}
-
-// --- Envois programmés (sous-section « Automatique ») ---
-export interface ScheduledMessageItem {
-  id: number;
-  recipient: string;
-  recipient_label: string | null;
-  message: string;
-  send_at: string;
-  status: string;
-  error: string | null;
-  created_at: string;
-  sent_at: string | null;
-}
-
-export async function fetchScheduledMessages(): Promise<ScheduledMessageItem[]> {
-  const data = await request<{ messages: ScheduledMessageItem[] }>('/api/scheduled');
-  return data.messages ?? [];
-}
-
-export async function cancelScheduledMessage(id: number): Promise<void> {
-  await request(`/api/scheduled/${id}`, { method: 'DELETE' });
-}
-
-// --- Stats d'une automatisation ---
-export interface AutomationStats {
-  automation: {
-    id: number;
-    name: string;
-    type: string;
-    status: string;
-    mode: string | null;
-    origin: string;
-  };
-  stats: {
-    targetsTotal: number;
-    contacted: number;
-    pending: number;
-    replied: number;
-    interested: number;
-    stopped: number;
-    messagesSent: number;
-    messagesHandled: number;
-    responseRatePercent: number | null;
-    conversions: number;
-    lastActionAt: string | null;
-    report: string | null;
-  };
-  today: { date: string; incoming: number; outgoing: number } | null;
-}
-
-export async function fetchAutomationStats(id: number): Promise<AutomationStats> {
-  return request<AutomationStats>(`/api/automations/${id}/stats`);
 }
 
 export async function registerUser(input: {

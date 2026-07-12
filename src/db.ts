@@ -175,59 +175,39 @@ function mapAgentMessage(row: Record<string, unknown>): AgentMessage {
   };
 }
 
-/** Canal de conversation agent : 'main' = chat principal, 'automation' = constructeur d'automatisations. */
-export type AgentChannel = "main" | "automation";
-
-export async function saveAgentMessage(
-  userId: number,
-  role: AgentRole,
-  content: string,
-  channel: AgentChannel = "main"
-): Promise<AgentMessage> {
+export async function saveAgentMessage(userId: number, role: AgentRole, content: string): Promise<AgentMessage> {
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO agent_conversation (user_id, role, content, channel)
-    VALUES (${userId}, ${role}, ${content}, ${channel})
+    INSERT INTO agent_conversation (user_id, role, content)
+    VALUES (${userId}, ${role}, ${content})
     RETURNING id, role, content, created_at
   `;
   return mapAgentMessage(rows[0]);
 }
 
-export async function getRecentAgentMessages(
-  userId: number,
-  limit = 50,
-  channel: AgentChannel = "main"
-): Promise<AgentMessage[]> {
+export async function getRecentAgentMessages(userId: number, limit = 50): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
-    WHERE user_id = ${userId} AND channel = ${channel}
+    WHERE user_id = ${userId}
     ORDER BY id DESC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage).reverse();
 }
 
-export async function getAgentMessagesSince(
-  userId: number,
-  sinceId = 0,
-  limit = 50,
-  channel: AgentChannel = "main"
-): Promise<AgentMessage[]> {
+export async function getAgentMessagesSince(userId: number, sinceId = 0, limit = 50): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
-    WHERE user_id = ${userId} AND channel = ${channel} AND id > ${sinceId}
+    WHERE user_id = ${userId} AND id > ${sinceId}
     ORDER BY id ASC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage);
 }
 
-export async function clearAgentConversation(
-  userId: number,
-  channel: AgentChannel = "main"
-): Promise<void> {
-  await sql`DELETE FROM agent_conversation WHERE user_id = ${userId} AND channel = ${channel}`;
+export async function clearAgentConversation(userId: number): Promise<void> {
+  await sql`DELETE FROM agent_conversation WHERE user_id = ${userId}`;
 }
 
 export interface WhatsAppMessage {
@@ -975,49 +955,6 @@ export async function markScheduledFailed(userId: number, id: number, error: str
   `;
 }
 
-/** Annule tous les envois programmés encore en attente pour un destinataire (chatId @g.us / @c.us). */
-export async function cancelPendingScheduledForRecipient(
-  userId: number,
-  recipientChatId: string
-): Promise<number> {
-  const rows = await sql<{ id: number }[]>`
-    UPDATE scheduled_messages
-    SET status = 'cancelled'
-    WHERE user_id = ${userId} AND recipient = ${recipientChatId} AND status = 'pending'
-    RETURNING id
-  `;
-  return rows.length;
-}
-
-/** Modifie le texte et/ou l'heure d'un envoi programmé encore en attente. */
-export async function updateScheduledMessage(
-  userId: number,
-  id: number,
-  input: { message?: string; sendAt?: string }
-): Promise<ScheduledMessage> {
-  const existing = await sql<Record<string, unknown>[]>`
-    SELECT id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-    FROM scheduled_messages WHERE user_id = ${userId} AND id = ${id}
-  `;
-  const row = existing[0];
-  if (!row) throw new Error(`Message programmé #${id} introuvable.`);
-  const mapped = mapScheduledMessage(row);
-  if (mapped.status !== "pending") {
-    throw new Error(`Impossible de modifier : statut actuel = ${mapped.status}.`);
-  }
-
-  const newMessage = input.message?.trim() || mapped.message;
-  const newSendAt = input.sendAt ? toTsParam(input.sendAt) : parseLocalDateTime(mapped.send_at);
-
-  const updated = await sql<Record<string, unknown>[]>`
-    UPDATE scheduled_messages
-    SET message = ${newMessage}, send_at = ${newSendAt}
-    WHERE user_id = ${userId} AND id = ${id}
-    RETURNING id, recipient, recipient_label, message, send_at, status, error, created_at, sent_at
-  `;
-  return mapScheduledMessage(updated[0]);
-}
-
 export async function getContactThread(userId: number, phone: string, limit = 100): Promise<WhatsAppMessage[]> {
   const trimmed = phone.trim();
   const chatId = trimmed.includes("@") ? trimmed : `${trimmed.replace(/\D/g, "")}@c.us`;
@@ -1128,19 +1065,6 @@ export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
 export const TARGET_STATUSES = ["pending", "contacted", "replied", "interested", "stopped", "error"] as const;
 export type TargetStatus = (typeof TARGET_STATUSES)[number];
 
-export interface CampaignFollowUpPolicy {
-  /** Activer les relances automatiques des non-répondeurs. */
-  enabled: boolean;
-  /** Nombre maximum de relances (ex. 1 = une seule relance). */
-  maxFollowUps: number;
-  /** Intervalle en jours entre chaque relance (ex. 2 = deux jours après). */
-  intervalDays: number;
-  /** Heure locale d'envoi préférée (0-23, ex. 8 = 8h). Optionnel. */
-  timeOfDayHour?: number;
-  /** Messages de relance personnalisés (un par étape). Si absent, l'IA en génère. */
-  messages?: string[];
-}
-
 export interface AutomationConfig {
   groupId?: string;
   groupName?: string;
@@ -1160,32 +1084,6 @@ export interface AutomationConfig {
   mediaType?: "image" | "document" | "audio";
   quietHoursStart?: number;
   quietHoursEnd?: number;
-
-  // --- Campagnes avancées (prospection & closing e-commerce) ---
-  /** prospection = on contacte des membres de groupe ; inbound_closing = on répond aux prospects qui écrivent (pub/e-commerce). */
-  mode?: "prospection" | "inbound_closing";
-  /** Objectif final de la campagne (ex. envoyer un lien, fixer un RDV, faire payer, proposer une livraison). */
-  objective?: string;
-  /** Ce que l'utilisateur vend / propose (produit, offre, service). */
-  sellingWhat?: string;
-  /** Style / ton d'échange souhaité avec les gens (comment l'IA doit parler). */
-  conversationStyle?: string;
-  /** Comment matcher les messages entrants déclencheurs (closing e-commerce). */
-  triggerMatchMode?: "any_keyword" | "all_keywords" | "exact_phrase";
-  /** Phrases exactes déclencheuses (ex. « je suis intéressé par ce produit »). */
-  triggerPhrases?: string[];
-  /** Si vrai : ne JAMAIS répondre à un entrant hors cadre (uniquement si un déclencheur matche). */
-  replyOnlyOnTrigger?: boolean;
-  /** Politique de relance des non-répondeurs, décidée par l'utilisateur. */
-  followUp?: CampaignFollowUpPolicy;
-  /** Arrêter la conversation et prévenir l'utilisateur si le prospect exprime du mécontentement. */
-  stopOnDissatisfaction?: boolean;
-  /** Arrêter et prévenir l'utilisateur si une question sort du cadre / sans réponse connue. */
-  stopOnUnknownQuestion?: boolean;
-  /** La simulation a été validée par l'utilisateur (garde-fou avant activation). */
-  simulationApproved?: boolean;
-  /** Origine de l'automatisation : 'chat' (chat principal) ou 'manual' (page Automatisation). */
-  origin?: "chat" | "manual";
 }
 
 export interface AutomationStats {
@@ -1203,10 +1101,6 @@ export interface AutomationStats {
   revenueFcfa?: number;
   abResults?: Record<string, { sent: number; replied: number; interested: number }>;
   openAiCostEstimateFcfa?: number;
-  /** Date locale (YYYY-MM-DD) du dernier rapport quotidien posté, pour éviter les doublons. */
-  lastReportDate?: string;
-  /** Nb de conversations arrêtées automatiquement (mécontentement / hors cadre). */
-  autoStopped?: number;
 }
 
 export interface Automation {
@@ -1418,28 +1312,6 @@ export async function updateAutomationStatus(
   await sql`UPDATE automations SET status = ${status}, updated_at = NOW() WHERE user_id = ${userId} AND id = ${id}`;
   await addAutomationLog(userId, id, "info", `Statut → ${status}`);
   return getAutomation(userId, id);
-}
-
-/**
- * Supprime définitivement une automatisation et ses données liées.
- * automation_targets et automation_logs sont supprimés par cascade FK.
- * send_queue et group_reply_rules n'ont pas de FK → nettoyage explicite.
- * contact_sequences.automation_id est ON DELETE SET NULL (conservé).
- * Renvoie true si une ligne a été supprimée.
- */
-export async function deleteAutomation(userId: number, id: number): Promise<boolean> {
-  const existing = await getAutomation(userId, id);
-  if (!existing) return false;
-  // Annule les envois programmés non partis rattachés à cette campagne.
-  await sql`
-    UPDATE send_queue SET status = 'cancelled'
-    WHERE user_id = ${userId} AND automation_id = ${id} AND status = 'pending'
-  `.catch(() => {});
-  await sql`DELETE FROM group_reply_rules WHERE user_id = ${userId} AND automation_id = ${id}`.catch(() => {});
-  const rows = await sql<{ id: number }[]>`
-    DELETE FROM automations WHERE user_id = ${userId} AND id = ${id} RETURNING id
-  `;
-  return rows.length > 0;
 }
 
 export async function updateAutomationStats(
@@ -1730,22 +1602,6 @@ export interface SequenceStep {
   condition?: "no_reply" | "always";
   mediaUrl?: string;
   mediaType?: string;
-  /** Heure locale préférée d'envoi (0-23). Si absent, envoi dès l'échéance du délai. */
-  hourOfDay?: number;
-}
-
-/** Calcule la prochaine échéance d'une étape de séquence, en respectant une heure fixe si fournie. */
-function computeNextStepAt(delayDays: number, hourOfDay?: number): Date {
-  const nextAt = new Date();
-  nextAt.setDate(nextAt.getDate() + Math.max(0, delayDays));
-  if (hourOfDay != null && Number.isFinite(hourOfDay)) {
-    nextAt.setHours(Math.max(0, Math.min(23, hourOfDay)), 0, 0, 0);
-    // Délai 0 mais l'heure est déjà passée aujourd'hui → repousser au lendemain.
-    if (nextAt.getTime() <= Date.now()) {
-      nextAt.setDate(nextAt.getDate() + 1);
-    }
-  }
-  return nextAt;
 }
 
 export interface ContactSequence {
@@ -1788,7 +1644,8 @@ export async function createContactSequence(userId: number, input: {
 }): Promise<ContactSequence> {
   const phone = normalizeContactPhone(input.contactPhone);
   const firstDelay = input.steps[0]?.delayDays ?? 0;
-  const nextAt = computeNextStepAt(firstDelay, input.steps[0]?.hourOfDay);
+  const nextAt = new Date();
+  nextAt.setDate(nextAt.getDate() + firstDelay);
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO contact_sequences (user_id, contact_phone, automation_id, name, steps_json, next_step_at)
     VALUES (
@@ -1830,7 +1687,8 @@ export async function advanceSequence(userId: number, id: number): Promise<void>
     return;
   }
   const delay = seq.steps[nextStep]?.delayDays ?? 1;
-  const nextAt = computeNextStepAt(delay, seq.steps[nextStep]?.hourOfDay);
+  const nextAt = new Date();
+  nextAt.setDate(nextAt.getDate() + delay);
   await sql`
     UPDATE contact_sequences SET current_step = ${nextStep}, next_step_at = ${toTsParam(formatLocalDateTime(nextAt))}
     WHERE user_id = ${userId} AND id = ${id}

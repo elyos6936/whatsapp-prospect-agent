@@ -30,6 +30,7 @@ export function AppSidebar({
   onNavigate,
   waConnected = true,
 }: AppSidebarProps) {
+
   return (
     <aside
       className={cn(
@@ -96,6 +97,7 @@ export function AppSidebar({
           );
         })}
       </nav>
+
     </aside>
   );
 }
