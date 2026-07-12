@@ -96,12 +96,14 @@ function extractPollVoteNote(message: unknown): string | null {
     : "[Vote sondage reçu]";
 }
 
-/** Webhook Evolution API — MESSAGES_UPSERT */
+/** Webhook Evolution API — MESSAGES_UPSERT + MESSAGES_UPDATE (receipts, suppressions, éditions) */
 export async function handleEvolutionWebhook(payload: unknown): Promise<number> {
   if (!payload || typeof payload !== "object") return 0;
   const body = payload as Record<string, unknown>;
-  const event = String(body.event ?? body.type ?? "").toUpperCase();
-  if (!event.includes("MESSAGES_UPSERT") && !event.includes("MESSAGES.UPSERT")) return 0;
+  const event = String(body.event ?? body.type ?? "").toUpperCase().replace(/\./g, "_");
+  const isUpsert = event.includes("MESSAGES_UPSERT");
+  const isUpdate = event.includes("MESSAGES_UPDATE") || event.includes("MESSAGES_EDITED") || event.includes("SEND_MESSAGE_UPDATE");
+  if (!isUpsert && !isUpdate) return 0;
 
   const instance = String(body.instance ?? body.instanceName ?? "");
   const userId = await userIdFromInstanceName(instance);
@@ -112,6 +114,11 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
 
   const data = body.data;
   const items = Array.isArray(data) ? data : data ? [data] : [];
+
+  if (isUpdate) {
+    return handleMessagesUpdate(userId, items);
+  }
+
   let processed = 0;
 
   for (const item of items) {
@@ -168,6 +175,134 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
     }
   }
   return processed;
+}
+
+/** Statuts d'accusé WhatsApp (Baileys) — code numérique → libellé. */
+const WA_STATUS_LABELS: Record<string, string> = {
+  "0": "erreur",
+  "1": "en attente",
+  "2": "envoyé",
+  "3": "distribué",
+  "4": "lu",
+  "5": "écouté",
+  ERROR: "erreur",
+  PENDING: "en attente",
+  SERVER_ACK: "envoyé",
+  DELIVERY_ACK: "distribué",
+  READ: "lu",
+  PLAYED: "écouté",
+};
+
+/** Extrait le nouveau texte d'un message édité (structures Baileys/Evolution variées). */
+function extractEditedText(message: unknown): string | null {
+  if (!message || typeof message !== "object") return null;
+  const m = message as Record<string, unknown>;
+  const edited = m.editedMessage as Record<string, unknown> | undefined;
+  const proto =
+    (m.protocolMessage as Record<string, unknown> | undefined) ??
+    (edited?.message as Record<string, unknown> | undefined)?.protocolMessage as
+      | Record<string, unknown>
+      | undefined;
+  const inner = (proto?.editedMessage ?? edited) as Record<string, unknown> | undefined;
+  if (inner) {
+    const t = extractEvolutionInboundText(inner);
+    if (t) return t;
+  }
+  return null;
+}
+
+/**
+ * Webhook MESSAGES_UPDATE : accusés (distribué/lu), suppressions (revoke) et éditions.
+ * Informatif — met à jour la santé du poller, journalise, et enregistre les
+ * suppressions/éditions comme notes visibles dans l'historique.
+ */
+async function handleMessagesUpdate(userId: number, items: unknown[]): Promise<number> {
+  let processed = 0;
+  const h = pollHealthFor(userId);
+
+  for (const item of items) {
+    if (!item || typeof item !== "object") continue;
+    const row = item as Record<string, unknown>;
+    const key =
+      (row.key as { remoteJid?: string; fromMe?: boolean; id?: string } | undefined) ??
+      (row.keyId
+        ? { remoteJid: String(row.remoteJid ?? ""), fromMe: Boolean(row.fromMe), id: String(row.keyId) }
+        : undefined);
+    const rawChatId = key?.remoteJid ?? String(row.remoteJid ?? "");
+    const msgId = key?.id ?? String(row.keyId ?? row.messageId ?? "");
+    if (!rawChatId || !msgId) continue;
+
+    const update = (row.update as Record<string, unknown> | undefined) ?? row;
+    const rawStatus = update.status ?? row.status;
+    const statusKey = rawStatus != null ? String(rawStatus).toUpperCase() : "";
+    const message = row.message ?? (update.message as unknown);
+
+    // 1) Suppression (revoke)
+    const isRevoke =
+      statusKey === "DELETED" ||
+      statusKey === "REVOKED" ||
+      Number(update.messageStubType) === 1 ||
+      hasRevokeProtocol(message);
+    if (isRevoke) {
+      const noteId = `${msgId}-deleted`;
+      try {
+        if (!(await whatsAppMessageExists(userId, noteId))) {
+          await saveWhatsAppMessage(userId, {
+            contactPhone: rawChatId.endsWith("@g.us") ? rawChatId : normalizeGroupParticipantId(rawChatId),
+            direction: key?.fromMe ? "sortant" : "entrant",
+            body: "[Message supprimé]",
+            greenApiId: noteId,
+          });
+          processed++;
+        }
+      } catch (err) {
+        console.error("Erreur enregistrement suppression:", err);
+      }
+      h.lastIncomingAt = new Date().toISOString();
+      continue;
+    }
+
+    // 2) Édition
+    const editedText = extractEditedText(message);
+    if (editedText) {
+      const noteId = `${msgId}-edited-${Math.floor(Date.now() / 1000)}`;
+      try {
+        if (!(await whatsAppMessageExists(userId, noteId))) {
+          await saveWhatsAppMessage(userId, {
+            contactPhone: rawChatId.endsWith("@g.us") ? rawChatId : normalizeGroupParticipantId(rawChatId),
+            direction: key?.fromMe ? "sortant" : "entrant",
+            body: `[Message modifié] ${editedText}`,
+            greenApiId: noteId,
+          });
+          processed++;
+        }
+      } catch (err) {
+        console.error("Erreur enregistrement édition:", err);
+      }
+      h.lastIncomingAt = new Date().toISOString();
+      continue;
+    }
+
+    // 3) Accusé d'envoi / distribution / lecture (informatif — journalisé)
+    if (statusKey && WA_STATUS_LABELS[statusKey]) {
+      console.log(
+        `📬 Accusé WhatsApp [${WA_STATUS_LABELS[statusKey]}] ${chatIdToDisplay(rawChatId)} (msg ${msgId})`
+      );
+      processed++;
+    }
+  }
+
+  return processed;
+}
+
+/** Détecte un protocolMessage de type REVOKE (suppression). */
+function hasRevokeProtocol(message: unknown): boolean {
+  if (!message || typeof message !== "object") return false;
+  const m = message as Record<string, unknown>;
+  const proto = m.protocolMessage as Record<string, unknown> | undefined;
+  if (!proto) return false;
+  const type = proto.type;
+  return type === 0 || String(type).toUpperCase() === "REVOKE";
 }
 
 export interface WhatsappPollHealth {

@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Check } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { saveOnboarding, ApiError } from '@/lib/api';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
@@ -24,6 +25,8 @@ const TARGETS = ['Particuliers (B2C)', 'Entreprises (B2B)', 'Les deux', 'Autre']
 
 const VOLUMES = ['< 20', '20-50', '50-200', '200+', 'Je ne sais pas encore'] as const;
 
+const OTHER = 'Autre';
+
 type Step = 0 | 1 | 2 | 3 | 4;
 
 export function OnboardingPage() {
@@ -32,6 +35,7 @@ export function OnboardingPage() {
   const [sector, setSector] = useState('');
   const [sectorOther, setSectorOther] = useState('');
   const [goals, setGoals] = useState<string[]>([]);
+  const [goalOtherOn, setGoalOtherOn] = useState(false);
   const [goalOther, setGoalOther] = useState('');
   const [target, setTarget] = useState('');
   const [targetOther, setTargetOther] = useState('');
@@ -45,9 +49,10 @@ export function OnboardingPage() {
   };
 
   const canNext = (): boolean => {
-    if (step === 0) return !!sector && (sector !== 'Autre' || sectorOther.trim().length > 0);
-    if (step === 1) return goals.length > 0 || goalOther.trim().length > 0;
-    if (step === 2) return !!target && (target !== 'Autre' || targetOther.trim().length > 0);
+    if (step === 0) return !!sector && (sector !== OTHER || sectorOther.trim().length > 0);
+    if (step === 1)
+      return goals.length > 0 || (goalOtherOn && goalOther.trim().length > 0);
+    if (step === 2) return !!target && (target !== OTHER || targetOther.trim().length > 0);
     if (step === 3) return !!volume;
     if (step === 4) return offer.trim().length > 2;
     return false;
@@ -58,9 +63,9 @@ export function OnboardingPage() {
     setBusy(true);
     try {
       const answers = {
-        sector: sector === 'Autre' ? sectorOther.trim() : sector,
-        goals: [...goals, ...(goalOther.trim() ? [goalOther.trim()] : [])],
-        target: target === 'Autre' ? targetOther.trim() : target,
+        sector: sector === OTHER ? sectorOther.trim() : sector,
+        goals: [...goals, ...(goalOtherOn && goalOther.trim() ? [goalOther.trim()] : [])],
+        target: target === OTHER ? targetOther.trim() : target,
         volume,
       };
       await saveOnboarding({
@@ -99,82 +104,72 @@ export function OnboardingPage() {
 
         <div className="mt-8 space-y-4">
           {step === 0 && (
-            <>
-              <p className="text-sm font-medium text-text-200">Quel est votre secteur d&apos;activité ?</p>
-              <div className="flex flex-wrap gap-2">
-                {SECTORS.map((s) => (
-                  <ChoiceChip key={s} selected={sector === s} onClick={() => setSector(s)} label={s} />
-                ))}
-              </div>
-              {sector === 'Autre' && (
-                <input
+            <ChoiceGroup label="Quel est votre secteur d'activité ?">
+              {SECTORS.map((s) => (
+                <OptionRow key={s} selected={sector === s} onClick={() => setSector(s)} label={s} />
+              ))}
+              {sector === OTHER && (
+                <OtherInput
                   value={sectorOther}
-                  onChange={(e) => setSectorOther(e.target.value)}
-                  placeholder="Précisez…"
-                  className="w-full rounded-xl border border-white/10 bg-bg-100 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
+                  onChange={setSectorOther}
+                  placeholder="Précisez votre secteur…"
                 />
               )}
-            </>
+            </ChoiceGroup>
           )}
 
           {step === 1 && (
-            <>
-              <p className="text-sm font-medium text-text-200">
-                Qu&apos;est-ce que vous voulez faire avec Klanvio ? (plusieurs choix possibles)
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {GOALS.map((g) => (
-                  <ChoiceChip
-                    key={g}
-                    selected={goals.includes(g)}
-                    onClick={() => toggleGoal(g)}
-                    label={g}
-                  />
-                ))}
-              </div>
-              <input
-                value={goalOther}
-                onChange={(e) => setGoalOther(e.target.value)}
-                placeholder="Autre objectif…"
-                className="w-full rounded-xl border border-white/10 bg-bg-100 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
+            <ChoiceGroup label="Qu'est-ce que vous voulez faire avec Klanvio ?" hint="Plusieurs choix possibles">
+              {GOALS.map((g) => (
+                <OptionRow
+                  key={g}
+                  multi
+                  selected={goals.includes(g)}
+                  onClick={() => toggleGoal(g)}
+                  label={g}
+                />
+              ))}
+              <OptionRow
+                multi
+                selected={goalOtherOn}
+                onClick={() => setGoalOtherOn((v) => !v)}
+                label="Autre"
               />
-            </>
+              {goalOtherOn && (
+                <OtherInput
+                  value={goalOther}
+                  onChange={setGoalOther}
+                  placeholder="Précisez votre objectif…"
+                />
+              )}
+            </ChoiceGroup>
           )}
 
           {step === 2 && (
-            <>
-              <p className="text-sm font-medium text-text-200">Qui est votre cible ?</p>
-              <div className="flex flex-wrap gap-2">
-                {TARGETS.map((t) => (
-                  <ChoiceChip key={t} selected={target === t} onClick={() => setTarget(t)} label={t} />
-                ))}
-              </div>
-              {target === 'Autre' && (
-                <input
+            <ChoiceGroup label="Qui est votre cible ?">
+              {TARGETS.map((t) => (
+                <OptionRow key={t} selected={target === t} onClick={() => setTarget(t)} label={t} />
+              ))}
+              {target === OTHER && (
+                <OtherInput
                   value={targetOther}
-                  onChange={(e) => setTargetOther(e.target.value)}
-                  placeholder="Précisez…"
-                  className="w-full rounded-xl border border-white/10 bg-bg-100 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
+                  onChange={setTargetOther}
+                  placeholder="Précisez votre cible…"
                 />
               )}
-            </>
+            </ChoiceGroup>
           )}
 
           {step === 3 && (
-            <>
-              <p className="text-sm font-medium text-text-200">
-                Combien de messages souhaitez-vous envoyer par jour ?
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {VOLUMES.map((v) => (
-                  <ChoiceChip key={v} selected={volume === v} onClick={() => setVolume(v)} label={v} />
-                ))}
-              </div>
-            </>
+            <ChoiceGroup label="Combien de messages souhaitez-vous envoyer par jour ?">
+              {VOLUMES.map((v) => (
+                <OptionRow key={v} selected={volume === v} onClick={() => setVolume(v)} label={v} />
+              ))}
+            </ChoiceGroup>
           )}
 
           {step === 4 && (
-            <>
+            <div className="space-y-3">
               <p className="text-sm font-medium text-text-200">
                 Décrivez votre offre principale en une phrase
               </p>
@@ -185,7 +180,7 @@ export function OnboardingPage() {
                 placeholder="Ex : Je vends des formations en marketing digital pour entrepreneurs…"
                 className="w-full resize-none rounded-xl border border-white/10 bg-bg-100 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
               />
-            </>
+            </div>
           )}
         </div>
 
@@ -240,27 +235,84 @@ export function OnboardingPage() {
   );
 }
 
-function ChoiceChip({
+function ChoiceGroup({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <p className="text-sm font-medium text-text-200">{label}</p>
+        {hint && <p className="mt-0.5 text-xs text-text-500">{hint}</p>}
+      </div>
+      <div className="space-y-2">{children}</div>
+    </div>
+  );
+}
+
+function OptionRow({
   label,
   selected,
+  multi = false,
   onClick,
 }: {
   label: string;
   selected: boolean;
+  multi?: boolean;
   onClick: () => void;
 }) {
   return (
     <button
       type="button"
       onClick={onClick}
+      aria-pressed={selected}
       className={cn(
-        'rounded-full border px-3 py-1.5 text-sm transition',
+        'flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left text-sm transition',
         selected
-          ? 'border-brand bg-brand-muted text-brand'
-          : 'border-white/10 text-text-400 hover:border-white/20 hover:text-text-200',
+          ? 'border-brand bg-brand-muted text-text-100'
+          : 'border-white/10 bg-bg-100 text-text-300 hover:border-white/25 hover:text-text-100',
       )}
     >
-      {label}
+      <span
+        className={cn(
+          'flex h-[18px] w-[18px] shrink-0 items-center justify-center border transition',
+          multi ? 'rounded-[5px]' : 'rounded-full',
+          selected ? 'border-brand bg-brand' : 'border-white/25',
+        )}
+      >
+        {selected &&
+          (multi ? (
+            <Check className="h-3 w-3 text-white" strokeWidth={3} />
+          ) : (
+            <span className="h-1.5 w-1.5 rounded-full bg-white" />
+          ))}
+      </span>
+      <span className="flex-1">{label}</span>
     </button>
+  );
+}
+
+function OtherInput({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  placeholder: string;
+}) {
+  return (
+    <input
+      autoFocus
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      placeholder={placeholder}
+      className="w-full rounded-xl border border-white/10 bg-bg-100 px-4 py-3 text-sm text-text-100 outline-none focus:border-brand"
+    />
   );
 }

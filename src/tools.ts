@@ -11,6 +11,12 @@ import {
   listWhatsAppGroups,
   listWhatsAppChannels,
   markChatRead,
+  markChatUnread,
+  archiveChat,
+  editWhatsAppMessage,
+  deleteWhatsAppMessage,
+  getMessageMediaBase64,
+  searchWhatsAppMessages,
   messageGroupMembers,
   normalizePhoneToChatId,
   normalizeGroupParticipantId,
@@ -755,6 +761,108 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
         },
         required: ["chat_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "mark_chat_unread",
+      description: "Marque un chat comme NON LU (pastille non lue). Nécessite l'ID d'un message récent du chat.",
+      parameters: {
+        type: "object",
+        properties: {
+          chat_id: { type: "string", description: "chatId (@c.us / @g.us), numéro +229… ou nom de groupe" },
+          message_id: { type: "string", description: "ID d'un message récent du chat (via list_green_incoming_messages / search_messages)" },
+          from_me: { type: "boolean", description: "true si ce message a été envoyé par nous. Défaut : false." },
+        },
+        required: ["chat_id", "message_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "archive_chat",
+      description: "Archive ou désarchive un chat. Nécessite l'ID d'un message récent du chat.",
+      parameters: {
+        type: "object",
+        properties: {
+          chat_id: { type: "string", description: "chatId (@c.us / @g.us), numéro +229… ou nom de groupe" },
+          message_id: { type: "string", description: "ID d'un message récent du chat" },
+          archive: { type: "boolean", description: "true pour archiver, false pour désarchiver. Défaut : true." },
+          from_me: { type: "boolean", description: "true si ce message a été envoyé par nous. Défaut : false." },
+        },
+        required: ["chat_id", "message_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "edit_message",
+      description: "Modifie le TEXTE d'un message déjà envoyé PAR NOUS (édition WhatsApp). Fonctionne dans les ~15 min après l'envoi.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "chatId (@c.us / @g.us), numéro +229… ou nom de groupe" },
+          message_id: { type: "string", description: "ID du message à modifier (envoyé par nous)" },
+          new_text: { type: "string", description: "Nouveau texte du message" },
+        },
+        required: ["recipient", "message_id", "new_text"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "delete_message",
+      description: "Supprime un message POUR TOUT LE MONDE (revoke). Doit avoir été envoyé par nous (sauf admin de groupe).",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "chatId (@c.us / @g.us), numéro +229… ou nom de groupe" },
+          message_id: { type: "string", description: "ID du message à supprimer" },
+          from_me: { type: "boolean", description: "true si le message a été envoyé par nous. Défaut : true." },
+          participant: { type: "string", description: "En groupe : JID de l'auteur du message (optionnel)" },
+        },
+        required: ["recipient", "message_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_message_media",
+      description: "Récupère le média (image/vidéo/audio/document) d'un message en base64 (data URL). Utile pour ré-envoyer ou analyser un fichier reçu.",
+      parameters: {
+        type: "object",
+        properties: {
+          message_id: { type: "string", description: "ID du message contenant le média" },
+          convert_to_mp4: { type: "boolean", description: "Convertir la vidéo/audio en mp4 (optionnel)" },
+        },
+        required: ["message_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "search_messages",
+      description: "Recherche/liste des messages WhatsApp. Filtre par chat (recipient) et/ou texte (query). Pour les messages de STATUT, mettre recipient='status@broadcast'.",
+      parameters: {
+        type: "object",
+        properties: {
+          recipient: { type: "string", description: "chatId, numéro, nom de groupe, ou 'status@broadcast' pour les statuts. Optionnel." },
+          query: { type: "string", description: "Texte à rechercher dans les messages (optionnel)" },
+          count: { type: "number", description: "Nombre max de résultats (défaut 50, max 200)" },
+        },
         additionalProperties: false,
       },
     },
@@ -1714,6 +1822,131 @@ export async function executeTool(userId: number, name: string, args: Record<str
         setRead: result.setRead,
         message: `Chat ${chatIdToDisplay(chatId)} marqué comme lu.`,
       });
+    }
+
+    case "mark_chat_unread": {
+      const messageId = String(args.message_id ?? "").trim();
+      if (!messageId) return JSON.stringify({ error: "message_id requis." });
+      try {
+        const chatId = await resolveRecipient(userId, String(args.chat_id ?? ""));
+        await markChatUnread(userId, chatId, messageId, { fromMe: args.from_me === true });
+        return JSON.stringify({
+          success: true,
+          chatId,
+          message: `Chat ${chatIdToDisplay(chatId)} marqué comme non lu.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "archive_chat": {
+      const messageId = String(args.message_id ?? "").trim();
+      if (!messageId) return JSON.stringify({ error: "message_id requis." });
+      const archive = args.archive !== false;
+      try {
+        const chatId = await resolveRecipient(userId, String(args.chat_id ?? ""));
+        await archiveChat(userId, chatId, messageId, archive, { fromMe: args.from_me === true });
+        return JSON.stringify({
+          success: true,
+          chatId,
+          archived: archive,
+          message: `Chat ${chatIdToDisplay(chatId)} ${archive ? "archivé" : "désarchivé"}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "edit_message": {
+      const messageId = String(args.message_id ?? "").trim();
+      const newText = String(args.new_text ?? "").trim();
+      if (!messageId) return JSON.stringify({ error: "message_id requis." });
+      if (!newText) return JSON.stringify({ error: "new_text requis." });
+      try {
+        const chatId = await resolveRecipient(userId, String(args.recipient ?? ""));
+        const result = await editWhatsAppMessage(userId, chatId, messageId, newText);
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          idMessage: result.idMessage,
+          editedAt: nowFr(),
+          message: `Message modifié à ${nowFr()}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "delete_message": {
+      const messageId = String(args.message_id ?? "").trim();
+      if (!messageId) return JSON.stringify({ error: "message_id requis." });
+      try {
+        const chatId = await resolveRecipient(userId, String(args.recipient ?? ""));
+        const result = await deleteWhatsAppMessage(userId, chatId, messageId, {
+          fromMe: args.from_me !== false,
+          participant: args.participant ? String(args.participant) : undefined,
+        });
+        return JSON.stringify({
+          success: true,
+          chatId: result.chatId,
+          deletedAt: nowFr(),
+          message: `Message supprimé pour tout le monde à ${nowFr()}.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "get_message_media": {
+      const messageId = String(args.message_id ?? "").trim();
+      if (!messageId) return JSON.stringify({ error: "message_id requis." });
+      try {
+        const media = await getMessageMediaBase64(userId, messageId, {
+          convertToMp4: args.convert_to_mp4 === true,
+        });
+        const dataUrl = `data:${media.mimetype};base64,${media.base64}`;
+        return JSON.stringify({
+          success: true,
+          mediaType: media.mediaType,
+          mimetype: media.mimetype,
+          fileName: media.fileName,
+          dataUrl,
+          message: `Média récupéré (${media.mediaType}, ${media.mimetype}). Utilisable comme URL data: pour ré-envoi.`,
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+
+    case "search_messages": {
+      try {
+        const recipientArg = args.recipient ? String(args.recipient) : undefined;
+        const recipient =
+          recipientArg && recipientArg !== "status@broadcast"
+            ? await resolveRecipient(userId, recipientArg)
+            : recipientArg;
+        const results = await searchWhatsAppMessages(userId, {
+          recipient,
+          query: args.query ? String(args.query) : undefined,
+          count: Number(args.count) || undefined,
+        });
+        return JSON.stringify({
+          success: true,
+          count: results.length,
+          messages: results.map((m) => ({
+            idMessage: m.idMessage,
+            chatId: m.chatId,
+            display: chatIdToDisplay(m.chatId),
+            fromMe: m.fromMe,
+            text: m.text,
+            typeMessage: m.typeMessage,
+            timestamp: m.timestamp,
+          })),
+        });
+      } catch (err) {
+        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+      }
     }
 
     case "list_green_incoming_messages": {

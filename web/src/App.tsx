@@ -29,7 +29,7 @@ export default function App() {
   const [mainView, setMainView] = useState<MainView>('chat');
   const [collapsed, toggle] = useSidebarCollapsed();
   const chatEnabled = mainView === 'chat' && !!user?.whatsapp?.connected;
-  const { messages, loading, appendLocal, appendOptimisticUser, clear, loadHistory, poll } =
+  const { messages, loading, appendLocal, appendOptimisticUser, clear, loadHistory } =
     useMessages(chatEnabled);
   const [isSending, setIsSending] = useState(false);
   const [clearing, setClearing] = useState(false);
@@ -79,7 +79,6 @@ export default function App() {
           created_at: result.created_at,
           label: 'Agent',
         });
-        void poll();
         void refreshUser();
       } catch (err) {
         appendLocal({
@@ -93,7 +92,7 @@ export default function App() {
         setIsSending(false);
       }
     },
-    [appendLocal, appendOptimisticUser, poll, refreshUser],
+    [appendLocal, appendOptimisticUser, refreshUser],
   );
 
   const handleClearHistory = useCallback(async () => {

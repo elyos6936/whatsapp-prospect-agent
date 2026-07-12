@@ -337,7 +337,7 @@ export async function createInstance(userId: number): Promise<void> {
           enabled: true,
           url: `${config.publicUrl}/api/evolution/webhook`,
           webhookByEvents: false,
-          events: ["MESSAGES_UPSERT"],
+          events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE"],
         },
       },
       timeoutMs: 60_000,
@@ -1649,6 +1649,192 @@ export async function markChatRead(userId: number, chatId: string, idMessage?: s
   return { setRead: true };
 }
 
+/** Marque un chat comme NON LU (dernier message identifié par idMessage). */
+export async function markChatUnread(
+  userId: number,
+  chatId: string,
+  idMessage: string,
+  opts: { fromMe?: boolean } = {}
+): Promise<{ markedUnread: boolean }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const remoteJid = toRemoteJid(chatId);
+  await evolutionFetch(creds, `/chat/markChatUnread/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      lastMessage: { key: { remoteJid, fromMe: opts.fromMe ?? false, id: idMessage } },
+      chat: remoteJid,
+    },
+  });
+  return { markedUnread: true };
+}
+
+/** Archive ou désarchive un chat. */
+export async function archiveChat(
+  userId: number,
+  chatId: string,
+  idMessage: string,
+  archive: boolean,
+  opts: { fromMe?: boolean } = {}
+): Promise<{ archived: boolean }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const remoteJid = toRemoteJid(chatId);
+  await evolutionFetch(creds, `/chat/archiveChat/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      lastMessage: { key: { remoteJid, fromMe: opts.fromMe ?? false, id: idMessage } },
+      chat: remoteJid,
+      archive,
+    },
+  });
+  return { archived: archive };
+}
+
+/** Modifie le texte d'un message DÉJÀ envoyé par nous (édition WhatsApp). */
+export async function editWhatsAppMessage(
+  userId: number,
+  chatId: string,
+  idMessage: string,
+  newText: string
+): Promise<{ idMessage: string; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  if (!newText.trim()) throw new EvolutionApiError("Le nouveau texte est requis.");
+
+  const remoteJid = toRemoteJid(chatId);
+  const number = chatId.endsWith("@g.us") ? chatId : chatIdToNumber(chatId);
+  const data = await evolutionFetch<unknown>(creds, `/chat/updateMessage/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      text: newText,
+      key: { remoteJid, fromMe: true, id: idMessage },
+    },
+  });
+  return { idMessage: extractMessageId(data) || idMessage, chatId: normalizeGroupParticipantId(chatId) };
+}
+
+/** Supprime un message pour TOUT LE MONDE (revoke). Le message doit avoir été envoyé par nous. */
+export async function deleteWhatsAppMessage(
+  userId: number,
+  chatId: string,
+  idMessage: string,
+  opts: { fromMe?: boolean; participant?: string } = {}
+): Promise<{ deleted: boolean; chatId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const remoteJid = toRemoteJid(chatId);
+  await evolutionFetch(creds, `/chat/deleteMessageForEveryone/${creds.instanceName}`, {
+    method: "DELETE",
+    body: {
+      id: idMessage,
+      remoteJid,
+      fromMe: opts.fromMe ?? true,
+      ...(opts.participant ? { participant: opts.participant } : {}),
+    },
+  });
+  return { deleted: true, chatId: normalizeGroupParticipantId(chatId) };
+}
+
+/** Récupère le média d'un message (image/vidéo/audio/document) en base64. */
+export async function getMessageMediaBase64(
+  userId: number,
+  idMessage: string,
+  opts: { convertToMp4?: boolean } = {}
+): Promise<{ base64: string; mimetype: string; fileName: string; mediaType: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const data = await evolutionFetch<{
+    base64?: string;
+    mimetype?: string;
+    fileName?: string;
+    mediaType?: string;
+  }>(creds, `/chat/getBase64FromMediaMessage/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      message: { key: { id: idMessage } },
+      ...(opts.convertToMp4 ? { convertToMp4: true } : {}),
+    },
+    timeoutMs: 60_000,
+  });
+
+  if (!data?.base64) throw new EvolutionApiError("Aucun média récupéré pour ce message.");
+  return {
+    base64: data.base64,
+    mimetype: data.mimetype ?? "application/octet-stream",
+    fileName: data.fileName ?? "media",
+    mediaType: data.mediaType ?? "unknown",
+  };
+}
+
+export interface SearchedMessage {
+  idMessage: string;
+  chatId: string;
+  fromMe: boolean;
+  text: string;
+  typeMessage: string;
+  timestamp: number;
+}
+
+/**
+ * Recherche/liste des messages. Filtre par chat (recipient) et/ou texte.
+ * Pour les messages de STATUT, passer recipient="status@broadcast".
+ */
+export async function searchWhatsAppMessages(
+  userId: number,
+  opts: { recipient?: string; query?: string; count?: number } = {}
+): Promise<SearchedMessage[]> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const take = Math.min(Math.max(opts.count ?? 50, 1), 200);
+  const where: Record<string, unknown> = {};
+  if (opts.recipient) {
+    const remoteJid =
+      opts.recipient === "status@broadcast"
+        ? "status@broadcast"
+        : opts.recipient.includes("@")
+          ? toRemoteJid(opts.recipient)
+          : toRemoteJid(normalizePhoneToChatId(opts.recipient));
+    where.key = { remoteJid };
+  }
+
+  const data = await evolutionFetch<{ messages?: { records?: unknown[] } }>(
+    creds,
+    `/chat/findMessages/${creds.instanceName}`,
+    {
+      method: "POST",
+      body: { where, take, orderBy: { messageTimestamp: "desc" } },
+    }
+  );
+
+  const records = data.messages?.records ?? [];
+  const q = opts.query?.trim().toLowerCase();
+  const out: SearchedMessage[] = [];
+  for (const row of records) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    const key = r.key as { id?: string; fromMe?: boolean; remoteJid?: string } | undefined;
+    const text = extractEvolutionText(r.message);
+    if (!text) continue;
+    if (q && !text.toLowerCase().includes(q)) continue;
+    out.push({
+      idMessage: key?.id ?? "",
+      chatId: normalizeGroupParticipantId(key?.remoteJid ?? ""),
+      fromMe: Boolean(key?.fromMe),
+      text,
+      typeMessage: String(r.messageType ?? "text"),
+      timestamp: Number(r.messageTimestamp ?? 0),
+    });
+  }
+  return out;
+}
+
 export async function listPersonalContacts(userId: number, limit = 50): Promise<Array<{ id: string; name: string }>> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
@@ -1853,7 +2039,7 @@ export async function setEvolutionWebhook(userId: number, webhookUrl: string): P
         enabled: true,
         url: webhookUrl,
         webhookByEvents: false,
-        events: ["MESSAGES_UPSERT", "CONNECTION_UPDATE"],
+        events: ["MESSAGES_UPSERT", "MESSAGES_UPDATE", "CONNECTION_UPDATE"],
       },
     },
   });
