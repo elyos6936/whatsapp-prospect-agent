@@ -37,6 +37,12 @@ import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
 import {
+  detectInboundMedia,
+  describeInboundMedia,
+  placeholderForKind,
+  typeMessageToKind,
+} from "./media-understanding.js";
+import {
   generateWhatsAppReply,
   getAdaptiveReplyDelay,
   getStopConfirmationReply,
@@ -165,10 +171,25 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
       continue;
     }
 
-    const text = extractEvolutionInboundText(row.message);
+    let text = extractEvolutionInboundText(row.message);
+    const isGroupChat = rawChatId.endsWith("@g.us");
+
+    // Média entrant (note vocale, image…) en DM : tenter d'interpréter avec OpenAI.
+    if (!text && !isGroupChat) {
+      const media = detectInboundMedia(row.message);
+      if (media) {
+        const mediaMsgId = key.id ?? "";
+        // Évite de rappeler OpenAI si le message est déjà en base.
+        if (mediaMsgId && (await whatsAppMessageExists(userId, mediaMsgId))) continue;
+        text =
+          (mediaMsgId ? await describeInboundMedia(userId, mediaMsgId, media) : null) ??
+          placeholderForKind(media.kind);
+      }
+    }
+
     if (!text) continue;
 
-    if (rawChatId.endsWith("@g.us")) {
+    if (isGroupChat) {
       const senderName = String(row.pushName ?? chatIdToDisplay(rawChatId));
       void runGroupAutoReply(userId, rawChatId, senderName, text);
       continue;
@@ -871,14 +892,26 @@ async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
       const rawChatId = m.chatId ?? m.senderId ?? "";
       if (!rawChatId || rawChatId.endsWith("@g.us") || isBroadcastOrStatusJid(rawChatId)) continue;
 
-      const text =
-        m.textMessage?.trim() ||
-        m.extendedTextMessageData?.text?.trim() ||
-        placeholderForType(m.typeMessage);
-      if (!text) continue;
-
       const greenApiId = m.idMessage;
       if (!greenApiId) continue;
+
+      let text = m.textMessage?.trim() || m.extendedTextMessageData?.text?.trim() || "";
+
+      // Pas de texte → tenter d'interpréter le média (audio/image) avec OpenAI.
+      if (!text) {
+        const kind = typeMessageToKind(m.typeMessage);
+        if (kind) {
+          // Vérification avant appel OpenAI pour éviter les doublons coûteux.
+          const alreadyStored = await whatsAppMessageExists(userId, greenApiId);
+          text = alreadyStored
+            ? placeholderForKind(kind)
+            : (await describeInboundMedia(userId, greenApiId, { kind })) ?? placeholderForKind(kind);
+        } else {
+          text = placeholderForType(m.typeMessage) ?? "";
+        }
+      }
+
+      if (!text) continue;
 
       const senderName = m.senderName || m.senderContactName || chatIdToDisplay(rawChatId);
       if (
