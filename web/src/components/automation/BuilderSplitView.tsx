@@ -4,11 +4,14 @@ import { MessageBubble } from '@/components/chat/MessageBubble';
 import { TypingIndicator } from '@/components/chat/TypingIndicator';
 import { KlanvioChatInput } from '@/components/ui/klanvio-chat-input';
 import { AutomationListCard } from '@/components/automation/AutomationListCard';
+import { AutomationStatsBar } from '@/components/automation/AutomationStatsBar';
 import {
   fetchAutomations,
+  fetchAutomationStats,
   fetchBuilderHistory,
   sendBuilderMessage,
   updateAutomationStatus,
+  type AutomationStats,
   type AutomationSummary,
   type ChatMessage,
 } from '@/lib/api';
@@ -63,6 +66,7 @@ export function BuilderSplitView({ onBack, onStats, initialAutomationId }: Build
   const [sending, setSending] = useState(false);
   const [drafts, setDrafts] = useState<AutomationSummary[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(initialAutomationId ?? null);
+  const [selectedStats, setSelectedStats] = useState<AutomationStats | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const refreshDrafts = useCallback(async () => {
@@ -93,6 +97,25 @@ export function BuilderSplitView({ onBack, onStats, initialAutomationId }: Build
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [messages.length, sending]);
+
+  useEffect(() => {
+    if (selectedId == null) {
+      setSelectedStats(null);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const s = await fetchAutomationStats(selectedId);
+        if (!cancelled) setSelectedStats(s);
+      } catch {
+        if (!cancelled) setSelectedStats(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId, drafts]);
 
   const handleSend = async (text: string) => {
     if (!text.trim()) return;
@@ -164,6 +187,12 @@ export function BuilderSplitView({ onBack, onStats, initialAutomationId }: Build
               direct à droite.
             </p>
           </div>
+
+          {selectedStats && (
+            <div className="shrink-0 border-b border-white/5 px-4 py-3">
+              <AutomationStatsBar data={selectedStats} />
+            </div>
+          )}
 
           <div ref={scrollRef} className="custom-scrollbar min-h-0 flex-1 overflow-y-auto px-4 py-4">
             {loading ? (
