@@ -1,4 +1,4 @@
-import type { ComponentProps } from 'react';
+import { useMemo, type ComponentProps } from 'react';
 import { format } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import ReactMarkdown from 'react-markdown';
@@ -11,7 +11,20 @@ import { sanitizeAssistantText } from '@/lib/sanitize-assistant-text';
 import { classifyMediaUrl, isProxiableMediaUrl, normalizeMediaUrl } from '@/lib/media';
 import type { ChatMessage } from '@/lib/api';
 
-const QUESTIONS_RE = /```klanvio-questions\s*\n([\s\S]*?)\n?```/;
+const QUESTIONS_LANG = 'klanvio-questions';
+const QUESTIONS_RE = /```klanvio-questions\s*\r?\n([\s\S]*?)\r?\n?```/;
+
+function parseQuestionsPayload(raw: string): QuestionsPayload | null {
+  try {
+    const payload = JSON.parse(raw) as QuestionsPayload;
+    if (!payload || !Array.isArray(payload.questions) || payload.questions.length === 0) {
+      return null;
+    }
+    return payload;
+  } catch {
+    return null;
+  }
+}
 
 /** Extrait un bloc de questions interactives du contenu brut d'un message. */
 function extractQuestions(
@@ -19,57 +32,69 @@ function extractQuestions(
 ): { intro: string; payload: QuestionsPayload } | null {
   const match = QUESTIONS_RE.exec(raw);
   if (!match) return null;
-  try {
-    const payload = JSON.parse(match[1]) as QuestionsPayload;
-    if (!payload || !Array.isArray(payload.questions) || payload.questions.length === 0) {
-      return null;
-    }
-    const intro = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim();
-    return { intro, payload };
-  } catch {
-    return null;
-  }
+  const payload = parseQuestionsPayload(match[1]);
+  if (!payload) return null;
+  const intro = (raw.slice(0, match.index) + raw.slice(match.index + match[0].length)).trim();
+  return { intro, payload };
 }
 
-const markdownComponents = {
-  code({ className, children, ...props }: ComponentProps<'code'> & { className?: string }) {
-    const match = /language-(\w+)/.exec(className ?? '');
-    const code = String(children).replace(/\n$/, '');
-    if (match) {
-      return <LazyCodeBlock language={match[1]} code={code} />;
-    }
-    return <code {...props}>{children}</code>;
-  },
-  img({ src, alt }: ComponentProps<'img'>) {
-    if (!src) return null;
-    return <ChatMedia src={src} alt={alt} />;
-  },
-  a({ href, children }: ComponentProps<'a'>) {
-    if (!href) return <span>{children}</span>;
-    const normalized = normalizeMediaUrl(href);
-    const childText = String(children ?? '').trim();
-    const looksLikeMediaLink =
-      (isProxiableMediaUrl(normalized) || href.startsWith('/')) &&
-      (classifyMediaUrl(normalized) !== 'image' ||
-        /aperçu|apercu|image|vidéo|video|media|thumbnail|note vocale/i.test(childText) ||
-        childText.length === 0);
+function createMarkdownComponents(handlers: {
+  onSend?: (text: string) => void;
+  interactive?: boolean;
+}) {
+  return {
+    code({ className, children, ...props }: ComponentProps<'code'> & { className?: string }) {
+      const match = /language-(\w+)/.exec(className ?? '');
+      const code = String(children).replace(/\n$/, '');
+      // Filet de sécurité : si un bloc de questions atterrit ici (extraction
+      // manquée), on le rend en carte — jamais en JSON brut.
+      if (match?.[1] === QUESTIONS_LANG) {
+        const payload = parseQuestionsPayload(code);
+        if (!payload) return null;
+        return (
+          <QuestionsCard
+            payload={payload}
+            onSubmit={handlers.onSend}
+            disabled={!handlers.interactive || !handlers.onSend}
+          />
+        );
+      }
+      if (match) {
+        return <LazyCodeBlock language={match[1]} code={code} />;
+      }
+      return <code {...props}>{children}</code>;
+    },
+    img({ src, alt }: ComponentProps<'img'>) {
+      if (!src) return null;
+      return <ChatMedia src={src} alt={alt} />;
+    },
+    a({ href, children }: ComponentProps<'a'>) {
+      if (!href) return <span>{children}</span>;
+      const normalized = normalizeMediaUrl(href);
+      const childText = String(children ?? '').trim();
+      const looksLikeMediaLink =
+        (isProxiableMediaUrl(normalized) || href.startsWith('/')) &&
+        (classifyMediaUrl(normalized) !== 'image' ||
+          /aperçu|apercu|image|vidéo|video|media|thumbnail|note vocale/i.test(childText) ||
+          childText.length === 0);
 
-    if (looksLikeMediaLink && (classifyMediaUrl(normalized) === 'video' || classifyMediaUrl(normalized) === 'audio')) {
-      return <ChatMedia src={normalized} alt={childText || 'Média'} />;
-    }
+      if (looksLikeMediaLink && (classifyMediaUrl(normalized) === 'video' || classifyMediaUrl(normalized) === 'audio')) {
+        return <ChatMedia src={normalized} alt={childText || 'Média'} />;
+      }
 
-    return (
-      <a
-        href={href.startsWith('/') ? normalizeMediaUrl(href) : href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="break-all text-brand underline-offset-2 hover:underline"
-      >
-        {children}
-      </a>
-    );
-  },
-};
+      return (
+        <a
+          href={href.startsWith('/') ? normalizeMediaUrl(href) : href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="break-all text-brand underline-offset-2 hover:underline"
+        >
+          {children}
+        </a>
+      );
+    },
+  };
+}
 
 interface MessageBubbleProps {
   message: ChatMessage;
@@ -98,6 +123,11 @@ export function MessageBubble({ message, isStreaming, onSend, isLast }: MessageB
     : isAssistant
       ? sanitizeAssistantText(message.content)
       : message.content;
+
+  const markdownComponents = useMemo(
+    () => createMarkdownComponents({ onSend, interactive: isLast }),
+    [onSend, isLast],
+  );
 
   const bubbleClass = cn(
     'min-w-0 max-w-full rounded-2xl px-3 py-2 text-[13px] leading-[1.45] transition-all duration-200',
