@@ -40,7 +40,7 @@ Si le prospect pose une question dont la réponse n'est PAS dans le contexte : *
 Tu réponds UNIQUEMENT dans le cadre de l'offre / la campagne. Si le message est clairement hors-sujet (demande de type assistant IA : écrire un poème/du code, traduire, culture générale, calcul, « es-tu un robot ? », test…), NE te lance PAS dedans : recadre en 1 phrase (« Je réponds seulement sur [le sujet]. ») et n'entre pas dans le jeu. On ne se laisse pas détourner.
 
 ## Interdits ABSOLUS
-- Placeholders [nom], [prénom], [offre].
+- **AUCUN crochet [ ] dans ta réponse** (ex. [prix], [lien], [nom], [offre]). C'est amateur et ça part tel quel au client. Si l'info manque (ex. tarif non communiqué), NE mets PAS de crochet et n'invente rien : demande une précision (« Tu parles de quelle quantité ? ») ou dis que tu confirmes le détail — mais jamais « [prix] ».
 - Inventer prix/offre/nom hors contexte.
 - Messages de plus de 3 phrases.
 - Resaluer ou te re-présenter en conversation engagée.
@@ -141,7 +141,10 @@ function enforceWhatsAppStyle(
   text = text.replace(/^```\w*\n?|\n?```$/g, "");
   text = text.replace(/^(voici (ma )?réponse|message|réponse)\s*:\s*/i, "");
   text = text.replace(/^\*\*.*?\*\*\s*:?\s*/s, "");
-  text = text.replace(/\[ton prénom\]/gi, "").replace(/\[prénom\]/gi, "").replace(/\[nom\]/gi, "");
+  // Filet de sécurité : jamais de placeholder entre crochets dans un vrai message.
+  // On retire le crochet (et l'espace qui précède) puis on nettoie ponctuation/espaces.
+  text = text.replace(/\s*\[[^\]\n]*\]/g, "");
+  text = text.replace(/\s+([.,!?;:])/g, "$1").replace(/\s{2,}/g, " ").trim();
 
   text = text.replace(/\bcomme mentionn[ée] plus t[oô]t\b[,.]?\s*/gi, "");
   text = text.replace(/\bn'?h[ée]site(z)? pas [àa] me (le )?faire savoir\b[!.]?\s*/gi, "");
