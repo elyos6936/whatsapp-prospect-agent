@@ -33,6 +33,7 @@ import {
   type ContactStatus,
 } from "./db.js";
 import { chatWithAgent } from "./agent.js";
+import { transcribeChatAudio } from "./media-understanding.js";
 import { chatIdToDisplay, diagnoseEvolutionApi, testEvolutionConnection } from "./evolutionapi.js";
 import { startNotificationPoller, getWhatsappPollHealth, handleEvolutionWebhook, reprocessPendingAutoReplies } from "./notifications.js";
 import { startScheduler } from "./scheduler.js";
@@ -50,7 +51,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.join(__dirname, "..", "public", "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-const app = Fastify({ logger: true });
+// bodyLimit relevé pour accepter les uploads base64 (fichiers du chat, audio de dictée vocale).
+const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
 const corsOrigins = (process.env.CORS_ORIGINS || "https://klanvio.netlify.app,http://localhost:3000,http://localhost:8888")
   .split(",")
@@ -382,6 +384,18 @@ app.post<{ Body: { message?: string } }>("/api/chat", async (request, reply) => 
       created_at: saved.created_at,
       error: true,
     };
+  }
+});
+
+app.post<{ Body: { data?: string; mimetype?: string } }>("/api/chat/transcribe", async (request, reply) => {
+  const userId = requireUserId(request);
+  const { data, mimetype } = request.body ?? {};
+  if (!data) return reply.status(400).send({ error: "Audio requis." });
+  try {
+    const text = await transcribeChatAudio(userId, data, mimetype || "audio/webm");
+    return { text };
+  } catch (err) {
+    return reply.status(500).send({ error: err instanceof Error ? err.message : "Transcription échouée." });
   }
 });
 

@@ -164,6 +164,21 @@ export async function clearHistory(): Promise<void> {
   await request('/api/history', { method: 'DELETE' });
 }
 
+/** Transcrit un enregistrement audio en texte (dictée vocale de l'input de chat). */
+export async function transcribeChatAudio(blob: Blob): Promise<string> {
+  const base64 = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1] ?? '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+  const data = await request<{ text: string }>('/api/chat/transcribe', {
+    method: 'POST',
+    body: JSON.stringify({ data: base64, mimetype: blob.type || 'audio/webm' }),
+  });
+  return data.text ?? '';
+}
+
 export async function uploadChatFiles(files: File[]): Promise<ChatAttachment[]> {
   const results: ChatAttachment[] = [];
 

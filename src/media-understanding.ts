@@ -137,6 +137,24 @@ function baseMimetype(mimetype: string): string {
   return mimetype.split(";")[0].trim().toLowerCase();
 }
 
+/**
+ * Transcrit un audio (base64) fourni par l'utilisateur depuis l'interface web
+ * (dictée vocale de l'input de chat). Retourne le texte, ou lève une erreur
+ * explicite si aucune clé OpenAI n'est configurée.
+ */
+export async function transcribeChatAudio(
+  userId: number,
+  base64: string,
+  mimetype: string,
+): Promise<string> {
+  const apiKey = await resolveOpenAIKey(userId);
+  if (!apiKey) {
+    throw new Error("Aucune clé OpenAI configurée pour la transcription.");
+  }
+  const text = await transcribeAudio(apiKey, base64, mimetype || "audio/webm");
+  return text ?? "";
+}
+
 // ─── Implémentations OpenAI ───────────────────────────────────────────────────
 
 async function transcribeAudio(

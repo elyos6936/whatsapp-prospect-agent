@@ -6,7 +6,7 @@ import {
   CHAT_MAX_FILES,
   type ChatAttachment,
 } from '@/lib/chat-attachments';
-import { uploadChatFiles } from '@/lib/api';
+import { transcribeChatAudio, uploadChatFiles } from '@/lib/api';
 
 export const QUICK_SUGGESTIONS = [
   { label: 'Lister contacts', prompt: 'Liste mes contacts' },
@@ -51,6 +51,7 @@ export function KlanvioChatInput({
   const [uploading, setUploading] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [transcribing, setTranscribing] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -78,7 +79,7 @@ export function KlanvioChatInput({
   }, []);
 
   const hasContent = message.trim().length > 0 || pendingFiles.length > 0;
-  const busy = disabled || uploading || isRecording;
+  const busy = disabled || uploading || isRecording || transcribing;
 
   const removePending = useCallback((id: string) => {
     setPendingFiles((prev) => {
@@ -118,6 +119,24 @@ export function KlanvioChatInput({
     setRecordingSeconds(0);
   }, [isRecording]);
 
+  // Dictée vocale : on transcrit l'enregistrement puis on l'insère dans l'input
+  // en texte (l'utilisateur peut relire/corriger avant d'envoyer).
+  const transcribeRecording = useCallback(async (blob: Blob) => {
+    if (blob.size === 0) return;
+    setTranscribing(true);
+    try {
+      const text = (await transcribeChatAudio(blob)).trim();
+      if (text) {
+        setMessage((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+        requestAnimationFrame(() => textareaRef.current?.focus());
+      }
+    } catch (err) {
+      alert('Transcription impossible : ' + (err instanceof Error ? err.message : 'erreur'));
+    } finally {
+      setTranscribing(false);
+    }
+  }, []);
+
   const startRecording = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -138,11 +157,7 @@ export function KlanvioChatInput({
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(recordingChunksRef.current, { type: mimeType });
-        const ext = mimeType.includes('mp4') ? 'm4a' : 'webm';
-        const file = new File([blob], `note-vocale-${Date.now()}.${ext}`, { type: mimeType });
-        const dt = new DataTransfer();
-        dt.items.add(file);
-        addFiles(dt.files);
+        void transcribeRecording(blob);
       };
 
       recorder.start(250);
@@ -160,7 +175,7 @@ export function KlanvioChatInput({
     } catch (err) {
       alert('Microphone non disponible : ' + (err instanceof Error ? err.message : 'erreur'));
     }
-  }, [addFiles, stopRecording]);
+  }, [transcribeRecording, stopRecording]);
 
   const handleSend = useCallback(async () => {
     if (isRecording) {
@@ -255,7 +270,13 @@ export function KlanvioChatInput({
           {isRecording && (
             <div className="flex items-center gap-2 px-1 text-xs text-red-400">
               <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
-              Enregistrement {recMin}:{recSec}
+              Dictée en cours… {recMin}:{recSec} — appuie pour arrêter
+            </div>
+          )}
+          {transcribing && (
+            <div className="flex items-center gap-2 px-1 text-xs text-brand">
+              <Loader2 className="h-3 w-3 animate-spin" />
+              Transcription en cours…
             </div>
           )}
 
@@ -322,17 +343,23 @@ export function KlanvioChatInput({
 
             <button
               type="button"
-              disabled={disabled || uploading}
-              title={isRecording ? 'Arrêter' : 'Note vocale'}
+              disabled={disabled || uploading || transcribing}
+              title={isRecording ? 'Arrêter la dictée' : 'Dicter un message'}
               onClick={() => (isRecording ? stopRecording() : void startRecording())}
               className={cn(
-                'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors',
+                'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors disabled:opacity-40',
                 isRecording
                   ? 'bg-red-500/20 text-red-400 animate-pulse'
                   : 'text-text-500 hover:bg-bg-300 hover:text-text-300',
               )}
             >
-              {isRecording ? <Square className="h-4 w-4" /> : <Mic className="h-4 w-4" />}
+              {transcribing ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : isRecording ? (
+                <Square className="h-4 w-4" />
+              ) : (
+                <Mic className="h-4 w-4" />
+              )}
             </button>
 
             <div className="flex-1" />
@@ -340,7 +367,7 @@ export function KlanvioChatInput({
             <button
               type="button"
               onClick={() => void handleSend()}
-              disabled={(!hasContent && !isRecording) || (disabled && !isRecording) || uploading}
+              disabled={(!hasContent && !isRecording) || (disabled && !isRecording) || uploading || transcribing}
               aria-label="Envoyer"
               className={cn(
                 'inline-flex shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-95',

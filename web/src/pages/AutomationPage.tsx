@@ -23,8 +23,6 @@ import {
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-type AutoMode = 'manual' | 'auto';
-
 const TYPE_LABELS: Record<string, string> = {
   group_prospect: 'Prospection groupe',
   contact_prospect: 'Prospection contacts',
@@ -145,9 +143,11 @@ function StatusControls({
 }
 
 // ─── Chat builder (mode Manuel) ─────────────────────────────────────────────
+// NOTE: temporairement retiré de l'interface (voir AutomationPage). Le code est
+// conservé pour être réintégré plus tard avec un canal dédié (hors chat principal).
 type ChatMsg = { role: 'user' | 'assistant'; content: string };
 
-function ManualBuilder({
+export function ManualBuilder({
   automations,
   loading,
   onRefresh,
@@ -357,7 +357,6 @@ function ManualBuilder({
 }
 
 export function AutomationPage() {
-  const [mode, setMode] = useState<AutoMode>('auto');
   const [automations, setAutomations] = useState<AutomationSummary[]>([]);
   const [detail, setDetail] = useState<AutomationDetail | null>(null);
   const [loading, setLoading] = useState(false);
@@ -417,56 +416,26 @@ export function AutomationPage() {
             <div>
               <h1 className="font-serif text-2xl font-light text-text-100">Automatisation</h1>
               <p className="mt-1 text-sm text-text-400">
-                Crée tes automatisations toi-même, ou retrouve celles lancées depuis le chat.
+                Retrouve ici les campagnes lancées depuis le chat, avec leur état et leurs
+                statistiques.
               </p>
             </div>
+            {!detail && (
+              <button
+                type="button"
+                onClick={loadAutomations}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
+              >
+                <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+                Actualiser
+              </button>
+            )}
           </div>
-
-          {/* Sélecteur de mode */}
-          {!detail && (
-            <div className="mt-5 inline-flex rounded-xl border border-white/10 bg-bg-100 p-1">
-              {([
-                { id: 'manual', label: 'Manuel', icon: Sparkles },
-                { id: 'auto', label: 'Automatique', icon: Bot },
-              ] as { id: AutoMode; label: string; icon: typeof Bot }[]).map((m) => {
-                const Icon = m.icon;
-                return (
-                  <button
-                    key={m.id}
-                    type="button"
-                    onClick={() => {
-                      setMode(m.id);
-                      setError(null);
-                    }}
-                    className={cn(
-                      'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition',
-                      mode === m.id
-                        ? 'bg-brand text-white shadow-sm'
-                        : 'text-text-400 hover:bg-bg-200 hover:text-text-200',
-                    )}
-                  >
-                    <Icon className="h-4 w-4" />
-                    {m.label}
-                  </button>
-                );
-              })}
-            </div>
-          )}
 
           {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
 
-          {/* ── MODE MANUEL ── */}
-          {mode === 'manual' && !detail && (
-            <ManualBuilder
-              automations={automations}
-              loading={loading}
-              onRefresh={loadAutomations}
-              onOpenStats={(id) => void showDetail(id)}
-            />
-          )}
-
-          {/* ── MODE AUTOMATIQUE ── */}
-          {mode === 'auto' && !detail && (
+          {/* ── CAMPAGNES ── */}
+          {!detail && (
             <div className="mt-6 space-y-3">
               {loading && automations.length === 0 ? (
                 <div className="space-y-3">
@@ -482,16 +451,9 @@ export function AutomationPage() {
                     Aucune campagne pour l’instant
                   </h3>
                   <p className="mt-1 max-w-sm text-sm text-text-400">
-                    Demande à l’agent IA de lancer une campagne, ou crée-en une en mode Manuel.
+                    Demande à l’agent IA de lancer une campagne depuis le Chat. Elle apparaîtra ici
+                    automatiquement.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setMode('manual')}
-                    className="mt-5 inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white hover:bg-brand-dark"
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    Créer en mode Manuel
-                  </button>
                 </div>
               ) : (
                 automations.map((auto) => {
