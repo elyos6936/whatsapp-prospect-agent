@@ -11,6 +11,13 @@ export default defineConfig({
     },
   },
   build: {
+    // rolldown-vite hisse tout le graphe asynchrone dans les <link modulepreload>
+    // de l'index.html. On retire les gros chunks réservés à l'espace connecté
+    // (chat) pour qu'ils ne soient pas téléchargés dès la landing page.
+    modulePreload: {
+      resolveDependencies: (_filename, deps) =>
+        deps.filter((dep) => !/syntax-highlighter|markdown/.test(dep)),
+    },
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -20,6 +27,9 @@ export default defineConfig({
           }
           if (id.includes('react-markdown') || id.includes('remark-') || id.includes('micromark')) {
             return 'markdown';
+          }
+          if (id.includes('framer-motion') || id.includes('motion-dom') || id.includes('motion-utils')) {
+            return 'motion';
           }
           if (id.includes('date-fns')) return 'date-fns';
           if (id.includes('lucide-react')) return 'icons';
