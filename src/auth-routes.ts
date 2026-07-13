@@ -1,7 +1,24 @@
 import type { FastifyInstance } from "fastify";
+import { OAuth2Client } from "google-auth-library";
+import { config } from "./config.js";
 import { hashPassword, verifyPassword, requireUserId } from "./auth.js";
-import { createUser, getUserByEmail, getUserById, completeOnboarding, publicUser } from "./users.js";
+import {
+  createUser,
+  createGoogleUser,
+  linkGoogleAccount,
+  getUserByEmail,
+  getUserByGoogleSub,
+  getUserById,
+  completeOnboarding,
+  publicUser,
+} from "./users.js";
 import { testEvolutionConnection } from "./evolutionapi.js";
+
+let googleClient: OAuth2Client | null = null;
+function getGoogleClient(): OAuth2Client {
+  if (!googleClient) googleClient = new OAuth2Client(config.googleClientId);
+  return googleClient;
+}
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: { email?: string; password?: string; name?: string } }>(
@@ -44,11 +61,66 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const row = await getUserByEmail(email);
-      if (!row || !(await verifyPassword(password, row.password_hash))) {
+      if (row && !row.password_hash) {
+        return reply
+          .status(401)
+          .send({ error: "Ce compte utilise la connexion Google. Cliquez sur « Continuer avec Google »." });
+      }
+      if (!row || !row.password_hash || !(await verifyPassword(password, row.password_hash))) {
         return reply.status(401).send({ error: "Email ou mot de passe incorrect." });
       }
 
       const { password_hash: _, ...user } = row;
+      const token = app.signUserToken(user.id);
+      return { token, user: publicUser(user) };
+    },
+  );
+
+  app.post<{ Body: { credential?: string } }>(
+    "/api/auth/google",
+    async (request, reply) => {
+      if (!config.googleClientId) {
+        return reply
+          .status(503)
+          .send({ error: "Connexion Google non configurée sur le serveur." });
+      }
+
+      const credential = request.body?.credential?.trim();
+      if (!credential) {
+        return reply.status(400).send({ error: "Jeton Google manquant." });
+      }
+
+      let payload;
+      try {
+        const ticket = await getGoogleClient().verifyIdToken({
+          idToken: credential,
+          audience: config.googleClientId,
+        });
+        payload = ticket.getPayload();
+      } catch {
+        return reply.status(401).send({ error: "Jeton Google invalide ou expiré." });
+      }
+
+      if (!payload?.sub || !payload.email) {
+        return reply.status(401).send({ error: "Compte Google incomplet." });
+      }
+      if (payload.email_verified === false) {
+        return reply.status(401).send({ error: "Email Google non vérifié." });
+      }
+
+      const googleSub = payload.sub;
+      const email = payload.email.trim().toLowerCase();
+      const name = (payload.name || payload.given_name || email.split("@")[0]).trim();
+      const avatarUrl = payload.picture;
+
+      let user = await getUserByGoogleSub(googleSub);
+      if (!user) {
+        const byEmail = await getUserByEmail(email);
+        user = byEmail
+          ? await linkGoogleAccount(byEmail.id, { googleSub, avatarUrl })
+          : await createGoogleUser({ email, name, googleSub, avatarUrl });
+      }
+
       const token = app.signUserToken(user.id);
       return { token, user: publicUser(user) };
     },

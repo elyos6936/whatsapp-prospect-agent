@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
+import { GoogleSignInButton } from '@/components/auth/GoogleSignInButton';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
+import { GOOGLE_CLIENT_ID } from '@/lib/config';
 
 type AuthPageProps = {
   onGoLogin: () => void;
@@ -10,7 +12,7 @@ type AuthPageProps = {
 };
 
 export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
-  const { register } = useAuth();
+  const { register, loginGoogle } = useAuth();
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -30,6 +32,18 @@ export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
       await register(email, password, name);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Erreur inscription');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleGoogle = async (credential: string) => {
+    setError('');
+    setBusy(true);
+    try {
+      await loginGoogle(credential);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Connexion Google échouée');
     } finally {
       setBusy(false);
     }
@@ -109,6 +123,21 @@ export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
             {busy ? 'Création…' : "S'inscrire"}
           </button>
         </form>
+
+        {GOOGLE_CLIENT_ID && (
+          <>
+            <div className="my-6 flex items-center gap-3">
+              <span className="h-px flex-1 bg-white/10" />
+              <span className="text-xs text-text-500">ou</span>
+              <span className="h-px flex-1 bg-white/10" />
+            </div>
+            <GoogleSignInButton
+              text="signup_with"
+              onCredential={(c) => void handleGoogle(c)}
+              onError={setError}
+            />
+          </>
+        )}
 
         <p className="mt-6 text-center text-sm text-text-500">
           Déjà un compte ?{' '}

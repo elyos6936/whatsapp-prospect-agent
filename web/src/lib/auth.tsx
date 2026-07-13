@@ -10,6 +10,7 @@ import {
 import {
   fetchMe,
   loginUser,
+  loginWithGoogle,
   registerUser,
   type AuthUser,
   type MeResponse,
@@ -20,6 +21,7 @@ type AuthState = {
   user: MeResponse | null;
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  loginGoogle: (credential: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
@@ -62,6 +64,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me ?? { ...u, whatsapp: { connected: false, state: 'unknown', message: '' } });
   }, []);
 
+  const loginGoogle = useCallback(async (credential: string) => {
+    const { token, user: u } = await loginWithGoogle(credential);
+    setStoredToken(token);
+    const me = await fetchMe();
+    setUser(me ?? { ...u, whatsapp: { connected: false, state: 'unknown', message: '' } });
+  }, []);
+
   const register = useCallback(async (email: string, password: string, name: string) => {
     const { token, user: u } = await registerUser({ email, password, name });
     setStoredToken(token);
@@ -75,8 +84,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ user, loading, login, register, logout, refreshUser }),
-    [user, loading, login, register, logout, refreshUser],
+    () => ({ user, loading, login, loginGoogle, register, logout, refreshUser }),
+    [user, loading, login, loginGoogle, register, logout, refreshUser],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

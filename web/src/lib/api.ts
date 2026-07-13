@@ -8,6 +8,7 @@ export interface AuthUser {
   id: number;
   email: string;
   name: string;
+  avatarUrl?: string;
   onboarding_completed: boolean;
   business: { ownerName: string; offer: string; price: string };
   whatsapp?: { connected: boolean; state: string; message: string };
@@ -386,6 +387,13 @@ export async function loginUser(input: {
   return request('/api/auth/login', {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+export async function loginWithGoogle(credential: string): Promise<{ token: string; user: AuthUser }> {
+  return request('/api/auth/google', {
+    method: 'POST',
+    body: JSON.stringify({ credential }),
   });
 }
 
