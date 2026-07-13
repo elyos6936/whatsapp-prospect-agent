@@ -14,16 +14,17 @@ import {
 import { clearHistory, sendChatMessage } from '@/lib/api';
 import type { MainView } from '@/lib/navigation';
 import { AutomationPage } from '@/pages/AutomationPage';
+import { LandingPage } from '@/pages/LandingPage';
 import { LoginPage } from '@/pages/LoginPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { RegisterPage } from '@/pages/RegisterPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 
-type AuthScreen = 'login' | 'register';
+type AuthScreen = 'landing' | 'login' | 'register';
 
 export default function App() {
   const { user, loading: authLoading, refreshUser } = useAuth();
-  const [authScreen, setAuthScreen] = useState<AuthScreen>('login');
+  const [authScreen, setAuthScreen] = useState<AuthScreen>('landing');
   const [mainView, setMainView] = useState<MainView>('chat');
   const [collapsed, toggle] = useSidebarCollapsed();
   const chatEnabled = mainView === 'chat' && !!user?.whatsapp?.connected;
@@ -106,10 +107,24 @@ export default function App() {
   }
 
   if (!user) {
+    if (authScreen === 'landing') {
+      return (
+        <LandingPage
+          onLogin={() => setAuthScreen('login')}
+          onRegister={() => setAuthScreen('register')}
+        />
+      );
+    }
     return authScreen === 'login' ? (
-      <LoginPage onGoRegister={() => setAuthScreen('register')} />
+      <LoginPage
+        onGoRegister={() => setAuthScreen('register')}
+        onGoBack={() => setAuthScreen('landing')}
+      />
     ) : (
-      <RegisterPage onGoLogin={() => setAuthScreen('login')} />
+      <RegisterPage
+        onGoLogin={() => setAuthScreen('login')}
+        onGoBack={() => setAuthScreen('landing')}
+      />
     );
   }
 

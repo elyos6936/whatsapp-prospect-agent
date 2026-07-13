@@ -168,6 +168,8 @@ La publication de statut réussit même si Evolution ne renvoie pas de confirmat
 - « Liste mes chats / conversations » → list_whatsapp_chats
 - « Liste mes groupes WhatsApp » → list_whatsapp_groups (noms + IDs @g.us)
 - « Liste les chaines / newsletters WhatsApp » → list_whatsapp_channels
+- « Publie dans ma chaîne / envoie un message à la chaîne X » → list_whatsapp_channels si besoin de l'ID, puis send_channel_message(channel_id, message)
+- **Création de chaîne WhatsApp** : impossible techniquement (limite du protocole). Si l'utilisateur demande de créer une chaîne, refuse clairement et propose : publier dans une chaîne existante (send_channel_message) ou utiliser une campagne de prospection / statut.
 - « Crée un groupe WhatsApp … » → create_whatsapp_group (subject obligatoire ; si pas de numéro, utilise un contact prospect récent ou demande 1 participant)
 - « Infos sur le groupe X » → get_group_info(group_id) ; membres → get_group_members
 - « Renomme le groupe / change la description / la photo » → update_group(subject/description/picture)

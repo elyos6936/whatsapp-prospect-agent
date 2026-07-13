@@ -6,9 +6,10 @@ import { ApiError } from '@/lib/api';
 
 type AuthPageProps = {
   onGoRegister: () => void;
+  onGoBack?: () => void;
 };
 
-export function LoginPage({ onGoRegister }: AuthPageProps) {
+export function LoginPage({ onGoRegister, onGoBack }: AuthPageProps) {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -32,6 +33,15 @@ export function LoginPage({ onGoRegister }: AuthPageProps) {
   return (
     <div className="flex min-h-full flex-col items-center justify-center bg-bg-0 px-4 py-10">
       <div className="w-full max-w-sm animate-fade-in">
+        {onGoBack && (
+          <button
+            type="button"
+            onClick={onGoBack}
+            className="mb-4 text-sm text-text-500 transition hover:text-text-200"
+          >
+            ← Retour
+          </button>
+        )}
         <div className="mb-8 flex justify-center">
           <KlanvioLogo variant="full" size="lg" />
         </div>

@@ -215,9 +215,14 @@ export function chatIdToDisplay(chatId: string): string {
   return chatId;
 }
 
+function isNewsletterJid(chatId: string): boolean {
+  return chatId.toLowerCase().includes("@newsletter");
+}
+
 function toRemoteJid(chatId: string): string {
   if (chatId.endsWith("@g.us")) return chatId;
   if (isLidJid(chatId)) return chatId;
+  if (isNewsletterJid(chatId)) return chatId;
   const digits = chatIdToNumber(chatId);
   if (!digits || !isLikelyPhoneJid(chatId)) {
     throw new EvolutionApiError("Destinataire invalide (identifiant @lid non résolu).");
@@ -228,6 +233,7 @@ function toRemoteJid(chatId: string): string {
 function formatEvolutionSendNumber(chatId: string): string {
   if (chatId.endsWith("@g.us")) return chatId;
   if (isLidJid(chatId)) return chatId;
+  if (isNewsletterJid(chatId)) return chatId;
   return toRemoteJid(chatId);
 }
 
@@ -279,7 +285,12 @@ async function sendTextViaEvolution(
   const number = formatEvolutionSendNumber(chatId);
   const digits = chatIdToNumber(chatId);
   const extra = buildTextOptionsBody(options);
-  const attempts: Array<Record<string, unknown>> = isLidJid(chatId)
+  const attempts: Array<Record<string, unknown>> = isNewsletterJid(chatId)
+    ? [
+        { number, textMessage: { text: message }, ...extra },
+        { number, text: message, ...extra },
+      ]
+    : isLidJid(chatId)
     ? [
         { number, textMessage: { text: message }, ...extra },
         { number, text: message, ...extra },
@@ -1030,6 +1041,34 @@ export async function sendWhatsAppMessage(
   }
 
   return { idMessage, chatId: normalized.endsWith("@g.us") ? chatId : normalized };
+}
+
+/**
+ * Publie un message texte dans une chaîne WhatsApp (@newsletter).
+ * Pas de quota, pas de contact auto-reply — diffusion broadcast uniquement.
+ * Nécessite une version Evolution récente avec support @newsletter.
+ */
+export async function sendWhatsAppChannelMessage(
+  userId: number,
+  channelJid: string,
+  message: string,
+): Promise<{ idMessage: string; channelId: string }> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+
+  const jid = channelJid.trim();
+  if (!isNewsletterJid(jid)) {
+    throw new EvolutionApiError(
+      "Identifiant de chaîne invalide. Utilise un ID se terminant par @newsletter (list_whatsapp_channels).",
+    );
+  }
+  const text = message.trim();
+  if (!text) throw new EvolutionApiError("Le message ne peut pas être vide.");
+
+  const data = await sendTextViaEvolution(creds, jid, text);
+  const idMessage = extractMessageId(data);
+
+  return { idMessage, channelId: jid };
 }
 
 /**

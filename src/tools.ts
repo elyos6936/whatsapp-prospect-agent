@@ -47,6 +47,7 @@ import {
   normalizeGroupParticipantId,
   isLikelyPhoneJid,
   sendWhatsAppMessage,
+  sendWhatsAppChannelMessage,
   sendWhatsAppMedia,
   sendWhatsAppVoice,
   sendWhatsAppLocation,
@@ -125,6 +126,26 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       description:
         "Liste les chaînes / newsletters WhatsApp (@newsletter) suivies par le compte, avec noms et IDs.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "send_channel_message",
+      description:
+        "Publie un message texte dans une chaîne WhatsApp existante (ID @newsletter). Impossible de créer une chaîne — uniquement envoyer dans une chaîne déjà liée au compte.",
+      parameters: {
+        type: "object",
+        properties: {
+          channel_id: {
+            type: "string",
+            description: "ID de la chaîne (xxx@newsletter). Obtenir via list_whatsapp_channels.",
+          },
+          message: { type: "string", description: "Texte à publier dans la chaîne." },
+        },
+        required: ["channel_id", "message"],
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -1726,6 +1747,31 @@ export async function executeTool(userId: number, name: string, args: Record<str
           ? "Les chaînes utilisent un ID @newsletter. Les noms peuvent être absents selon la version Evolution API."
           : "Aucune chaîne détectée sur ce compte.",
       });
+    }
+
+    case "send_channel_message": {
+      const channelId = String(args.channel_id ?? "").trim();
+      const message = String(args.message ?? "").trim();
+      if (!channelId || !message) {
+        return JSON.stringify({ error: "channel_id et message sont requis." });
+      }
+      try {
+        const result = await sendWhatsAppChannelMessage(userId, channelId, message);
+        return JSON.stringify({
+          success: true,
+          channel_id: result.channelId,
+          message_id: result.idMessage,
+          hint: "Message publié dans la chaîne. Seuls les abonnés verront le contenu.",
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return JSON.stringify({
+          success: false,
+          error: msg,
+          hint:
+            "Si l'erreur mentionne un format invalide, vérifie l'ID via list_whatsapp_channels. La création de chaîne n'est pas supportée.",
+        });
+      }
     }
 
     case "create_whatsapp_group": {
