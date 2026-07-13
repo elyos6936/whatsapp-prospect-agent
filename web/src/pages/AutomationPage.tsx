@@ -172,6 +172,37 @@ function DistributionBar({
   );
 }
 
+// Vue d'ensemble agrégée sur toutes les campagnes (tableau de bord).
+function OverviewStats({ automations }: { automations: AutomationSummary[] }) {
+  const outbound = automations.filter((a) => isOutboundType(a.type));
+  const active = automations.filter((a) => a.status === 'active').length;
+  const contacted = outbound.reduce((s, a) => s + Number(a.stats?.contacted ?? 0), 0);
+  const replied = outbound.reduce((s, a) => s + Number(a.stats?.replied ?? 0), 0);
+  const interested = outbound.reduce((s, a) => s + Number(a.stats?.interested ?? 0), 0);
+  const globalRate = pct(replied, contacted);
+
+  const items = [
+    { label: 'Campagnes', value: automations.length, hint: `${active} active(s)`, color: '#0f172a' },
+    { label: 'Contactés', value: contacted, color: '#2057ce' },
+    { label: 'Réponses', value: replied, hint: `${globalRate}% de réponse`, color: '#0ea5e9' },
+    { label: 'Intéressés', value: interested, color: '#10b981' },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {items.map((it) => (
+        <div key={it.label} className="panel p-4">
+          <span className="text-xs text-text-500">{it.label}</span>
+          <p className="mt-1 text-2xl font-semibold" style={{ color: it.color }}>
+            {it.value}
+          </p>
+          {it.hint && <p className="mt-0.5 text-[11px] text-text-500">{it.hint}</p>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   return (
     <span
@@ -529,8 +560,13 @@ export function AutomationPage() {
           {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
 
           {/* ── CAMPAGNES ── */}
+          {!detail && automations.length > 0 && (
+            <div className="mt-6">
+              <OverviewStats automations={automations} />
+            </div>
+          )}
           {!detail && (
-            <div className="mt-6 space-y-3">
+            <div className="mt-4 space-y-3">
               {loading && automations.length === 0 ? (
                 <div className="space-y-3">
                   <div className="panel h-28 animate-pulse" />
@@ -554,7 +590,11 @@ export function AutomationPage() {
                   const contacted = (auto.stats?.contacted as number) ?? 0;
                   const pending = (auto.stats?.pending as number) ?? 0;
                   const replied = (auto.stats?.replied as number) ?? 0;
+                  const interested = (auto.stats?.interested as number) ?? 0;
                   const handled = (auto.stats?.messagesHandled as number) ?? 0;
+                  const totalT = contacted + pending + replied + interested +
+                    ((auto.stats?.stopped as number) ?? 0) + ((auto.stats?.errors as number) ?? 0);
+                  const progress = pct(contacted + replied + interested, totalT);
 
                   return (
                     <article
@@ -585,6 +625,11 @@ export function AutomationPage() {
                               <MessageSquare className="h-3.5 w-3.5 text-text-500" />
                               {replied} réponse(s)
                             </span>
+                            {interested > 0 && (
+                              <span className="inline-flex items-center gap-1.5 text-emerald-600">
+                                {interested} intéressé(s)
+                              </span>
+                            )}
                           </>
                         ) : (
                           <span className="inline-flex items-center gap-1.5">
@@ -593,6 +638,21 @@ export function AutomationPage() {
                           </span>
                         )}
                       </div>
+
+                      {isOutboundType(auto.type) && totalT > 0 && (
+                        <div className="mt-3">
+                          <div className="flex justify-between text-[11px] text-text-500">
+                            <span>Progression</span>
+                            <span>{progress}%</span>
+                          </div>
+                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/[0.06]">
+                            <div
+                              className="h-full rounded-full bg-brand transition-all duration-500"
+                              style={{ width: `${progress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
 
                       <div
                         className="mt-4 flex flex-wrap gap-2"

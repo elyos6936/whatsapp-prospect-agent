@@ -110,9 +110,19 @@ function hasInterestSignal(text: string): boolean {
   );
 }
 
+/** Une question du prospect = engagement (il attend une réponse) → jamais un motif d'arrêt. */
+function looksLikeQuestion(text: string): boolean {
+  const t = text.toLowerCase().normalize("NFD").replace(/\p{M}/gu, "");
+  return (
+    text.includes("?") ||
+    /\b(comment|combien|quand|ou|pourquoi|quel|quelle|est-ce|c est quoi|qu est|vous faites|tu fais|ca marche|ca coute|possible)\b/.test(t)
+  );
+}
+
 /**
- * Détecte un échange qui tourne en rond : plusieurs messages sortants,
- * prospect sceptique ou froid, aucun signal d'intérêt.
+ * Détecte un échange qui tourne VRAIMENT en rond. Volontairement conservateur :
+ * on ne coupe JAMAIS un prospect qui pose des questions ou montre de l'intérêt.
+ * On n'arrête que sur une hostilité répétée et manifeste.
  */
 export function detectConversationStall(
   history: Array<{ direction: string; body: string }>,
@@ -120,19 +130,16 @@ export function detectConversationStall(
 ): boolean {
   const outbound = history.filter((m) => m.direction === "sortant").length;
   const inbound = history.filter((m) => m.direction === "entrant");
-  if (outbound < 2 || inbound.length < 2) return false;
+  // Il faut un échange déjà bien avancé avant même d'envisager un arrêt.
+  if (outbound < 5 || inbound.length < 4) return false;
 
-  const recentInbound = [...inbound.slice(-3), { direction: "entrant", body: currentText }];
-  const anyInterest = recentInbound.some((m) => hasInterestSignal(m.body));
-  if (anyInterest) return false;
+  const recent = [...inbound.slice(-4), { direction: "entrant", body: currentText }];
+  // Toute question ou signal d'intérêt récent = on continue, point.
+  if (recent.some((m) => looksLikeQuestion(m.body) || hasInterestSignal(m.body))) return false;
 
+  // Hostilité/scepticisme répété et persistant uniquement.
   const skepticalCount = countSkepticalInbound(history) + (detectSkepticism(currentText) ? 1 : 0);
-  if (skepticalCount >= 2) return true;
-
-  // 3+ réponses sortantes sans aucun signal d'intérêt du prospect.
-  if (outbound >= 3 && !anyInterest) return true;
-
-  return false;
+  return skepticalCount >= 3;
 }
 
 export function shouldStopConversation(
@@ -161,7 +168,10 @@ export function shouldStopConversation(
     }
   }
 
-  if (campaignConfig?.stopOnUnknownQuestion !== false && detectUnknownQuestion(text, business, campaignConfig)) {
+  // Une question sans réponse configurée ne doit PAS clôturer la conversation :
+  // l'agent doit gérer (répondre au mieux, proposer de revenir avec l'info, ou
+  // escalader) plutôt que de fuir. Arrêt uniquement si explicitement demandé.
+  if (campaignConfig?.stopOnUnknownQuestion === true && detectUnknownQuestion(text, business, campaignConfig)) {
     return "unknown_question";
   }
 
