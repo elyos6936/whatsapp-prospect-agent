@@ -1118,7 +1118,7 @@ export async function sendWhatsAppMedia(
     mimetype?: string;
   },
   opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
-): Promise<{ idMessage: string; chatId: string }> {
+): Promise<{ idMessage: string; chatId: string; confirmed: boolean }> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
@@ -1132,20 +1132,33 @@ export async function sendWhatsAppMedia(
     ? input.url.slice(input.url.indexOf(",") + 1)
     : input.url;
 
-  const data = await evolutionFetch<unknown>(creds, `/message/sendMedia/${creds.instanceName}`, {
-    method: "POST",
-    body: {
-      number,
-      mediatype: input.type,
-      media,
-      caption: input.caption,
-      fileName: input.fileName,
-      ...(input.mimetype ? { mimetype: input.mimetype } : {}),
-    },
-  });
+  // Les vidéos / gros fichiers : Evolution télécharge, ré-encode puis ré-uploade
+  // le média vers WhatsApp → largement plus long que 30 s. On laisse 120 s, et si
+  // Evolution ne répond pas à temps on considère l'envoi probablement réussi
+  // (même bug connu que sendStatus : le média part quand même côté serveur).
+  let idMessage: string;
+  let confirmed = true;
+  try {
+    const data = await evolutionFetch<unknown>(creds, `/message/sendMedia/${creds.instanceName}`, {
+      method: "POST",
+      body: {
+        number,
+        mediatype: input.type,
+        media,
+        caption: input.caption,
+        fileName: input.fileName,
+        ...(input.mimetype ? { mimetype: input.mimetype } : {}),
+      },
+      timeoutMs: 120_000,
+    });
+    idMessage = extractMessageId(data);
+  } catch (err) {
+    if (!isEvolutionTimeoutError(err)) throw err;
+    idMessage = `media-${Date.now()}`;
+    confirmed = false;
+  }
 
   markOutboundSent();
-  const idMessage = extractMessageId(data);
   const source = input.url.startsWith("data:") ? "[base64]" : input.url;
   const label = input.caption || `[${input.type}] ${source}`;
 
@@ -1166,7 +1179,7 @@ export async function sendWhatsAppMedia(
     }
   }
 
-  return { idMessage, chatId: normalized };
+  return { idMessage, chatId: normalized, confirmed };
 }
 
 /**
@@ -2405,10 +2418,21 @@ async function getInstanceOwnerJid(creds: EvolutionCredentials): Promise<string 
   return null;
 }
 
+// La liste d'audience des statuts est coûteuse à construire (contacts + chats +
+// éventuellement membres de groupes). On la met en cache par utilisateur pour ne
+// pas la reconstruire à chaque publication de statut.
+const STATUS_JID_CACHE = new Map<number, { jids: string[]; expiresAt: number }>();
+const STATUS_JID_CACHE_TTL_MS = 10 * 60 * 1000;
+
 /** Liste de JIDs pour statusJidList — allContacts:true provoque un timeout sur Evolution v2.3.7. */
 async function buildStatusJidList(userId: number, participants?: string[]): Promise<string[]> {
   if (participants?.length) {
     return [...new Set(participants.map(toStatusJid))];
+  }
+
+  const cached = STATUS_JID_CACHE.get(userId);
+  if (cached && cached.expiresAt > Date.now() && cached.jids.length > 0) {
+    return cached.jids;
   }
 
   const jids = new Set<string>();
@@ -2450,7 +2474,11 @@ async function buildStatusJidList(userId: number, participants?: string[]): Prom
     }
   }
 
-  return [...jids];
+  const result = [...jids];
+  if (result.length > 0) {
+    STATUS_JID_CACHE.set(userId, { jids: result, expiresAt: Date.now() + STATUS_JID_CACHE_TTL_MS });
+  }
+  return result;
 }
 
 export function parseConnectQrPayload(data: unknown): {

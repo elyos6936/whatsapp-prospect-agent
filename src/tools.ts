@@ -2550,14 +2550,19 @@ export async function executeTool(userId: number, name: string, args: Record<str
           mimetype: args.mimetype ? String(args.mimetype) : undefined,
         });
         const isGroup = chatId.endsWith("@g.us");
+        const kind = type === "image" ? "Image" : type === "video" ? "Vidéo" : "Document";
+        const dest = isGroup ? "dans le groupe" : `à ${chatIdToDisplay(result.chatId)}`;
         return JSON.stringify({
           success: true,
           chatId: result.chatId,
           display: isGroup ? chatId : chatIdToDisplay(result.chatId),
           isGroup,
           idMessage: result.idMessage,
+          confirmed: result.confirmed,
           sentAt: nowFr(),
-          message: `${type === "image" ? "Image" : type === "video" ? "Vidéo" : "Document"} envoyé(e) ${isGroup ? "dans le groupe" : `à ${chatIdToDisplay(result.chatId)}`} à ${nowFr()}.`,
+          message: result.confirmed
+            ? `${kind} envoyé(e) ${dest} à ${nowFr()}.`
+            : `${kind} envoyé(e) ${dest} à ${nowFr()}. (Evolution n'a pas renvoyé de confirmation dans les temps pour ce média volumineux — c'est normal, le fichier est bien parti. Ne PAS annoncer d'échec ni réessayer l'envoi.)`,
         });
       } catch (err) {
         return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
