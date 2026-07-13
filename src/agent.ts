@@ -4,8 +4,13 @@ import { SYSTEM_PROMPT } from "./persona.js";
 import { getAppSettings, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
 import { testEvolutionConnection } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
+import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
 
 const MAX_TOOL_ROUNDS = 8;
+// Historique injecté à chaque tour : assez pour le contexte, pas trop pour
+// limiter la consommation de tokens (et donc les 429 de limite de vitesse).
+const CHAT_HISTORY_LIMIT = 30;
+const CHAT_MAX_TOKENS = 2048;
 
 /**
  * Détecte une réponse « amorce vide » : le modèle annonce un contenu
@@ -32,11 +37,6 @@ function isEmptySimulationStart(text: string): boolean {
   const hasQuotedMessage = /[«"„][^»"]{8,}[»"]/.test(t);
   const isShort = t.length < 240;
   return !hasQuotedMessage && isShort;
-}
-
-/** Petite pause. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
@@ -77,19 +77,6 @@ function toOpenAiMessages(history: AgentMessage[]): OpenAI.Chat.Completions.Chat
   }));
 }
 
-function formatOpenAiError(err: unknown): string {
-  if (err instanceof OpenAI.APIError) {
-    if (err.status === 401) return "Clé API OpenAI invalide (401). Vérifiez votre clé dans Connexions.";
-    if (err.status === 429) return "Limite OpenAI atteinte (429). Réessayez dans quelques secondes.";
-    if (err.status === 500 || err.status === 503) {
-      return "OpenAI temporairement indisponible. Réessayez dans un moment.";
-    }
-    return `Erreur OpenAI (${err.status}) : ${err.message}`;
-  }
-  if (err instanceof Error) return err.message;
-  return String(err);
-}
-
 export async function chatWithAgent(userId: number, userMessage: string): Promise<string> {
   const connection = await testEvolutionConnection(userId);
   if (!connection.connected) {
@@ -105,7 +92,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
   const client = await getOpenAiClient(userId);
   const [settings, history] = await Promise.all([
     getAppSettings(userId),
-    getRecentAgentMessages(userId, 50),
+    getRecentAgentMessages(userId, CHAT_HISTORY_LIMIT),
   ]);
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -125,29 +112,18 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
     rounds++;
 
     let response: OpenAI.Chat.Completions.ChatCompletion;
-    const MAX_API_RETRIES = 3;
-    let apiAttempt = 0;
-    for (;;) {
-      apiAttempt++;
-      try {
-        response = await client.chat.completions.create({
+    try {
+      response = await callOpenAiWithRetry(() =>
+        client.chat.completions.create({
           model: config.openaiModel,
           messages,
           tools: TOOL_DEFINITIONS,
           tool_choice: "auto",
-          max_tokens: 4096,
-        });
-        break;
-      } catch (err) {
-        const status = err instanceof OpenAI.APIError ? err.status : undefined;
-        const retryable = status === 429 || status === 500 || status === 503;
-        if (retryable && apiAttempt <= MAX_API_RETRIES) {
-          // Back-off exponentiel : 1s, 2s, 4s.
-          await sleep(1000 * 2 ** (apiAttempt - 1));
-          continue;
-        }
-        throw new Error(formatOpenAiError(err));
-      }
+          max_tokens: CHAT_MAX_TOKENS,
+        })
+      );
+    } catch (err) {
+      throw new Error(describeOpenAiError(err));
     }
 
     const choice = response.choices[0];

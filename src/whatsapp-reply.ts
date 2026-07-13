@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { config } from "./config.js";
 import { getAppSettings, getContactChatHistory } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
+import { callOpenAiWithRetry } from "./openai-retry.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un expert WhatsApp business (20+ ans) qui répond aux messages entrants pour un entrepreneur en Afrique francophone.
 
@@ -76,10 +77,6 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) throw new Error("Clé OpenAI manquante.");
   return new OpenAI({ apiKey: key });
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function formatHistory(
@@ -214,31 +211,19 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max). Directe, humaine, selon 
     isOngoingConversation ? " NE RESALUE PAS." : ""
   }`;
 
-  const MAX_API_RETRIES = 3;
-  let response: OpenAI.Chat.Completions.ChatCompletion | undefined;
-  for (let attempt = 1; attempt <= MAX_API_RETRIES; attempt++) {
-    try {
-      response = await client.chat.completions.create({
-        model: config.openaiModel,
-        messages: [
-          { role: "system", content: WHATSAPP_REPLY_PROMPT },
-          { role: "user", content: userContent },
-        ],
-        max_tokens: 150,
-        temperature: 0.65,
-        presence_penalty: 0.4,
-        frequency_penalty: 0.35,
-      });
-      break;
-    } catch (err) {
-      const status = err instanceof OpenAI.APIError ? err.status : undefined;
-      if ((status === 429 || status === 500 || status === 503) && attempt < MAX_API_RETRIES) {
-        await sleep(1000 * 2 ** (attempt - 1));
-        continue;
-      }
-      throw err;
-    }
-  }
+  const response = await callOpenAiWithRetry(() =>
+    client.chat.completions.create({
+      model: config.openaiModel,
+      messages: [
+        { role: "system", content: WHATSAPP_REPLY_PROMPT },
+        { role: "user", content: userContent },
+      ],
+      max_tokens: 150,
+      temperature: 0.65,
+      presence_penalty: 0.4,
+      frequency_penalty: 0.35,
+    })
+  );
 
   const reply = response?.choices[0]?.message?.content?.trim();
   if (!reply) {
