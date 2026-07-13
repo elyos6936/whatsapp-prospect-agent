@@ -21,5 +21,6 @@ services:
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
       EVOLUTION_API_BASE_URL: ${EVOLUTION_API_BASE_URL}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://klanvio.netlify.app}
       PUBLIC_URL: ${PUBLIC_URL:-https://klanvio-api.srv1820011.hstgr.cloud}
