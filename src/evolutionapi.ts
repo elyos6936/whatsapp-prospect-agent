@@ -367,8 +367,14 @@ export async function createInstance(userId: number): Promise<void> {
       status === 403 ||
       status === 409 ||
       /already|exists|in use|déjà/i.test(msg);
-    if (alreadyExists) return;
-    throw err;
+    if (!alreadyExists) throw err;
+  }
+
+  // Désactive la lecture auto des statuts/messages (non bloquant).
+  try {
+    await applyEvolutionInstanceSettings(userId);
+  } catch {
+    /* best-effort : l'instance reste utilisable même si les settings échouent */
   }
 }
 
@@ -2571,5 +2577,29 @@ export async function fetchAllInstances(userId: number): Promise<unknown> {
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
   return evolutionFetch(creds, `/instance/fetchInstances`, {
     query: { instanceName: creds.instanceName },
+  });
+}
+
+/**
+ * Réglages Baileys de l'instance. On force `readStatus: false` et
+ * `readMessages: false` : le numéro lié ne doit PAS visionner/marquer
+ * automatiquement les statuts ni les messages des contacts (comportement
+ * non pertinent + risque anti-blocage). Les accusés de lecture restent
+ * possibles à la demande via markChatRead.
+ */
+export async function applyEvolutionInstanceSettings(userId: number): Promise<unknown> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  return evolutionFetch(creds, `/settings/set/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      rejectCall: false,
+      msgCall: "",
+      groupsIgnore: false,
+      alwaysOnline: false,
+      readMessages: false,
+      readStatus: false,
+      syncFullHistory: false,
+    },
   });
 }
