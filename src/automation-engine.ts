@@ -21,6 +21,7 @@ import {
 import { pickAbVariant, recordAbSent } from "./ab-testing.js";
 import {
   chatIdToDisplay,
+  getConnectedOwnerId,
   getGroupMembers,
   normalizeGroupParticipantId,
   requireEvolutionConnected,
@@ -318,6 +319,11 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   const group = await getGroupMembers(userId, groupId);
   const maxMembers = Math.min(Math.max(auto.config.maxMembers ?? 30, 1), 50);
 
+  // Le compte connecté (nous) est presque toujours membre du groupe : on ne se
+  // prospecte jamais soi-même. C'est ce qui explique qu'un groupe à 2 membres
+  // ne charge qu'1 seule cible.
+  const ownerId = await getConnectedOwnerId(userId);
+
   const eligible = await Promise.all(
     group.participants.map(async (p) => {
       const rawId = p.id;
@@ -326,6 +332,7 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
         id,
         name: p.name || chatIdToDisplay(id),
         rawId,
+        isSelf: !!ownerId && (chatIdsMatch(ownerId, id) || chatIdsMatch(ownerId, rawId)),
         blocked: (await isContactBlocked(userId, id)) || (await isContactBlocked(userId, rawId)),
       };
     })
@@ -335,6 +342,7 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
 
   const participants = eligible
     .filter((p) => {
+      if (p.isSelf) return false;
       if (p.blocked) return false;
       for (const tid of alreadyEnrolled) {
         if (chatIdsMatch(tid, p.id) || chatIdsMatch(tid, p.rawId)) return false;

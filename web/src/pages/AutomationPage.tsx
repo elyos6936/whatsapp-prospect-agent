@@ -68,12 +68,106 @@ function responseRate(stats?: Record<string, number | string>): number | null {
   return Math.round((replied / contacted) * 100);
 }
 
-function StatCard({ label, value, hint }: { label: string; value: string | number; hint?: string }) {
+function StatCard({
+  label,
+  value,
+  hint,
+  accent,
+}: {
+  label: string;
+  value: string | number;
+  hint?: string;
+  accent?: string;
+}) {
   return (
     <div className="panel-inset p-4">
       <span className="text-xs text-text-500">{label}</span>
-      <p className="mt-1 text-2xl font-semibold text-text-100">{value}</p>
+      <p className="mt-1 text-2xl font-semibold" style={accent ? { color: accent } : { color: 'var(--text-100)' }}>
+        {value}
+      </p>
       {hint && <p className="mt-0.5 text-[11px] text-text-500">{hint}</p>}
+    </div>
+  );
+}
+
+const TARGET_META: Record<string, { label: string; color: string }> = {
+  pending: { label: 'En attente', color: '#94a3b8' },
+  contacted: { label: 'Contactés', color: '#2057ce' },
+  replied: { label: 'Réponses', color: '#0ea5e9' },
+  interested: { label: 'Intéressés', color: '#10b981' },
+  stopped: { label: 'Arrêtés', color: '#f59e0b' },
+  error: { label: 'Erreurs', color: '#ef4444' },
+};
+const TARGET_ORDER = ['interested', 'replied', 'contacted', 'pending', 'stopped', 'error'] as const;
+
+function pct(value: number, total: number): number {
+  return total > 0 ? Math.round((value / total) * 100) : 0;
+}
+
+// Barre "funnel" : une étape avec sa valeur et son pourcentage d'une base.
+function FunnelRow({
+  label,
+  value,
+  base,
+  color,
+}: {
+  label: string;
+  value: number;
+  base: number;
+  color: string;
+}) {
+  const p = pct(value, base);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-xs">
+        <span className="text-text-400">{label}</span>
+        <span className="font-medium text-text-200">
+          {value}
+          <span className="ml-1.5 text-text-500">{p}%</span>
+        </span>
+      </div>
+      <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-black/[0.06]">
+        <div
+          className="h-full rounded-full transition-all duration-500"
+          style={{ width: `${p}%`, background: color }}
+        />
+      </div>
+    </div>
+  );
+}
+
+// Barre empilée de répartition des cibles + légende.
+function DistributionBar({
+  counts,
+  total,
+}: {
+  counts: Record<string, number>;
+  total: number;
+}) {
+  const segments = TARGET_ORDER.map((k) => ({ key: k, ...TARGET_META[k], n: counts[k] ?? 0 })).filter(
+    (s) => s.n > 0,
+  );
+  if (total === 0) return null;
+  return (
+    <div>
+      <div className="flex h-3 w-full overflow-hidden rounded-full bg-black/[0.06]">
+        {segments.map((s) => (
+          <div
+            key={s.key}
+            style={{ width: `${(s.n / total) * 100}%`, background: s.color }}
+            title={`${s.label} : ${s.n}`}
+          />
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
+        {segments.map((s) => (
+          <span key={s.key} className="inline-flex items-center gap-1.5 text-xs text-text-400">
+            <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
+            {s.label}
+            <span className="font-medium text-text-200">{s.n}</span>
+          </span>
+        ))}
+      </div>
     </div>
   );
 }
@@ -532,16 +626,42 @@ export function AutomationPage() {
           )}
 
           {/* ── DÉTAIL / STATISTIQUES ── */}
-          {detail && a && (
+          {detail && a && (() => {
+            const counts = TARGET_ORDER.reduce<Record<string, number>>((acc, s) => {
+              acc[s] = targets.filter((t) => t.status === s).length;
+              return acc;
+            }, {});
+            const totalTargets = targets.length;
+            const contacted = (stats.contacted as number) ?? 0;
+            const replied = (stats.replied as number) ?? 0;
+            const interested = (stats.interested as number) ?? 0;
+            const pendingN = (stats.pending as number) ?? 0;
+            const engaged = contacted + replied + interested + ((stats.stopped as number) ?? 0);
+            const handled = (stats.messagesHandled as number) ?? 0;
+            const conversions = (stats.conversions as number) ?? 0;
+            const interestRate = pct(interested, engaged || contacted);
+            const convRate = pct(conversions, handled);
+
+            return (
             <div className="mt-6 space-y-6">
-              <button
-                type="button"
-                onClick={() => setDetail(null)}
-                className="inline-flex items-center gap-1.5 text-sm text-brand hover:underline"
-              >
-                <ArrowLeft className="h-4 w-4" />
-                Retour
-              </button>
+              <div className="flex items-center justify-between gap-3">
+                <button
+                  type="button"
+                  onClick={() => setDetail(null)}
+                  className="inline-flex items-center gap-1.5 text-sm text-brand hover:underline"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                  Retour
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void showDetail(a.id)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
+                >
+                  <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+                  Actualiser
+                </button>
+              </div>
 
               <header className="panel flex items-start justify-between gap-4 p-5">
                 <div>
@@ -549,6 +669,11 @@ export function AutomationPage() {
                   <p className="mt-1 text-sm text-text-500">
                     {TYPE_LABELS[a.type] || a.type} · Créée le {fmtTime(a.created_at)}
                   </p>
+                  {stats.lastActionAt && (
+                    <p className="mt-0.5 text-xs text-text-500">
+                      Dernière activité : {fmtTime(stats.lastActionAt as string)}
+                    </p>
+                  )}
                 </div>
                 <StatusBadge status={a.status} />
               </header>
@@ -556,27 +681,61 @@ export function AutomationPage() {
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 {isOutboundType(a.type) ? (
                   <>
-                    <StatCard label="Contactés" value={(stats.contacted as number) ?? 0} />
-                    <StatCard label="Restants" value={(stats.pending as number) ?? 0} />
-                    <StatCard label="Réponses" value={(stats.replied as number) ?? 0} />
+                    <StatCard
+                      label="Contactés"
+                      value={contacted}
+                      hint={totalTargets ? `sur ${totalTargets} cible(s)` : undefined}
+                      accent="#2057ce"
+                    />
+                    <StatCard label="Réponses" value={replied} accent="#0ea5e9" />
                     <StatCard
                       label="Taux de réponse"
                       value={rate != null ? `${rate}%` : '—'}
-                      hint={`${(stats.interested as number) ?? 0} intéressé(s)`}
+                    />
+                    <StatCard
+                      label="Intéressés"
+                      value={interested}
+                      hint={engaged ? `${interestRate}% des engagés` : undefined}
+                      accent="#10b981"
                     />
                   </>
                 ) : (
                   <>
+                    <StatCard label="Messages traités" value={handled} accent="#2057ce" />
+                    <StatCard label="Intéressés" value={interested} accent="#10b981" />
                     <StatCard
-                      label="Messages traités"
-                      value={(stats.messagesHandled as number) ?? 0}
+                      label="Conversions"
+                      value={conversions}
+                      hint={handled ? `${convRate}% de conversion` : undefined}
+                      accent="#0ea5e9"
                     />
-                    <StatCard label="Intéressés" value={(stats.interested as number) ?? 0} />
-                    <StatCard label="Conversions" value={(stats.conversions as number) ?? 0} />
                     <StatCard label="Budget" value={`${a.budget_fcfa || 0} FCFA`} />
                   </>
                 )}
               </div>
+
+              {isOutboundType(a.type) && totalTargets > 0 && (
+                <div className="grid gap-4 lg:grid-cols-2">
+                  <section className="panel p-5">
+                    <h3 className="text-sm font-semibold text-text-200">Entonnoir de conversion</h3>
+                    <p className="mt-0.5 text-xs text-text-500">% calculé sur le total des cibles</p>
+                    <div className="mt-4 space-y-3.5">
+                      <FunnelRow label="Contactés" value={contacted} base={totalTargets} color="#2057ce" />
+                      <FunnelRow label="Réponses" value={replied} base={totalTargets} color="#0ea5e9" />
+                      <FunnelRow label="Intéressés" value={interested} base={totalTargets} color="#10b981" />
+                    </div>
+                  </section>
+                  <section className="panel p-5">
+                    <h3 className="text-sm font-semibold text-text-200">Répartition des cibles</h3>
+                    <p className="mt-0.5 text-xs text-text-500">
+                      {totalTargets} cible(s) · {pendingN} en attente
+                    </p>
+                    <div className="mt-4">
+                      <DistributionBar counts={counts} total={totalTargets} />
+                    </div>
+                  </section>
+                </div>
+              )}
 
               {typeof stats.report === 'string' && stats.report && (
                 <section className="panel p-5">
@@ -589,15 +748,24 @@ export function AutomationPage() {
                 <section className="panel p-5">
                   <h3 className="text-sm font-semibold text-text-200">Cibles ({targets.length})</h3>
                   <div className="mt-3 space-y-1.5">
-                    {targets.slice(0, 30).map((t) => (
-                      <div
-                        key={t.target_id}
-                        className="flex justify-between rounded-lg bg-bg-0 px-3 py-2 text-sm"
-                      >
-                        <span className="text-text-300">{t.target_label || t.target_id}</span>
-                        <span className="text-text-500">{t.status}</span>
-                      </div>
-                    ))}
+                    {targets.slice(0, 30).map((t) => {
+                      const meta = TARGET_META[t.status] ?? { label: t.status, color: '#94a3b8' };
+                      return (
+                        <div
+                          key={t.target_id}
+                          className="flex items-center justify-between rounded-lg bg-bg-0 px-3 py-2 text-sm"
+                        >
+                          <span className="truncate text-text-300">{t.target_label || t.target_id}</span>
+                          <span
+                            className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
+                            style={{ background: `${meta.color}1f`, color: meta.color }}
+                          >
+                            <span className="h-1.5 w-1.5 rounded-full" style={{ background: meta.color }} />
+                            {meta.label}
+                          </span>
+                        </div>
+                      );
+                    })}
                     {targets.length > 30 && (
                       <p className="text-xs text-text-500">… et {targets.length - 30} autre(s)</p>
                     )}
@@ -643,7 +811,8 @@ export function AutomationPage() {
                 <StatusControls auto={a} onChange={() => showDetail(a.id)} size="md" />
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
       </div>
     </div>

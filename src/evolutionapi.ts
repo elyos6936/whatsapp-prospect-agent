@@ -2397,6 +2397,17 @@ function hexToArgb(hex: string): number {
   return (0xff << 24) | rgb;
 }
 
+/**
+ * Numéro du compte WhatsApp connecté (le nôtre), sous forme d'ID participant
+ * normalisé — pour ne jamais se prospecter soi-même dans un groupe.
+ */
+export async function getConnectedOwnerId(userId: number): Promise<string | null> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) return null;
+  const owner = await getInstanceOwnerJid(creds);
+  return owner ? normalizeGroupParticipantId(owner) : null;
+}
+
 async function getInstanceOwnerJid(creds: EvolutionCredentials): Promise<string | null> {
   try {
     const data = await evolutionFetch<unknown>(creds, `/instance/fetchInstances`, {
