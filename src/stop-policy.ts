@@ -6,7 +6,8 @@ export type StopReason =
   | "escalation"
   | "not_interested"
   | "skepticism"
-  | "conversation_stall";
+  | "conversation_stall"
+  | "off_topic";
 
 const DISSATISFACTION_PATTERNS =
   /pas content|pas satisf|mecontent|insatisf|arnaque|escroc|hors de question|nul\b|mauvais service|inacceptable|scandale|vous abusez|laissez-moi tranquille|plus jamais|je me plains/i;
@@ -23,6 +24,12 @@ const SKEPTICISM_STOP_PATTERNS =
 const PRICE_QUESTION = /combien|prix|tarif|co[uû]t|fcfa|franc|budget|payer combien/i;
 const DELIVERY_QUESTION = /livraison|livrer|adresse|ou est|delai de livraison|frais de port/i;
 const PRODUCT_QUESTION = /c'est quoi|qu'est.ce que|detail|composition|ingredient|garantie|retour/i;
+
+// Usage détourné / hors-sujet : quelqu'un qui essaie de se servir du numéro comme
+// d'un assistant IA généraliste (poème, code, traduction, culture générale…) ou
+// qui teste le bot. On coupe SANS appeler l'IA (anti-gaspillage de tokens).
+const OFF_TOPIC_PATTERNS =
+  /\b(ecris|écris|redige|rédige|compose|genere|génère)\b[^?.!]*\b(poeme|poème|poesie|poésie|chanson|dissertation|redaction|rédaction|code|script|programme|essai|texte|paragraphe|lettre de motivation|cv)\b|\btradui(s|re|sez)\b|\btraduction\b|qui est le president|qui est le président|capitale (de|du|des)|combien font|combien fait|resou(s|dre)|résou(s|dre)|calcule[- ]?moi|raconte[- ]?(moi )?une (blague|histoire)|donne[- ]?moi (la )?recette|quelle (est l.?)?(heure|meteo|météo)|quel jour (on est|sommes)|es[- ]?tu (un|une|réel|reel|vrai|humain|robot|ia|intelligence artificielle|chatgpt|gpt|bot|machine)|t.?es (un|une) (robot|ia|bot|chatgpt|gpt)|\bchat ?gpt\b|\bgpt\b|\bllm\b|fais (mes|un) devoir|aide[- ]?moi (a|à|pour) (mes|le) devoir|resume[- ]?moi ce|résume[- ]?moi ce/i;
 
 const INTEREST_SIGNAL =
   /int[eé]ress|curieux|en savoir plus|dites-moi|comment|combien|prix|rdv|rendez-vous|appel|disponible|oui|ok|d'accord|formation|inscription|acheter|commander/i;
@@ -59,6 +66,11 @@ export function detectSkepticism(text: string): boolean {
     .replace(/\p{M}/gu, "")
     .replace(/['’]/g, " ");
   return SKEPTICISM_STOP_PATTERNS.test(t);
+}
+
+/** Message hors-sujet / usage détourné du bot (culture générale, tâche d'IA, test…). */
+export function detectOffTopic(text: string): boolean {
+  return OFF_TOPIC_PATTERNS.test(text.normalize("NFD").replace(/\p{M}/gu, ""));
 }
 
 /** Détecte une question dont la réponse n'est pas dans le contexte business/campagne. */
@@ -150,6 +162,9 @@ export function shouldStopConversation(
 ): StopReason | null {
   if (detectNotInterested(text)) return "not_interested";
 
+  // Hors-sujet / usage détourné → on coupe (protège contre le gaspillage de tokens).
+  if (detectOffTopic(text)) return "off_topic";
+
   if (campaignConfig?.stopOnDissatisfaction !== false && detectDissatisfaction(text)) {
     return "dissatisfaction";
   }
@@ -192,6 +207,8 @@ export function stopReasonLabel(reason: StopReason): string {
       return "prospect sceptique / méfiant";
     case "conversation_stall":
       return "échange sans progression (pas d'intérêt)";
+    case "off_topic":
+      return "message hors-sujet / usage détourné";
   }
 }
 
@@ -208,5 +225,7 @@ export function getStopFarewellReply(reason: StopReason): string {
       return "Je comprends, je transmets à mon responsable. Merci.";
     case "unknown_question":
       return "Je n'ai pas l'info sous la main pour répondre précisément. Mon responsable reviendra vers vous. Merci !";
+    case "off_topic":
+      return "Je réponds uniquement au sujet de mon message initial. Bonne journée ! 🙂";
   }
 }
