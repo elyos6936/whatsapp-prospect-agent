@@ -70,7 +70,7 @@ export function FaqAccordion() {
                         exit={{ height: 0, opacity: 0 }}
                         transition={{ duration: 0.25 }}
                       >
-                        <p className="border-t border-white/10 px-5 py-4 text-sm leading-relaxed text-text-400">
+                        <p className="border-t border-black/10 px-5 py-4 text-sm leading-relaxed text-text-400">
                           {faq.a}
                         </p>
                       </motion.div>

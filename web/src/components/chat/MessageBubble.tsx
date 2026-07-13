@@ -73,7 +73,7 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const bubbleClass = cn(
     'min-w-0 max-w-full rounded-2xl px-3 py-2 text-[13px] leading-[1.45] transition-all duration-200',
     isUser && 'bg-brand text-white',
-    isAssistant && !message.content.startsWith('❌') && 'border border-white/10 bg-bg-100 text-text-100',
+    isAssistant && !message.content.startsWith('❌') && 'border border-black/10 bg-bg-100 text-text-100',
     message.kind === 'error' && 'border border-red-500/30 bg-red-950/30 text-red-100',
     isWaIn && 'border border-dashed border-emerald-500/30 bg-bg-200 text-text-100',
     isWaOut && 'border border-brand-border bg-brand-muted text-text-100',

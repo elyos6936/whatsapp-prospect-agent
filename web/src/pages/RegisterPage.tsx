@@ -37,11 +37,11 @@ export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
     }
   };
 
-  const handleGoogle = async (credential: string) => {
+  const handleGoogle = async (accessToken: string) => {
     setError('');
     setBusy(true);
     try {
-      await loginGoogle(credential);
+      await loginGoogle(accessToken);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Connexion Google échouée');
     } finally {
@@ -78,7 +78,7 @@ export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
               autoComplete="name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-bg-100 px-3 py-2.5 text-sm text-text-100 outline-none focus:border-brand"
+              className="w-full rounded-xl border border-black/10 bg-bg-0 px-3 py-2.5 text-sm text-text-100 outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
             />
           </div>
           <div>
@@ -89,7 +89,7 @@ export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
               autoComplete="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              className="w-full rounded-xl border border-white/10 bg-bg-100 px-3 py-2.5 text-sm text-text-100 outline-none focus:border-brand"
+              className="w-full rounded-xl border border-black/10 bg-bg-0 px-3 py-2.5 text-sm text-text-100 outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
             />
           </div>
           <div>
@@ -101,7 +101,7 @@ export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
                 autoComplete="new-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="w-full rounded-xl border border-white/10 bg-bg-100 px-3 py-2.5 pr-10 text-sm text-text-100 outline-none focus:border-brand"
+                className="w-full rounded-xl border border-black/10 bg-bg-0 px-3 py-2.5 pr-10 text-sm text-text-100 outline-none transition focus:border-brand focus:ring-2 focus:ring-brand/20"
               />
               <button
                 type="button"
@@ -127,14 +127,15 @@ export function RegisterPage({ onGoLogin, onGoBack }: AuthPageProps) {
         {GOOGLE_CLIENT_ID && (
           <>
             <div className="my-6 flex items-center gap-3">
-              <span className="h-px flex-1 bg-white/10" />
+              <span className="h-px flex-1 bg-black/10" />
               <span className="text-xs text-text-500">ou</span>
-              <span className="h-px flex-1 bg-white/10" />
+              <span className="h-px flex-1 bg-black/10" />
             </div>
             <GoogleSignInButton
-              text="signup_with"
-              onCredential={(c) => void handleGoogle(c)}
+              label="S'inscrire avec Google"
+              onToken={(t) => void handleGoogle(t)}
               onError={setError}
+              disabled={busy}
             />
           </>
         )}

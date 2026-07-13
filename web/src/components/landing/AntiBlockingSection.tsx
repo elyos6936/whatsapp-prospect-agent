@@ -21,7 +21,7 @@ const POINTS = [
 
 export function AntiBlockingSection() {
   return (
-    <section className="border-t border-white/10 bg-bg-100/30 py-20 sm:py-28">
+    <section className="border-t border-black/10 bg-bg-100/30 py-20 sm:py-28">
       <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <div className="grid items-center gap-12 lg:grid-cols-2">
           <Reveal>

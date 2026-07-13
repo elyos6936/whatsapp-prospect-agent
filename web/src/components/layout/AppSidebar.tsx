@@ -34,13 +34,13 @@ export function AppSidebar({
   return (
     <aside
       className={cn(
-        'flex h-full shrink-0 flex-col border-r border-white/[0.06] bg-bg-0 transition-[width] duration-300 ease-silk',
+        'flex h-full shrink-0 flex-col border-r border-black/[0.06] bg-bg-0 transition-[width] duration-300 ease-silk',
         collapsed ? 'w-[68px]' : 'w-[260px]',
       )}
     >
       <div
         className={cn(
-          'flex shrink-0 items-center border-b border-white/[0.06] py-2.5',
+          'flex shrink-0 items-center border-b border-black/[0.06] py-2.5',
           collapsed ? 'flex-col gap-2 px-2' : 'justify-between gap-2 px-3',
         )}
       >

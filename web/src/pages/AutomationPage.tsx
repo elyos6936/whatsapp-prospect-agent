@@ -87,7 +87,7 @@ function StatusBadge({ status }: { status: string }) {
         status === 'draft' && 'bg-blue-500/15 text-blue-300',
         status === 'paused' && 'bg-amber-500/15 text-amber-400',
         status === 'failed' && 'bg-red-500/15 text-red-400',
-        status === 'completed' && 'bg-white/10 text-text-400',
+        status === 'completed' && 'bg-black/[0.06] text-text-400',
       )}
     >
       {(status === 'active') && <span className="status-dot" style={{ background: '#34d399' }} />}
@@ -117,7 +117,7 @@ function StatusControls({
           await updateAutomationStatus(auto.id, 'paused');
           await onChange();
         }}
-        className={cn(cls, 'border border-white/10 text-text-300 hover:bg-bg-200')}
+        className={cn(cls, 'border border-black/10 text-text-300 hover:bg-bg-200')}
       >
         <Pause className="h-3.5 w-3.5" />
         Désactiver
@@ -193,7 +193,7 @@ export function ManualBuilder({
     <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_340px]">
       {/* Colonne chat */}
       <div className="panel flex h-[68vh] min-h-[460px] flex-col overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-white/10 bg-white/[0.02] px-4 py-3">
+        <div className="flex items-center gap-3 border-b border-black/10 bg-black/[0.02] px-4 py-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-muted text-brand">
             <Sparkles className="h-4.5 w-4.5" />
           </span>
@@ -222,7 +222,7 @@ export function ManualBuilder({
                     key={s}
                     type="button"
                     onClick={() => void send(s)}
-                    className="group flex items-center gap-2 rounded-xl border border-white/10 bg-bg-0 px-3.5 py-2.5 text-left text-sm text-text-300 transition hover:border-brand-border hover:bg-brand-muted hover:text-text-100"
+                    className="group flex items-center gap-2 rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-left text-sm text-text-300 transition hover:border-brand-border hover:bg-brand-muted hover:text-text-100"
                   >
                     <Plus className="h-4 w-4 shrink-0 text-text-500 transition group-hover:text-brand" />
                     <span>{s}</span>
@@ -249,7 +249,7 @@ export function ManualBuilder({
                     'max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
                     m.role === 'user'
                       ? 'rounded-br-md bg-brand text-white'
-                      : 'rounded-bl-md border border-white/10 bg-bg-200 text-text-200',
+                      : 'rounded-bl-md border border-black/10 bg-bg-200 text-text-200',
                   )}
                 >
                   {m.content}
@@ -262,7 +262,7 @@ export function ManualBuilder({
               <span className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-muted text-brand">
                 <Bot className="h-4 w-4" />
               </span>
-              <div className="flex gap-1 rounded-2xl rounded-bl-md border border-white/10 bg-bg-200 px-4 py-3">
+              <div className="flex gap-1 rounded-2xl rounded-bl-md border border-black/10 bg-bg-200 px-4 py-3">
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-500 [animation-delay:-0.3s]" />
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-500 [animation-delay:-0.15s]" />
                 <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-500" />
@@ -271,8 +271,8 @@ export function ManualBuilder({
           )}
         </div>
 
-        <div className="border-t border-white/10 bg-white/[0.02] p-3">
-          <div className="flex items-end gap-2 rounded-2xl border border-white/10 bg-bg-0 p-2 transition focus-within:border-brand-border focus-within:ring-2 focus-within:ring-brand/20">
+        <div className="border-t border-black/10 bg-black/[0.02] p-3">
+          <div className="flex items-end gap-2 rounded-2xl border border-black/10 bg-bg-0 p-2 transition focus-within:border-brand-border focus-within:ring-2 focus-within:ring-brand/20">
             <textarea
               ref={taRef}
               value={input}
@@ -305,12 +305,12 @@ export function ManualBuilder({
 
       {/* Colonne automatisations */}
       <div className="panel flex h-[68vh] min-h-[460px] flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-white/10 bg-white/[0.02] px-4 py-3">
+        <div className="flex items-center justify-between border-b border-black/10 bg-black/[0.02] px-4 py-3">
           <h3 className="text-sm font-semibold text-text-100">Mes automatisations</h3>
           <button
             type="button"
             onClick={onRefresh}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 text-text-400 transition hover:bg-bg-200 hover:text-text-100"
+            className="flex h-7 w-7 items-center justify-center rounded-lg border border-black/10 text-text-400 transition hover:bg-bg-200 hover:text-text-100"
             title="Actualiser"
           >
             <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
@@ -340,7 +340,7 @@ export function ManualBuilder({
                   <button
                     type="button"
                     onClick={() => onOpenStats(auto.id)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-2.5 py-1 text-[11px] text-text-300 transition hover:bg-bg-200"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-2.5 py-1 text-[11px] text-text-300 transition hover:bg-bg-200"
                   >
                     <BarChart3 className="h-3.5 w-3.5" />
                     Statistiques
@@ -424,7 +424,7 @@ export function AutomationPage() {
               <button
                 type="button"
                 onClick={loadAutomations}
-                className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
+                className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
               >
                 <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
                 Actualiser
@@ -507,7 +507,7 @@ export function AutomationPage() {
                         <button
                           type="button"
                           onClick={() => void showDetail(auto.id)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 px-3 py-1.5 text-xs text-text-300 transition hover:bg-bg-200"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-1.5 text-xs text-text-300 transition hover:bg-bg-200"
                         >
                           <BarChart3 className="h-3.5 w-3.5" />
                           Statistiques

@@ -22,25 +22,25 @@
   --ease-silk: cubic-bezier(0.2, 0, 0, 1);
 }
 
-/* Thème noir pur / bleu Klanvio */
+/* Thème clair / bleu Klanvio */
 :root {
-  --bg-0: #000000;
-  --bg-100: #0b0b0d;
-  --bg-200: #141417;
-  --bg-300: #1f1f24;
-  --text-100: #ffffff;
-  --text-200: #eceef2;
-  --text-300: #c4c8d0;
-  --text-400: #9298a4;
-  --text-500: #6b7280;
-  --accent: #2f6bff;
-  --accent-hover: #1f52d6;
-  --brand: #2f6bff;
-  --brand-dark: #1f52d6;
-  --brand-muted: rgba(47, 107, 255, 0.16);
-  --brand-border: rgba(47, 107, 255, 0.5);
-  --brand-ring: rgba(47, 107, 255, 0.28);
-  --border: rgba(255, 255, 255, 0.1);
+  --bg-0: #ffffff;
+  --bg-100: #f8fafc;
+  --bg-200: #f1f5f9;
+  --bg-300: #e2e8f0;
+  --text-100: #0f172a;
+  --text-200: #1e293b;
+  --text-300: #334155;
+  --text-400: #64748b;
+  --text-500: #94a3b8;
+  --accent: #0f172a;
+  --accent-hover: #020617;
+  --brand: #2057ce;
+  --brand-dark: #1845a8;
+  --brand-muted: #dce6fa;
+  --brand-border: rgba(32, 87, 206, 0.42);
+  --brand-ring: rgba(32, 87, 206, 0.24);
+  --border: rgba(15, 23, 42, 0.14);
   --ease-silk: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -121,14 +121,14 @@ body {
 /* ── Surfaces & polish ─────────────────────────────────────────── */
 /* Carte avec léger dégradé + filet lumineux en haut (élévation par la couleur, pas par l'ombre). */
 .panel {
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.03) 0%, rgba(255, 255, 255, 0) 40%),
-    var(--bg-100);
+  background: var(--bg-100);
   border: 1px solid var(--border);
   border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 .panel-inset {
   background: var(--bg-0);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
   border-radius: 12px;
 }
 
@@ -184,18 +184,18 @@ body {
   font-size: 0.85em;
   padding: 0.15em 0.4em;
   border-radius: 4px;
-  background: rgba(32, 87, 206, 0.15);
-  color: #93c5fd;
+  background: var(--bg-200);
+  color: var(--brand-dark);
 }
 .prose-klanvio pre {
   margin: 0.5em 0;
   border-radius: 8px;
   overflow: hidden;
-  background: #050a0f;
+  background: #0b1220;
   border: 1px solid var(--border);
 }
 .prose-klanvio a {
-  color: #3b82f6;
+  color: var(--brand);
   overflow-wrap: anywhere;
   word-break: break-all;
 }

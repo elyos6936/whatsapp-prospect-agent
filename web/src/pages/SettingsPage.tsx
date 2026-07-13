@@ -146,7 +146,7 @@ export function SettingsPage() {
             <button
               type="button"
               onClick={logout}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-3 py-2 text-sm text-text-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300"
+              className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300"
             >
               <LogOut className="h-4 w-4" />
               Se déconnecter
@@ -154,7 +154,7 @@ export function SettingsPage() {
           </div>
 
           {/* Onglets */}
-          <div className="mb-6 inline-flex rounded-xl border border-white/10 bg-bg-100 p-1">
+          <div className="mb-6 inline-flex rounded-xl border border-black/10 bg-bg-100 p-1">
             {tabs.map((t) => {
               const Icon = t.icon;
               return (
@@ -212,7 +212,7 @@ export function SettingsPage() {
                 </div>
 
                 {connected && (
-                  <div className="mt-5 border-t border-white/10 pt-4">
+                  <div className="mt-5 border-t border-black/10 pt-4">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-xs text-text-500">
                         Pour utiliser un autre numéro, déconnecte celui-ci puis scanne un nouveau QR.
@@ -236,7 +236,7 @@ export function SettingsPage() {
                 <div className="panel p-5">
                   <div className="flex flex-col items-center text-center">
                     {qrLoading && !qrData ? (
-                      <div className="flex h-[240px] w-[240px] items-center justify-center rounded-2xl border border-white/10 bg-bg-0">
+                      <div className="flex h-[240px] w-[240px] items-center justify-center rounded-2xl border border-black/10 bg-bg-0">
                         <RefreshCw className="h-6 w-6 animate-spin text-text-500" />
                       </div>
                     ) : qrData?.base64 ? (
@@ -246,7 +246,7 @@ export function SettingsPage() {
                         className="h-[240px] w-[240px] rounded-2xl border-4 border-white bg-white object-contain p-1 shadow-lg"
                       />
                     ) : (
-                      <div className="flex h-[240px] w-[240px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-white/15 bg-bg-0 text-text-500">
+                      <div className="flex h-[240px] w-[240px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-black/15 bg-bg-0 text-text-500">
                         <QrCode className="h-8 w-8" />
                         <span className="text-xs">QR indisponible</span>
                       </div>
@@ -269,7 +269,7 @@ export function SettingsPage() {
                       type="button"
                       onClick={() => void loadQr()}
                       disabled={qrLoading}
-                      className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-white/10 px-4 py-2 text-sm text-text-300 transition hover:bg-bg-200 disabled:opacity-50"
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-4 py-2 text-sm text-text-300 transition hover:bg-bg-200 disabled:opacity-50"
                     >
                       <RefreshCw className={cn('h-4 w-4', qrLoading && 'animate-spin')} />
                       Actualiser le QR
@@ -295,7 +295,7 @@ export function SettingsPage() {
                     value={ownerName}
                     onChange={(e) => setOwnerName(e.target.value)}
                     placeholder="Ex. Awa"
-                    className="w-full rounded-xl border border-white/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                    className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
                   />
                 </div>
                 <div>
@@ -305,7 +305,7 @@ export function SettingsPage() {
                     onChange={(e) => setOffer(e.target.value)}
                     rows={3}
                     placeholder="Ex. Formation en marketing digital, coaching 1-1…"
-                    className="w-full resize-none rounded-xl border border-white/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                    className="w-full resize-none rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
                   />
                 </div>
                 <div>
@@ -316,7 +316,7 @@ export function SettingsPage() {
                     value={price}
                     onChange={(e) => setPrice(e.target.value)}
                     placeholder="Ex. 25 000 FCFA"
-                    className="w-full rounded-xl border border-white/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                    className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
                   />
                 </div>
                 <button

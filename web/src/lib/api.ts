@@ -390,10 +390,10 @@ export async function loginUser(input: {
   });
 }
 
-export async function loginWithGoogle(credential: string): Promise<{ token: string; user: AuthUser }> {
+export async function loginWithGoogle(accessToken: string): Promise<{ token: string; user: AuthUser }> {
   return request('/api/auth/google', {
     method: 'POST',
-    body: JSON.stringify({ credential }),
+    body: JSON.stringify({ accessToken }),
   });
 }
 

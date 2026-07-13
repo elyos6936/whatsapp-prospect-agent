@@ -20,6 +20,64 @@ function getGoogleClient(): OAuth2Client {
   return googleClient;
 }
 
+interface GoogleIdentity {
+  sub: string;
+  email: string;
+  name: string;
+  avatarUrl?: string;
+}
+
+/** Vérifie un ID token (flux GIS renderButton / One Tap). */
+async function identityFromIdToken(credential: string): Promise<GoogleIdentity | null> {
+  const ticket = await getGoogleClient().verifyIdToken({
+    idToken: credential,
+    audience: config.googleClientId,
+  });
+  const payload = ticket.getPayload();
+  if (!payload?.sub || !payload.email || payload.email_verified === false) return null;
+  const email = payload.email.trim().toLowerCase();
+  return {
+    sub: payload.sub,
+    email,
+    name: (payload.name || payload.given_name || email.split("@")[0]).trim(),
+    avatarUrl: payload.picture,
+  };
+}
+
+/**
+ * Vérifie un access token (flux popup OAuth `initTokenClient`).
+ * On contrôle que le token a bien été émis pour NOTRE client (aud), puis on
+ * récupère le profil via l'endpoint userinfo.
+ */
+async function identityFromAccessToken(accessToken: string): Promise<GoogleIdentity | null> {
+  const info = await getGoogleClient().getTokenInfo(accessToken);
+  if (info.aud !== config.googleClientId) return null;
+  if (!info.sub || !info.email || info.email_verified === false) return null;
+
+  let name = "";
+  let avatarUrl: string | undefined;
+  try {
+    const res = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    if (res.ok) {
+      const profile = (await res.json()) as { name?: string; given_name?: string; picture?: string };
+      name = (profile.name || profile.given_name || "").trim();
+      avatarUrl = profile.picture;
+    }
+  } catch {
+    /* profil best-effort : on retombe sur l'email */
+  }
+
+  const email = info.email.trim().toLowerCase();
+  return {
+    sub: info.sub,
+    email,
+    name: name || email.split("@")[0],
+    avatarUrl,
+  };
+}
+
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post<{ Body: { email?: string; password?: string; name?: string } }>(
     "/api/auth/register",
@@ -76,7 +134,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     },
   );
 
-  app.post<{ Body: { credential?: string } }>(
+  app.post<{ Body: { credential?: string; accessToken?: string } }>(
     "/api/auth/google",
     async (request, reply) => {
       if (!config.googleClientId) {
@@ -86,32 +144,25 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const credential = request.body?.credential?.trim();
-      if (!credential) {
+      const accessToken = request.body?.accessToken?.trim();
+      if (!credential && !accessToken) {
         return reply.status(400).send({ error: "Jeton Google manquant." });
       }
 
-      let payload;
+      let identity: GoogleIdentity | null = null;
       try {
-        const ticket = await getGoogleClient().verifyIdToken({
-          idToken: credential,
-          audience: config.googleClientId,
-        });
-        payload = ticket.getPayload();
+        identity = accessToken
+          ? await identityFromAccessToken(accessToken)
+          : await identityFromIdToken(credential!);
       } catch {
+        identity = null;
+      }
+
+      if (!identity) {
         return reply.status(401).send({ error: "Jeton Google invalide ou expiré." });
       }
 
-      if (!payload?.sub || !payload.email) {
-        return reply.status(401).send({ error: "Compte Google incomplet." });
-      }
-      if (payload.email_verified === false) {
-        return reply.status(401).send({ error: "Email Google non vérifié." });
-      }
-
-      const googleSub = payload.sub;
-      const email = payload.email.trim().toLowerCase();
-      const name = (payload.name || payload.given_name || email.split("@")[0]).trim();
-      const avatarUrl = payload.picture;
+      const { sub: googleSub, email, name, avatarUrl } = identity;
 
       let user = await getUserByGoogleSub(googleSub);
       if (!user) {

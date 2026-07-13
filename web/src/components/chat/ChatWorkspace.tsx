@@ -100,7 +100,7 @@ export function ChatWorkspace({
                       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-brand-border bg-brand-muted">
                         <span className="text-[10px] font-medium text-brand">AI</span>
                       </div>
-                      <div className="flex items-center gap-2 rounded-2xl border border-white/10 bg-bg-100 px-3 py-2">
+                      <div className="flex items-center gap-2 rounded-2xl border border-black/10 bg-bg-100 px-3 py-2">
                         <TypingIndicator />
                         <span className="text-[13px] text-text-400">L&apos;agent réfléchit…</span>
                       </div>
@@ -113,7 +113,7 @@ export function ChatWorkspace({
         )}
       </div>
 
-      <div className="shrink-0 border-t border-white/10 bg-bg-0">
+      <div className="shrink-0 border-t border-black/10 bg-bg-0">
         <div className="mx-auto w-full max-w-3xl">
           <KlanvioChatInput
             onSend={onSend}

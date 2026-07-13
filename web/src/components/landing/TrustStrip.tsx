@@ -10,7 +10,7 @@ const BADGES = [
 
 export function TrustStrip() {
   return (
-    <section className="border-y border-white/10 bg-bg-100/50 py-8">
+    <section className="border-y border-black/10 bg-bg-100/50 py-8">
       <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-center gap-6 px-4 sm:gap-10 sm:px-6">
         {BADGES.map((b, i) => {
           const Icon = b.icon;

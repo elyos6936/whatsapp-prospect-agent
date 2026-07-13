@@ -7,7 +7,7 @@ type FinalCtaProps = {
 
 export function FinalCta({ onRegister }: FinalCtaProps) {
   return (
-    <section className="border-t border-white/10 py-20 sm:py-28">
+    <section className="border-t border-black/10 py-20 sm:py-28">
       <div className="mx-auto max-w-3xl px-4 text-center sm:px-6">
         <Reveal>
           <h2 className="font-serif text-3xl font-light text-text-100 sm:text-4xl">

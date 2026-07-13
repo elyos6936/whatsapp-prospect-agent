@@ -18,7 +18,7 @@ export function AppHeader({
   const title = onChat ? 'Agent WhatsApp' : getViewTitle(mainView);
 
   return (
-    <header className="relative z-30 flex h-14 shrink-0 items-center gap-4 border-b border-white/[0.06] bg-bg-0/95 px-4 backdrop-blur-md sm:px-5">
+    <header className="relative z-30 flex h-14 shrink-0 items-center gap-4 border-b border-black/[0.06] bg-bg-0/95 px-4 backdrop-blur-md sm:px-5">
       <div className="flex min-w-0 flex-1 items-center gap-3">
         {!onChat && (
           <button
@@ -31,7 +31,7 @@ export function AppHeader({
           </button>
         )}
 
-        <div className={onChat ? 'min-w-0' : 'min-w-0 border-l border-white/[0.08] pl-3'}>
+        <div className={onChat ? 'min-w-0' : 'min-w-0 border-l border-black/[0.08] pl-3'}>
           <p className="truncate text-sm font-medium text-text-200">{title}</p>
         </div>
       </div>

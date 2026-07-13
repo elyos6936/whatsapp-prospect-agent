@@ -83,7 +83,7 @@ export function ConnectWhatsAppGate() {
           Sans connexion, l&apos;agent ne peut effectuer aucune action.
         </p>
 
-        <div className="mt-8 rounded-2xl border border-white/10 bg-bg-100 p-6">
+        <div className="mt-8 rounded-2xl border border-black/10 bg-bg-100 p-6">
           {loading ? (
             <p className="text-sm text-text-500">Chargement du QR…</p>
           ) : qrData?.connected ? (
@@ -94,7 +94,7 @@ export function ConnectWhatsAppGate() {
                 <img
                   src={qrImageSrc(qrData.base64)}
                   alt="QR WhatsApp"
-                  className="mx-auto max-w-[220px] rounded-lg border border-white/10 bg-white p-2"
+                  className="mx-auto max-w-[220px] rounded-lg border border-black/10 bg-white p-2"
                 />
               )}
               {qrData?.pairingCode && (
@@ -112,14 +112,14 @@ export function ConnectWhatsAppGate() {
             <button
               type="button"
               onClick={() => void loadQr()}
-              className="rounded-lg border border-white/10 px-4 py-2 text-sm text-text-300 hover:bg-bg-200"
+              className="rounded-lg border border-black/10 px-4 py-2 text-sm text-text-300 hover:bg-bg-200"
             >
               Actualiser
             </button>
             <button
               type="button"
               onClick={() => void rebootEvolutionInstance().then(() => loadQr())}
-              className="rounded-lg border border-white/10 px-4 py-2 text-sm text-text-300 hover:bg-bg-200"
+              className="rounded-lg border border-black/10 px-4 py-2 text-sm text-text-300 hover:bg-bg-200"
             >
               Redémarrer
             </button>

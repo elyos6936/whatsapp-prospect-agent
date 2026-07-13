@@ -9,7 +9,7 @@ const LINKS = [
 
 export function LandingFooter() {
   return (
-    <footer className="border-t border-white/10 bg-bg-100 py-10">
+    <footer className="border-t border-black/10 bg-bg-100 py-10">
       <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-6 px-4 sm:flex-row sm:px-6">
         <KlanvioLogo variant="full" size="sm" />
         <nav className="flex flex-wrap justify-center gap-4">

@@ -28,7 +28,7 @@ export function LandingNav({ onLogin, onRegister }: LandingNavProps) {
       className={cn(
         'fixed inset-x-0 top-0 z-50 transition-all duration-300',
         scrolled
-          ? 'border-b border-white/10 bg-bg-0/90 backdrop-blur-md'
+          ? 'border-b border-black/10 bg-bg-0/90 backdrop-blur-md'
           : 'bg-transparent',
       )}
     >

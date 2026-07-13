@@ -178,7 +178,7 @@ export function OnboardingPage() {
                 onChange={(e) => setOffer(e.target.value)}
                 rows={3}
                 placeholder="Ex : Je vends des formations en marketing digital pour entrepreneurs…"
-                className="w-full resize-none rounded-xl border border-white/10 bg-bg-100 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
+                className="w-full resize-none rounded-xl border border-black/10 bg-bg-100 px-3 py-2 text-sm text-text-100 outline-none focus:border-brand"
               />
             </div>
           )}
@@ -191,7 +191,7 @@ export function OnboardingPage() {
             <button
               type="button"
               onClick={() => setStep((s) => (s - 1) as Step)}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm text-text-400 hover:bg-bg-100"
+              className="rounded-xl border border-black/10 px-4 py-2 text-sm text-text-400 hover:bg-bg-100"
             >
               Retour
             </button>
@@ -275,14 +275,14 @@ function OptionRow({
         'flex w-full items-center gap-3 rounded-xl border px-4 py-3 text-left text-sm transition',
         selected
           ? 'border-brand bg-brand-muted text-text-100'
-          : 'border-white/10 bg-bg-100 text-text-300 hover:border-white/25 hover:text-text-100',
+          : 'border-black/10 bg-bg-100 text-text-300 hover:border-black/25 hover:text-text-100',
       )}
     >
       <span
         className={cn(
           'flex h-[18px] w-[18px] shrink-0 items-center justify-center border transition',
           multi ? 'rounded-[5px]' : 'rounded-full',
-          selected ? 'border-brand bg-brand' : 'border-white/25',
+          selected ? 'border-brand bg-brand' : 'border-black/25',
         )}
       >
         {selected &&
@@ -312,7 +312,7 @@ function OtherInput({
       value={value}
       onChange={(e) => onChange(e.target.value)}
       placeholder={placeholder}
-      className="w-full rounded-xl border border-white/10 bg-bg-100 px-4 py-3 text-sm text-text-100 outline-none focus:border-brand"
+      className="w-full rounded-xl border border-black/10 bg-bg-100 px-4 py-3 text-sm text-text-100 outline-none focus:border-brand"
     />
   );
 }

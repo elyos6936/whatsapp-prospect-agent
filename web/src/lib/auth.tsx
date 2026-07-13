@@ -64,8 +64,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(me ?? { ...u, whatsapp: { connected: false, state: 'unknown', message: '' } });
   }, []);
 
-  const loginGoogle = useCallback(async (credential: string) => {
-    const { token, user: u } = await loginWithGoogle(credential);
+  const loginGoogle = useCallback(async (accessToken: string) => {
+    const { token, user: u } = await loginWithGoogle(accessToken);
     setStoredToken(token);
     const me = await fetchMe();
     setUser(me ?? { ...u, whatsapp: { connected: false, state: 'unknown', message: '' } });
