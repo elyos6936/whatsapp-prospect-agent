@@ -1091,6 +1091,8 @@ export interface AutomationConfig {
   salesScript?: string;
   followUpInstructions?: string;
   closingGoal?: "payment" | "delivery" | "link" | "appointment";
+  /** Lien concret (Calendly, paiement, landing…) — jamais de placeholder. */
+  closingLink?: string;
   relance?: { enabled: boolean; delaysDays: number[]; hour?: number; messages?: string[] };
   stopOnDissatisfaction?: boolean;
   stopOnUnknownQuestion?: boolean;

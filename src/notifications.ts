@@ -622,9 +622,14 @@ function buildActiveCampaignContext(auto: Automation): string {
       ? `TON & APPROCHE (suis à la lettre, c'est le cœur de la campagne) :\n${cfg.conversationGuide}`
       : "",
     cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
-    cfg.price ? `Prix : ${cfg.price}` : "",
+    cfg.price
+      ? `Prix EXACT à citer si demandé : ${cfg.price}`
+      : `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire [prix].`,
+    cfg.closingLink
+      ? `Lien à envoyer au prospect (URL réelle) : ${cfg.closingLink}`
+      : "",
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
-    `RÈGLES DE RÉPONSE : messages COURTS (1-2 phrases max), ton WhatsApp naturel, va droit au but selon l'objectif. Ne re-pitche pas. Ne te re-présente pas.`,
+    `RÈGLES DE RÉPONSE : messages COURTS (1-2 phrases max), ton WhatsApp naturel, va droit au but selon l'objectif. Ne re-pitche pas. Ne te re-présente pas. AUCUN texte entre crochets [ ].`,
   ].filter(Boolean);
   return lines.join("\n");
 }

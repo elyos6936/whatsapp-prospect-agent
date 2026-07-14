@@ -10,6 +10,7 @@ import {
   saveWhatsAppMessage,
 } from "./db.js";
 import { config } from "./config.js";
+import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 
 export interface EvolutionCredentials {
   baseUrl: string;
@@ -1016,7 +1017,8 @@ export async function sendWhatsAppMessage(
   await assertCanSendTo(userId, chatId);
   await waitOutboundSpacing();
 
-  const data = await sendTextViaEvolution(creds, chatId, message, opts.textOptions);
+  const safeMessage = sanitizeOutboundWhatsAppText(message);
+  const data = await sendTextViaEvolution(creds, chatId, safeMessage, opts.textOptions);
 
   markOutboundSent();
   const idMessage = extractMessageId(data);
@@ -1024,7 +1026,7 @@ export async function sendWhatsAppMessage(
   await saveWhatsAppMessage(userId, {
     contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
     direction: "sortant",
-    body: message,
+    body: safeMessage,
     greenApiId: idMessage,
     countsTowardQuota: opts.countsTowardQuota !== false,
   });

@@ -100,6 +100,7 @@ import {
   bootstrapContactProspectTargets,
 } from "./automation-engine.js";
 import { getContactPresence } from "./notifications.js";
+import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -1291,9 +1292,20 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             items: { type: "string" },
             description: "Alias de trigger_phrases (rétrocompat)",
           },
-          product_name: { type: "string", description: "Nom du produit" },
-          price: { type: "string", description: "Prix en FCFA" },
-          sales_script: { type: "string", description: "Script / argumentaire" },
+          product_name: {
+            type: "string",
+            description: "Nom du produit / offre (valeur réelle, sans crochets)",
+          },
+          price: {
+            type: "string",
+            description: "Prix réel en FCFA (ex. « 25000 FCFA ») — OBLIGATOIRE si on vend quelque chose. Jamais [prix].",
+          },
+          closing_link: {
+            type: "string",
+            description:
+              "URL réelle à envoyer aux prospects (Calendly, paiement, landing…). Obligatoire si l'objectif est RDV / paiement / lien. Jamais [lien].",
+          },
+          sales_script: { type: "string", description: "Script / argumentaire (sans crochets)" },
           relance_enabled: { type: "boolean", description: "Activer les relances si pas de réponse" },
           relance_delays_days: {
             type: "array",
@@ -1410,6 +1422,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           trigger_phrases: { type: "array", items: { type: "string" } },
           product_name: { type: "string" },
           price: { type: "string" },
+          closing_link: { type: "string", description: "URL réelle (RDV / paiement / landing), sans crochets" },
           sales_script: { type: "string" },
           closing_goal: { type: "string", enum: ["payment", "delivery", "link", "appointment"] },
           relance_enabled: { type: "boolean" },
@@ -1633,6 +1646,7 @@ function buildAutomationConfigFromArgs(
     keywords: triggerPhrases,
     productName: args.product_name ? String(args.product_name) : undefined,
     price: args.price ? String(args.price) : undefined,
+    closingLink: args.closing_link ? String(args.closing_link).trim() : undefined,
     salesScript: args.sales_script ? String(args.sales_script) : undefined,
     closingGoal: args.closing_goal
       ? (String(args.closing_goal) as AutomationConfig["closingGoal"])
@@ -3090,6 +3104,50 @@ export async function executeTool(userId: number, name: string, args: Record<str
 
       const config = buildAutomationConfigFromArgs(args, type);
 
+      // Interdit de stocker des crochets dans les textes de campagne (ils finiraient chez les prospects).
+      const badFields = findPlaceholderFields([
+        { label: "initial_message", value: config.initialMessage },
+        { label: "conversation_guide", value: config.conversationGuide },
+        { label: "product_name", value: config.productName },
+        { label: "price", value: config.price },
+        { label: "closing_link", value: config.closingLink },
+        { label: "sales_script", value: config.salesScript },
+        ...(config.relance?.messages ?? []).map((m, i) => ({ label: `relance_messages[${i}]`, value: m })),
+        ...(config.abVariants ?? []).map((v) => ({ label: `ab_variants.${v.id}`, value: v.message })),
+        ...(config.sequenceSteps ?? []).map((s, i) => ({ label: `sequence_steps[${i}]`, value: s.message })),
+      ]);
+      if (badFields.length) {
+        return JSON.stringify({
+          error:
+            `Texte avec crochets interdit (${badFields.join(", ")}). ` +
+            `Demande d'abord à l'utilisateur les vraies valeurs (prix en FCFA, lien réel…) et réessaie SANS aucun […].`,
+        });
+      }
+
+      const needsSaleInfo = type === "keyword_sales" || Boolean(config.closingGoal);
+      if (needsSaleInfo && !config.price?.trim()) {
+        return JSON.stringify({
+          error:
+            "Prix manquant. Avant de créer la campagne, demande le prix exact (ex. 15000 FCFA) et passe-le dans price — jamais [prix].",
+        });
+      }
+      if (
+        (config.closingGoal === "appointment" ||
+          config.closingGoal === "payment" ||
+          config.closingGoal === "link") &&
+        !config.closingLink?.trim()
+      ) {
+        return JSON.stringify({
+          error:
+            "Lien manquant (closing_link). Pour un objectif RDV / paiement / lien, exige l'URL réelle auprès de l'utilisateur avant de créer la campagne.",
+        });
+      }
+      if (config.initialMessage && hasTemplatePlaceholders(config.initialMessage)) {
+        return JSON.stringify({
+          error: "initial_message contient des crochets. Remplace-les par de vraies valeurs.",
+        });
+      }
+
       if (type === "contact_prospect") {
         if (!args.initial_message) {
           return JSON.stringify({ error: "contact_prospect requiert initial_message." });
@@ -3227,6 +3285,32 @@ export async function executeTool(userId: number, name: string, args: Record<str
       }
 
       const auto = detail.automation;
+      if (
+        (auto.type === "keyword_sales" || auto.config.mode === "inbound_closing") &&
+        !auto.config.price?.trim()
+      ) {
+        return JSON.stringify({
+          error:
+            "Impossible d'activer : prix manquant dans la campagne. Demande le prix exact à l'utilisateur, mets-le à jour via update_automation_config (price), puis réessaie.",
+        });
+      }
+      if (
+        (auto.config.closingGoal === "appointment" ||
+          auto.config.closingGoal === "payment" ||
+          auto.config.closingGoal === "link") &&
+        !auto.config.closingLink?.trim()
+      ) {
+        return JSON.stringify({
+          error:
+            "Impossible d'activer : lien (closing_link) manquant. Demande l'URL réelle, mets à jour la config, puis réessaie.",
+        });
+      }
+      if (auto.config.initialMessage && hasTemplatePlaceholders(auto.config.initialMessage)) {
+        return JSON.stringify({
+          error:
+            "Impossible d'activer : le premier message contient encore des crochets […]. Corrige-le avec de vraies valeurs.",
+        });
+      }
       let targetsAdded = 0;
       if (auto.type === "group_prospect") {
         if (!auto.config.groupId || !auto.config.initialMessage) {
@@ -3289,6 +3373,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
       }
       if (args.product_name) merged.productName = String(args.product_name);
       if (args.price) merged.price = String(args.price);
+      if (args.closing_link) merged.closingLink = String(args.closing_link).trim();
       if (args.sales_script) merged.salesScript = String(args.sales_script);
       if (args.closing_goal) {
         merged.closingGoal = String(args.closing_goal) as AutomationConfig["closingGoal"];
@@ -3310,6 +3395,21 @@ export async function executeTool(userId: number, name: string, args: Record<str
                 : current.relance?.messages,
             }
           : { enabled: false, delaysDays: [] };
+      }
+
+      const badFields = findPlaceholderFields([
+        { label: "initial_message", value: merged.initialMessage },
+        { label: "conversation_guide", value: merged.conversationGuide },
+        { label: "product_name", value: merged.productName },
+        { label: "price", value: merged.price },
+        { label: "closing_link", value: merged.closingLink },
+        { label: "sales_script", value: merged.salesScript },
+        ...(merged.relance?.messages ?? []).map((m, i) => ({ label: `relance_messages[${i}]`, value: m })),
+      ]);
+      if (badFields.length) {
+        return JSON.stringify({
+          error: `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
+        });
       }
 
       const updated = await updateAutomationConfig(userId, id, merged);

@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { getAppSettings, getContactChatHistory } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
+import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un expert WhatsApp business (20+ ans) qui répond aux messages entrants pour un entrepreneur en Afrique francophone.
 
@@ -15,21 +16,23 @@ Poursuivre la conversation selon l'OBJECTIF DE LA CAMPAGNE (fourni dans le conte
 3. **CONTEXTE CAMPAGNE** : tu connais l'objectif, le ton et l'approche de la campagne — tu les suis. Tu ne réponds pas « à vide ».
 4. **PAS DE ROBOT** : interdit « comme mentionné plus tôt », « je suis X et je propose », « n'hésite pas à me le faire savoir », « je suis là pour ça ».
 5. **PAS DE RE-SALUT** si conversation déjà engagée : zéro « Bonjour », « Salut », « Bonsoir » en début de réponse.
+6. **ZÉRO CROCHETS** : n'écris JAMAIS de crochets [ ] dans un message WhatsApp. Interdit absolu : [prix], [lien], [prénom], [nom], [produit], [offre], ou tout autre mot entre crochets. Si une info manque (prix, lien…), NE l'invente PAS et NE mets PAS de placeholder : dis que tu confirmes et reviens (« Je te confirme le tarif exact juste après 🙂 ») ou pose une question utile.
 
 ## Adaptation par situation
 | Situation | Réponse type (1 phrase) |
 |-----------|--------------------------|
-| « Qui êtes-vous ? » / identité | « C'est [prénom du contexte], [offre en 5 mots]. » — PAS de pitch long |
+| « Qui êtes-vous ? » / identité | Prénom + offre courte du contexte — PAS de pitch long |
 | « C'est toi qui m'écrit » / scepticisme | « Oui c'est moi, désolé si ça t'a surpris. » — court, pas de re-pitch |
-| Question précise | Réponse directe avec l'info du contexte |
+| Question prix / détail | Chiffre ou info EXACTE du contexte ; si absent → « Je te confirme ça juste après 🙂 » (JAMAIS de crochets) |
 | « ok » / « merci » / court | « Super ! » ou « Avec plaisir » — 3-5 mots max |
-| Intérêt | UNE prochaine étape claire (créneau, lien, info) |
+| Intérêt | UNE prochaine étape claire (créneau, lien RÉEL du contexte, info) |
 | Refus / pas intéressé | « Compris, bonne continuation ! » — ne pas insister |
 
 ## NE FUIS JAMAIS une question (crucial)
-Si le prospect pose une question dont la réponse n'est PAS dans le contexte : **ne coupe pas la conversation, ne dis pas « je n'ai pas l'info donc j'arrête »**. Reste engagé :
-- Réponds au mieux avec ce que tu as, OU pose une brève question de précision, OU dis que tu confirmes et reviens vite (« Bonne question, je vérifie ça et je te reviens très vite 🙂 »).
-- Le prospect qui pose des questions est INTÉRESSÉ : garde-le, oriente-le vers la prochaine étape. Ne clôture que s'il refuse clairement.
+Si le prospect pose une question dont la réponse n'est PAS dans le contexte : **ne coupe pas la conversation**. Reste engagé :
+- Réponds au mieux avec ce que tu as, OU pose une brève question de précision, OU dis que tu confirmes et reviens vite.
+- JAMAIS de texte type « Le produit coûte [prix] ».
+- Le prospect qui pose des questions est INTÉRESSÉ : garde-le. Ne clôture que s'il refuse clairement.
 
 ## Style WhatsApp
 - Tutoiement ou vouvoiement : suis le prospect.
@@ -37,18 +40,18 @@ Si le prospect pose une question dont la réponse n'est PAS dans le contexte : *
 - Pas de bullet points, pas de listes, pas de formules corporate.
 
 ## Reste dans le sujet (anti-abus)
-Tu réponds UNIQUEMENT dans le cadre de l'offre / la campagne. Si le message est clairement hors-sujet (demande de type assistant IA : écrire un poème/du code, traduire, culture générale, calcul, « es-tu un robot ? », test…), NE te lance PAS dedans : recadre en 1 phrase (« Je réponds seulement sur [le sujet]. ») et n'entre pas dans le jeu. On ne se laisse pas détourner.
+Tu réponds UNIQUEMENT dans le cadre de l'offre / la campagne. Si le message est clairement hors-sujet (poème, code, traduction, culture générale, « es-tu un robot ? »…), recadre en 1 phrase sans entrer dans le jeu.
 
 ## Interdits ABSOLUS
-- **AUCUN crochet [ ] dans ta réponse** (ex. [prix], [lien], [nom], [offre]). C'est amateur et ça part tel quel au client. Si l'info manque (ex. tarif non communiqué), NE mets PAS de crochet et n'invente rien : demande une précision (« Tu parles de quelle quantité ? ») ou dis que tu confirmes le détail — mais jamais « [prix] ».
-- Inventer prix/offre/nom hors contexte.
+- Tout texte entre crochets […].
+- Inventer prix/offre/nom/lien hors contexte.
 - Messages de plus de 3 phrases.
 - Resaluer ou te re-présenter en conversation engagée.
 - Ignorer l'objectif de la campagne.
 - Faire des tâches hors-sujet (poème, code, traduction, culture générale…).
 
 ## Format
-Réponds UNIQUEMENT avec le texte du message WhatsApp. Rien d'autre.`;
+Réponds UNIQUEMENT avec le texte du message WhatsApp. Rien d'autre.`
 
 const INJECTION_PATTERNS =
   /ignore\s+(tes|vos|your)\s+instructions|ignore\s+previous|system\s+prompt|révèle\s+(ton|le)\s+prompt|jailbreak|DAN\s+mode/i;
@@ -141,10 +144,6 @@ function enforceWhatsAppStyle(
   text = text.replace(/^```\w*\n?|\n?```$/g, "");
   text = text.replace(/^(voici (ma )?réponse|message|réponse)\s*:\s*/i, "");
   text = text.replace(/^\*\*.*?\*\*\s*:?\s*/s, "");
-  // Filet de sécurité : jamais de placeholder entre crochets dans un vrai message.
-  // On retire le crochet (et l'espace qui précède) puis on nettoie ponctuation/espaces.
-  text = text.replace(/\s*\[[^\]\n]*\]/g, "");
-  text = text.replace(/\s+([.,!?;:])/g, "$1").replace(/\s{2,}/g, " ").trim();
 
   text = text.replace(/\bcomme mentionn[ée] plus t[oô]t\b[,.]?\s*/gi, "");
   text = text.replace(/\bn'?h[ée]site(z)? pas [àa] me (le )?faire savoir\b[!.]?\s*/gi, "");
@@ -169,7 +168,7 @@ function enforceWhatsAppStyle(
     text = sentences[0] ?? text.slice(0, 120);
   }
 
-  return text.replace(/\s{2,}/g, " ").trim();
+  return sanitizeOutboundWhatsAppText(text.replace(/\s{2,}/g, " ").trim());
 }
 
 function nowFr(): string {
@@ -178,10 +177,13 @@ function nowFr(): string {
 
 async function businessContextBlock(userId: number): Promise<string> {
   const s = await getAppSettings(userId);
+  const price = s.business_price?.trim();
   const lines = [
-    `Prénom / nom à utiliser : ${s.business_owner_name || "(non configuré — ne pas inventer)"}`,
-    `Offre / formation : ${s.business_offer || "(non configuré)"}`,
-    `Tarif (FCFA) : ${s.business_price || "(non communiqué)"}`,
+    `Prénom / nom à utiliser : ${s.business_owner_name || "(non configuré — ne pas inventer, ne pas mettre de crochets)"}`,
+    `Offre / formation : ${s.business_offer || "(non configuré — ne pas inventer)"}`,
+    price
+      ? `Tarif (FCFA) : ${price}`
+      : `Tarif (FCFA) : NON COMMUNIQUÉ — si on te demande le prix, dis que tu confirmes juste après. INTERDIT d'écrire [prix] ou tout autre crochet.`,
   ];
   return lines.join("\n");
 }

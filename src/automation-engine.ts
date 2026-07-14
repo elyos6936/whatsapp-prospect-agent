@@ -31,6 +31,7 @@ import { startSequenceForContact } from "./sequences.js";
 import { listActiveUserIds } from "./users.js";
 import { getActiveCampaignTargetIds } from "./campaign-gating.js";
 import { chatIdsMatch } from "./evolutionapi.js";
+import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -135,7 +136,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     await enqueueSend(userId, {
       recipient: target.target_id,
       recipientLabel: target.target_label ?? undefined,
-      message,
+      message: sanitizeOutboundWhatsAppText(message),
       mediaUrl: auto.config.mediaUrl,
       mediaType: auto.config.mediaType,
       priority,
