@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 
 const DEFAULT_MAX_RETRIES = 4;
-const MAX_BACKOFF_MS = 15_000;
+const MAX_BACKOFF_MS = 60_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -18,20 +18,41 @@ export function isQuotaError(err: unknown): boolean {
   return code === "insufficient_quota" || /quota|billing|insufficient/i.test(err.message || "");
 }
 
-/** Délai conseillé par OpenAI via les en-têtes Retry-After (en ms), si présent. */
+/** Délai conseillé par OpenAI (headers ou texte « try again in … »). */
 function retryAfterMs(err: unknown): number | null {
-  if (!(err instanceof OpenAI.APIError) || !err.headers) return null;
-  const headers = err.headers as Record<string, string | null | undefined>;
-  const ms = headers["retry-after-ms"];
-  if (ms != null) {
-    const n = Number(ms);
-    if (Number.isFinite(n) && n >= 0) return Math.min(n, MAX_BACKOFF_MS);
+  const message = err instanceof Error ? err.message : "";
+  const isTpm = /tokens per min|TPM|rate limit/i.test(message);
+
+  if (err instanceof OpenAI.APIError && err.headers) {
+    const headers = err.headers as Record<string, string | null | undefined>;
+    const ms = headers["retry-after-ms"];
+    if (ms != null) {
+      const n = Number(ms);
+      if (Number.isFinite(n) && n >= 0) {
+        return Math.min(Math.max(n, isTpm ? 2000 : 0), MAX_BACKOFF_MS);
+      }
+    }
+    const sec = headers["retry-after"];
+    if (sec != null) {
+      const n = Number(sec);
+      if (Number.isFinite(n) && n >= 0) {
+        return Math.min(Math.max(n * 1000, isTpm ? 2000 : 0), MAX_BACKOFF_MS);
+      }
+    }
   }
-  const sec = headers["retry-after"];
-  if (sec != null) {
-    const n = Number(sec);
-    if (Number.isFinite(n) && n >= 0) return Math.min(n * 1000, MAX_BACKOFF_MS);
+
+  const m = /try again in\s+(\d+(?:\.\d+)?)\s*(ms|s|seconds?)/i.exec(message);
+  if (m) {
+    const n = Number(m[1]);
+    const unit = m[2].toLowerCase();
+    const parsed = unit.startsWith("ms") ? n : n * 1000;
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return Math.min(Math.max(parsed, isTpm ? 2000 : 0), MAX_BACKOFF_MS);
+    }
   }
+
+  // Sans délai explicite : pour un TPM saturé, attendre un peu avant de retenter.
+  if (isTpm) return 3000;
   return null;
 }
 
