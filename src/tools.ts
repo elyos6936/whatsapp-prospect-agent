@@ -1271,6 +1271,21 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "number",
             description: "Délai maximum entre deux envois, en secondes (anti-blocage)",
           },
+          quiet_hours_start: {
+            type: "number",
+            description:
+              "Heure (0-23) de début des heures calmes (PAS d'envoi). Ex. activité 9h-18h → quiet_hours_start=18",
+          },
+          quiet_hours_end: {
+            type: "number",
+            description:
+              "Heure (0-23) de fin des heures calmes. Ex. activité 9h-18h → quiet_hours_end=9",
+          },
+          scheduled_start_at: {
+            type: "string",
+            description:
+              "Date/heure de lancement différé (ISO 8601 ou 'YYYY-MM-DD HH:mm'). Omettre = dès activation.",
+          },
           enable_auto_reply: {
             type: "boolean",
             description: "Réponses auto pour les prospects contactés (défaut true)",
@@ -1433,6 +1448,9 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           relance_hour: { type: "number" },
           relance_messages: { type: "array", items: { type: "string" } },
           max_members: { type: "number" },
+          quiet_hours_start: { type: "number" },
+          quiet_hours_end: { type: "number" },
+          scheduled_start_at: { type: "string" },
         },
         required: ["automation_id"],
         additionalProperties: false,
@@ -1719,6 +1737,19 @@ function buildAutomationConfigFromArgs(
     mediaUrl: args.media_url ? String(args.media_url) : undefined,
     mediaType: args.media_type ? (String(args.media_type) as "image" | "document" | "audio") : undefined,
   };
+
+  const qStart = args.quiet_hours_start != null ? Number(args.quiet_hours_start) : NaN;
+  const qEnd = args.quiet_hours_end != null ? Number(args.quiet_hours_end) : NaN;
+  if (Number.isFinite(qStart) && qStart >= 0 && qStart <= 23) {
+    config.quietHoursStart = Math.round(qStart);
+  }
+  if (Number.isFinite(qEnd) && qEnd >= 0 && qEnd <= 23) {
+    config.quietHoursEnd = Math.round(qEnd);
+  }
+  if (args.scheduled_start_at) {
+    const raw = String(args.scheduled_start_at).trim();
+    if (raw) config.scheduledStartAt = raw;
+  }
 
   if (relanceEnabled && relanceDelays.length) {
     config.relance = {
@@ -3457,6 +3488,16 @@ export async function executeTool(userId: number, name: string, args: Record<str
         merged.closingGoal = String(args.closing_goal) as AutomationConfig["closingGoal"];
       }
       if (args.max_members != null) merged.maxMembers = Number(args.max_members);
+      if (args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))) {
+        merged.quietHoursStart = Math.round(Number(args.quiet_hours_start));
+      }
+      if (args.quiet_hours_end != null && Number.isFinite(Number(args.quiet_hours_end))) {
+        merged.quietHoursEnd = Math.round(Number(args.quiet_hours_end));
+      }
+      if (args.scheduled_start_at != null) {
+        const raw = String(args.scheduled_start_at).trim();
+        merged.scheduledStartAt = raw || undefined;
+      }
 
       if (args.relance_enabled != null || args.relance_delays_days != null) {
         const enabled = args.relance_enabled === true;

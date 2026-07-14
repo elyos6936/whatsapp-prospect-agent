@@ -1110,6 +1110,8 @@ export interface AutomationConfig {
   mediaType?: "image" | "document" | "audio";
   quietHoursStart?: number;
   quietHoursEnd?: number;
+  /** ISO ou datetime locale : ne pas démarrer les openers avant cette date. */
+  scheduledStartAt?: string;
 }
 
 export interface AutomationStats {

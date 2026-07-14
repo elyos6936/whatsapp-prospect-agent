@@ -63,6 +63,14 @@ async function countSentTodayForAutomation(userId: number, automationId: number)
 }
 
 async function processGroupProspect(userId: number, auto: Automation): Promise<void> {
+  const startAt = auto.config.scheduledStartAt?.trim();
+  if (startAt) {
+    const when = new Date(startAt.includes("T") ? startAt : startAt.replace(" ", "T"));
+    if (!Number.isNaN(when.getTime()) && when.getTime() > Date.now()) {
+      return; // Lancement différé — pas encore l'heure
+    }
+  }
+
   const quota = await canSendOutbound(userId);
   if (!quota.ok) {
     await addAutomationLog(userId, auto.id, "warning", quota.reason ?? "Quota journalier atteint — envois en pause.");

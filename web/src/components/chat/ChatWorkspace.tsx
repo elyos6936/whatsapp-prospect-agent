@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { KlanvioChatInput, QUICK_SUGGESTIONS } from '@/components/ui/klanvio-chat-input';
+import { KlanvioChatInput } from '@/components/ui/klanvio-chat-input';
 import { MessageBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
 import { PLATFORM_NAME } from '@/lib/brand';
@@ -66,20 +66,6 @@ export function ChatWorkspace({
                 Votre agent {PLATFORM_NAME} WhatsApp est prêt. Donnez une instruction — il exécute
                 prospection, groupes et réponses automatiques.
               </p>
-
-              <div className="mt-8 flex flex-wrap items-center justify-center gap-2">
-                {QUICK_SUGGESTIONS.map((suggestion) => (
-                  <button
-                    key={suggestion.label}
-                    type="button"
-                    onClick={() => void onSend(suggestion.prompt)}
-                    disabled={isSending}
-                    className="rounded-full border border-brand-border bg-brand-muted px-4 py-2 text-sm font-medium text-brand transition-colors hover:border-brand hover:bg-brand/25 disabled:opacity-50"
-                  >
-                    {suggestion.label}
-                  </button>
-                ))}
-              </div>
             </div>
           </div>
         ) : (

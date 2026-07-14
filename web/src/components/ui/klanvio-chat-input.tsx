@@ -8,13 +8,6 @@ import {
 } from '@/lib/chat-attachments';
 import { transcribeChatAudio, uploadChatFiles } from '@/lib/api';
 
-export const QUICK_SUGGESTIONS = [
-  { label: 'Lister contacts', prompt: 'Liste mes contacts' },
-  { label: 'Groupes WA', prompt: 'Liste mes groupes WhatsApp' },
-  { label: 'Prospection', prompt: 'Envoie un message de prospection à +229…' },
-  { label: 'Bilan du jour', prompt: 'Donne-moi le bilan du jour' },
-] as const;
-
 type PendingFile = {
   id: string;
   file: File;

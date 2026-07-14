@@ -3,6 +3,7 @@ import {
   cancelPendingSendQueue,
   countOutboundToday,
   formatLocalDateTime,
+  getAutomation,
   getDueQueueItems,
   getEffectiveOutboundLimit,
   markQueueFailed,
@@ -30,11 +31,45 @@ function bypassQuietHours(item: QueueItem): boolean {
   return (item.priority ?? 0) >= CAMPAIGN_OPENER_MIN_PRIORITY;
 }
 
-async function rescheduleQuiet(userId: number, item: QueueItem): Promise<void> {
-  const tomorrow = new Date();
-  tomorrow.setDate(tomorrow.getDate() + 1);
-  tomorrow.setHours(8, 30, 0, 0);
-  const when = formatLocalDateTime(tomorrow);
+async function quietHoursForItem(
+  userId: number,
+  item: QueueItem
+): Promise<{ start: number; end: number }> {
+  if (!item.automation_id) {
+    return { start: DEFAULT_QUIET_START, end: DEFAULT_QUIET_END };
+  }
+  try {
+    const auto = await getAutomation(userId, item.automation_id);
+    const start = auto?.config.quietHoursStart;
+    const end = auto?.config.quietHoursEnd;
+    if (
+      typeof start === "number" &&
+      typeof end === "number" &&
+      start >= 0 &&
+      start <= 23 &&
+      end >= 0 &&
+      end <= 23
+    ) {
+      return { start, end };
+    }
+  } catch {
+    /* fallback défaut */
+  }
+  return { start: DEFAULT_QUIET_START, end: DEFAULT_QUIET_END };
+}
+
+async function rescheduleQuiet(
+  userId: number,
+  item: QueueItem,
+  quietEndHour: number
+): Promise<void> {
+  const next = new Date();
+  const hour = new Date().getHours();
+  if (hour >= quietEndHour) {
+    next.setDate(next.getDate() + 1);
+  }
+  next.setHours(quietEndHour, 30, 0, 0);
+  const when = formatLocalDateTime(next);
   await rescheduleSendQueueItem(userId, item.id, when);
   const label = item.recipient_label || chatIdToDisplay(item.recipient);
   console.log(`🌙 Queue #${item.id} → ${label} reporté à ${when} (heures calmes)`);
@@ -43,7 +78,7 @@ async function rescheduleQuiet(userId: number, item: QueueItem): Promise<void> {
       userId,
       item.automation_id,
       "info",
-      `Envoi à ${label} reporté à ${when} (heures calmes 22h–7h).`
+      `Envoi à ${label} reporté à ${when} (hors fenêtre d'envoi).`
     );
   }
 }
@@ -55,8 +90,9 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
   const items = await getDueQueueItems(userId, limit);
 
   for (const item of items) {
-    if (isQuietHours() && !bypassQuietHours(item)) {
-      await rescheduleQuiet(userId, item);
+    const quiet = await quietHoursForItem(userId, item);
+    if (isQuietHours(quiet.start, quiet.end) && !bypassQuietHours(item)) {
+      await rescheduleQuiet(userId, item, quiet.end);
       continue;
     }
     if ((await countOutboundToday(userId)) >= (await getEffectiveOutboundLimit(userId))) break;

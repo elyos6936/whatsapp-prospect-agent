@@ -146,6 +146,14 @@ export function assessCampaignBriefing(
     );
   if (!hasRhythm) missing.push("rythme / relances (anti-blocage)");
 
+  const hasSchedule =
+    /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|cr[eé]neau|horaire|fen[eê]tre|lancer\s+(à|a)|d[eé]marr)\b/i.test(
+      blob
+    );
+  if (!hasSchedule) {
+    missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+  }
+
   // Au moins 5 questions posées + aucun élément critique manquant
   const criticalMissing = missing.filter(
     (m) =>
@@ -155,7 +163,8 @@ export function assessCampaignBriefing(
       m.includes("déclencheur") ||
       m.includes("offre") ||
       m.includes("objectif") ||
-      m.includes("cible")
+      m.includes("cible") ||
+      m.includes("horaires")
   );
   const readyForDraft = questionsAsked >= 5 && criticalMissing.length === 0;
 
@@ -187,6 +196,8 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
     `INTERDIT : create_automation, activate_automation, show_campaign_simulation, rédiger le message final, ou sauter des questions.\n` +
     `Même si l'utilisateur dit « c'est un test », « plus tard », « comme tu veux » → insiste pour une réponse concrète exploitable.\n` +
     `Si objectif = rendez-vous → tu DOIS obtenir le **lien de réservation** (URL) avant tout brouillon.\n` +
+    `N'oublie pas le **planning** : fenêtre horaire d'envoi + jour/heure de lancement (une question à la fois).\n` +
+    `S'il a déjà des campagnes listées dans le contexte → demande d'abord « nouvelle ou modifier une existante ? ».\n` +
     `Valable pour TOUS produits / services / support client.`
   );
 }

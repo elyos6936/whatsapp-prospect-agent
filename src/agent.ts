@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT } from "./persona.js";
-import { getAppSettings, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
+import { getAppSettings, getRecentAgentMessages, listAutomations, type AgentMessage, type AppSettings } from "./db.js";
 import { testEvolutionConnection } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
@@ -114,10 +114,11 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
   return new OpenAI({ apiKey: key });
 }
 
-function buildBusinessContext(
+async function buildBusinessContext(
+  userId: number,
   settings: AppSettings,
   connection: { connected: boolean; state: string; message: string }
-): string {
+): Promise<string> {
   const lines: string[] = [];
   lines.push(
     `## État WhatsApp (Evolution API)\n${
@@ -134,9 +135,31 @@ function buildBusinessContext(
   );
   lines.push(
     `## Rappel campagnes\n` +
-      `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois) avant brouillon. ` +
-      `Objectif RDV → exiger le lien de réservation. Simulation = outil show_campaign_simulation, 3-4 messages max, puis feedback.`
+      `Parle comme un expert WhatsApp humain, créatif et concis. ` +
+      `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois). ` +
+      `Demande aussi la fenêtre horaire d'envoi et le jour/heure de lancement. ` +
+      `Objectif RDV → lien de réservation. Simulation = 3-4 messages max + feedback.`
   );
+
+  try {
+    const autos = await listAutomations(userId, { limit: 20 });
+    if (autos.length) {
+      const rows = autos
+        .slice(0, 12)
+        .map(
+          (a) =>
+            `#${a.id} « ${a.name} » [${a.status}] type=${a.type}`
+        )
+        .join("\n");
+      lines.push(
+        `## Campagnes existantes\n${rows}\n\n` +
+          `Si l'utilisateur veut (re)lancer une prospection / vente : pose d'abord « nouvelle campagne ou modifier une existante ? » avant le brief.`
+      );
+    }
+  } catch {
+    /* ignore */
+  }
+
   return lines.join("\n\n");
 }
 
@@ -167,7 +190,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
 
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    { role: "system", content: buildBusinessContext(settings, connection) },
+    { role: "system", content: await buildBusinessContext(userId, settings, connection) },
     ...toOpenAiMessages(history),
   ];
 
