@@ -6,7 +6,6 @@ import {
   MessageCircle,
   Shield,
   Sparkles,
-  Users,
   X,
   Zap,
 } from 'lucide-react';
@@ -222,13 +221,6 @@ export function LandingPage({ onLogin, onRegister }: LandingPageProps) {
                 close vos ventes, gère vos groupes et publie vos statuts — comme un vrai commercial
                 WhatsApp, 24h/24.
               </p>
-              <div className="mt-5 flex gap-3 rounded-2xl border border-brand-border/60 bg-white/80 p-3.5 text-sm text-text-300 shadow-sm backdrop-blur">
-                <Users className="mt-0.5 h-5 w-5 shrink-0 text-brand" />
-                <p>
-                  <strong className="font-semibold text-text-100">Extractions illimitées</strong> de
-                  contacts dans n’importe quel groupe WhatsApp — même ceux où vous n’êtes pas admin.
-                </p>
-              </div>
               <div className="mt-7 flex flex-wrap gap-3">
                 <button
                   type="button"
