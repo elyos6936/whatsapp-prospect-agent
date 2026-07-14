@@ -1,6 +1,7 @@
 import { chatIdsMatch } from "./evolutionapi.js";
 import {
   listActiveAutomations,
+  listAutomations,
   listAutomationTargets,
   setContactAutoReply,
   saveContact,
@@ -48,13 +49,13 @@ export async function getActiveCampaignTargetIds(
   return ids;
 }
 
-/** Contact cible d'une campagne de prospection sortante active. */
-export async function findActiveOutboundCampaign(
+async function matchOutboundTarget(
+  campaigns: Automation[],
   userId: number,
   chatId: string
 ): Promise<{ automation: Automation; targetId: string } | null> {
-  const active = (await listActiveAutomations(userId)).filter(isOutboundCampaign);
-  for (const auto of active) {
+  for (const auto of campaigns) {
+    if (!isOutboundCampaign(auto)) continue;
     const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
     const target = targets.find(
       (t) => chatIdsMatch(t.target_id, chatId) && OUTBOUND_TARGET_STATUSES.has(t.status)
@@ -62,6 +63,26 @@ export async function findActiveOutboundCampaign(
     if (target) return { automation: auto, targetId: target.target_id };
   }
   return null;
+}
+
+/**
+ * Campagne de prospection liée à ce contact pour les réponses auto.
+ * Inclut les campagnes « completed » : le statut completed signifie seulement
+ * que tous les premiers messages sont partis — le dialogue doit continuer.
+ */
+export async function findActiveOutboundCampaign(
+  userId: number,
+  chatId: string
+): Promise<{ automation: Automation; targetId: string } | null> {
+  const active = await listActiveAutomations(userId);
+  const fromActive = await matchOutboundTarget(active, userId, chatId);
+  if (fromActive) return fromActive;
+
+  const recent = await listAutomations(userId, { limit: 40 });
+  const fallback = recent.filter(
+    (a) => a.status === "completed" || a.status === "paused" || a.status === "active"
+  );
+  return matchOutboundTarget(fallback, userId, chatId);
 }
 
 /** Campagne e-commerce entrant dont un déclencheur exact correspond au message. */

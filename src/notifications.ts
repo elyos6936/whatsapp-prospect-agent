@@ -41,7 +41,7 @@ import { scoreIncomingMessage } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
-import { passesReplyGate } from "./campaign-gating.js";
+import { passesReplyGate, findActiveOutboundCampaign } from "./campaign-gating.js";
 import {
   detectInboundMedia,
   describeInboundMedia,
@@ -581,13 +581,17 @@ async function recordAutomationEngagement(
   text: string,
   interested: boolean
 ): Promise<void> {
-  const followups = (await listActiveAutomations(userId)).filter(
-    (a) =>
-      a.type === "group_prospect" ||
-      a.type === "contact_prospect" ||
-      a.type === "custom_followup"
-  );
-  for (const auto of followups) {
+  const outbound = await findActiveOutboundCampaign(userId, chatId);
+  const campaigns = outbound
+    ? [outbound.automation]
+    : (await listActiveAutomations(userId)).filter(
+        (a) =>
+          a.type === "group_prospect" ||
+          a.type === "contact_prospect" ||
+          a.type === "custom_followup"
+      );
+
+  for (const auto of campaigns) {
     const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
     const target = findAutomationTarget(targets, chatId);
     if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
