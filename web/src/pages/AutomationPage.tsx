@@ -156,8 +156,8 @@ function StatusControls({
   size?: 'sm' | 'md';
 }) {
   const cls = cn(
-    'inline-flex items-center gap-1.5 rounded-lg font-medium transition',
-    size === 'sm' ? 'px-2.5 py-1 text-[11px]' : 'px-3.5 py-2 text-sm',
+    'inline-flex items-center gap-1.5 rounded-lg font-semibold transition shadow-sm',
+    size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm',
   );
   if (auto.status === 'active') {
     return (
@@ -167,10 +167,13 @@ function StatusControls({
           await updateAutomationStatus(auto.id, 'paused');
           await onChange();
         }}
-        className={cn(cls, 'border border-black/10 text-text-300 hover:bg-bg-200')}
+        className={cn(
+          cls,
+          'border border-amber-500/40 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25',
+        )}
         title="Stoppe les envois et les réponses automatiques"
       >
-        <Pause className="h-3.5 w-3.5" />
+        <Pause className={size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
         Désactiver
       </button>
     );
@@ -185,7 +188,7 @@ function StatusControls({
         }}
         className={cn(cls, 'bg-brand text-white hover:bg-brand-dark')}
       >
-        <Play className="h-3.5 w-3.5" />
+        <Play className={size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
         {auto.status === 'draft' ? 'Activer' : 'Réactiver'}
       </button>
     );
@@ -387,11 +390,11 @@ export function ManualBuilder({
                   </div>
                   <StatusBadge status={auto.status} />
                 </div>
-                <div className="mt-3 flex flex-wrap gap-1.5">
+                <div className="mt-3 flex flex-wrap gap-2">
                   <button
                     type="button"
                     onClick={() => onOpenStats(auto.id)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-2.5 py-1 text-[11px] text-text-300 transition hover:bg-bg-200"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand shadow-sm transition hover:bg-brand/20"
                   >
                     <BarChart3 className="h-3.5 w-3.5" />
                     Statistiques
@@ -592,18 +595,18 @@ export function AutomationPage() {
                         <button
                           type="button"
                           onClick={() => void showDetail(auto.id)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-black/10 px-3 py-1.5 text-xs text-text-300 transition hover:bg-bg-200"
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-4 py-2 text-sm font-semibold text-brand shadow-sm transition hover:bg-brand/20"
                         >
-                          <BarChart3 className="h-3.5 w-3.5" />
+                          <BarChart3 className="h-4 w-4" />
                           Statistiques
                         </button>
                         {needsMemberReload(auto) && (
                           <button
                             type="button"
                             onClick={() => void handleReloadMembers(auto.id)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-1.5 text-xs text-white hover:bg-brand-dark"
+                            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark"
                           >
-                            <RefreshCw className="h-3.5 w-3.5" />
+                            <RefreshCw className="h-4 w-4" />
                             Recharger membres
                           </button>
                         )}

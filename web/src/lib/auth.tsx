@@ -8,6 +8,7 @@ import {
   type ReactNode,
 } from 'react';
 import {
+  ApiError,
   fetchMe,
   loginUser,
   loginWithGoogle,
@@ -15,77 +16,195 @@ import {
   type AuthUser,
   type MeResponse,
 } from '@/lib/api';
-import { clearStoredToken, onAuthLogout, setStoredToken, getStoredToken } from '@/lib/auth-storage';
+import {
+  clearSession,
+  getStoredToken,
+  getStoredUser,
+  onAuthLogout,
+  setStoredToken,
+  setStoredUser,
+} from '@/lib/auth-storage';
 
 type AuthState = {
   user: MeResponse | null;
   loading: boolean;
+  /** Token présent mais serveur injoignable au démarrage */
+  sessionError: string | null;
   login: (email: string, password: string) => Promise<void>;
   loginGoogle: (credential: string) => Promise<void>;
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
+  retrySession: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
 
+function toMe(user: AuthUser, fallbackWhatsApp?: MeResponse['whatsapp']): MeResponse {
+  return {
+    ...user,
+    whatsapp: user.whatsapp ??
+      fallbackWhatsApp ?? { connected: false, state: 'unknown', message: '' },
+  };
+}
+
+function syncAppUrl(loggedIn: boolean): void {
+  if (typeof window === 'undefined') return;
+  const target = loggedIn ? '/app' : '/';
+  if (window.location.pathname !== target) {
+    window.history.replaceState(null, '', target);
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<MeResponse | null>(null);
   const [loading, setLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+
+  const applyUser = useCallback((me: MeResponse | null) => {
+    setUser(me);
+    if (me) {
+      setStoredUser(me);
+      syncAppUrl(true);
+    } else {
+      syncAppUrl(false);
+    }
+  }, []);
 
   const refreshUser = useCallback(async () => {
     const token = getStoredToken();
     if (!token) {
-      setUser(null);
+      applyUser(null);
+      setSessionError(null);
       return;
     }
+
     try {
       const me = await fetchMe();
-      setUser(me);
-    } catch {
-      setUser(null);
-      clearStoredToken();
+      applyUser(me);
+      setSessionError(null);
+    } catch (err) {
+      const status = err instanceof ApiError ? err.status : undefined;
+      // Session invalide uniquement sur 401 — ne pas déconnecter sur une erreur réseau / 5xx
+      if (status === 401) {
+        clearSession();
+        applyUser(null);
+        setSessionError(null);
+        return;
+      }
+
+      // Garder la session courante (mémoire ou cache) si le serveur est juste injoignable
+      setUser((current) => {
+        if (current) {
+          setStoredUser(current);
+          syncAppUrl(true);
+          return current;
+        }
+        const cached = getStoredUser();
+        if (cached) {
+          syncAppUrl(true);
+          return cached;
+        }
+        setSessionError(
+          err instanceof Error ? err.message : 'Impossible de rejoindre le serveur',
+        );
+        return null;
+      });
     }
-  }, []);
+  }, [applyUser]);
+
+  const retrySession = useCallback(async () => {
+    setLoading(true);
+    setSessionError(null);
+    await refreshUser();
+    setLoading(false);
+  }, [refreshUser]);
 
   useEffect(() => {
     void (async () => {
+      // Restaurer immédiatement le profil en cache pour éviter un flash landing
+      const token = getStoredToken();
+      const cached = getStoredUser();
+      if (token && cached) {
+        setUser(cached);
+        syncAppUrl(true);
+      }
       await refreshUser();
       setLoading(false);
     })();
   }, [refreshUser]);
 
-  useEffect(() => onAuthLogout(() => setUser(null)), []);
+  useEffect(
+    () =>
+      onAuthLogout(() => {
+        applyUser(null);
+        setSessionError(null);
+      }),
+    [applyUser],
+  );
 
-  const login = useCallback(async (email: string, password: string) => {
-    const { token, user: u } = await loginUser({ email, password });
-    setStoredToken(token);
-    const me = await fetchMe();
-    setUser(me ?? { ...u, whatsapp: { connected: false, state: 'unknown', message: '' } });
-  }, []);
+  const login = useCallback(
+    async (email: string, password: string) => {
+      const { token, user: u } = await loginUser({ email, password });
+      setStoredToken(token);
+      const me = await fetchMe();
+      applyUser(me ?? toMe(u));
+      setSessionError(null);
+    },
+    [applyUser],
+  );
 
-  const loginGoogle = useCallback(async (accessToken: string) => {
-    const { token, user: u } = await loginWithGoogle(accessToken);
-    setStoredToken(token);
-    const me = await fetchMe();
-    setUser(me ?? { ...u, whatsapp: { connected: false, state: 'unknown', message: '' } });
-  }, []);
+  const loginGoogle = useCallback(
+    async (accessToken: string) => {
+      const { token, user: u } = await loginWithGoogle(accessToken);
+      setStoredToken(token);
+      const me = await fetchMe();
+      applyUser(me ?? toMe(u));
+      setSessionError(null);
+    },
+    [applyUser],
+  );
 
-  const register = useCallback(async (email: string, password: string, name: string) => {
-    const { token, user: u } = await registerUser({ email, password, name });
-    setStoredToken(token);
-    const me = await fetchMe();
-    setUser(me ?? { ...u, whatsapp: { connected: false, state: 'unknown', message: '' } });
-  }, []);
+  const register = useCallback(
+    async (email: string, password: string, name: string) => {
+      const { token, user: u } = await registerUser({ email, password, name });
+      setStoredToken(token);
+      const me = await fetchMe();
+      applyUser(me ?? toMe(u));
+      setSessionError(null);
+    },
+    [applyUser],
+  );
 
   const logout = useCallback(() => {
-    clearStoredToken();
-    setUser(null);
-  }, []);
+    clearSession();
+    applyUser(null);
+    setSessionError(null);
+  }, [applyUser]);
 
   const value = useMemo(
-    () => ({ user, loading, login, loginGoogle, register, logout, refreshUser }),
-    [user, loading, login, loginGoogle, register, logout, refreshUser],
+    () => ({
+      user,
+      loading,
+      sessionError,
+      login,
+      loginGoogle,
+      register,
+      logout,
+      refreshUser,
+      retrySession,
+    }),
+    [
+      user,
+      loading,
+      sessionError,
+      login,
+      loginGoogle,
+      register,
+      logout,
+      refreshUser,
+      retrySession,
+    ],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

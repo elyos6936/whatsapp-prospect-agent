@@ -42,6 +42,7 @@ export function KlanvioChatInput({
   const [message, setMessage] = useState('');
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [localSending, setLocalSending] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [transcribing, setTranscribing] = useState(false);
@@ -50,7 +51,9 @@ export function KlanvioChatInput({
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const sendingLockRef = useRef(false);
   const isHero = variant === 'hero';
+  const locked = disabled || localSending;
 
   useEffect(() => {
     if (!autoGrow) return;
@@ -72,7 +75,7 @@ export function KlanvioChatInput({
   }, []);
 
   const hasContent = message.trim().length > 0 || pendingFiles.length > 0;
-  const busy = disabled || uploading || isRecording || transcribing;
+  const busy = locked || uploading || isRecording || transcribing;
 
   const removePending = useCallback((id: string) => {
     setPendingFiles((prev) => {
@@ -176,25 +179,37 @@ export function KlanvioChatInput({
       return;
     }
     const text = message.trim();
-    if ((!text && pendingFiles.length === 0) || busy) return;
+    if ((!text && pendingFiles.length === 0) || busy || sendingLockRef.current) return;
 
-    let attachments: ChatAttachment[] = [];
-    const filesToUpload = pendingFiles.map((p) => p.file);
+    const filesSnapshot = pendingFiles;
+    const filesToUpload = filesSnapshot.map((p) => p.file);
+    sendingLockRef.current = true;
+    setLocalSending(true);
+    setMessage('');
+    setPendingFiles([]);
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
     try {
+      let attachments: ChatAttachment[] = [];
       if (filesToUpload.length > 0) {
         setUploading(true);
-        attachments = await uploadChatFiles(filesToUpload);
+        try {
+          attachments = await uploadChatFiles(filesToUpload);
+        } catch (err) {
+          setMessage(text);
+          setPendingFiles(filesSnapshot);
+          alert('Envoi impossible : ' + (err instanceof Error ? err.message : 'erreur upload'));
+          return;
+        }
       }
-      await onSend(text, attachments);
-      setMessage('');
-      for (const p of pendingFiles) {
+      for (const p of filesSnapshot) {
         if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
       }
-      setPendingFiles([]);
-      if (textareaRef.current) textareaRef.current.style.height = 'auto';
+      await onSend(text, attachments);
     } finally {
       setUploading(false);
+      setLocalSending(false);
+      sendingLockRef.current = false;
     }
   }, [message, pendingFiles, busy, isRecording, stopRecording, onSend]);
 
@@ -311,8 +326,9 @@ export function KlanvioChatInput({
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={handleKeyDown}
               onPaste={handlePaste}
-              placeholder={placeholder}
+              placeholder={locked ? "L'agent réfléchit…" : placeholder}
               disabled={busy}
+              readOnly={locked}
               rows={isHero ? 2 : 1}
               className={cn(
                 'block w-full resize-none border-0 bg-transparent leading-relaxed text-text-100',
@@ -336,7 +352,7 @@ export function KlanvioChatInput({
 
             <button
               type="button"
-              disabled={disabled || uploading || transcribing}
+              disabled={locked || uploading || transcribing}
               title={isRecording ? 'Arrêter la dictée' : 'Dicter un message'}
               onClick={() => (isRecording ? stopRecording() : void startRecording())}
               className={cn(
@@ -360,7 +376,7 @@ export function KlanvioChatInput({
             <button
               type="button"
               onClick={() => void handleSend()}
-              disabled={(!hasContent && !isRecording) || (disabled && !isRecording) || uploading || transcribing}
+              disabled={(!hasContent && !isRecording) || (locked && !isRecording) || uploading || transcribing}
               aria-label="Envoyer"
               className={cn(
                 'inline-flex shrink-0 items-center justify-center rounded-xl transition-all duration-200 active:scale-95',

@@ -27,12 +27,13 @@ export async function scoreIncomingMessage(userId: number, text: string, chatId:
   if (NEGATIVE_KEYWORDS.test(text)) delta -= 35;
   if (text.trim().length > 80) delta += 5;
   if (/\?/.test(text)) delta += 5;
+  if (detectConversionIntent(text)) delta += 30;
 
   const newScore = Math.max(0, Math.min(100, current + delta));
   await updateContactLeadScore(userId, chatId, newScore);
 
   const label = newScore >= 70 ? "chaud" : newScore >= 40 ? "tiède" : "froid";
-  const interested = newScore >= 70;
+  const interested = newScore >= 70 || HOT_KEYWORDS.test(text) || detectConversionIntent(text);
   const needsHandoff = HANDOFF_KEYWORDS.test(text) || newScore >= 85;
 
   return {
@@ -47,6 +48,18 @@ export async function scoreIncomingMessage(userId: number, text: string, chatId:
         : "Prospect très chaud — score ≥ 85"
       : undefined,
   };
+}
+
+/** Le prospect signale qu'il a payé / commandé / pris RDV / cliqué le lien. */
+export function detectConversionIntent(text: string): boolean {
+  const t = text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/['’]/g, " ");
+  return /j.?ai paye|paiement (fait|effectue|ok|valide)|j.?ai (commande|acheter|achete)|commande (passee|faite)|c.?est commande|j.?ai clique|lien (recu|marche|ok)|rdv (confirme|pris|ok)|rendez[- ]vous (confirme|pris)|c.?est bon j.?ai|ok j.?ai paye|transfert (fait|effectue)/i.test(
+    t
+  );
 }
 
 export async function recordAutomationConversion(

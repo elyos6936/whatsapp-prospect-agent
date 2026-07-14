@@ -1480,6 +1480,45 @@ export async function listAutomationTargets(
   return rows.map(mapAutomationTarget);
 }
 
+/**
+ * Trouve une cible de campagne pour un chatId (phone/@c.us), sans plafond de 500
+ * lignes qui faisait perdre les prospects en fin de liste.
+ */
+export async function findMatchingAutomationTarget(
+  userId: number,
+  automationId: number,
+  chatId: string,
+  statuses?: TargetStatus[]
+): Promise<AutomationTarget | null> {
+  const digits = chatId.replace(/\D/g, "");
+  if (digits.length < 8) return null;
+
+  const allowed = new Set(
+    statuses?.length
+      ? statuses
+      : (["pending", "contacted", "replied", "interested"] as TargetStatus[])
+  );
+
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
+    FROM automation_targets
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND (
+        target_id = ${chatId}
+        OR regexp_replace(target_id, '\\D', '', 'g') = ${digits}
+      )
+    ORDER BY id ASC
+    LIMIT 20
+  `;
+
+  for (const row of rows) {
+    const mapped = mapAutomationTarget(row);
+    if (allowed.has(mapped.status)) return mapped;
+  }
+  return null;
+}
+
 export async function updateAutomationTarget(
   userId: number,
   automationId: number,
@@ -1809,7 +1848,8 @@ export async function pauseAllActiveAutomations(userId: number): Promise<number>
 export interface SequenceStep {
   delayDays: number;
   message: string;
-  condition?: "no_reply" | "always";
+  /** no_reply = tant que le prospect n'a pas répondu ; stale_after_reply = silence après un échange ; always = toujours */
+  condition?: "no_reply" | "stale_after_reply" | "always";
   mediaUrl?: string;
   mediaType?: string;
 }
@@ -1902,6 +1942,20 @@ export async function advanceSequence(userId: number, id: number): Promise<void>
   await sql`
     UPDATE contact_sequences SET current_step = ${nextStep}, next_step_at = ${toTsParam(formatLocalDateTime(nextAt))}
     WHERE user_id = ${userId} AND id = ${id}
+  `;
+}
+
+/** Repousse une séquence (ex. entrant encore non traité par l'auto-reply). */
+export async function postponeSequence(
+  userId: number,
+  id: number,
+  hours = 2
+): Promise<void> {
+  const next = new Date(Date.now() + Math.max(1, hours) * 3600_000);
+  await sql`
+    UPDATE contact_sequences
+    SET next_step_at = ${next}
+    WHERE user_id = ${userId} AND id = ${id} AND status = 'active'
   `;
 }
 

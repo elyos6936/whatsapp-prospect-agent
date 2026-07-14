@@ -103,12 +103,14 @@ export function ChatWorkspace({
         <div className="mx-auto w-full max-w-3xl">
           <KlanvioChatInput
             onSend={onSend}
-            disabled={isSending}
+            disabled={Boolean(isSending)}
             variant="dock"
             placeholder={
-              showWelcome
-                ? 'Donnez une instruction à l\'agent WhatsApp…'
-                : 'Écrire à l\'agent…'
+              isSending
+                ? "L'agent réfléchit…"
+                : showWelcome
+                  ? 'Donnez une instruction à l\'agent WhatsApp…'
+                  : 'Écrire à l\'agent…'
             }
           />
         </div>

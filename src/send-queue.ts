@@ -104,8 +104,24 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           type: item.media_type as "image" | "document" | "audio",
           caption: item.message ?? undefined,
         });
+        if (item.automation_id != null) {
+          try {
+            const { setContactAutoReply, saveContact } = await import("./db.js");
+            await setContactAutoReply(userId, item.recipient, true);
+            await saveContact(userId, {
+              phone: item.recipient,
+              status: "en_conversation",
+              autoReply: true,
+            });
+          } catch {
+            /* best effort */
+          }
+        }
       } else if (item.message) {
-        await sendWhatsAppMessage(userId, item.recipient, item.message, { enableAutoReply: false });
+        // Conserver / renforcer auto_reply pour les envois de campagne
+        await sendWhatsAppMessage(userId, item.recipient, item.message, {
+          enableAutoReply: item.automation_id != null,
+        });
       } else {
         await markQueueFailed(userId, item.id, "Message ou média manquant");
         continue;

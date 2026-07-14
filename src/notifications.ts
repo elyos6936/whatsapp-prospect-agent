@@ -20,6 +20,7 @@ import {
   findMatchingKeywordAutomations,
   listActiveAutomations,
   listAutomationTargets,
+  findMatchingAutomationTarget,
   findGroupReplyRule,
   addAutomationLog,
   updateAutomationStats,
@@ -32,12 +33,13 @@ import {
   setContactWhatsappLid,
   saveAgentMessage,
   setContactAutoReply,
+  saveContact,
   incrementAutoStopped,
   incrementMessagesHandled,
   cancelSequencesForContact,
 } from "./db.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
-import { scoreIncomingMessage } from "./lead-scoring.js";
+import { scoreIncomingMessage, detectConversionIntent, recordAutomationConversion } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
@@ -619,13 +621,17 @@ function buildActiveCampaignContext(auto: Automation): string {
     link: "envoyer un lien",
     appointment: "fixer un rendez-vous",
   };
-  const goal = cfg.closingGoal ? goalLabels[cfg.closingGoal] ?? cfg.closingGoal : "engager le prospect vers une action concrète";
+  const goal = cfg.closingGoal
+    ? goalLabels[cfg.closingGoal] ?? cfg.closingGoal
+    : "engager le prospect vers une action concrète";
 
   const lines = [
     `=== CAMPAGNE ACTIVE : « ${auto.name} » (#${auto.id}) ===`,
     `Type : ${auto.type}`,
     `Objectif de la campagne : ${goal}`,
-    cfg.initialMessage ? `Premier message déjà envoyé au prospect : « ${cfg.initialMessage} »` : "",
+    cfg.initialMessage
+      ? `Premier message déjà envoyé au prospect : « ${cfg.initialMessage} »`
+      : "",
     cfg.conversationGuide
       ? `TON & APPROCHE (suis à la lettre, c'est le cœur de la campagne) :\n${cfg.conversationGuide}`
       : "",
@@ -637,8 +643,15 @@ function buildActiveCampaignContext(auto: Automation): string {
       ? `Lien à envoyer au prospect (URL réelle) : ${cfg.closingLink}`
       : "",
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
-    `RÈGLES DE RÉPONSE : messages COURTS (1-2 phrases max), ton WhatsApp naturel, va droit au but selon l'objectif. Ne re-pitche pas. Ne te re-présente pas. AUCUN texte entre crochets [ ].`,
-  ].filter(Boolean);
+    "",
+    `PARCOURS CONVERSATION (obligatoire) :`,
+    `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair.`,
+    `2. Si le prospect demande qui tu es / est surpris → présente-toi brièvement + rappel de l'offre, puis une question utile.`,
+    `3. Si intéressé / pose des questions → réponds, qualifie, puis avance vers l'objectif (${goal}).`,
+    `4. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
+    `5. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
+    `RÈGLES : messages COURTS (1-2 phrases), ton WhatsApp naturel. Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. AUCUN texte entre crochets [ ].`,
+  ].filter((l) => l !== undefined);
   return lines.join("\n");
 }
 
@@ -689,10 +702,9 @@ async function buildAutomationContext(
         a.type === "custom_followup"
     );
     for (const auto of followups) {
-      const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
-      const target = findAutomationTarget(targets, chatId);
+      const target = await findMatchingAutomationTarget(userId, auto.id, chatId);
       if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
-      if (auto.config.conversationGuide) {
+      if (auto.config.conversationGuide || auto.config.initialMessage) {
         parts.push(buildActiveCampaignContext(auto));
       }
     }
@@ -763,10 +775,11 @@ async function runAutoReply(
       reply = getStopConfirmationReply();
       await blockContact(userId, chatId);
       if (activeCampaign) {
-        const targets = await listAutomationTargets(userId, activeCampaign.id, { limit: 500 });
-        const target = findAutomationTarget(targets, chatId);
+        const target = await findMatchingAutomationTarget(userId, activeCampaign.id, chatId);
         if (target) {
-          await updateAutomationTarget(userId, activeCampaign.id, target.target_id, { status: "stopped" });
+          await updateAutomationTarget(userId, activeCampaign.id, target.target_id, {
+            status: "stopped",
+          });
         }
         await cancelSequencesForContact(userId, chatId);
       }
@@ -792,10 +805,20 @@ async function runAutoReply(
 
       if (stopReason && activeCampaign) {
         reply = getStopFarewellReply(stopReason);
-        await blockContact(userId, chatId);
-        await setContactAutoReply(userId, chatId, false);
-        const targets = await listAutomationTargets(userId, activeCampaign.id, { limit: 500 });
-        const target = findAutomationTarget(targets, chatId);
+        // Blocage permanent seulement sur refus / hostilité / STOP — pas sur escalade humaine
+        const hardStop =
+          stopReason === "not_interested" ||
+          stopReason === "dissatisfaction" ||
+          stopReason === "skepticism" ||
+          stopReason === "conversation_stall" ||
+          stopReason === "off_topic";
+        if (hardStop) {
+          await blockContact(userId, chatId);
+          await setContactAutoReply(userId, chatId, false);
+        } else {
+          await setContactAutoReply(userId, chatId, false);
+        }
+        const target = await findMatchingAutomationTarget(userId, activeCampaign.id, chatId);
         if (target) {
           await updateAutomationTarget(userId, activeCampaign.id, target.target_id, {
             status: "stopped",
@@ -822,6 +845,38 @@ async function runAutoReply(
       const scoring = await scoreIncomingMessage(userId, text, chatId);
       await recordAutomationEngagement(userId, chatId, text, scoring.interested);
       void refreshContactMemory(userId, chatId).catch(() => {});
+
+      if (scoring.interested) {
+        try {
+          await saveContact(userId, {
+            phone: chatId,
+            status: "interesse",
+            autoReply: true,
+          });
+        } catch {
+          /* best effort */
+        }
+      }
+
+      if (activeCampaign && detectConversionIntent(text)) {
+        try {
+          await recordAutomationConversion(userId, activeCampaign.id);
+          const target = await findMatchingAutomationTarget(userId, activeCampaign.id, chatId);
+          if (target && target.status !== "stopped") {
+            await updateAutomationTarget(userId, activeCampaign.id, target.target_id, {
+              status: "interested",
+              notes: "Conversion / intention d'achat détectée",
+            });
+          }
+          await saveAgentMessage(
+            userId,
+            "assistant",
+            `🎉 Conversion détectée avec ${senderName} (${chatIdToDisplay(chatId)}) — campagne « ${activeCampaign.name} ».`
+          );
+        } catch (err) {
+          console.error("Erreur conversion:", err);
+        }
+      }
 
       const automationContext = await buildAutomationContext(userId, text, chatId, activeCampaign);
       const handoff = await maybeCreateHandoff(userId, {

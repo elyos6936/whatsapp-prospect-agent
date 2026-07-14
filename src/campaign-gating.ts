@@ -1,16 +1,22 @@
-import { chatIdsMatch } from "./evolutionapi.js";
 import {
   listActiveAutomations,
   listAutomationTargets,
+  findMatchingAutomationTarget,
   setContactAutoReply,
   saveContact,
   getContact,
   getContactChatHistory,
   type Automation,
+  type TargetStatus,
 } from "./db.js";
 import { matchesAnyTriggerPhrase } from "./phrase-matching.js";
 
-const OUTBOUND_TARGET_STATUSES = new Set(["pending", "contacted", "replied", "interested"]);
+const OUTBOUND_TARGET_STATUSES: TargetStatus[] = [
+  "pending",
+  "contacted",
+  "replied",
+  "interested",
+];
 
 function isOutboundCampaign(auto: Automation): boolean {
   return (
@@ -38,7 +44,7 @@ export async function getActiveCampaignTargetIds(
   const ids = new Set<string>();
   for (const auto of active) {
     if (excludeAutomationId != null && auto.id === excludeAutomationId) continue;
-    const targets = await listAutomationTargets(userId, auto.id, { limit: 2000 });
+    const targets = await listAutomationTargets(userId, auto.id, { limit: 5000 });
     for (const t of targets) {
       if (t.status !== "stopped" && t.status !== "error") {
         ids.add(t.target_id);
@@ -55,9 +61,11 @@ async function matchOutboundTarget(
 ): Promise<{ automation: Automation; targetId: string } | null> {
   for (const auto of campaigns) {
     if (!isOutboundCampaign(auto)) continue;
-    const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
-    const target = targets.find(
-      (t) => chatIdsMatch(t.target_id, chatId) && OUTBOUND_TARGET_STATUSES.has(t.status)
+    const target = await findMatchingAutomationTarget(
+      userId,
+      auto.id,
+      chatId,
+      OUTBOUND_TARGET_STATUSES
     );
     if (target) return { automation: auto, targetId: target.target_id };
   }
@@ -95,8 +103,6 @@ export async function findMatchingInboundClosingCampaign(
  * Conversation de closing DÉJÀ engagée : le contact a été déclenché auparavant
  * (auto_reply activé) et un échange existe. On poursuit alors le fil même si le
  * message courant ne contient plus le mot déclencheur — sinon la vente se coupe.
- * Sûr : auto_reply=1 n'est posé que par une campagne ou un déclencheur antérieur,
- * jamais pour un inconnu.
  */
 export async function findOngoingClosingConversation(
   userId: number,
@@ -124,9 +130,9 @@ export interface ReplyGateResult {
 }
 
 /**
- * Portier strict à deux régimes :
- * (a) prospect contacté en campagne sortante -> poursuite du fil
- * (b) entrant e-commerce -> déclencheur exact uniquement, sinon silence
+ * Portier à deux régimes :
+ * (a) prospect contacté en campagne sortante -> poursuite du fil jusqu'à conversion / refus
+ * (b) entrant e-commerce -> déclencheur exact, puis fil engagé
  */
 export async function passesReplyGate(
   userId: number,
@@ -135,6 +141,19 @@ export async function passesReplyGate(
 ): Promise<ReplyGateResult> {
   const outbound = await findActiveOutboundCampaign(userId, chatId);
   if (outbound) {
+    // Garder le contact en mode conversation auto pour la suite du fil
+    try {
+      if (outbound.automation.config.enableAutoReply !== false) {
+        await setContactAutoReply(userId, chatId, true);
+        await saveContact(userId, {
+          phone: chatId,
+          status: "en_conversation",
+          autoReply: true,
+        });
+      }
+    } catch {
+      /* best effort */
+    }
     return {
       allow: true,
       reason: `prospect campagne « ${outbound.automation.name} »`,
@@ -157,7 +176,6 @@ export async function passesReplyGate(
     };
   }
 
-  // Closing déjà engagé : poursuivre le fil sans exiger à nouveau le déclencheur.
   const ongoing = await findOngoingClosingConversation(userId, chatId);
   if (ongoing) {
     return {
