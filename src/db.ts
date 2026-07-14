@@ -621,15 +621,22 @@ export async function unblockContact(userId: number, chatId: string): Promise<Co
   return saveContact(userId, { phone: chatId, status: nextStatus });
 }
 
+/** Liste explicite de contacts exclus (réglage), distincte du statut conversation « stop ». */
+export async function getBlockedContactIds(userId: number): Promise<string[]> {
+  try {
+    const list = JSON.parse((await getSetting(userId, "blocked_contacts")) || "[]") as unknown;
+    if (!Array.isArray(list)) return [];
+    return list.map((x) => String(x ?? "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 export async function isContactBlocked(userId: number, chatId: string): Promise<boolean> {
   const contact = await findContactForChat(userId, chatId);
   if (contact) return contact.status === "stop";
-  try {
-    const list = JSON.parse((await getSetting(userId, "blocked_contacts")) || "[]") as string[];
-    return list.includes(chatId);
-  } catch {
-    return false;
-  }
+  const list = await getBlockedContactIds(userId);
+  return list.includes(chatId);
 }
 
 export async function shouldAutoReplyContact(userId: number, chatId: string): Promise<boolean> {

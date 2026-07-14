@@ -9,8 +9,11 @@ import {
   listAutomationTargets,
   saveContact,
   setContactAutoReply,
+  getBlockedContactIds,
+  getContact,
   isContactBlocked,
   saveAgentMessage,
+  unblockContact,
   updateAutomationStats,
   updateAutomationStatus,
   updateAutomationTarget,
@@ -21,6 +24,7 @@ import {
 import { pickAbVariant, recordAbSent } from "./ab-testing.js";
 import {
   chatIdToDisplay,
+  chatIdsMatch,
   getConnectedOwnerId,
   getGroupMembers,
   normalizeGroupParticipantId,
@@ -30,7 +34,6 @@ import { generatePersonalizedOpener } from "./prospect-personalizer.js";
 import { startSequenceForContact } from "./sequences.js";
 import { listActiveUserIds } from "./users.js";
 import { getActiveCampaignTargetIds } from "./campaign-gating.js";
-import { chatIdsMatch } from "./evolutionapi.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
@@ -319,53 +322,102 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
 
   const group = await getGroupMembers(userId, groupId);
   const maxMembers = Math.min(Math.max(auto.config.maxMembers ?? 30, 1), 50);
+  const groupLabel = group.subject || auto.config.groupName || groupId;
 
   // Le compte connecté (nous) est presque toujours membre du groupe : on ne se
   // prospecte jamais soi-même. C'est ce qui explique qu'un groupe à 2 membres
   // ne charge qu'1 seule cible.
   const ownerId = await getConnectedOwnerId(userId);
+  const hardBlockedIds = await getBlockedContactIds(userId);
+  const alreadyEnrolled = await getActiveCampaignTargetIds(userId, automationId);
 
-  const eligible = await Promise.all(
+  const matchesAny = (candidate: string, ids: Iterable<string>): boolean => {
+    for (const id of ids) {
+      if (chatIdsMatch(candidate, id)) return true;
+    }
+    return false;
+  };
+
+  const classified = await Promise.all(
     group.participants.map(async (p) => {
       const rawId = p.id;
       const id = normalizeGroupParticipantId(rawId);
+      const isSelf = !!ownerId && (chatIdsMatch(ownerId, id) || chatIdsMatch(ownerId, rawId));
+      const hardBlocked =
+        matchesAny(id, hardBlockedIds) || matchesAny(rawId, hardBlockedIds);
+      const enrolled =
+        matchesAny(id, alreadyEnrolled) || matchesAny(rawId, alreadyEnrolled);
+      const contact =
+        (await getContact(userId, id)) ||
+        (rawId !== id ? await getContact(userId, rawId) : null);
+      const softStopped = !hardBlocked && contact?.status === "stop";
       return {
         id,
-        name: p.name || chatIdToDisplay(id),
+        name: p.name || contact?.name || chatIdToDisplay(id),
         rawId,
-        isSelf: !!ownerId && (chatIdsMatch(ownerId, id) || chatIdsMatch(ownerId, rawId)),
-        blocked: (await isContactBlocked(userId, id)) || (await isContactBlocked(userId, rawId)),
+        isSelf,
+        hardBlocked,
+        softStopped,
+        enrolled,
       };
     })
   );
 
-  const alreadyEnrolled = await getActiveCampaignTargetIds(userId, automationId);
+  const selfCount = classified.filter((p) => p.isSelf).length;
+  const hardBlockedCount = classified.filter((p) => !p.isSelf && p.hardBlocked).length;
+  const enrolledCount = classified.filter((p) => !p.isSelf && !p.hardBlocked && p.enrolled).length;
+  const softStoppedCount = classified.filter(
+    (p) => !p.isSelf && !p.hardBlocked && !p.enrolled && p.softStopped
+  ).length;
 
-  const participants = eligible
-    .filter((p) => {
-      if (p.isSelf) return false;
-      if (p.blocked) return false;
-      for (const tid of alreadyEnrolled) {
-        if (chatIdsMatch(tid, p.id) || chatIdsMatch(tid, p.rawId)) return false;
-      }
-      return true;
-    })
+  // Nouvelle campagne groupe : on réinclut les contacts en statut « stop »
+  // (souvent issus d'une ancienne prospection) et on les réactive pour pouvoir envoyer.
+  // Les exclusions explicites (blocked_contacts) restent respectées.
+  const participants = classified
+    .filter((p) => !p.isSelf && !p.hardBlocked && !p.enrolled)
     .slice(0, maxMembers);
 
   if (!group.participants.length) {
     await failAutomationNoTargets(
       userId,
       automationId,
-      `Aucun membre récupéré depuis « ${group.subject || auto.config.groupName || groupId} ». ` +
-        "Vérifiez que WhatsApp est autorisé (état authorized) et que vous êtes membre du groupe."
+      `Aucun membre récupéré depuis « ${groupLabel} ». ` +
+        "Vérifiez que WhatsApp est autorisé (état open) et que vous êtes membre du groupe."
     );
   }
 
   if (!participants.length) {
+    const parts = [
+      `${group.participants.length} membre(s) dans le groupe`,
+      selfCount ? `${selfCount} = vous (exclu)` : null,
+      hardBlockedCount ? `${hardBlockedCount} bloqué(s) explicitement` : null,
+      enrolledCount ? `${enrolledCount} déjà dans une autre campagne active` : null,
+      softStoppedCount ? `${softStoppedCount} stoppé(s)` : null,
+    ].filter(Boolean);
     await failAutomationNoTargets(
       userId,
       automationId,
-      "Aucun membre éligible (tous bloqués ou liste vide après filtrage)."
+      `Aucun membre éligible dans « ${groupLabel} » (${parts.join(" · ")}). ` +
+        "Ajoutez d'autres membres au groupe, ou retirez le numéro de la liste de blocage / des campagnes actives."
+    );
+  }
+
+  const reactivated: string[] = [];
+  for (const p of participants) {
+    if (!p.softStopped) continue;
+    try {
+      await unblockContact(userId, p.id);
+      reactivated.push(p.name || chatIdToDisplay(p.id));
+    } catch {
+      /* best effort — assertCanSendTo échouera sinon au moment de l'envoi */
+    }
+  }
+  if (reactivated.length) {
+    await addAutomationLog(
+      userId,
+      automationId,
+      "info",
+      `Contact(s) réactivé(s) pour cette campagne : ${reactivated.join(", ")}`
     );
   }
 
@@ -382,7 +434,7 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
     userId,
     automationId,
     "info",
-    `${added} membre(s) ajouté(s) depuis le groupe « ${group.subject || auto.config.groupName || groupId} »`
+    `${added} membre(s) ajouté(s) depuis le groupe « ${groupLabel} »`
   );
 
   if (added === 0) {

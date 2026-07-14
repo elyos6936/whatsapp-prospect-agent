@@ -3270,9 +3270,11 @@ export async function executeTool(userId: number, name: string, args: Record<str
           return JSON.stringify({ error: msg });
         }
         const groupId = await resolveGroupId(userId, String(args.group_id));
-        const group = await findGroupByNameOrId(userId, groupId);
+        // listWhatsAppGroups est mis en cache — évite un 2e aller-retour Evolution.
+        const groups = await listWhatsAppGroups(userId);
+        const matched = groups.find((g) => g.id === groupId);
         config.groupId = groupId;
-        config.groupName = group?.name ?? String(args.group_id);
+        config.groupName = matched?.name ?? String(args.group_id);
       }
 
       if (type === "keyword_sales") {
@@ -3359,7 +3361,6 @@ export async function executeTool(userId: number, name: string, args: Record<str
           return JSON.stringify({ error: "groupId ou initialMessage manquant dans la config." });
         }
         try {
-          await requireEvolutionConnected(userId, "l'activation de la campagne");
           await updateAutomationStatus(userId, id, "active");
           targetsAdded = await bootstrapGroupProspectTargets(userId, id);
         } catch (err) {

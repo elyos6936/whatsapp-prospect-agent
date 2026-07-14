@@ -399,11 +399,28 @@ export async function diagnoseEvolutionApi(userId: number): Promise<{
   };
 }
 
+const CONNECTION_STATE_CACHE = new Map<
+  number,
+  { result: Awaited<ReturnType<typeof testEvolutionConnection>>; expiresAt: number }
+>();
+const CONNECTION_STATE_TTL_MS = 20_000;
+
+const GROUPS_LIST_CACHE = new Map<
+  number,
+  { groups: Array<{ id: string; name: string; type: string }>; expiresAt: number }
+>();
+const GROUPS_LIST_TTL_MS = 60_000;
+
 export async function testEvolutionConnection(userId: number): Promise<{
   connected: boolean;
   state: string;
   message: string;
 }> {
+  const cached = CONNECTION_STATE_CACHE.get(userId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.result;
+  }
+
   const creds = await getEvolutionCredentials(userId);
   if (!creds) {
     return { connected: false, state: "not_configured", message: "Evolution API non configurée." };
@@ -416,7 +433,7 @@ export async function testEvolutionConnection(userId: number): Promise<{
     );
     const state = data.instance?.state ?? "unknown";
     const ok = state === "open";
-    return {
+    const result = {
       connected: ok,
       state,
       message: ok
@@ -427,6 +444,8 @@ export async function testEvolutionConnection(userId: number): Promise<{
             ? "WhatsApp déconnecté — reconnectez l'instance Evolution API."
             : `État WhatsApp : ${state}`,
     };
+    CONNECTION_STATE_CACHE.set(userId, { result, expiresAt: Date.now() + CONNECTION_STATE_TTL_MS });
+    return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     return { connected: false, state: "error", message: msg };
@@ -517,7 +536,7 @@ async function fetchGroupNameMap(creds: EvolutionCredentials): Promise<Map<strin
   try {
     const data = await evolutionFetch<unknown>(creds, `/group/fetchAllGroups/${creds.instanceName}`, {
       query: { getParticipants: "false" },
-      timeoutMs: 90_000,
+      timeoutMs: 45_000,
     });
     for (const g of normalizeEvolutionRows(data)) {
       const id = String(g.id || g.remoteJid || g.jid || "");
@@ -581,32 +600,39 @@ async function resolveChatDisplayName(
 }
 
 export async function listWhatsAppGroups(userId: number): Promise<Array<{ id: string; name: string; type: string }>> {
+  const cached = GROUPS_LIST_CACHE.get(userId);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.groups;
+  }
+
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const groupNames = await fetchGroupNameMap(creds);
+  let out: Array<{ id: string; name: string; type: string }>;
   if (groupNames.size > 0) {
-    return [...groupNames.entries()].map(([id, name]) => ({ id, name, type: "group" }));
+    out = [...groupNames.entries()].map(([id, name]) => ({ id, name, type: "group" }));
+  } else {
+    const data = await evolutionFetch<unknown>(
+      creds,
+      `/group/fetchAllGroups/${creds.instanceName}`,
+      { query: { getParticipants: "false" }, timeoutMs: 45_000 }
+    );
+
+    const rows = normalizeEvolutionRows(data);
+    out = [];
+
+    for (const g of rows) {
+      const id = String(g.id || g.remoteJid || g.jid || "");
+      if (!id.endsWith("@g.us")) continue;
+      const name =
+        pickReadableName(g.subject, g.name, g.pushName) ||
+        (await resolveGroupDisplayName(creds, id, groupNames));
+      out.push({ id, name, type: "group" });
+    }
   }
 
-  const data = await evolutionFetch<unknown>(
-    creds,
-    `/group/fetchAllGroups/${creds.instanceName}`,
-    { query: { getParticipants: "false" }, timeoutMs: 90_000 }
-  );
-
-  const rows = normalizeEvolutionRows(data);
-  const out: Array<{ id: string; name: string; type: string }> = [];
-
-  for (const g of rows) {
-    const id = String(g.id || g.remoteJid || g.jid || "");
-    if (!id.endsWith("@g.us")) continue;
-    const name =
-      pickReadableName(g.subject, g.name, g.pushName) ||
-      (await resolveGroupDisplayName(creds, id, groupNames));
-    out.push({ id, name, type: "group" });
-  }
-
+  GROUPS_LIST_CACHE.set(userId, { groups: out, expiresAt: Date.now() + GROUPS_LIST_TTL_MS });
   return out;
 }
 
@@ -736,33 +762,62 @@ export async function getGroupMembers(userId: number, groupId: string): Promise<
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const groupJid = groupId.trim();
-  const [info, participantsData] = await Promise.all([
-    evolutionFetch<{ group?: { id?: string; subject?: string; size?: number } }>(
+  const [infoRaw, participantsData] = await Promise.all([
+    evolutionFetch<Record<string, unknown>>(
       creds,
       `/group/findGroupInfos/${creds.instanceName}`,
-      { query: { groupJid } }
-    ).catch(() => ({ group: { id: groupJid, subject: groupJid } })),
+      { query: { groupJid }, timeoutMs: 25_000 }
+    ).catch(() => ({ id: groupJid, subject: groupJid }) as Record<string, unknown>),
     evolutionFetch<{ participants?: Array<{ id?: string; isAdmin?: boolean; isSuperAdmin?: boolean }> }>(
       creds,
       `/group/participants/${creds.instanceName}`,
-      { query: { groupJid } }
+      { query: { groupJid }, timeoutMs: 25_000 }
     ),
   ]);
 
-  const groupInfo = info.group ?? { id: groupJid, subject: groupJid };
-  const participants = (participantsData.participants ?? []).map((p) => {
-    const raw = (p as { phoneNumber?: string; id?: string }).phoneNumber || p.id || "";
-    return {
-      id: normalizeGroupParticipantId(raw),
-      name: undefined,
-      isAdmin: Boolean(p.isAdmin || (p as { admin?: string | null }).admin),
-    };
-  });
+  const nested =
+    infoRaw.group && typeof infoRaw.group === "object"
+      ? (infoRaw.group as Record<string, unknown>)
+      : null;
+  const groupInfo = {
+    id: String(nested?.id ?? infoRaw.id ?? groupJid),
+    subject: String(nested?.subject ?? infoRaw.subject ?? groupJid).trim() || groupJid,
+    size:
+      typeof nested?.size === "number"
+        ? nested.size
+        : typeof infoRaw.size === "number"
+          ? infoRaw.size
+          : undefined,
+  };
+
+  // Prefer phoneNumber (réel) over @lid id — Evolution v2 renvoie souvent les deux.
+  const participants = (participantsData.participants ?? [])
+    .map((p) => {
+      const row = p as {
+        phoneNumber?: string;
+        id?: string;
+        name?: string;
+        isAdmin?: boolean;
+        admin?: string | null;
+      };
+      const phone = typeof row.phoneNumber === "string" ? row.phoneNumber.trim() : "";
+      const lid = typeof row.id === "string" ? row.id.trim() : "";
+      const preferred =
+        phone && (phone.endsWith("@s.whatsapp.net") || phone.endsWith("@c.us"))
+          ? phone
+          : lid || phone;
+      return {
+        id: normalizeGroupParticipantId(preferred),
+        name: pickReadableName(row.name) || undefined,
+        isAdmin: Boolean(row.isAdmin || row.admin),
+      };
+    })
+    .filter((p) => p.id);
 
   return {
     groupId: groupInfo.id || groupJid,
     subject: groupInfo.subject || groupJid,
-    size: "size" in groupInfo && groupInfo.size != null ? groupInfo.size : participants.length,
+    size: groupInfo.size != null ? groupInfo.size : participants.length,
     participants,
   };
 }
