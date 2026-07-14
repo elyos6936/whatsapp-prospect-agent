@@ -152,7 +152,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
   // --- Constructeur d'automatisation (page Automatisation → Manuel) : chat IA dédié ---
   app.get("/api/automations/builder/history", async (request) => {
     const userId = requireUserId(request);
-    const messages = await getRecentAgentMessages(userId, 100, "automation");
+    const messages = await getRecentAgentMessages(userId, 100);
     return { messages };
   });
 
@@ -163,25 +163,21 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       return reply.status(400).send({ error: "Le champ « message » est requis." });
     }
 
-    await saveAgentMessage(userId, "user", message, "automation");
+    await saveAgentMessage(userId, "user", message);
     try {
-      const assistantReply = await chatWithAgent(userId, message, {
-        channel: "automation",
-        origin: "manual",
-        builder: true,
-      });
-      const saved = await saveAgentMessage(userId, "assistant", assistantReply, "automation");
+      const assistantReply = await chatWithAgent(userId, message);
+      const saved = await saveAgentMessage(userId, "assistant", assistantReply);
       return { id: saved.id, reply: saved.content, created_at: saved.created_at };
     } catch (err) {
       const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
-      const saved = await saveAgentMessage(userId, "assistant", `❌ ${errorText}`, "automation");
+      const saved = await saveAgentMessage(userId, "assistant", `❌ ${errorText}`);
       return { id: saved.id, reply: saved.content, created_at: saved.created_at, error: true };
     }
   });
 
   app.delete("/api/automations/builder/history", async (request) => {
     const userId = requireUserId(request);
-    await clearAgentConversation(userId, "automation");
+    await clearAgentConversation(userId);
     return { ok: true };
   });
 

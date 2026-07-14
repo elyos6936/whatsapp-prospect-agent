@@ -30,6 +30,54 @@ function hasSimulationThread(text: string): boolean {
   return Boolean(quotes && quotes.length >= 2);
 }
 
+const SIMULATION_ADJUSTMENT_FOOTER =
+  /Qu'est-ce que tu veux ajuster dans le ton, l'accroche ou l'offre/i;
+
+function recentHistoryHasSimulation(history: AgentMessage[]): boolean {
+  for (let i = history.length - 1; i >= 0 && i >= history.length - 6; i--) {
+    const m = history[i];
+    if (m?.role !== "assistant") continue;
+    if (hasSimulationThread(m.content) || SIMULATION_ADJUSTMENT_FOOTER.test(m.content)) return true;
+  }
+  return false;
+}
+
+/** L'utilisateur valide la simulation (pas une demande de modification). */
+function isSimulationApproval(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return false;
+  if (/\b(modifie|change|ajuste|autre|recommence|refais|retire|enlève|enleve|moins|plus court|plus long)\b/i.test(t)) {
+    return false;
+  }
+  return (
+    /^(c'est bon|c bon|cest bon|ok\.?|parfait\.?|nickel\.?|top\.?|validé\.?|validé|ca me va|ça me va|good|yes|oui\.?)(\s|$|pour|,)/i.test(
+      t
+    ) ||
+    /\b(c'est bon pour moi|ca me convient|ça me convient|rien à changer|pas de changement|comme ça|comme ca)\b/i.test(
+      t
+    )
+  );
+}
+
+function userWantsSimulationChange(text: string): boolean {
+  return /\b(modifie|change|ajuste|autre|recommence|refais|ton|accroche|message|relance|plus court|plus long|moins agressif|moins direct)\b/i.test(
+    text
+  );
+}
+
+const ACTIVATION_AFTER_SIMULATION_NUDGE =
+  "L'utilisateur a VALIDÉ la simulation déjà affichée. INTERDIT de rappeler show_campaign_simulation ou de réécrire le fil Toi/Prospect. Étape suivante UNIQUEMENT :\n" +
+  "1. Résume en 2-3 lignes la campagne (cible, message d'ouverture, relances si configurées).\n" +
+  "2. Demande explicitement : « Je lance la campagne maintenant ? »\n" +
+  "3. Si l'utilisateur confirme (oui / vas-y / active / lance) → appelle activate_automation avec l'automationId du brouillon.\n" +
+  "Ne répète jamais la simulation.";
+
+function shouldBlockDuplicateSimulation(history: AgentMessage[], userMessage: string): boolean {
+  if (!recentHistoryHasSimulation(history)) return false;
+  if (userWantsSimulationChange(userMessage)) return false;
+  return true;
+}
+
 /**
  * Détecte une annonce de simulation / aperçu de conversation SANS le fil.
  * Couvre aussi « Voici comment la conversation pourrait se dérouler… : » (bug récurrent).
@@ -114,6 +162,10 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
     messages.push({ role: "user", content: userMessage });
   }
 
+  if (isSimulationApproval(userMessage) && recentHistoryHasSimulation(history)) {
+    messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
+  }
+
   let rounds = 0;
   let simFixAttempts = 0;
 
@@ -160,6 +212,23 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
         }
 
         let result: string;
+        if (
+          toolCall.function.name === "show_campaign_simulation" &&
+          shouldBlockDuplicateSimulation(history, userMessage)
+        ) {
+          result = JSON.stringify({
+            error:
+              "Simulation déjà affichée et validée. Ne la répète pas : résume la campagne et demande « Je lance la campagne ? », ou appelle activate_automation si l'utilisateur confirme.",
+          });
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: result,
+          });
+          messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
+          continue;
+        }
+
         try {
           result = await executeTool(userId, toolCall.function.name, args);
         } catch (err) {
@@ -204,6 +273,17 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
         content:
           "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète dans UN seul message : si c'est une simulation, appelle l'outil show_campaign_simulation (3-4 tours Toi/Prospect) OU écris directement le fil « Toi → «\u00A0…\u00A0» » / « Prospect → «\u00A0…\u00A0» ». Ne termine JAMAIS sur «\u00A0:\u00A0».",
       });
+      continue;
+    }
+
+    // Garde-fou : ne pas répéter une simulation déjà validée.
+    if (
+      shouldBlockDuplicateSimulation(history, userMessage) &&
+      (hasSimulationThread(text) || isBrokenSimulationPreview(text)) &&
+      rounds < MAX_TOOL_ROUNDS
+    ) {
+      messages.push({ role: "assistant", content: text });
+      messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
       continue;
     }
 
