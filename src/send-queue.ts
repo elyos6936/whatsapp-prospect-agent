@@ -1,4 +1,5 @@
 import {
+  addAutomationLog,
   cancelPendingSendQueue,
   countOutboundToday,
   formatLocalDateTime,
@@ -14,6 +15,8 @@ import { listActiveUserIds } from "./users.js";
 
 const DEFAULT_QUIET_START = 22;
 const DEFAULT_QUIET_END = 7;
+/** Priorité campagne (openers) : envoi immédiat même hors horaires « calmes ». */
+const CAMPAIGN_OPENER_MIN_PRIORITY = 6;
 
 let queueRunning = false;
 
@@ -23,11 +26,26 @@ function isQuietHours(start = DEFAULT_QUIET_START, end = DEFAULT_QUIET_END): boo
   return hour >= start && hour < end;
 }
 
+function bypassQuietHours(item: QueueItem): boolean {
+  return (item.priority ?? 0) >= CAMPAIGN_OPENER_MIN_PRIORITY;
+}
+
 async function rescheduleQuiet(userId: number, item: QueueItem): Promise<void> {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
   tomorrow.setHours(8, 30, 0, 0);
-  await rescheduleSendQueueItem(userId, item.id, formatLocalDateTime(tomorrow));
+  const when = formatLocalDateTime(tomorrow);
+  await rescheduleSendQueueItem(userId, item.id, when);
+  const label = item.recipient_label || chatIdToDisplay(item.recipient);
+  console.log(`🌙 Queue #${item.id} → ${label} reporté à ${when} (heures calmes)`);
+  if (item.automation_id) {
+    await addAutomationLog(
+      userId,
+      item.automation_id,
+      "info",
+      `Envoi à ${label} reporté à ${when} (heures calmes 22h–7h).`
+    );
+  }
 }
 
 async function processSendQueueForUser(userId: number, limit: number): Promise<number> {
@@ -37,7 +55,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
   const items = await getDueQueueItems(userId, limit);
 
   for (const item of items) {
-    if (isQuietHours()) {
+    if (isQuietHours() && !bypassQuietHours(item)) {
       await rescheduleQuiet(userId, item);
       continue;
     }
@@ -59,9 +77,21 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       await markQueueSent(userId, item.id);
       sent++;
       console.log(`📤 Queue #${item.id} → ${chatIdToDisplay(item.recipient)}`);
+      if (item.automation_id) {
+        const label = item.recipient_label || chatIdToDisplay(item.recipient);
+        await addAutomationLog(userId, item.automation_id, "success", `Message envoyé à ${label}`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await markQueueFailed(userId, item.id, msg);
+      if (item.automation_id) {
+        await addAutomationLog(
+          userId,
+          item.automation_id,
+          "error",
+          `Échec envoi à ${chatIdToDisplay(item.recipient)} : ${msg.slice(0, 160)}`
+        );
+      }
     }
   }
 

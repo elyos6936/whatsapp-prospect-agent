@@ -110,11 +110,11 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
         userId,
         auto.id,
         "success",
-        "Tous les premiers messages ont été envoyés. Campagne toujours active — réponses auto en cours."
+        "Tous les premiers messages sont en file / envoyés. Campagne toujours active — réponses auto en cours."
       );
       await updateAutomationStats(userId, auto.id, {
         openersDone: true,
-        report: `Premiers messages envoyés (${fresh?.stats.contacted ?? 0}). Conversations en cours.`,
+        report: `Premiers messages en file (${fresh?.stats.contacted ?? 0}). Conversations en cours.`,
         lastActionAt: new Date().toISOString(),
       });
     }
