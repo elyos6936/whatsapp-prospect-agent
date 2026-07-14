@@ -69,9 +69,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     },
   });
 
-  if (res.status === 401) {
+  if (res.status === 401 && !path.startsWith('/api/auth/')) {
     emitAuthLogout();
-    throw new ApiError('Session expirée. Reconnectez-vous.', 401);
   }
 
   if (!res.ok) {
@@ -82,7 +81,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* ignore */
     }
-    throw new ApiError(message, res.status);
+    throw new ApiError(
+      res.status === 401 && !path.startsWith('/api/auth/')
+        ? 'Session expirée. Reconnectez-vous.'
+        : message,
+      res.status,
+    );
   }
 
   if (res.status === 204) return undefined as T;

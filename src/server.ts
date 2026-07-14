@@ -54,14 +54,31 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // bodyLimit relevé pour accepter les uploads base64 (fichiers du chat, audio de dictée vocale).
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
-const corsOrigins = (process.env.CORS_ORIGINS || "https://klanvio.netlify.app,http://localhost:3000,http://localhost:8888")
+const corsOrigins = (process.env.CORS_ORIGINS || "https://klanvio.netlify.app,https://klanvio1.netlify.app,http://localhost:3000,http://localhost:5174,http://localhost:8888")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
+function isAllowedCorsOrigin(origin: string): boolean {
+  if (corsOrigins.includes("*") || corsOrigins.includes(origin)) return true;
+  // Tout site Netlify (prod, alias, previews) — l'API est multi-tenant côté auth.
+  try {
+    const host = new URL(origin).hostname;
+    return host === "netlify.app" || host.endsWith(".netlify.app");
+  } catch {
+    return false;
+  }
+}
+
 await app.register(fastifyCors, {
-  origin: corsOrigins.length === 1 && corsOrigins[0] === "*" ? true : corsOrigins,
+  origin: (origin, cb) => {
+    if (!origin) return cb(null, true);
+    if (isAllowedCorsOrigin(origin)) return cb(null, true);
+    cb(null, false);
+  },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"],
+  credentials: true,
 });
 
 await app.register(fastifyStatic, {
