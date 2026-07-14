@@ -150,7 +150,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       // mais on garde un filet au cas où.
       const msg = err instanceof Error ? err.message : String(err);
       const short = /429|rate limit|TPM|tokens per min/i.test(msg)
-        ? "limite de vitesse OpenAI momentanée"
+        ? "limite de vitesse IA momentanée"
         : msg.slice(0, 160);
       await addAutomationLog(
         userId,

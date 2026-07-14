@@ -17,10 +17,14 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       SUPABASE_URL: ${SUPABASE_URL}
       JWT_SECRET: ${JWT_SECRET}
+      LLM_PROVIDER: ${LLM_PROVIDER:-deepseek}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-v4-pro}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      OPENAI_MODEL: ${OPENAI_MODEL:-deepseek-v4-pro}
       EVOLUTION_API_BASE_URL: ${EVOLUTION_API_BASE_URL}
       EVOLUTION_API_KEY: ${EVOLUTION_API_KEY}
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
-      CORS_ORIGINS: ${CORS_ORIGINS:-https://klanvio.netlify.app}
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://klanvio.netlify.app,https://klanvio1.netlify.app}
       PUBLIC_URL: ${PUBLIC_URL:-https://klanvio-api.srv1820011.hstgr.cloud}

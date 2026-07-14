@@ -3,6 +3,7 @@ import { config } from "./config.js";
 import { getAppSettings, getContactChatHistory } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
+import { createLlmClient, llmProviderLabel } from "./llm.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un expert WhatsApp business (20+ ans) qui répond aux messages entrants pour un entrepreneur en Afrique francophone.
@@ -87,8 +88,8 @@ export function isStopRequest(text: string): boolean {
 
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
-  if (!key) throw new Error("Clé OpenAI manquante.");
-  return new OpenAI({ apiKey: key });
+  if (!key) throw new Error(`Clé ${llmProviderLabel()} manquante.`);
+  return createLlmClient(key);
 }
 
 async function formatHistory(
@@ -241,7 +242,7 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max). Directe, humaine, selon 
 
   const reply = response?.choices[0]?.message?.content?.trim();
   if (!reply) {
-    throw new Error("OpenAI n'a pas généré de réponse.");
+    throw new Error(`${llmProviderLabel()} n'a pas généré de réponse.`);
   }
 
   return enforceWhatsAppStyle(reply, {

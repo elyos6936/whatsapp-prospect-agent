@@ -5,6 +5,7 @@ import { getAppSettings, getRecentAgentMessages, listAutomations, type AgentMess
 import { testEvolutionConnection } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
+import { createLlmClient, llmProviderLabel } from "./llm.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -108,10 +109,10 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) {
     throw new Error(
-      "Clé OpenAI manquante. Ouvrez « Connexions » et renseignez votre clé API OpenAI."
+      `Clé ${llmProviderLabel()} manquante. Définissez DEEPSEEK_API_KEY (ou OPENAI_API_KEY) sur le serveur.`
     );
   }
-  return new OpenAI({ apiKey: key });
+  return createLlmClient(key);
 }
 
 async function buildBusinessContext(
@@ -243,7 +244,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
 
     const choice = response.choices[0];
     if (!choice?.message) {
-      throw new Error("Réponse OpenAI vide.");
+      throw new Error(`Réponse ${llmProviderLabel()} vide.`);
     }
 
     const assistantMsg = choice.message;

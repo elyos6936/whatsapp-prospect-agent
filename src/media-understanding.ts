@@ -1,15 +1,15 @@
 /**
- * Interprétation des médias entrants WhatsApp avec OpenAI.
+ * Interprétation des médias entrants WhatsApp.
  *
- * - Notes vocales / audio → transcription Whisper
- * - Images               → description GPT-4o mini (vision)
- * - Vidéos, documents, stickers → placeholder uniquement (pas de coût OpenAI)
+ * Sur OpenAI : Whisper (audio) + vision (images).
+ * Sur DeepSeek : pas d'API Whisper/vision équivalente → on saute (pas de coût inutile).
  */
 
 import OpenAI, { toFile } from "openai";
 import { getMessageMediaBase64 } from "./evolutionapi.js";
 import { getAppSettings } from "./db.js";
 import { config } from "./config.js";
+import { createLlmClient } from "./llm.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -149,7 +149,7 @@ export async function transcribeChatAudio(
 ): Promise<string> {
   const apiKey = await resolveOpenAIKey(userId);
   if (!apiKey) {
-    throw new Error("Aucune clé OpenAI configurée pour la transcription.");
+    throw new Error("Aucune clé IA configurée pour la transcription.");
   }
   const text = await transcribeAudio(apiKey, base64, mimetype || "audio/webm");
   return text ?? "";
@@ -162,11 +162,15 @@ async function transcribeAudio(
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  const openai = new OpenAI({ apiKey });
+  // DeepSeek n'expose pas Whisper — éviter un appel facturé / en erreur.
+  if (config.llmProvider === "deepseek") {
+    console.warn("[media] Transcription audio indisponible avec DeepSeek — note vocale ignorée.");
+    return null;
+  }
+  const openai = new OpenAI({ apiKey, baseURL: config.llmBaseUrl });
   const clean = baseMimetype(mimetype);
   const ext = mimeToExt(clean) ?? "ogg";
   const buffer = Buffer.from(base64, "base64");
-  // Whisper attend un type MIME propre (sans « ; codecs=… ») et une extension cohérente.
   const file = await toFile(buffer, `audio.${ext}`, { type: clean || "audio/ogg" });
 
   const result = await openai.audio.transcriptions.create({
@@ -184,7 +188,11 @@ async function describeImage(
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  const openai = new OpenAI({ apiKey });
+  if (config.llmProvider === "deepseek") {
+    console.warn("[media] Description d'image indisponible avec DeepSeek — image ignorée.");
+    return null;
+  }
+  const openai = createLlmClient(apiKey);
   const clean = baseMimetype(mimetype) || "image/jpeg";
   const dataUrl = `data:${clean};base64,${base64}`;
 

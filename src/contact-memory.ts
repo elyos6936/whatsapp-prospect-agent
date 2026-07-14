@@ -1,4 +1,3 @@
-import OpenAI from "openai";
 import { config } from "./config.js";
 import {
   getAppSettings,
@@ -6,6 +5,7 @@ import {
   getContactChatHistory,
   updateContactMemory,
 } from "./db.js";
+import { createLlmClient } from "./llm.js";
 
 export async function getMemoryContextBlock(userId: number, chatId: string): Promise<string> {
   const contact = await getContact(userId, chatId);
@@ -31,7 +31,7 @@ export async function refreshContactMemory(userId: number, chatId: string): Prom
     .map((m) => `${m.direction === "entrant" ? "Prospect" : "Moi"}: ${m.body}`)
     .join("\n");
 
-  const client = new OpenAI({ apiKey: key });
+  const client = createLlmClient(key);
   const response = await client.chat.completions.create({
     model: config.openaiModel,
     messages: [

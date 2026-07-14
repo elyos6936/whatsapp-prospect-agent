@@ -21,10 +21,28 @@ export const config = {
   databaseUrl: process.env.DATABASE_URL?.trim() || "",
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
-  openaiModel: process.env.OPENAI_MODEL?.trim() || "gpt-4o",
+  /**
+   * Fournisseur LLM. DeepSeek = API compatible OpenAI (baseURL + modèle).
+   * Clé : DEEPSEEK_API_KEY prioritaire, sinon OPENAI_API_KEY (rétrocompat).
+   */
+  llmProvider: (process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek") as "deepseek" | "openai",
+  llmBaseUrl: (
+    process.env.LLM_BASE_URL?.trim() ||
+    (process.env.LLM_PROVIDER?.trim().toLowerCase() === "openai"
+      ? "https://api.openai.com/v1"
+      : "https://api.deepseek.com")
+  ).replace(/\/$/, ""),
+  /** Modèle chat + tool calling. Défaut DeepSeek V4 Pro (qualité / tools). */
+  openaiModel:
+    process.env.OPENAI_MODEL?.trim() ||
+    process.env.LLM_MODEL?.trim() ||
+    (process.env.LLM_PROVIDER?.trim().toLowerCase() === "openai" ? "gpt-4o" : "deepseek-v4-pro"),
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
   defaultEvolutionBaseUrl: "http://localhost:8080",
-  envOpenAiKey: process.env.OPENAI_API_KEY?.trim() || "",
+  envOpenAiKey:
+    process.env.DEEPSEEK_API_KEY?.trim() ||
+    process.env.OPENAI_API_KEY?.trim() ||
+    "",
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),
   envEvolutionApiKey: process.env.EVOLUTION_API_KEY?.trim() || "",
 } as const;

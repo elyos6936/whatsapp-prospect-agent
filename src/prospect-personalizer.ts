@@ -1,7 +1,7 @@
-import OpenAI from "openai";
 import { config } from "./config.js";
 import { getAppSettings } from "./db.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
+import { createLlmClient, llmProviderLabel } from "./llm.js";
 
 export async function generatePersonalizedOpener(userId: number, input: {
   template: string;
@@ -12,7 +12,7 @@ export async function generatePersonalizedOpener(userId: number, input: {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) return personalizeFallback(input);
 
-  const client = new OpenAI({ apiKey: key });
+  const client = createLlmClient(key);
   try {
     const response = await callOpenAiWithRetry(
       () =>
@@ -43,7 +43,7 @@ Génère UNIQUEMENT le texte du message.`,
     return text || personalizeFallback(input);
   } catch (err) {
     console.warn(
-      `[personalizer] fallback après échec OpenAI: ${describeOpenAiError(err)}`
+      `[personalizer] fallback après échec ${llmProviderLabel()}: ${describeOpenAiError(err)}`
     );
     return personalizeFallback(input);
   }

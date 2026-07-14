@@ -168,8 +168,8 @@ app.get("/api/contacts/:phone/thread", async (request, reply) => {
 });
 
 app.post("/api/settings/openai", async () => {
-  // Clé OpenAI gérée par la plateforme (variable d'environnement).
-  return { ok: true, message: "Clé OpenAI gérée par la plateforme." };
+  // Clé LLM gérée par la plateforme (DEEPSEEK_API_KEY / OPENAI_API_KEY).
+  return { ok: true, message: "Clé IA gérée par la plateforme (DeepSeek)." };
 });
 
 app.post("/api/settings/evolution", async () => {
@@ -437,7 +437,8 @@ try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   console.log(`\n🚀 WhatsApp Agent : http://localhost:${config.port}`);
   console.log(`🕐 Fuseau horaire : ${config.timezone} (process.env.TZ=${process.env.TZ})`);
-  console.log(`   Ouvrez l'app → Connexions → configurez OpenAI + Evolution API\n`);
+  console.log(`   LLM : ${config.llmProvider} (${config.openaiModel}) @ ${config.llmBaseUrl}`);
+  console.log(`   Ouvrez l'app → Connexions → Evolution API + WhatsApp QR\n`);
   startNotificationPoller(3000);
   startScheduler(5000);
   startAutomationEngine(15000);

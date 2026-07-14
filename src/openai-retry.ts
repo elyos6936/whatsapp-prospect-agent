@@ -1,7 +1,9 @@
 import OpenAI from "openai";
+import { llmProviderLabel } from "./llm.js";
 
 const DEFAULT_MAX_RETRIES = 4;
 const MAX_BACKOFF_MS = 60_000;
+const PROVIDER = () => llmProviderLabel();
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -18,7 +20,7 @@ export function isQuotaError(err: unknown): boolean {
   return code === "insufficient_quota" || /quota|billing|insufficient/i.test(err.message || "");
 }
 
-/** Délai conseillé par OpenAI (headers ou texte « try again in … »). */
+/** Délai conseillé par le fournisseur (headers ou texte « try again in … »). */
 function retryAfterMs(err: unknown): number | null {
   const message = err instanceof Error ? err.message : "";
   const isTpm = /tokens per min|TPM|rate limit/i.test(message);
@@ -51,17 +53,12 @@ function retryAfterMs(err: unknown): number | null {
     }
   }
 
-  // Sans délai explicite : pour un TPM saturé, attendre un peu avant de retenter.
   if (isTpm) return 3000;
   return null;
 }
 
 /**
- * Exécute un appel OpenAI en gérant les erreurs transitoires (429/500/503).
- * - Respecte le header Retry-After quand OpenAI l'envoie.
- * - Back-off exponentiel plafonné + jitter sinon.
- * - N'insiste PAS sur une erreur de quota (crédit épuisé) : c'est inutile,
- *   on remonte immédiatement l'erreur pour afficher un message clair.
+ * Exécute un appel LLM en gérant les erreurs transitoires (429/500/503).
  */
 export async function callOpenAiWithRetry<T>(
   fn: () => Promise<T>,
@@ -87,29 +84,29 @@ export async function callOpenAiWithRetry<T>(
   }
 }
 
-/** Message clair et actionnable pour l'utilisateur à partir d'une erreur OpenAI. */
+/** Message clair pour l'utilisateur à partir d'une erreur LLM. */
 export function describeOpenAiError(err: unknown): string {
+  const name = PROVIDER();
   if (err instanceof OpenAI.APIError) {
     if (err.status === 401) {
-      return "Clé API OpenAI invalide (401). Vérifiez votre clé dans Connexions.";
+      return `Clé API ${name} invalide (401). Vérifiez DEEPSEEK_API_KEY / OPENAI_API_KEY sur le serveur.`;
     }
     if (isQuotaError(err)) {
       return (
-        "Crédit OpenAI épuisé (quota atteint). Ce n'est pas une simple limite de vitesse : " +
-        "il faut recharger le solde du compte OpenAI (facturation) ou utiliser une clé disposant de crédit. " +
-        "Dès que le crédit est rétabli, tout refonctionne sans rien changer ici."
+        `Crédit ${name} épuisé (quota atteint). Rechargez le solde du compte ${name} ` +
+        `ou utilisez une clé disposant de crédit.`
       );
     }
     if (err.status === 429) {
       return (
-        "Trop de requêtes en peu de temps (limite de vitesse OpenAI). " +
-        "Patientez quelques secondes puis réessayez. Si cela revient souvent, augmentez le palier (tier) de votre compte OpenAI."
+        `Trop de requêtes en peu de temps (limite de vitesse ${name}). ` +
+        `Patientez quelques secondes puis réessayez.`
       );
     }
     if (err.status === 500 || err.status === 503) {
-      return "OpenAI est temporairement indisponible. Réessayez dans un moment.";
+      return `${name} est temporairement indisponible. Réessayez dans un moment.`;
     }
-    return `Erreur OpenAI (${err.status}) : ${err.message}`;
+    return `Erreur ${name} (${err.status}) : ${err.message}`;
   }
   if (err instanceof Error) return err.message;
   return String(err);
