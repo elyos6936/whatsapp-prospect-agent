@@ -1,6 +1,7 @@
 [build]
   base = "web"
-  publish = "web/dist"
+  # publish est relatif à base → "dist" = web/dist, pas web/web/dist
+  publish = "dist"
   command = "npm install && npm run build"
 
 [build.environment]
