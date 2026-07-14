@@ -90,6 +90,11 @@ import {
   pauseAutomation,
   resumeAutomation,
   updateAutomationConfig,
+  updateAutomationMeta,
+  findReusableAutomation,
+  haltAutomationMessaging,
+  resumeAutomationMessaging,
+  setAutoReplyEnabled,
   deleteAutomation,
   listProspectedContacts,
   type AutomationStatus,
@@ -1238,10 +1243,18 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "create_automation",
       description:
-        "Crée une campagne WhatsApp en BROUILLON (draft) — visible sur Automatisation mais PAS active. Utiliser pour prospection groupe ou closing e-commerce. L'activation se fait via activate_automation après simulation validée et confirmation utilisateur.",
+        "Crée OU met à jour une campagne WhatsApp en BROUILLON. " +
+        "Si l'utilisateur veut MODIFIER une campagne existante : passe automation_id (obligatoire) — NE CRÉE PAS une nouvelle. " +
+        "Sans automation_id, réutilise automatiquement un brouillon du même type/groupe s'il en existe un, pour éviter les doublons. " +
+        "L'activation se fait via activate_automation après simulation validée. Auto-reply sera TOUJOURS activé à l'activation.",
       parameters: {
         type: "object",
         properties: {
+          automation_id: {
+            type: "number",
+            description:
+              "ID de la campagne à MODIFIER. À fournir dès que l'utilisateur demande une modification / ajustement d'une campagne existante — ne crée pas de doublon.",
+          },
           name: { type: "string", description: "Nom court de la campagne" },
           type: {
             type: "string",
@@ -1288,7 +1301,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
           enable_auto_reply: {
             type: "boolean",
-            description: "Réponses auto pour les prospects contactés (défaut true)",
+            description:
+              "Ignoré : l'auto-reply est TOUJOURS forcé à true pour une campagne (activer/désactiver la campagne suffit).",
           },
           conversation_guide: {
             type: "string",
@@ -1328,47 +1342,20 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           relance_delays_days: {
             type: "array",
             items: { type: "number" },
-            description: "Délais de relance en jours (ex. [1, 2] = J+1 puis J+2)",
+            description: "Délais en jours pour les relances (ex. [2, 5])",
           },
-          relance_hour: {
-            type: "number",
-            description: "Heure d'envoi des relances (0-23, ex. 8 pour 8h)",
-          },
+          relance_hour: { type: "number", description: "Heure d'envoi des relances (0-23)" },
           relance_messages: {
             type: "array",
             items: { type: "string" },
-            description: "Textes des relances (un par délai)",
+            description: "Messages de relance (sans crochets)",
           },
-          stop_on_dissatisfaction: {
-            type: "boolean",
-            description: "Arrêter si mécontentement (défaut true)",
-          },
-          stop_on_unknown_question: {
-            type: "boolean",
-            description: "Arrêter si question sans réponse (défaut true)",
-          },
-          budget_fcfa: { type: "number", description: "Budget estimé FCFA (optionnel)" },
-          personalize_messages: { type: "boolean", description: "Personnaliser chaque DM (group_prospect)" },
-          ab_variants: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: { id: { type: "string" }, message: { type: "string" } },
-            },
-            description: "Variantes A/B",
-          },
-          sequence_steps: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                delayDays: { type: "number" },
-                message: { type: "string" },
-                condition: { type: "string", enum: ["no_reply", "always"] },
-              },
-            },
-            description: "Relances (alternative à relance_*)",
-          },
+          budget_fcfa: { type: "number" },
+          personalize_messages: { type: "boolean" },
+          stop_on_dissatisfaction: { type: "boolean" },
+          stop_on_unknown_question: { type: "boolean" },
+          ab_variants: { type: "array", items: { type: "object" } },
+          sequence_steps: { type: "array", items: { type: "object" } },
           media_url: { type: "string" },
           media_type: { type: "string", enum: ["image", "document", "audio"] },
         },
@@ -1430,7 +1417,10 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "update_automation_config",
-      description: "Modifie la configuration d'une campagne (brouillon ou active).",
+      description:
+        "Modifie la config d'une campagne EXISTANTE (brouillon, active ou en pause). " +
+        "À utiliser dès que l'utilisateur demande un changement (message, prix, lien, ton…) — " +
+        "NE PAS appeler create_automation pour ça (évite les doublons).",
       parameters: {
         type: "object",
         properties: {
@@ -1705,7 +1695,7 @@ function buildAutomationConfigFromArgs(
         : undefined,
     minDelaySeconds: clampSeconds(args.min_delay_seconds),
     maxDelaySeconds: clampSeconds(args.max_delay_seconds),
-    enableAutoReply: args.enable_auto_reply !== false,
+    enableAutoReply: true, // Toujours ON — désactivation = pause / désactiver la campagne
     conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
     triggerPhrases,
     keywords: triggerPhrases,
@@ -3242,6 +3232,96 @@ export async function executeTool(userId: number, name: string, args: Record<str
         });
       }
 
+      /** Persist draft — update existing if reusable, else create. */
+      const persistDraft = async (
+        cfg: AutomationConfig,
+        extra?: { resolvedCount?: number; unresolved?: string[] }
+      ): Promise<string> => {
+        const explicitId =
+          args.automation_id != null && Number.isFinite(Number(args.automation_id))
+            ? Number(args.automation_id)
+            : undefined;
+        const reusable = await findReusableAutomation(userId, type, {
+          automationId: explicitId,
+          groupId: cfg.groupId,
+          name: args.name ? String(args.name) : undefined,
+        });
+
+        const name = String(args.name ?? reusable?.name ?? "Campagne");
+        const summary = args.summary ? String(args.summary) : reusable?.summary ?? undefined;
+        const budget = args.budget_fcfa ? Number(args.budget_fcfa) : reusable?.budget_fcfa ?? 0;
+
+        // Fusion : garde les champs non fournis de la campagne existante
+        const merged: AutomationConfig = reusable
+          ? {
+              ...reusable.config,
+              ...cfg,
+              enableAutoReply: true,
+              // Ne pas écraser group/contacts si absents du nouvel appel
+              groupId: cfg.groupId ?? reusable.config.groupId,
+              groupName: cfg.groupName ?? reusable.config.groupName,
+              contactTargets: cfg.contactTargets ?? reusable.config.contactTargets,
+              initialMessage: cfg.initialMessage ?? reusable.config.initialMessage,
+              conversationGuide: cfg.conversationGuide ?? reusable.config.conversationGuide,
+            }
+          : { ...cfg, enableAutoReply: true };
+
+        if (reusable) {
+          await updateAutomationConfig(userId, reusable.id, merged);
+          await updateAutomationMeta(userId, reusable.id, {
+            name,
+            summary: summary ?? undefined,
+            budgetFcfa: budget,
+          });
+          // Si active, renforcer auto-reply ; si pause, ne pas réactiver les contacts ici
+          if (reusable.status === "active") {
+            await resumeAutomationMessaging(userId, reusable.id);
+          }
+          const fresh = await getAutomationDetail(userId, reusable.id);
+          return JSON.stringify({
+            success: true,
+            updated: true,
+            automationId: reusable.id,
+            name: fresh?.automation.name,
+            type: fresh?.automation.type,
+            status: fresh?.automation.status,
+            config: fresh?.automation.config,
+            resolvedContacts: extra?.resolvedCount,
+            unresolved: extra?.unresolved,
+            message: `Campagne « ${name} » mise à jour (#${reusable.id}) — pas de doublon créé. Prochaine étape : simulation si besoin, puis activate_automation si brouillon.`,
+            simulationHint:
+              "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
+            completedAt: nowFr(),
+          });
+        }
+
+        const auto = await createAutomation(userId, {
+          name,
+          type,
+          config: merged,
+          summary,
+          budgetFcfa: budget,
+          status: "draft",
+        });
+        return JSON.stringify({
+          success: true,
+          updated: false,
+          automationId: auto.id,
+          name: auto.name,
+          type: auto.type,
+          status: auto.status,
+          config: auto.config,
+          resolvedContacts: extra?.resolvedCount,
+          unresolved: extra?.unresolved,
+          message: `Campagne « ${auto.name} » créée en brouillon (#${auto.id})${
+            extra?.resolvedCount != null ? ` avec ${extra.resolvedCount} contact(s)` : ""
+          }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""} Prochaine étape : simulation puis activate_automation après confirmation.`,
+          simulationHint:
+            "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
+          completedAt: nowFr(),
+        });
+      };
+
       if (type === "contact_prospect") {
         if (!args.initial_message) {
           return JSON.stringify({ error: "contact_prospect requiert initial_message." });
@@ -3282,30 +3362,9 @@ export async function executeTool(userId: number, name: string, args: Record<str
           });
         }
         config.contactTargets = resolved;
-        if (failed.length) {
-          config.followUpInstructions = undefined;
-        }
-        const auto = await createAutomation(userId, {
-          name: String(args.name ?? "Prospection contacts"),
-          type,
-          config,
-          summary: args.summary ? String(args.summary) : undefined,
-          budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
-          status: "draft",
-        });
-        return JSON.stringify({
-          success: true,
-          automationId: auto.id,
-          name: auto.name,
-          type: auto.type,
-          status: auto.status,
-          config: auto.config,
-          resolvedContacts: resolved.length,
+        return await persistDraft(config, {
+          resolvedCount: resolved.length,
           unresolved: failed,
-          message: `Campagne « ${auto.name} » créée en brouillon (#${auto.id}) avec ${resolved.length} contact(s).${failed.length ? ` Non résolus : ${failed.join(", ")}.` : ""} Prochaine étape : simulation puis activate_automation après confirmation.`,
-          simulationHint:
-            "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
-          completedAt: nowFr(),
         });
       }
 
@@ -3322,7 +3381,6 @@ export async function executeTool(userId: number, name: string, args: Record<str
           return JSON.stringify({ error: msg });
         }
         const groupId = await resolveGroupId(userId, String(args.group_id));
-        // listWhatsAppGroups est mis en cache — évite un 2e aller-retour Evolution.
         const groups = await listWhatsAppGroups(userId);
         const matched = groups.find((g) => g.id === groupId);
         config.groupId = groupId;
@@ -3338,28 +3396,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
         }
       }
 
-      const auto = await createAutomation(userId, {
-        name: String(args.name ?? "Campagne"),
-        type,
-        config,
-        summary: args.summary ? String(args.summary) : undefined,
-        budgetFcfa: args.budget_fcfa ? Number(args.budget_fcfa) : 0,
-        status: "draft",
-      });
-
-      return JSON.stringify({
-        success: true,
-        automationId: auto.id,
-        name: auto.name,
-        type: auto.type,
-        status: auto.status,
-        config: auto.config,
-        summary: auto.summary,
-        message: `Campagne « ${auto.name} » créée en brouillon (#${auto.id}). Prochaine étape : simulation puis activate_automation après confirmation.`,
-        simulationHint:
-          "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
-        completedAt: nowFr(),
-      });
+      return await persistDraft(config);
     }
 
     case "activate_automation": {
@@ -3422,6 +3459,13 @@ export async function executeTool(userId: number, name: string, args: Record<str
         });
       }
       let targetsAdded = 0;
+      // Auto-reply OBLIGATOIRE dès qu'une campagne est active (global + contacts)
+      await updateAutomationConfig(userId, id, {
+        ...auto.config,
+        enableAutoReply: true,
+      });
+      await setAutoReplyEnabled(userId, true);
+
       if (auto.type === "group_prospect") {
         if (!auto.config.groupId || !auto.config.initialMessage) {
           return JSON.stringify({ error: "groupId ou initialMessage manquant dans la config." });
@@ -3429,6 +3473,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
         try {
           await updateAutomationStatus(userId, id, "active");
           targetsAdded = await bootstrapGroupProspectTargets(userId, id);
+          await resumeAutomationMessaging(userId, id);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({ error: `Activation échouée : ${msg}`, automationId: id });
@@ -3441,12 +3486,14 @@ export async function executeTool(userId: number, name: string, args: Record<str
           await requireEvolutionConnected(userId, "l'activation de la campagne");
           await updateAutomationStatus(userId, id, "active");
           targetsAdded = await bootstrapContactProspectTargets(userId, id);
+          await resumeAutomationMessaging(userId, id);
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({ error: `Activation échouée : ${msg}`, automationId: id });
         }
       } else {
         await updateAutomationStatus(userId, id, "active");
+        await resumeAutomationMessaging(userId, id);
       }
 
       const fresh = await getAutomationDetail(userId, id);
@@ -3455,8 +3502,9 @@ export async function executeTool(userId: number, name: string, args: Record<str
         automationId: id,
         status: "active",
         targetsAdded,
+        autoReply: true,
         stats: fresh?.automation.stats,
-        message: `Campagne #${id} « ${auto.name} » activée.${targetsAdded ? ` ${targetsAdded} membre(s) chargé(s).` : ""}`,
+        message: `Campagne #${id} « ${auto.name} » activée — auto-reply ON.${targetsAdded ? ` ${targetsAdded} membre(s) chargé(s).` : ""}`,
         completedAt: nowFr(),
       });
     }
@@ -3531,12 +3579,18 @@ export async function executeTool(userId: number, name: string, args: Record<str
         });
       }
 
-      const updated = await updateAutomationConfig(userId, id, merged);
+      const updated = await updateAutomationConfig(userId, id, {
+        ...merged,
+        enableAutoReply: detail.automation.status === "active" ? true : merged.enableAutoReply !== false,
+      });
+      if (detail.automation.status === "active") {
+        await resumeAutomationMessaging(userId, id);
+      }
       return JSON.stringify({
         success: true,
         automationId: id,
         config: updated?.config,
-        message: `Campagne #${id} mise à jour.`,
+        message: `Campagne #${id} mise à jour${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}.`,
       });
     }
 
@@ -3632,12 +3686,23 @@ export async function executeTool(userId: number, name: string, args: Record<str
       if (!Number.isFinite(id) || !["active", "paused", "completed"].includes(status)) {
         return JSON.stringify({ error: "Paramètres invalides." });
       }
-      const updated =
-        status === "paused"
-          ? await pauseAutomation(userId, id)
-          : status === "active"
-            ? await resumeAutomation(userId, id)
-            : await updateAutomationStatus(userId, id, status);
+      let updated;
+      if (status === "paused") {
+        updated = await pauseAutomation(userId, id);
+      } else if (status === "active") {
+        updated = await resumeAutomation(userId, id);
+      } else {
+        // completed = coupe aussi auto-reply + file
+        await haltAutomationMessaging(userId, id);
+        const cur = await getAutomationDetail(userId, id);
+        if (cur) {
+          await updateAutomationConfig(userId, id, {
+            ...cur.automation.config,
+            enableAutoReply: false,
+          });
+        }
+        updated = await updateAutomationStatus(userId, id, status);
+      }
       if (!updated) {
         return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
       }
@@ -3645,10 +3710,13 @@ export async function executeTool(userId: number, name: string, args: Record<str
         success: true,
         automationId: id,
         status: updated.status,
+        autoReply: updated.status === "active",
         message:
           status === "paused"
-            ? `Automatisation #${id} en pause — plus aucun message automatique (file, relances, réponses).`
-            : `Automatisation #${id} → ${status}.`,
+            ? `Campagne #${id} désactivée — auto-reply OFF, plus aucun message automatique.`
+            : status === "active"
+              ? `Campagne #${id} réactivée — auto-reply ON.`
+              : `Campagne #${id} terminée — auto-reply OFF.`,
       });
     }
 

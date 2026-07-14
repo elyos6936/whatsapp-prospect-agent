@@ -174,14 +174,13 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       abVariant: ab.variantId,
     });
 
-    if (auto.config.enableAutoReply !== false) {
-      await setContactAutoReply(userId, target.target_id, true);
-    }
+    // Campagne active = auto-reply OBLIGATOIRE
+    await setContactAutoReply(userId, target.target_id, true);
     await saveContact(userId, {
       phone: target.target_id,
       name: target.target_label ?? undefined,
       status: "en_conversation",
-      autoReply: auto.config.enableAutoReply !== false,
+      autoReply: true,
     });
 
     if (auto.config.sequenceSteps?.length || auto.config.relance?.enabled) {

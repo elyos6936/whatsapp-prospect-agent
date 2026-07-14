@@ -13,6 +13,7 @@ import {
   fetchEvolutionQr,
   fetchSettings,
   saveBusinessProfile,
+  setAutoReply,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -47,6 +48,10 @@ export function SettingsPage() {
   const [businessFb, setBusinessFb] = useState('');
   const [savingBusiness, setSavingBusiness] = useState(false);
 
+  const [autoReplyOn, setAutoReplyOn] = useState(true);
+  const [autoReplyBusy, setAutoReplyBusy] = useState(false);
+  const [autoReplyFb, setAutoReplyFb] = useState('');
+
   const [qrData, setQrData] = useState<{
     connected: boolean;
     message: string;
@@ -65,6 +70,7 @@ export function SettingsPage() {
       setOwnerName(s.business.ownerName || user?.name || '');
       setOffer(s.business.offer || '');
       setPrice(s.business.price || '');
+      setAutoReplyOn(s.autoReply !== false);
     } catch {
       /* ignore */
     } finally {
@@ -75,6 +81,21 @@ export function SettingsPage() {
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  const toggleAutoReply = useCallback(async () => {
+    const next = !autoReplyOn;
+    setAutoReplyBusy(true);
+    setAutoReplyFb('');
+    try {
+      await setAutoReply(next);
+      setAutoReplyOn(next);
+      setAutoReplyFb(next ? 'Réponses auto activées.' : 'Réponses auto désactivées.');
+    } catch (err) {
+      setAutoReplyFb(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setAutoReplyBusy(false);
+    }
+  }, [autoReplyOn]);
 
   const loadQr = useCallback(async () => {
     setQrLoading(true);
@@ -229,6 +250,39 @@ export function SettingsPage() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Interrupteur réponses auto */}
+              <div className="panel p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-text-100">Réponses automatiques</h2>
+                    <p className="mt-0.5 text-xs text-text-400">
+                      Quand une campagne est active, l’agent répond seul aux prospects contactés.
+                      {autoReplyOn ? '' : ' Actuellement OFF — les messages ne sont pas traités auto.'}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void toggleAutoReply()}
+                    disabled={autoReplyBusy}
+                    className={cn(
+                      'relative h-8 w-14 shrink-0 rounded-full transition',
+                      autoReplyOn ? 'bg-brand' : 'bg-bg-300',
+                      autoReplyBusy && 'opacity-50',
+                    )}
+                    aria-pressed={autoReplyOn}
+                    aria-label="Activer ou désactiver les réponses auto"
+                  >
+                    <span
+                      className={cn(
+                        'absolute top-1 h-6 w-6 rounded-full bg-white shadow transition',
+                        autoReplyOn ? 'left-7' : 'left-1',
+                      )}
+                    />
+                  </button>
+                </div>
+                <Feedback text={autoReplyFb} type={autoReplyFb.includes('Erreur') ? 'err' : 'ok'} />
               </div>
 
               {/* Panneau QR quand non connecté */}

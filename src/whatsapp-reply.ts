@@ -129,13 +129,13 @@ async function formatHistory(
   return { text, messageCount: filtered.length, isOngoingConversation };
 }
 
-/** Délai avant réponse auto : 30–90 s (premier contact) / 15–40 s (déjà engagé). */
+/** Délai avant réponse auto : 8–20 s (premier contact) / 4–12 s (déjà engagé). */
 export async function getAdaptiveReplyDelay(userId: number, chatId: string): Promise<number> {
   const { isOngoingConversation } = await formatHistory(userId, chatId, "", undefined);
   if (isOngoingConversation) {
-    return 15_000 + Math.floor(Math.random() * 25_000);
+    return 4_000 + Math.floor(Math.random() * 8_000);
   }
-  return 30_000 + Math.floor(Math.random() * 60_000);
+  return 8_000 + Math.floor(Math.random() * 12_000);
 }
 
 /** Nettoie et force le style WhatsApp court. */

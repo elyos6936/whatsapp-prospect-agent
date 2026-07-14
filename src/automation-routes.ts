@@ -16,6 +16,7 @@ import {
   updateAutomationStatus,
   pauseAutomation,
   resumeAutomation,
+  haltAutomationMessaging,
   type AutomationStatus,
   type AutomationType,
 } from "./db.js";
@@ -60,7 +61,17 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
           ? await pauseAutomation(userId, id)
           : status === "active"
             ? await resumeAutomation(userId, id)
-            : await updateAutomationStatus(userId, id, status);
+            : await (async () => {
+                const cur = await getAutomation(userId, id);
+                if (cur) {
+                  await haltAutomationMessaging(userId, id);
+                  await updateAutomationConfig(userId, id, {
+                    ...cur.config,
+                    enableAutoReply: false,
+                  });
+                }
+                return updateAutomationStatus(userId, id, status);
+              })();
       if (!updated) {
         return reply.status(404).send({ error: "Automatisation introuvable." });
       }

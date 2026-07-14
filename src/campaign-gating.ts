@@ -141,16 +141,14 @@ export async function passesReplyGate(
 ): Promise<ReplyGateResult> {
   const outbound = await findActiveOutboundCampaign(userId, chatId);
   if (outbound) {
-    // Garder le contact en mode conversation auto pour la suite du fil
+    // Campagne active → auto-reply toujours ON pour ce prospect
     try {
-      if (outbound.automation.config.enableAutoReply !== false) {
-        await setContactAutoReply(userId, chatId, true);
-        await saveContact(userId, {
-          phone: chatId,
-          status: "en_conversation",
-          autoReply: true,
-        });
-      }
+      await setContactAutoReply(userId, chatId, true);
+      await saveContact(userId, {
+        phone: chatId,
+        status: "en_conversation",
+        autoReply: true,
+      });
     } catch {
       /* best effort */
     }

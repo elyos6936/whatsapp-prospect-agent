@@ -205,16 +205,53 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
       continue;
     }
 
-    const keyExtra = key as { senderPn?: string; remoteJidAlt?: string; participant?: string };
+    const keyExtra = key as {
+      senderPn?: string;
+      remoteJidAlt?: string;
+      participant?: string;
+      participantPn?: string;
+    };
+    const rowExtra = row as {
+      senderPn?: string;
+      remoteJidAlt?: string;
+      participant?: string;
+      pushName?: string;
+    };
+    const senderPn =
+      keyExtra.senderPn ||
+      rowExtra.senderPn ||
+      keyExtra.participantPn ||
+      undefined;
+    const remoteJidAlt = keyExtra.remoteJidAlt || rowExtra.remoteJidAlt || undefined;
+    const participant = keyExtra.participant || rowExtra.participant || undefined;
+    const senderName = String(row.pushName ?? chatIdToDisplay(rawChatId));
+
     const chatId = await resolveInboundChatId(userId, rawChatId, {
-      senderPn: keyExtra.senderPn,
-      remoteJidAlt: keyExtra.remoteJidAlt,
-      participant: keyExtra.participant,
-      senderName: String(row.pushName ?? ""),
+      senderPn,
+      remoteJidAlt,
+      participant,
+      senderName,
     });
+    // Si on a résolu un téléphone depuis un @lid, mémoriser le mapping
+    if (
+      /@lid$/i.test(rawChatId) &&
+      chatId.endsWith("@c.us") &&
+      !/@lid$/i.test(chatId)
+    ) {
+      try {
+        await setContactWhatsappLid(userId, chatId, rawChatId);
+      } catch {
+        /* best effort */
+      }
+    }
     const msgId = key.id ?? `evo-${Date.now()}`;
-    const senderName = String(row.pushName ?? chatIdToDisplay(chatId));
-    if (await ingestInboundMessage(userId, chatId, senderName, text, msgId, "notification")) {
+    if (
+      await ingestInboundMessage(userId, chatId, senderName, text, msgId, "notification", {
+        senderPn,
+        remoteJidAlt,
+        participant,
+      })
+    ) {
       processed++;
     }
   }

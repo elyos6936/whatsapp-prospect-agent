@@ -8,6 +8,7 @@ import {
   isContactBlocked,
   saveContact,
   saveWhatsAppMessage,
+  setContactWhatsappLid,
 } from "./db.js";
 import { config } from "./config.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
@@ -184,7 +185,13 @@ export async function resolveInboundChatId(
     if (!candidate?.trim()) continue;
     const c = candidate.trim();
     if ((c.endsWith("@s.whatsapp.net") || c.endsWith("@c.us")) && isLikelyPhoneJid(c)) {
-      return normalizeGroupParticipantId(c);
+      const phone = normalizeGroupParticipantId(c);
+      // Mémoriser si l'entrée était un LID
+      if (isLidJid(raw) || (raw.endsWith("@c.us") && !isLikelyPhoneJid(raw))) {
+        const lid = isLidJid(raw) ? raw : `${chatIdToNumber(raw)}@lid`;
+        void setContactWhatsappLid(userId, phone, lid).catch(() => {});
+      }
+      return phone;
     }
   }
 

@@ -663,6 +663,7 @@ export async function findProspectPhoneForLidReply(
   const lidDigits = lidOrPseudo.replace(/@c\.us|@lid|@s\.whatsapp\.net/gi, "").replace(/\D/g, "");
   const lid = lidOrPseudo.includes("@") ? lidOrPseudo.trim() : `${lidDigits}@lid`;
 
+  // 1) Mapping LID déjà connu
   const mapped = await sql<{ phone: string }[]>`
     SELECT phone FROM contacts
     WHERE user_id = ${userId} AND (whatsapp_lid = ${lid} OR whatsapp_lid = ${`${lidDigits}@lid`})
@@ -670,7 +671,21 @@ export async function findProspectPhoneForLidReply(
   `;
   if (mapped[0]?.phone) return mapped[0].phone;
 
+  // 2) Nom unique parmi les cibles de campagnes ACTIVES
   if (senderName?.trim()) {
+    const byNameCampaign = await sql<{ phone: string }[]>`
+      SELECT DISTINCT t.target_id as phone
+      FROM automation_targets t
+      JOIN automations a ON a.id = t.automation_id AND a.user_id = t.user_id AND a.status = 'active'
+      JOIN contacts c ON c.user_id = t.user_id AND c.phone = t.target_id
+      WHERE t.user_id = ${userId}
+        AND t.status IN ('contacted', 'replied', 'interested', 'pending')
+        AND c.name = ${senderName.trim()}
+        AND c.status != 'stop'
+      LIMIT 2
+    `;
+    if (byNameCampaign.length === 1) return byNameCampaign[0].phone;
+
     const byName = await sql<{ phone: string }[]>`
       SELECT phone FROM contacts
       WHERE user_id = ${userId} AND auto_reply = 1 AND status != 'stop' AND name = ${senderName.trim()}
@@ -679,6 +694,25 @@ export async function findProspectPhoneForLidReply(
     if (byName.length === 1) return byName[0].phone;
   }
 
+  // 3) Une seule cible contactée récemment dans une campagne active
+  const campaignRecent = await sql<{ phone: string }[]>`
+    SELECT t.target_id as phone
+    FROM automation_targets t
+    JOIN automations a ON a.id = t.automation_id AND a.user_id = t.user_id AND a.status = 'active'
+    JOIN messages m ON m.user_id = t.user_id
+      AND m.contact_phone = t.target_id
+      AND m.direction = 'sortant'
+      AND m.created_at >= NOW() - INTERVAL '72 hours'
+    WHERE t.user_id = ${userId}
+      AND t.status IN ('contacted', 'replied', 'interested')
+    GROUP BY t.target_id
+    HAVING COUNT(*) >= 1
+    ORDER BY MAX(m.created_at) DESC
+    LIMIT 3
+  `;
+  if (campaignRecent.length === 1) return campaignRecent[0].phone;
+
+  // 4) Un seul contact auto_reply avec envoi récent (hors rafale)
   const recentOut = await sql<{ phone: string }[]>`
     SELECT m.contact_phone as phone
     FROM messages m
@@ -686,7 +720,8 @@ export async function findProspectPhoneForLidReply(
     WHERE m.user_id = ${userId}
       AND m.direction = 'sortant'
       AND m.created_at >= NOW() - INTERVAL '15 minutes'
-    ORDER BY m.created_at DESC
+    GROUP BY m.contact_phone
+    ORDER BY MAX(m.created_at) DESC
     LIMIT 2
   `;
   if (recentOut.length === 1) return recentOut[0].phone;
@@ -1369,6 +1404,11 @@ export async function haltAutomationMessaging(
   for (const t of targets) {
     try {
       await setContactAutoReply(userId, t.target_id, false);
+      await saveContact(userId, {
+        phone: t.target_id,
+        name: t.target_label ?? undefined,
+        autoReply: false,
+      });
       disabledContacts++;
     } catch {
       /* best effort */
@@ -1387,18 +1427,23 @@ export async function haltAutomationMessaging(
   };
 }
 
-/** Réactive les réponses auto pour les prospects déjà engagés (après reprise). */
+/** Réactive les réponses auto pour TOUS les prospects non stoppés (campagne active = auto-reply obligatoire). */
 export async function resumeAutomationMessaging(
   userId: number,
   automationId: number
 ): Promise<{ enabledContacts: number }> {
-  const targets = await listAutomationTargets(userId, automationId, { limit: 2000 });
-  const engaged = new Set(["contacted", "replied", "interested"]);
+  const targets = await listAutomationTargets(userId, automationId, { limit: 5000 });
   let enabledContacts = 0;
   for (const t of targets) {
-    if (!engaged.has(t.status)) continue;
+    if (t.status === "stopped" || t.status === "error") continue;
     try {
       await setContactAutoReply(userId, t.target_id, true);
+      await saveContact(userId, {
+        phone: t.target_id,
+        name: t.target_label ?? undefined,
+        status: t.status === "interested" ? "interesse" : "en_conversation",
+        autoReply: true,
+      });
       enabledContacts++;
     } catch {
       /* best effort */
@@ -1407,16 +1452,29 @@ export async function resumeAutomationMessaging(
   return { enabledContacts };
 }
 
-/** Pause utilisateur : statut paused + plus aucun message automatique. */
+/** Pause utilisateur : statut paused + plus aucun message automatique + auto-reply OFF. */
 export async function pauseAutomation(userId: number, id: number): Promise<Automation | null> {
   const updated = await updateAutomationStatus(userId, id, "paused");
   if (!updated) return null;
+  // Auto-reply désactivé pour cette campagne
+  await updateAutomationConfig(userId, id, {
+    ...updated.config,
+    enableAutoReply: false,
+  });
   await haltAutomationMessaging(userId, id);
   return getAutomation(userId, id);
 }
 
-/** Reprise : active + réactive les réponses pour les prospects déjà contactés. */
+/** Reprise : active + auto-reply OBLIGATOIRE pour les prospects de la campagne. */
 export async function resumeAutomation(userId: number, id: number): Promise<Automation | null> {
+  const current = await getAutomation(userId, id);
+  if (!current) return null;
+  await updateAutomationConfig(userId, id, {
+    ...current.config,
+    enableAutoReply: true,
+  });
+  // Réactive aussi l'interrupteur GLOBAL (peut être OFF après un arrêt d'urgence)
+  await setAutoReplyEnabled(userId, true);
   const updated = await updateAutomationStatus(userId, id, "active");
   if (!updated) return null;
   await resumeAutomationMessaging(userId, id);
@@ -1481,8 +1539,8 @@ export async function listAutomationTargets(
 }
 
 /**
- * Trouve une cible de campagne pour un chatId (phone/@c.us), sans plafond de 500
- * lignes qui faisait perdre les prospects en fin de liste.
+ * Trouve une cible de campagne pour un chatId (phone/@c.us/@lid).
+ * Résout aussi les JID @lid via contacts.whatsapp_lid.
  */
 export async function findMatchingAutomationTarget(
   userId: number,
@@ -1490,8 +1548,21 @@ export async function findMatchingAutomationTarget(
   chatId: string,
   statuses?: TargetStatus[]
 ): Promise<AutomationTarget | null> {
-  const digits = chatId.replace(/\D/g, "");
-  if (digits.length < 8) return null;
+  const raw = chatId.trim();
+  const isLid = /@lid$/i.test(raw);
+  let phoneHint = raw;
+
+  if (isLid) {
+    const resolved = await findProspectPhoneForLidReply(userId, raw);
+    if (resolved) phoneHint = resolved;
+  }
+
+  const digits = phoneHint.replace(/\D/g, "");
+  const lidNorm = isLid
+    ? raw
+    : digits.length >= 8
+      ? `${digits}@lid`
+      : "";
 
   const allowed = new Set(
     statuses?.length
@@ -1500,21 +1571,34 @@ export async function findMatchingAutomationTarget(
   );
 
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
-    FROM automation_targets
-    WHERE user_id = ${userId}
-      AND automation_id = ${automationId}
+    SELECT t.id, t.automation_id, t.target_id, t.target_label, t.status, t.last_action_at, t.notes, t.ab_variant, t.created_at
+    FROM automation_targets t
+    LEFT JOIN contacts c ON c.user_id = t.user_id AND c.phone = t.target_id
+    WHERE t.user_id = ${userId}
+      AND t.automation_id = ${automationId}
       AND (
-        target_id = ${chatId}
-        OR regexp_replace(target_id, '\\D', '', 'g') = ${digits}
+        t.target_id = ${phoneHint}
+        OR t.target_id = ${raw}
+        OR (${digits.length >= 8} AND regexp_replace(t.target_id, '\\D', '', 'g') = ${digits})
+        OR (${isLid} AND (c.whatsapp_lid = ${raw} OR c.whatsapp_lid = ${lidNorm}))
       )
-    ORDER BY id ASC
+    ORDER BY t.id ASC
     LIMIT 20
   `;
 
   for (const row of rows) {
     const mapped = mapAutomationTarget(row);
-    if (allowed.has(mapped.status)) return mapped;
+    if (allowed.has(mapped.status)) {
+      // Mémoriser le LID pour les prochains messages
+      if (isLid && mapped.target_id) {
+        try {
+          await setContactWhatsappLid(userId, mapped.target_id, raw);
+        } catch {
+          /* best effort */
+        }
+      }
+      return mapped;
+    }
   }
   return null;
 }
@@ -1614,6 +1698,67 @@ export async function updateAutomationConfig(
     WHERE user_id = ${userId} AND id = ${id}
   `;
   return getAutomation(userId, id);
+}
+
+/** Met à jour nom / résumé / budget sans toucher au type. */
+export async function updateAutomationMeta(
+  userId: number,
+  id: number,
+  patch: { name?: string; summary?: string; budgetFcfa?: number }
+): Promise<Automation | null> {
+  const current = await getAutomation(userId, id);
+  if (!current) return null;
+  const name = patch.name?.trim() || current.name;
+  const summary =
+    patch.summary !== undefined ? patch.summary.trim() || null : current.summary;
+  const budget =
+    patch.budgetFcfa != null && Number.isFinite(patch.budgetFcfa)
+      ? patch.budgetFcfa
+      : current.budget_fcfa;
+  await sql`
+    UPDATE automations
+    SET name = ${name}, summary = ${summary}, budget_fcfa = ${budget}, updated_at = NOW()
+    WHERE user_id = ${userId} AND id = ${id}
+  `;
+  return getAutomation(userId, id);
+}
+
+/**
+ * Trouve un brouillon / campagne réutilisable pour éviter les doublons.
+ * Priorité : automation_id explicite → même groupe → même type brouillon unique.
+ */
+export async function findReusableAutomation(
+  userId: number,
+  type: AutomationType,
+  opts: { automationId?: number; groupId?: string; name?: string } = {}
+): Promise<Automation | null> {
+  if (opts.automationId != null && Number.isFinite(opts.automationId)) {
+    const byId = await getAutomation(userId, opts.automationId);
+    if (byId && byId.type === type) return byId;
+  }
+
+  const open = await listAutomations(userId, { limit: 100 });
+  const candidates = open.filter(
+    (a) =>
+      a.type === type &&
+      (a.status === "draft" || a.status === "paused" || a.status === "active")
+  );
+
+  if (opts.groupId) {
+    const byGroup = candidates.find((a) => a.config.groupId === opts.groupId);
+    if (byGroup) return byGroup;
+  }
+
+  if (opts.name?.trim()) {
+    const needle = opts.name.trim().toLowerCase();
+    const byName = candidates.find((a) => a.name.trim().toLowerCase() === needle);
+    if (byName) return byName;
+  }
+
+  const drafts = candidates.filter((a) => a.status === "draft");
+  if (drafts.length === 1) return drafts[0];
+
+  return null;
 }
 
 export async function findMatchingKeywordAutomations(userId: number, text: string): Promise<Automation[]> {
