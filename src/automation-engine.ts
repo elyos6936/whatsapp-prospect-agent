@@ -103,18 +103,17 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       return;
     }
 
-    // Tous les premiers messages sont partis. On marque « completed » pour le funnel,
-    // mais les réponses auto continuent via findActiveOutboundCampaign (completed inclus).
-    if (auto.status !== "completed") {
-      await updateAutomationStatus(userId, auto.id, "completed");
+    // Tous les premiers messages sont partis — la campagne reste active pour les réponses.
+    if (!auto.stats.openersDone) {
+      const fresh = await getAutomation(userId, auto.id);
       await addAutomationLog(
         userId,
         auto.id,
         "success",
-        "Tous les premiers messages ont été envoyés. Les réponses auto restent actives tant que les prospects répondent."
+        "Tous les premiers messages ont été envoyés. Campagne toujours active — réponses auto en cours."
       );
-      const fresh = await getAutomation(userId, auto.id);
       await updateAutomationStats(userId, auto.id, {
+        openersDone: true,
         report: `Premiers messages envoyés (${fresh?.stats.contacted ?? 0}). Conversations en cours.`,
         lastActionAt: new Date().toISOString(),
       });

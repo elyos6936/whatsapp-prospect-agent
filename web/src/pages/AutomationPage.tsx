@@ -243,6 +243,7 @@ function StatusControls({
           await onChange();
         }}
         className={cn(cls, 'border border-black/10 text-text-300 hover:bg-bg-200')}
+        title="Stoppe les envois et les réponses automatiques"
       >
         <Pause className="h-3.5 w-3.5" />
         Désactiver

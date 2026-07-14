@@ -86,6 +86,8 @@ import {
   scheduleMessage,
   setContactAutoReply,
   updateAutomationStatus,
+  pauseAutomation,
+  resumeAutomation,
   updateAutomationConfig,
   deleteAutomation,
   listProspectedContacts,
@@ -1470,7 +1472,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "set_automation_status",
-      description: "Active, met en pause ou arrête une automatisation.",
+      description:
+        "Active, met en pause ou marque terminée une automatisation. paused = coupe TOUS les envois (file, relances) et les réponses auto des prospects.",
       parameters: {
         type: "object",
         properties: {
@@ -1478,7 +1481,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           status: {
             type: "string",
             enum: ["active", "paused", "completed"],
-            description: "active = reprendre, paused = suspendre, completed = terminer",
+            description:
+              "active = reprendre (réponses + envois), paused = tout couper (préféré pour arrêter), completed = marquer terminée manuellement",
           },
         },
         required: ["automation_id", "status"],
@@ -3556,7 +3560,12 @@ export async function executeTool(userId: number, name: string, args: Record<str
       if (!Number.isFinite(id) || !["active", "paused", "completed"].includes(status)) {
         return JSON.stringify({ error: "Paramètres invalides." });
       }
-      const updated = await updateAutomationStatus(userId, id, status);
+      const updated =
+        status === "paused"
+          ? await pauseAutomation(userId, id)
+          : status === "active"
+            ? await resumeAutomation(userId, id)
+            : await updateAutomationStatus(userId, id, status);
       if (!updated) {
         return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
       }
@@ -3564,7 +3573,10 @@ export async function executeTool(userId: number, name: string, args: Record<str
         success: true,
         automationId: id,
         status: updated.status,
-        message: `Automatisation #${id} → ${status}.`,
+        message:
+          status === "paused"
+            ? `Automatisation #${id} en pause — plus aucun message automatique (file, relances, réponses).`
+            : `Automatisation #${id} → ${status}.`,
       });
     }
 

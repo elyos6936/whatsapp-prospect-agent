@@ -1,7 +1,6 @@
 import { chatIdsMatch } from "./evolutionapi.js";
 import {
   listActiveAutomations,
-  listAutomations,
   listAutomationTargets,
   setContactAutoReply,
   saveContact,
@@ -67,22 +66,14 @@ async function matchOutboundTarget(
 
 /**
  * Campagne de prospection liée à ce contact pour les réponses auto.
- * Inclut les campagnes « completed » : le statut completed signifie seulement
- * que tous les premiers messages sont partis — le dialogue doit continuer.
+ * Uniquement les campagnes active (paused = stop total).
  */
 export async function findActiveOutboundCampaign(
   userId: number,
   chatId: string
 ): Promise<{ automation: Automation; targetId: string } | null> {
   const active = await listActiveAutomations(userId);
-  const fromActive = await matchOutboundTarget(active, userId, chatId);
-  if (fromActive) return fromActive;
-
-  const recent = await listAutomations(userId, { limit: 40 });
-  const fallback = recent.filter(
-    (a) => a.status === "completed" || a.status === "paused" || a.status === "active"
-  );
-  return matchOutboundTarget(fallback, userId, chatId);
+  return matchOutboundTarget(active, userId, chatId);
 }
 
 /** Campagne e-commerce entrant dont un déclencheur exact correspond au message. */

@@ -1124,6 +1124,8 @@ export interface AutomationStats {
   lastActionAt?: string;
   lastReportDate?: string;
   report?: string;
+  /** True une fois tous les premiers messages partis (campagne reste active). */
+  openersDone?: boolean;
   conversions?: number;
   revenueFcfa?: number;
   autoStopped?: number;
@@ -1261,6 +1263,7 @@ async function recomputeAutomationStats(userId: number, automationId: number): P
     stats.lastReportDate = auto.stats.lastReportDate;
     stats.conversions = auto.stats.conversions;
     stats.revenueFcfa = auto.stats.revenueFcfa;
+    stats.openersDone = auto.stats.openersDone;
   }
 
   await sql`
@@ -1343,6 +1346,78 @@ export async function updateAutomationStatus(
 ): Promise<Automation | null> {
   await sql`UPDATE automations SET status = ${status}, updated_at = NOW() WHERE user_id = ${userId} AND id = ${id}`;
   await addAutomationLog(userId, id, "info", `Statut → ${status}`);
+  return getAutomation(userId, id);
+}
+
+/** Coupe tous les envois liés à une campagne (file, relances, réponses auto contact). */
+export async function haltAutomationMessaging(
+  userId: number,
+  automationId: number
+): Promise<{ cancelledQueue: number; cancelledSequences: number; disabledContacts: number }> {
+  const queueResult = await sql`
+    UPDATE send_queue SET status = 'cancelled', error = 'Campagne mise en pause'
+    WHERE user_id = ${userId} AND automation_id = ${automationId} AND status = 'pending'
+  `;
+  const seqResult = await sql`
+    UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
+    WHERE user_id = ${userId} AND automation_id = ${automationId} AND status = 'active'
+  `;
+  const targets = await listAutomationTargets(userId, automationId, { limit: 2000 });
+  let disabledContacts = 0;
+  for (const t of targets) {
+    try {
+      await setContactAutoReply(userId, t.target_id, false);
+      disabledContacts++;
+    } catch {
+      /* best effort */
+    }
+  }
+  await addAutomationLog(
+    userId,
+    automationId,
+    "info",
+    `Envois coupés : ${Number(queueResult.count)} file, ${Number(seqResult.count)} relance(s), ${disabledContacts} réponse(s) auto off.`
+  );
+  return {
+    cancelledQueue: Number(queueResult.count),
+    cancelledSequences: Number(seqResult.count),
+    disabledContacts,
+  };
+}
+
+/** Réactive les réponses auto pour les prospects déjà engagés (après reprise). */
+export async function resumeAutomationMessaging(
+  userId: number,
+  automationId: number
+): Promise<{ enabledContacts: number }> {
+  const targets = await listAutomationTargets(userId, automationId, { limit: 2000 });
+  const engaged = new Set(["contacted", "replied", "interested"]);
+  let enabledContacts = 0;
+  for (const t of targets) {
+    if (!engaged.has(t.status)) continue;
+    try {
+      await setContactAutoReply(userId, t.target_id, true);
+      enabledContacts++;
+    } catch {
+      /* best effort */
+    }
+  }
+  return { enabledContacts };
+}
+
+/** Pause utilisateur : statut paused + plus aucun message automatique. */
+export async function pauseAutomation(userId: number, id: number): Promise<Automation | null> {
+  const updated = await updateAutomationStatus(userId, id, "paused");
+  if (!updated) return null;
+  await haltAutomationMessaging(userId, id);
+  return getAutomation(userId, id);
+}
+
+/** Reprise : active + réactive les réponses pour les prospects déjà contactés. */
+export async function resumeAutomation(userId: number, id: number): Promise<Automation | null> {
+  const updated = await updateAutomationStatus(userId, id, "active");
+  if (!updated) return null;
+  await resumeAutomationMessaging(userId, id);
   return getAutomation(userId, id);
 }
 
@@ -1719,10 +1794,14 @@ export async function cancelPendingSendQueue(userId: number): Promise<number> {
 }
 
 export async function pauseAllActiveAutomations(userId: number): Promise<number> {
-  const result = await sql`
-    UPDATE automations SET status = 'paused', updated_at = NOW() WHERE user_id = ${userId} AND status = 'active'
+  const rows = await sql<Array<{ id: number }>>`
+    SELECT id FROM automations
+    WHERE user_id = ${userId} AND status = 'active'
   `;
-  return Number(result.count);
+  for (const row of rows) {
+    await pauseAutomation(userId, Number(row.id));
+  }
+  return rows.length;
 }
 
 export interface SequenceStep {

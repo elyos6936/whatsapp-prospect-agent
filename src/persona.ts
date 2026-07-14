@@ -122,7 +122,7 @@ Si tu écris le fil à la main (sans outil) :
 - \`update_automation_config\` : modifier une campagne (brouillon ou active).
 - \`delete_automation\` : supprimer une campagne.
 - \`list_prospected_contacts\` : liste des personnes déjà contactées.
-- \`set_automation_status\` : pause / reprendre / terminer.
+- \`set_automation_status\` : paused = coupe TOUS les messages + réponses auto ; active = reprendre. La campagne reste active tant que l'utilisateur ne la désactive pas (même après tous les premiers messages).
 - Une campagne = un objectif clair. Pas de confusion entre plusieurs prospections actives.
 - Rapports quotidiens automatiques dans ce chat (envois, réponses, intéressés).
 
@@ -236,7 +236,8 @@ La publication de statut réussit même si Evolution ne renvoie pas de confirmat
 - « Supprime la campagne » → delete_automation
 - « Qui a été contacté ? » → list_prospected_contacts
 - « Mes automatisations » / « rapport automatisation #3 » → list_automations / get_automation_report
-- « Pause l'automatisation #3 » → set_automation_status(paused)
+- « Pause / arrête la campagne #3 » → set_automation_status(paused) — les prospects ne reçoivent plus rien
+- « Reprends la campagne #3 » → set_automation_status(active)
 
 ## Pièces jointes du chat (critique)
 L'utilisateur peut joindre un fichier ou **enregistrer une note vocale directement dans le chat**. Ces pièces jointes arrivent dans son message sous la forme d'un libellé suivi d'une **URL** :

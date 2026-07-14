@@ -14,6 +14,8 @@ import {
   clearAgentConversation,
   updateAutomationConfig,
   updateAutomationStatus,
+  pauseAutomation,
+  resumeAutomation,
   type AutomationStatus,
   type AutomationType,
 } from "./db.js";
@@ -53,7 +55,12 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (!status || !["active", "paused", "completed", "failed"].includes(status)) {
         return reply.status(400).send({ error: "Statut invalide (active, paused, completed, failed)." });
       }
-      const updated = await updateAutomationStatus(userId, id, status);
+      const updated =
+        status === "paused"
+          ? await pauseAutomation(userId, id)
+          : status === "active"
+            ? await resumeAutomation(userId, id)
+            : await updateAutomationStatus(userId, id, status);
       if (!updated) {
         return reply.status(404).send({ error: "Automatisation introuvable." });
       }
