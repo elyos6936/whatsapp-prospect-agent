@@ -4,7 +4,9 @@ export function sanitizeAssistantText(text: string): string {
 
   let out = text;
 
-  out = out.replace(/\n---\s*\n[\s\S]*$/m, '').trimEnd();
+  // Uniquement les footers techniques d'outil (pas un séparateur markdown « --- »
+  // suivi d'une simulation / contenu utile — ça coupait le fil de conversation).
+  out = out.replace(/\n---\s*\n(?:STATUT|DETAIL|Outil|Tool|Résultat|Result)\b[\s\S]*$/im, '').trimEnd();
   out = out.replace(/\n+STATUT\s*:\s*[^\n]+/gi, '');
   out = out.replace(/\n+DETAIL\s*:\s*[^\n]+/gi, '');
 

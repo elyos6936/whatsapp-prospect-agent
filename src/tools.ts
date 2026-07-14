@@ -1516,6 +1516,47 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "show_campaign_simulation",
+      description:
+        "OBLIGATOIRE dès que l'utilisateur accepte une simulation de campagne. Affiche un vrai fil de discussion (3 à 4 messages) dans le chat agent — aucun envoi WhatsApp. Ne jamais annoncer « Voici comment… : » sans appeler cet outil.",
+      parameters: {
+        type: "object",
+        properties: {
+          turns: {
+            type: "array",
+            description: "3 ou 4 répliques alternées Toi / Prospect",
+            minItems: 3,
+            maxItems: 4,
+            items: {
+              type: "object",
+              properties: {
+                speaker: {
+                  type: "string",
+                  enum: ["toi", "prospect"],
+                  description: "toi = message de l'entreprise ; prospect = réponse du contact",
+                },
+                name: {
+                  type: "string",
+                  description: "Prénom du prospect (si speaker=prospect). Défaut : Prospect",
+                },
+                text: {
+                  type: "string",
+                  description: "Texte du message WhatsApp (valeurs réelles, SANS crochets [ ])",
+                },
+              },
+              required: ["speaker", "text"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["turns"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_group_rule",
       description:
         "Crée une règle de réponse automatique dans un groupe WhatsApp. L'IA répond publiquement quand un message contient un mot-clé.",
@@ -1564,6 +1605,7 @@ const LOCAL_TOOLS = new Set([
   "update_automation_config",
   "delete_automation",
   "list_prospected_contacts",
+  "show_campaign_simulation",
   "create_group_rule",
 ]);
 
@@ -3522,6 +3564,47 @@ export async function executeTool(userId: number, name: string, args: Record<str
         automationId: id,
         status: updated.status,
         message: `Automatisation #${id} → ${status}.`,
+      });
+    }
+
+    case "show_campaign_simulation": {
+      const rawTurns = Array.isArray(args.turns) ? args.turns : [];
+      if (rawTurns.length < 3 || rawTurns.length > 4) {
+        return JSON.stringify({
+          error: "La simulation doit contenir exactement 3 ou 4 messages (turns).",
+        });
+      }
+      const lines: string[] = [];
+      for (const raw of rawTurns) {
+        if (!raw || typeof raw !== "object") {
+          return JSON.stringify({ error: "Chaque turn doit avoir speaker + text." });
+        }
+        const turn = raw as { speaker?: string; name?: string; text?: string };
+        const speaker = String(turn.speaker ?? "").toLowerCase();
+        const text = String(turn.text ?? "").trim();
+        if (!text) return JSON.stringify({ error: "Un message de la simulation est vide." });
+        if (hasTemplatePlaceholders(text)) {
+          return JSON.stringify({
+            error: "Crochets [ ] interdits dans la simulation. Utilise les vraies valeurs (prix, lien…).",
+          });
+        }
+        if (speaker === "toi") {
+          lines.push(`Toi → « ${text} »`);
+        } else if (speaker === "prospect") {
+          const name = String(turn.name ?? "Prospect").trim() || "Prospect";
+          lines.push(`${name} → « ${text} »`);
+        } else {
+          return JSON.stringify({ error: "speaker doit être « toi » ou « prospect »." });
+        }
+      }
+      const display =
+        lines.join("\n") +
+        "\n\nQu'est-ce que tu veux ajuster dans le ton, l'accroche ou l'offre — ou c'est bon comme ça ?";
+      return JSON.stringify({
+        success: true,
+        display,
+        turns: rawTurns.length,
+        message: "Simulation prête. Affiche le champ display tel quel à l'utilisateur.",
       });
     }
 

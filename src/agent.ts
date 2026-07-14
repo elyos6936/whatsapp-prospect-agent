@@ -21,22 +21,30 @@ function isDanglingAnnouncement(text: string): boolean {
   return /[:：]$/u.test(t);
 }
 
+/** Vrai contenu de simulation (fil Toi → / Prospect → ou messages entre guillemets). */
+function hasSimulationThread(text: string): boolean {
+  const arrowTurns = (text.match(/→/g) || []).length;
+  if (arrowTurns >= 2) return true;
+  if (/(^|\n)\s*(toi|moi)\s*→/im.test(text) && /(^|\n)\s*\S{2,}\s*→/im.test(text)) return true;
+  const quotes = text.match(/[«"][^»"\n]{12,}[»"]/g);
+  return Boolean(quotes && quotes.length >= 2);
+}
+
 /**
- * Détecte une annonce de simulation « vide » : le modèle dit qu'il commence /
- * lance la simulation mais ne fournit aucun message concret (ni guillemets, ni
- * contenu réel). C'est le bug typique où la simulation est zappée.
+ * Détecte une annonce de simulation / aperçu de conversation SANS le fil.
+ * Couvre aussi « Voici comment la conversation pourrait se dérouler… : » (bug récurrent).
  */
-function isEmptySimulationStart(text: string): boolean {
+function isBrokenSimulationPreview(text: string): boolean {
   const t = text.trim();
-  const announcesSim =
-    /\b(commen[çc]ons|d[ée]marr\w*|lan[çc]\w*|d[ée]buton\w*|on commence|passons\s+[àa])\b[^.!?]{0,40}\bsimulation\b/i.test(
+  const announces =
+    /\b(simulation|simuler|d[ée]rouler|ressemblerait|fil de discussion|voici comment|avec cette approche|commen[çc]ons|d[ée]marr\w*|lan[çc]ons|d[ée]butons)\b/i.test(
       t
-    ) || /\bsimulation\b[^.!?]{0,20}\b(commence|d[ée]marre|c'est parti)\b/i.test(t);
-  if (!announcesSim) return false;
-  // S'il y a déjà un vrai message entre guillemets ou un contenu multi-lignes conséquent, ce n'est pas vide.
-  const hasQuotedMessage = /[«"„][^»"]{8,}[»"]/.test(t);
-  const isShort = t.length < 240;
-  return !hasQuotedMessage && isShort;
+    ) || /\bconversation\b.{0,40}\b(d[ée]rouler|ressembl)/i.test(t);
+  if (!announces) return false;
+  if (hasSimulationThread(t)) return false;
+  // Annonce qui finit sur « : » OU texte court sans vrai fil
+  if (isDanglingAnnouncement(t)) return true;
+  return t.length < 450;
 }
 
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
@@ -107,6 +115,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
   }
 
   let rounds = 0;
+  let simFixAttempts = 0;
 
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
@@ -159,6 +168,19 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
           });
         }
 
+        // Si l'outil a déjà formaté le fil de simulation, on l'affiche tel quel
+        // (évite que le modèle annonce encore « Voici comment… : » sans contenu).
+        if (toolCall.function.name === "show_campaign_simulation") {
+          try {
+            const parsed = JSON.parse(result) as { success?: boolean; display?: string };
+            if (parsed.success && parsed.display?.trim()) {
+              return parsed.display.trim();
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+
         messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
@@ -174,26 +196,25 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
       return "Je n'ai pas pu générer de réponse. Réessayez.";
     }
 
-    // Garde-fou : le modèle a annoncé un contenu (« … : ») puis s'est arrêté
-    // sans le fournir. On le relance une fois pour qu'il écrive le message complet.
+    // Garde-fou : annonce se terminant par « : » sans contenu.
     if (isDanglingAnnouncement(text) && rounds < MAX_TOOL_ROUNDS) {
       messages.push({ role: "assistant", content: text });
       messages.push({
         role: "system",
         content:
-          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète : reprends l'annonce PUIS le texte annoncé en entier (le message de prospection, la suggestion, etc.), dans un seul message. Ne termine pas sur «\u00A0:\u00A0».",
+          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète dans UN seul message : si c'est une simulation, appelle l'outil show_campaign_simulation (3-4 tours Toi/Prospect) OU écris directement le fil « Toi → «\u00A0…\u00A0» » / « Prospect → «\u00A0…\u00A0» ». Ne termine JAMAIS sur «\u00A0:\u00A0».",
       });
       continue;
     }
 
-    // Garde-fou simulation : le modèle a dit « commençons la simulation » sans
-    // écrire de message concret. On le force à dérouler réellement la simulation.
-    if (isEmptySimulationStart(text) && rounds < MAX_TOOL_ROUNDS) {
+    // Garde-fou simulation vide / incomplète (ex. « Voici comment… pourrait se dérouler : »).
+    if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < MAX_TOOL_ROUNDS) {
+      simFixAttempts++;
       messages.push({ role: "assistant", content: text });
       messages.push({
         role: "system",
         content:
-          "Tu viens d'annoncer la simulation SANS l'écrire — c'est interdit. Écris MAINTENANT la simulation réelle, dans ce message : d'abord le premier message tel qu'il partirait au prospect (voix de l'entreprise, entre guillemets «\u00A0…\u00A0»), puis la réponse réaliste du prospect (préfixée par son nom), sur 2-3 tours. Termine par «\u00A0Est-ce que cela te convient ?\u00A0». Pas de bloc de code.",
+          "INTERDIT : tu as annoncé une simulation/aperçu SANS écrire le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 3 ou 4 tours (speaker toi/prospect + texte réel sans crochets), OU écris le fil complet dans ce message au format :\nToi → «\u00A0…\u00A0»\nProspect → «\u00A0…\u00A0»\nToi → «\u00A0…\u00A0»\nPuis demande ce qu'il faut ajuster. Aucune phrase qui finit par «\u00A0:\u00A0» sans le fil juste après.",
       });
       continue;
     }
