@@ -5,6 +5,11 @@ import { getAppSettings, getRecentAgentMessages, type AgentMessage, type AppSett
 import { testEvolutionConnection } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
+import {
+  assessCampaignBriefing,
+  buildBriefingNudge,
+  wantsCampaignSimulation,
+} from "./campaign-briefing.js";
 
 const MAX_TOOL_ROUNDS = 8;
 // Historique injecté à chaque tour : assez pour le contexte, pas trop pour
@@ -31,10 +36,10 @@ function hasSimulationThread(text: string): boolean {
 }
 
 const SIMULATION_ADJUSTMENT_FOOTER =
-  /Qu'est-ce que tu veux ajuster dans le ton, l'accroche ou l'offre/i;
+  /Qu'est-ce que tu veux (ajuster|changer)|ce qui te convient|simulation courte/i;
 
 function recentHistoryHasSimulation(history: AgentMessage[]): boolean {
-  for (let i = history.length - 1; i >= 0 && i >= history.length - 6; i--) {
+  for (let i = history.length - 1; i >= 0 && i >= history.length - 8; i--) {
     const m = history[i];
     if (m?.role !== "assistant") continue;
     if (hasSimulationThread(m.content) || SIMULATION_ADJUSTMENT_FOOTER.test(m.content)) return true;
@@ -66,11 +71,16 @@ function userWantsSimulationChange(text: string): boolean {
 }
 
 const ACTIVATION_AFTER_SIMULATION_NUDGE =
-  "L'utilisateur a VALIDÉ la simulation déjà affichée. INTERDIT de rappeler show_campaign_simulation ou de réécrire le fil Toi/Prospect. Étape suivante UNIQUEMENT :\n" +
+  "L'utilisateur a VALIDÉ la simulation déjà affichée (après feedback). INTERDIT de rappeler show_campaign_simulation ou de réécrire le fil Toi/Prospect. Étape suivante UNIQUEMENT :\n" +
   "1. Résume en 2-3 lignes la campagne (cible, message d'ouverture, relances si configurées).\n" +
   "2. Demande explicitement : « Je lance la campagne maintenant ? »\n" +
   "3. Si l'utilisateur confirme (oui / vas-y / active / lance) → appelle activate_automation avec l'automationId du brouillon.\n" +
   "Ne répète jamais la simulation.";
+
+const FORCE_SIMULATION_NUDGE =
+  "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
+  "avec exactement 3 ou 4 tours (speaker toi/prospect, textes réels SANS crochets, prix/lien déjà collectés). " +
+  "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 4 messages (coût tokens).";
 
 function shouldBlockDuplicateSimulation(history: AgentMessage[], userMessage: string): boolean {
   if (!recentHistoryHasSimulation(history)) return false;
@@ -90,7 +100,6 @@ function isBrokenSimulationPreview(text: string): boolean {
     ) || /\bconversation\b.{0,40}\b(d[ée]rouler|ressembl)/i.test(t);
   if (!announces) return false;
   if (hasSimulationThread(t)) return false;
-  // Annonce qui finit sur « : » OU texte court sans vrai fil
   if (isDanglingAnnouncement(t)) return true;
   return t.length < 450;
 }
@@ -122,6 +131,11 @@ function buildBusinessContext(
       `Prénom / nom : ${settings.business_owner_name || "(non configuré)"}\n` +
       `Offre / formation : ${settings.business_offer || "(non configuré)"}\n` +
       `Tarif (FCFA) : ${settings.business_price || "(non communiqué)"}`
+  );
+  lines.push(
+    `## Rappel campagnes\n` +
+      `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois) avant brouillon. ` +
+      `Objectif RDV → exiger le lien de réservation. Simulation = outil show_campaign_simulation, 3-4 messages max, puis feedback.`
   );
   return lines.join("\n\n");
 }
@@ -162,15 +176,32 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
     messages.push({ role: "user", content: userMessage });
   }
 
-  if (isSimulationApproval(userMessage) && recentHistoryHasSimulation(history)) {
+  const briefing = assessCampaignBriefing(history, userMessage);
+  const hasSimAlready = recentHistoryHasSimulation(history);
+  const forceSim =
+    wantsCampaignSimulation(userMessage, history) &&
+    (!hasSimAlready || userWantsSimulationChange(userMessage));
+
+  if (forceSim) {
+    messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
+  } else if (isSimulationApproval(userMessage) && hasSimAlready) {
     messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
+  } else if (!hasSimAlready) {
+    const nudge = buildBriefingNudge(briefing);
+    if (nudge) messages.push({ role: "system", content: nudge });
   }
 
   let rounds = 0;
   let simFixAttempts = 0;
+  let forcedSimUsed = false;
 
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
+
+    const toolChoice: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption =
+      forceSim && !forcedSimUsed && rounds <= 2
+        ? { type: "function", function: { name: "show_campaign_simulation" } }
+        : "auto";
 
     let response: OpenAI.Chat.Completions.ChatCompletion;
     try {
@@ -179,7 +210,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
           model: config.openaiModel,
           messages,
           tools: TOOL_DEFINITIONS,
-          tool_choice: "auto",
+          tool_choice: toolChoice,
           max_tokens: CHAT_MAX_TOKENS,
         })
       );
@@ -203,6 +234,34 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
 
       for (const toolCall of assistantMsg.tool_calls) {
         if (toolCall.type !== "function") continue;
+
+        if (toolCall.function.name === "show_campaign_simulation") {
+          forcedSimUsed = true;
+        }
+
+        // Pendant un briefing incomplet : bloquer create/activate
+        if (
+          !hasSimAlready &&
+          !briefing.readyForDraft &&
+          briefing.inCampaignFlow &&
+          (toolCall.function.name === "create_automation" ||
+            toolCall.function.name === "activate_automation")
+        ) {
+          const block = JSON.stringify({
+            error:
+              `Briefing incomplet (≈${briefing.questionsAsked}/5 questions, manques : ${
+                briefing.missing.join(", ") || "détails"
+              }). Pose encore UNE question ciblée — n'appelle pas cet outil maintenant.`,
+          });
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: block,
+          });
+          const nudge = buildBriefingNudge(briefing);
+          if (nudge) messages.push({ role: "system", content: nudge });
+          continue;
+        }
 
         let args: Record<string, unknown> = {};
         try {
@@ -262,6 +321,13 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
 
     const text = assistantMsg.content?.trim();
     if (!text) {
+      if (forceSim && !forcedSimUsed && rounds < MAX_TOOL_ROUNDS) {
+        messages.push({
+          role: "system",
+          content: FORCE_SIMULATION_NUDGE,
+        });
+        continue;
+      }
       return "Je n'ai pas pu générer de réponse. Réessayez.";
     }
 
@@ -287,15 +353,22 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
       continue;
     }
 
-    // Garde-fou simulation vide / incomplète (ex. « Voici comment… pourrait se dérouler : »).
+    // Garde-fou simulation vide / incomplète.
     if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < MAX_TOOL_ROUNDS) {
       simFixAttempts++;
       messages.push({ role: "assistant", content: text });
       messages.push({
         role: "system",
         content:
-          "INTERDIT : tu as annoncé une simulation/aperçu SANS écrire le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 3 ou 4 tours (speaker toi/prospect + texte réel sans crochets), OU écris le fil complet dans ce message au format :\nToi → «\u00A0…\u00A0»\nProspect → «\u00A0…\u00A0»\nToi → «\u00A0…\u00A0»\nPuis demande ce qu'il faut ajuster. Aucune phrase qui finit par «\u00A0:\u00A0» sans le fil juste après.",
+          "INTERDIT : tu as annoncé une simulation/aperçu SANS écrire le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 3 ou 4 tours (speaker toi/prospect + texte réel sans crochets), OU écris le fil complet dans ce message au format :\nToi → «\u00A0…\u00A0»\nProspect → «\u00A0…\u00A0»\nToi → «\u00A0…\u00A0»\nPuis demande ce qu'il faut changer ou garder. Aucune phrase qui finit par «\u00A0:\u00A0» sans le fil juste après. MAX 4 messages.",
       });
+      continue;
+    }
+
+    // Si on forçait la simulation et qu'on a du texte sans fil → forcer l'outil
+    if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < MAX_TOOL_ROUNDS) {
+      messages.push({ role: "assistant", content: text });
+      messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
       continue;
     }
 

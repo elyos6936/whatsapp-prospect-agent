@@ -63,6 +63,7 @@ import {
   chatIdToNumber,
   requireEvolutionConnected,
 } from "./evolutionapi.js";
+import { needsAppointmentLink } from "./campaign-briefing.js";
 import {
   CONTACT_STATUSES,
   blockContact,
@@ -1522,13 +1523,13 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "show_campaign_simulation",
       description:
-        "OBLIGATOIRE dès que l'utilisateur accepte une simulation de campagne. Affiche un vrai fil de discussion (3 à 4 messages) dans le chat agent — aucun envoi WhatsApp. Ne jamais annoncer « Voici comment… : » sans appeler cet outil.",
+        "OBLIGATOIRE dès que l'utilisateur accepte une simulation. Affiche un fil court (EXACTEMENT 3 ou 4 messages max — économie tokens) dans le chat agent — aucun envoi WhatsApp. Après affichage, l'utilisateur doit dire ce qu'il change ou valide. Ne jamais annoncer « Voici comment… : » sans cet outil.",
       parameters: {
         type: "object",
         properties: {
           turns: {
             type: "array",
-            description: "3 ou 4 répliques alternées Toi / Prospect",
+            description: "Exactement 3 ou 4 répliques alternées Toi / Prospect (JAMAIS plus de 4)",
             minItems: 3,
             maxItems: 4,
             items: {
@@ -3188,6 +3189,22 @@ export async function executeTool(userId: number, name: string, args: Record<str
             "Lien manquant (closing_link). Pour un objectif RDV / paiement / lien, exige l'URL réelle auprès de l'utilisateur avant de créer la campagne.",
         });
       }
+      {
+        if (
+          needsAppointmentLink({
+            closingGoal: config.closingGoal,
+            conversationGuide: config.conversationGuide,
+            initialMessage: config.initialMessage,
+            closingLink: config.closingLink,
+            productName: config.productName,
+          })
+        ) {
+          return JSON.stringify({
+            error:
+              "Objectif rendez-vous détecté sans closing_link. Demande d'abord le lien de réservation (Calendly, Google Agenda, autre URL) puis réessaie avec closing_goal=appointment et closing_link=URL.",
+          });
+        }
+      }
       if (config.initialMessage && hasTemplatePlaceholders(config.initialMessage)) {
         return JSON.stringify({
           error: "initial_message contient des crochets. Remplace-les par de vraies valeurs.",
@@ -3351,6 +3368,20 @@ export async function executeTool(userId: number, name: string, args: Record<str
         return JSON.stringify({
           error:
             "Impossible d'activer : lien (closing_link) manquant. Demande l'URL réelle, mets à jour la config, puis réessaie.",
+        });
+      }
+      if (
+        needsAppointmentLink({
+          closingGoal: auto.config.closingGoal,
+          conversationGuide: auto.config.conversationGuide,
+          initialMessage: auto.config.initialMessage,
+          closingLink: auto.config.closingLink,
+          productName: auto.config.productName,
+        })
+      ) {
+        return JSON.stringify({
+          error:
+            "Impossible d'activer : objectif RDV sans lien de réservation. Demande l'URL, update_automation_config(closing_goal=appointment, closing_link=…), puis réessaie.",
         });
       }
       if (auto.config.initialMessage && hasTemplatePlaceholders(auto.config.initialMessage)) {
@@ -3612,7 +3643,12 @@ export async function executeTool(userId: number, name: string, args: Record<str
       }
       const display =
         lines.join("\n") +
-        "\n\nQu'est-ce que tu veux ajuster dans le ton, l'accroche ou l'offre — ou c'est bon comme ça ?";
+        "\n\n---\n" +
+        "*(Simulation courte — 3 à 4 messages max.)*\n\n" +
+        "Dis-moi concrètement :\n" +
+        "• ce qui te convient\n" +
+        "• ce que tu veux changer (ton, accroche, CTA, prix, lien…)\n\n" +
+        "Ou réponds « c'est bon » si on peut passer à l'activation.";
       return JSON.stringify({
         success: true,
         display,
