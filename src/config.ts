@@ -15,6 +15,26 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   process.exit(1);
 }
 
+function resolveLlmApiKey(): string {
+  const deepseek = process.env.DEEPSEEK_API_KEY?.trim() || "";
+  const openai = process.env.OPENAI_API_KEY?.trim() || "";
+  const provider = (process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek") as "deepseek" | "openai";
+
+  if (provider === "deepseek") {
+    if (deepseek) return deepseek;
+    // Une clé OpenAI (sk-proj-…) envoyée à DeepSeek provoque un 401 trompeur.
+    if (openai.startsWith("sk-proj-") || openai.startsWith("sk-svcacct-")) {
+      console.error(
+        "❌ DEEPSEEK_API_KEY manquante : OPENAI_API_KEY (OpenAI) ne peut pas être utilisée avec DeepSeek."
+      );
+      return "";
+    }
+    // Anciennes clés DeepSeek parfois mises dans OPENAI_API_KEY
+    return openai;
+  }
+  return openai || deepseek;
+}
+
 export const config = {
   port,
   timezone: appTimezone,
@@ -34,15 +54,12 @@ export const config = {
   ).replace(/\/$/, ""),
   /** Modèle chat + tool calling. Défaut DeepSeek V4 Pro (qualité / tools). */
   openaiModel:
-    process.env.OPENAI_MODEL?.trim() ||
     process.env.LLM_MODEL?.trim() ||
+    process.env.OPENAI_MODEL?.trim() ||
     (process.env.LLM_PROVIDER?.trim().toLowerCase() === "openai" ? "gpt-4o" : "deepseek-v4-pro"),
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
   defaultEvolutionBaseUrl: "http://localhost:8080",
-  envOpenAiKey:
-    process.env.DEEPSEEK_API_KEY?.trim() ||
-    process.env.OPENAI_API_KEY?.trim() ||
-    "",
+  envOpenAiKey: resolveLlmApiKey(),
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),
   envEvolutionApiKey: process.env.EVOLUTION_API_KEY?.trim() || "",
 } as const;
