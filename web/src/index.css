@@ -18,7 +18,7 @@
   --color-brand-border: var(--brand-border);
   --color-border: var(--border);
   --font-serif: 'Source Serif 4', Georgia, serif;
-  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
   --ease-silk: cubic-bezier(0.2, 0, 0, 1);
 }
 
@@ -61,6 +61,7 @@ html,
 body,
 #root {
   height: 100%;
+  overflow-x: hidden;
 }
 
 body {

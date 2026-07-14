@@ -1,4 +1,5 @@
 import { ArrowLeft, Trash2 } from 'lucide-react';
+import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getViewTitle, type MainView } from '@/lib/navigation';
 
 type AppHeaderProps = {
@@ -6,6 +7,7 @@ type AppHeaderProps = {
   onGoToChat: () => void;
   onClearHistory?: () => void;
   clearing?: boolean;
+  onOpenMobileNav?: () => void;
 };
 
 export function AppHeader({
@@ -13,13 +15,16 @@ export function AppHeader({
   onGoToChat,
   onClearHistory,
   clearing,
+  onOpenMobileNav,
 }: AppHeaderProps) {
   const onChat = mainView === 'chat';
   const title = onChat ? 'Agent WhatsApp' : getViewTitle(mainView);
 
   return (
-    <header className="relative z-30 flex h-14 shrink-0 items-center gap-4 border-b border-black/[0.06] bg-bg-0/95 px-4 backdrop-blur-md sm:px-5">
-      <div className="flex min-w-0 flex-1 items-center gap-3">
+    <header className="relative z-30 flex h-12 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-bg-0/95 px-3 backdrop-blur-md sm:h-14 sm:gap-4 sm:px-5">
+      {onOpenMobileNav && <MobileNavButton onClick={onOpenMobileNav} />}
+
+      <div className="flex min-w-0 flex-1 items-center gap-2 sm:gap-3">
         {!onChat && (
           <button
             type="button"
@@ -31,7 +36,7 @@ export function AppHeader({
           </button>
         )}
 
-        <div className={onChat ? 'min-w-0' : 'min-w-0 border-l border-black/[0.08] pl-3'}>
+        <div className={onChat ? 'min-w-0' : 'min-w-0 border-l border-black/[0.08] pl-2 sm:pl-3'}>
           <p className="truncate text-sm font-medium text-text-200">{title}</p>
         </div>
       </div>

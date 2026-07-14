@@ -22,6 +22,13 @@ import {
   type AutomationSummary,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { CampaignCharts } from '@/components/automation/CampaignCharts';
+import {
+  outreachMetrics,
+  pct,
+  TARGET_META,
+  TARGET_ORDER,
+} from '@/lib/campaign-metrics';
 
 const TYPE_LABELS: Record<string, string> = {
   group_prospect: 'Prospection groupe',
@@ -56,16 +63,8 @@ function isOutboundType(type: string): boolean {
 
 function needsMemberReload(a: AutomationSummary): boolean {
   if (a.type !== 'group_prospect') return false;
-  const contacted = (a.stats?.contacted as number) ?? 0;
-  const pending = (a.stats?.pending as number) ?? 0;
-  return a.status === 'failed' || (contacted === 0 && pending === 0);
-}
-
-function responseRate(stats?: Record<string, number | string>): number | null {
-  const contacted = Number(stats?.contacted ?? 0);
-  const replied = Number(stats?.replied ?? 0);
-  if (!contacted) return null;
-  return Math.round((replied / contacted) * 100);
+  const m = outreachMetrics(a.stats as Record<string, number>);
+  return a.status === 'failed' || (m.reached === 0 && m.pending === 0);
 }
 
 function StatCard({
@@ -90,101 +89,27 @@ function StatCard({
   );
 }
 
-const TARGET_META: Record<string, { label: string; color: string }> = {
-  pending: { label: 'En attente', color: '#94a3b8' },
-  contacted: { label: 'Contactés', color: '#2057ce' },
-  replied: { label: 'Réponses', color: '#0ea5e9' },
-  interested: { label: 'Intéressés', color: '#10b981' },
-  stopped: { label: 'Arrêtés', color: '#f59e0b' },
-  error: { label: 'Erreurs', color: '#ef4444' },
-};
-const TARGET_ORDER = ['interested', 'replied', 'contacted', 'pending', 'stopped', 'error'] as const;
-
-function pct(value: number, total: number): number {
-  return total > 0 ? Math.round((value / total) * 100) : 0;
-}
-
-// Barre "funnel" : une étape avec sa valeur et son pourcentage d'une base.
-function FunnelRow({
-  label,
-  value,
-  base,
-  color,
-}: {
-  label: string;
-  value: number;
-  base: number;
-  color: string;
-}) {
-  const p = pct(value, base);
-  return (
-    <div>
-      <div className="flex items-baseline justify-between text-xs">
-        <span className="text-text-400">{label}</span>
-        <span className="font-medium text-text-200">
-          {value}
-          <span className="ml-1.5 text-text-500">{p}%</span>
-        </span>
-      </div>
-      <div className="mt-1 h-2.5 overflow-hidden rounded-full bg-black/[0.06]">
-        <div
-          className="h-full rounded-full transition-all duration-500"
-          style={{ width: `${p}%`, background: color }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// Barre empilée de répartition des cibles + légende.
-function DistributionBar({
-  counts,
-  total,
-}: {
-  counts: Record<string, number>;
-  total: number;
-}) {
-  const segments = TARGET_ORDER.map((k) => ({ key: k, ...TARGET_META[k], n: counts[k] ?? 0 })).filter(
-    (s) => s.n > 0,
-  );
-  if (total === 0) return null;
-  return (
-    <div>
-      <div className="flex h-3 w-full overflow-hidden rounded-full bg-black/[0.06]">
-        {segments.map((s) => (
-          <div
-            key={s.key}
-            style={{ width: `${(s.n / total) * 100}%`, background: s.color }}
-            title={`${s.label} : ${s.n}`}
-          />
-        ))}
-      </div>
-      <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5">
-        {segments.map((s) => (
-          <span key={s.key} className="inline-flex items-center gap-1.5 text-xs text-text-400">
-            <span className="h-2.5 w-2.5 rounded-full" style={{ background: s.color }} />
-            {s.label}
-            <span className="font-medium text-text-200">{s.n}</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // Vue d'ensemble agrégée sur toutes les campagnes (tableau de bord).
 function OverviewStats({ automations }: { automations: AutomationSummary[] }) {
   const outbound = automations.filter((a) => isOutboundType(a.type));
   const active = automations.filter((a) => a.status === 'active').length;
-  const contacted = outbound.reduce((s, a) => s + Number(a.stats?.contacted ?? 0), 0);
-  const replied = outbound.reduce((s, a) => s + Number(a.stats?.replied ?? 0), 0);
-  const interested = outbound.reduce((s, a) => s + Number(a.stats?.interested ?? 0), 0);
-  const globalRate = pct(replied, contacted);
+  const reached = outbound.reduce((s, a) => s + outreachMetrics(a.stats as Record<string, number>).reached, 0);
+  const answered = outbound.reduce((s, a) => s + outreachMetrics(a.stats as Record<string, number>).answered, 0);
+  const interested = outbound.reduce(
+    (s, a) => s + outreachMetrics(a.stats as Record<string, number>).interested,
+    0,
+  );
+  const globalRate = pct(answered, reached);
 
   const items = [
     { label: 'Campagnes', value: automations.length, hint: `${active} active(s)`, color: '#0f172a' },
-    { label: 'Contactés', value: contacted, color: '#2057ce' },
-    { label: 'Réponses', value: replied, hint: `${globalRate}% de réponse`, color: '#0ea5e9' },
+    { label: 'Atteints', value: reached, hint: 'prospects contactés', color: '#2057ce' },
+    {
+      label: 'Réponses',
+      value: answered,
+      hint: reached ? `${globalRate}% de réponse` : undefined,
+      color: '#0ea5e9',
+    },
     { label: 'Intéressés', value: interested, color: '#10b981' },
   ];
 
@@ -531,7 +456,7 @@ export function AutomationPage() {
   const stats = a?.stats ?? {};
   const targets = detail?.targets ?? [];
   const logs = detail?.logs ?? [];
-  const rate = responseRate(stats);
+  const metrics = outreachMetrics(stats as Record<string, number>);
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -588,19 +513,21 @@ export function AutomationPage() {
                 </div>
               ) : (
                 automations.map((auto) => {
-                  const contacted = (auto.stats?.contacted as number) ?? 0;
-                  const pending = (auto.stats?.pending as number) ?? 0;
-                  const replied = (auto.stats?.replied as number) ?? 0;
-                  const interested = (auto.stats?.interested as number) ?? 0;
+                  const m = outreachMetrics(auto.stats as Record<string, number>);
                   const handled = (auto.stats?.messagesHandled as number) ?? 0;
-                  const totalT = contacted + pending + replied + interested +
-                    ((auto.stats?.stopped as number) ?? 0) + ((auto.stats?.errors as number) ?? 0);
-                  const progress = pct(contacted + replied + interested, totalT);
+                  const totalT =
+                    m.waitingReply +
+                    m.pending +
+                    m.replied +
+                    m.interested +
+                    m.stopped +
+                    m.errors;
+                  const progress = pct(m.reached, totalT);
 
                   return (
                     <article
                       key={auto.id}
-                      className="panel cursor-pointer p-5 transition hover:border-brand-border"
+                      className="panel cursor-pointer p-4 transition hover:border-brand-border sm:p-5"
                       onClick={() => void showDetail(auto.id)}
                     >
                       <div className="flex items-start justify-between gap-3">
@@ -614,21 +541,24 @@ export function AutomationPage() {
                       </div>
                       <p className="mt-2 line-clamp-2 text-sm text-text-400">{auto.summary || '—'}</p>
 
-                      <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-text-400">
+                      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-400 sm:gap-4">
                         {isOutboundType(auto.type) ? (
                           <>
                             <span className="inline-flex items-center gap-1.5">
                               <Users className="h-3.5 w-3.5 text-text-500" />
-                              {contacted} contacté(s)
+                              {m.reached} atteint(s)
                             </span>
-                            <span>{pending} restant(s)</span>
+                            <span>{m.pending} restant(s)</span>
                             <span className="inline-flex items-center gap-1.5">
                               <MessageSquare className="h-3.5 w-3.5 text-text-500" />
-                              {replied} réponse(s)
+                              {m.answered} réponse(s)
+                              {m.rate != null && (
+                                <span className="text-text-500">· {m.rate}%</span>
+                              )}
                             </span>
-                            {interested > 0 && (
+                            {m.interested > 0 && (
                               <span className="inline-flex items-center gap-1.5 text-emerald-600">
-                                {interested} intéressé(s)
+                                {m.interested} intéressé(s)
                               </span>
                             )}
                           </>
@@ -693,18 +623,12 @@ export function AutomationPage() {
               return acc;
             }, {});
             const totalTargets = targets.length;
-            const contacted = (stats.contacted as number) ?? 0;
-            const replied = (stats.replied as number) ?? 0;
-            const interested = (stats.interested as number) ?? 0;
-            const pendingN = (stats.pending as number) ?? 0;
-            const engaged = contacted + replied + interested + ((stats.stopped as number) ?? 0);
             const handled = (stats.messagesHandled as number) ?? 0;
             const conversions = (stats.conversions as number) ?? 0;
-            const interestRate = pct(interested, engaged || contacted);
             const convRate = pct(conversions, handled);
 
             return (
-            <div className="mt-6 space-y-6">
+            <div className="mt-6 space-y-5 sm:space-y-6">
               <div className="flex items-center justify-between gap-3">
                 <button
                   type="button"
@@ -724,9 +648,9 @@ export function AutomationPage() {
                 </button>
               </div>
 
-              <header className="panel flex items-start justify-between gap-4 p-5">
-                <div>
-                  <h2 className="text-xl font-medium text-text-100">{a.name}</h2>
+              <header className="panel flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+                <div className="min-w-0">
+                  <h2 className="text-lg font-medium text-text-100 sm:text-xl">{a.name}</h2>
                   <p className="mt-1 text-sm text-text-500">
                     {TYPE_LABELS[a.type] || a.type} · Créée le {fmtTime(a.created_at)}
                   </p>
@@ -739,31 +663,41 @@ export function AutomationPage() {
                 <StatusBadge status={a.status} />
               </header>
 
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {isOutboundType(a.type) ? (
                   <>
                     <StatCard
-                      label="Contactés"
-                      value={contacted}
+                      label="Atteints"
+                      value={metrics.reached}
                       hint={totalTargets ? `sur ${totalTargets} cible(s)` : undefined}
                       accent="#2057ce"
                     />
-                    <StatCard label="Réponses" value={replied} accent="#0ea5e9" />
+                    <StatCard
+                      label="Réponses"
+                      value={metrics.answered}
+                      hint={metrics.waitingReply ? `${metrics.waitingReply} sans réponse` : undefined}
+                      accent="#0ea5e9"
+                    />
                     <StatCard
                       label="Taux de réponse"
-                      value={rate != null ? `${rate}%` : '—'}
+                      value={metrics.rate != null ? `${metrics.rate}%` : '—'}
+                      hint="réponses ÷ atteints"
                     />
                     <StatCard
                       label="Intéressés"
-                      value={interested}
-                      hint={engaged ? `${interestRate}% des engagés` : undefined}
+                      value={metrics.interested}
+                      hint={
+                        metrics.interestRate != null
+                          ? `${metrics.interestRate}% des réponses`
+                          : undefined
+                      }
                       accent="#10b981"
                     />
                   </>
                 ) : (
                   <>
                     <StatCard label="Messages traités" value={handled} accent="#2057ce" />
-                    <StatCard label="Intéressés" value={interested} accent="#10b981" />
+                    <StatCard label="Intéressés" value={metrics.interested} accent="#10b981" />
                     <StatCard
                       label="Conversions"
                       value={conversions}
@@ -776,26 +710,13 @@ export function AutomationPage() {
               </div>
 
               {isOutboundType(a.type) && totalTargets > 0 && (
-                <div className="grid gap-4 lg:grid-cols-2">
-                  <section className="panel p-5">
-                    <h3 className="text-sm font-semibold text-text-200">Entonnoir de conversion</h3>
-                    <p className="mt-0.5 text-xs text-text-500">% calculé sur le total des cibles</p>
-                    <div className="mt-4 space-y-3.5">
-                      <FunnelRow label="Contactés" value={contacted} base={totalTargets} color="#2057ce" />
-                      <FunnelRow label="Réponses" value={replied} base={totalTargets} color="#0ea5e9" />
-                      <FunnelRow label="Intéressés" value={interested} base={totalTargets} color="#10b981" />
-                    </div>
-                  </section>
-                  <section className="panel p-5">
-                    <h3 className="text-sm font-semibold text-text-200">Répartition des cibles</h3>
-                    <p className="mt-0.5 text-xs text-text-500">
-                      {totalTargets} cible(s) · {pendingN} en attente
-                    </p>
-                    <div className="mt-4">
-                      <DistributionBar counts={counts} total={totalTargets} />
-                    </div>
-                  </section>
-                </div>
+                <CampaignCharts
+                  counts={counts}
+                  totalTargets={totalTargets}
+                  reached={metrics.reached}
+                  answered={metrics.answered}
+                  interested={metrics.interested}
+                />
               )}
 
               {typeof stats.report === 'string' && stats.report && (

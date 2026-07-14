@@ -21,6 +21,7 @@ export default function AuthenticatedApp() {
   const { user, refreshUser } = useAuth();
   const [mainView, setMainView] = useState<MainView>('chat');
   const [collapsed, toggle] = useSidebarCollapsed();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const chatEnabled = mainView === 'chat' && !!user?.whatsapp?.connected;
   const { messages, loading, appendLocal, appendOptimisticUser, clear, loadHistory } =
     useMessages(chatEnabled);
@@ -29,10 +30,10 @@ export default function AuthenticatedApp() {
 
   const waConnected = user?.whatsapp?.connected ?? false;
 
-  // Rafraîchir le statut WhatsApp toutes les 5s quand connecté à l'app
+  // Rafraîchir le statut WhatsApp toutes les 15s
   useEffect(() => {
     if (!user) return;
-    const id = setInterval(() => void refreshUser(), 5000);
+    const id = setInterval(() => void refreshUser(), 15_000);
     return () => clearInterval(id);
   }, [user, refreshUser]);
 
@@ -103,13 +104,15 @@ export default function AuthenticatedApp() {
   }
 
   return (
-    <div className="flex h-full overflow-hidden bg-bg-0">
+    <div className="flex h-full max-w-[100vw] overflow-hidden bg-bg-0">
       <AppSidebar
         collapsed={collapsed}
         onToggleCollapsed={toggle}
         mainView={mainView}
         onNavigate={handleNavigate}
         waConnected={waConnected}
+        mobileOpen={mobileNavOpen}
+        onMobileClose={() => setMobileNavOpen(false)}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -118,6 +121,7 @@ export default function AuthenticatedApp() {
           onGoToChat={() => handleNavigate('chat')}
           onClearHistory={mainView === 'chat' ? handleClearHistory : undefined}
           clearing={clearing}
+          onOpenMobileNav={() => setMobileNavOpen(true)}
         />
 
         {mainView === 'chat' && (

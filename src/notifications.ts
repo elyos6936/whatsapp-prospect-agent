@@ -569,7 +569,7 @@ async function ensureWhatsAppAuthorized(userId: number): Promise<boolean> {
 }
 
 function findAutomationTarget(
-  targets: Array<{ target_id: string; ab_variant?: string | null }>,
+  targets: Array<{ target_id: string; status?: string; ab_variant?: string | null }>,
   chatId: string
 ) {
   return targets.find((t) => chatIdsMatch(t.target_id, chatId));
@@ -592,12 +592,16 @@ async function recordAutomationEngagement(
       );
 
   for (const auto of campaigns) {
-    const targets = await listAutomationTargets(userId, auto.id, { limit: 500 });
+    const targets = await listAutomationTargets(userId, auto.id, { limit: 2000 });
     const target = findAutomationTarget(targets, chatId);
     if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
     if (target) {
+      // Ne jamais rétrograder intéressé / stoppé
+      if (target.status === "interested" || target.status === "stopped") continue;
+      const nextStatus = interested ? "interested" : "replied";
+      if (target.status === nextStatus) continue;
       await updateAutomationTarget(userId, auto.id, target.target_id, {
-        status: interested ? "interested" : "replied",
+        status: nextStatus,
       });
       if (target.ab_variant) {
         await recordAbReply(userId, auto.id, target.ab_variant, interested);
@@ -931,6 +935,13 @@ async function ingestInboundMessage(
 
     const tag = source === "history" ? "sync" : "notif";
     console.log(`📩 WhatsApp entrant [${tag}] de ${senderName} → ${chatIdToDisplay(chatId)}: ${text.slice(0, 60)}…`);
+
+    // Compter la réponse prospect dès réception (pas seulement après la réponse IA).
+    try {
+      await recordAutomationEngagement(userId, chatId, text, false);
+    } catch (err) {
+      console.error("Erreur stats engagement:", err);
+    }
 
     if (isAutoReplyEligible(text, rawChatId)) {
       scheduleAutoReply(userId, chatId, senderName, text);
