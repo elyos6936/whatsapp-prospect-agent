@@ -9,6 +9,7 @@ import {
   listAutomationTargets,
   saveContact,
   setContactAutoReply,
+  beginFreshCampaignConversation,
   getBlockedContactIds,
   getContact,
   isContactBlocked,
@@ -162,6 +163,9 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   }
 
   try {
+    // Nouvelle campagne (id différent) → oubli mémoire + historique pré-campagne
+    await beginFreshCampaignConversation(userId, target.target_id, auto.id);
+
     const priority = auto.config.personalizeMessages ? 7 : 6;
     await enqueueSend(userId, {
       recipient: target.target_id,

@@ -386,19 +386,38 @@ export async function listAllIncomingMessages(userId: number, limit = 100): Prom
 }
 
 export async function getContactChatHistory(userId: number, chatId: string, limit = 12): Promise<WhatsAppMessage[]> {
+  await ensureConversationEpochColumns().catch(() => {});
   const digits = chatId.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
-  const rows = await sql<Record<string, unknown>[]>`
-    SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-    FROM messages
-    WHERE user_id = ${userId} AND (contact_phone = ${chatId}
-       OR (${digits} != '' AND (
-         contact_phone = ${digits} || '@c.us'
-         OR contact_phone = ${digits} || '@lid'
-         OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
-       )))
-    ORDER BY id DESC
-    LIMIT ${limit}
-  `;
+  const contact = await findContactForChat(userId, chatId).catch(() => null);
+  const epoch = contact?.conversation_epoch_at ?? null;
+
+  const rows = epoch
+    ? await sql<Record<string, unknown>[]>`
+        SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+        FROM messages
+        WHERE user_id = ${userId}
+          AND created_at >= ${toTsParam(epoch)}
+          AND (contact_phone = ${chatId}
+           OR (${digits} != '' AND (
+             contact_phone = ${digits} || '@c.us'
+             OR contact_phone = ${digits} || '@lid'
+             OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+           )))
+        ORDER BY id DESC
+        LIMIT ${limit}
+      `
+    : await sql<Record<string, unknown>[]>`
+        SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
+        FROM messages
+        WHERE user_id = ${userId} AND (contact_phone = ${chatId}
+           OR (${digits} != '' AND (
+             contact_phone = ${digits} || '@c.us'
+             OR contact_phone = ${digits} || '@lid'
+             OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+           )))
+        ORDER BY id DESC
+        LIMIT ${limit}
+      `;
   return rows.map(mapWhatsAppMessage).reverse();
 }
 
@@ -422,6 +441,10 @@ export interface Contact {
   memory_summary: string | null;
   memory_updated_at: string | null;
   handoff_status: string | null;
+  /** Début de la conversation courante (nouvelle campagne) — historique LLM ignoré avant. */
+  conversation_epoch_at: string | null;
+  /** Campagne à laquelle appartient l'époque courante (relances = même id → contexte gardé). */
+  conversation_campaign_id: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -466,16 +489,37 @@ function mapContact(row: Record<string, unknown>): Contact {
     memory_summary: row.memory_summary != null ? String(row.memory_summary) : null,
     memory_updated_at: formatTsNullable(row.memory_updated_at),
     handoff_status: row.handoff_status != null ? String(row.handoff_status) : null,
+    conversation_epoch_at: formatTsNullable(row.conversation_epoch_at),
+    conversation_campaign_id:
+      row.conversation_campaign_id != null ? Number(row.conversation_campaign_id) : null,
     created_at: formatTs(row.created_at),
     updated_at: formatTs(row.updated_at),
   };
 }
 
+let conversationEpochColumnsReady: Promise<void> | null = null;
+
+/** Colonnes epoch conversation — best-effort si la migration SQL n'a pas encore été appliquée. */
+export async function ensureConversationEpochColumns(): Promise<void> {
+  if (!conversationEpochColumnsReady) {
+    conversationEpochColumnsReady = (async () => {
+      await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS conversation_epoch_at TIMESTAMPTZ`;
+      await sql`ALTER TABLE contacts ADD COLUMN IF NOT EXISTS conversation_campaign_id BIGINT`;
+    })().catch((err) => {
+      conversationEpochColumnsReady = null;
+      throw err;
+    });
+  }
+  await conversationEpochColumnsReady;
+}
+
 async function lookupContactRow(userId: number, chatId: string): Promise<Contact | null> {
+  await ensureConversationEpochColumns().catch(() => {});
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, phone, name, notes, status, auto_reply,
            COALESCE(lead_score, 0) as lead_score,
            memory_summary, memory_updated_at, handoff_status,
+           conversation_epoch_at, conversation_campaign_id,
            created_at, updated_at
     FROM contacts WHERE user_id = ${userId} AND (phone = ${chatId} OR whatsapp_lid = ${chatId})
   `;
@@ -511,6 +555,7 @@ export async function listContacts(
     ? await sql<Record<string, unknown>[]>`
         SELECT id, phone, name, notes, status, auto_reply,
           COALESCE(lead_score, 0) as lead_score, memory_summary, memory_updated_at, handoff_status,
+          conversation_epoch_at, conversation_campaign_id,
           created_at, updated_at
         FROM contacts
         WHERE user_id = ${userId} AND status = ${options.status}
@@ -520,6 +565,7 @@ export async function listContacts(
     : await sql<Record<string, unknown>[]>`
         SELECT id, phone, name, notes, status, auto_reply,
           COALESCE(lead_score, 0) as lead_score, memory_summary, memory_updated_at, handoff_status,
+          conversation_epoch_at, conversation_campaign_id,
           created_at, updated_at
         FROM contacts
         WHERE user_id = ${userId}
@@ -549,6 +595,57 @@ export async function updateContactMemory(userId: number, phone: string, summary
     UPDATE contacts SET memory_summary = ${summary.trim()}, memory_updated_at = NOW(),
       updated_at = NOW() WHERE user_id = ${userId} AND phone = ${chatId}
   `;
+}
+
+/** Efface le résumé LLM (sans toucher à l'époque) — ex. pause de campagne. */
+export async function clearContactMemory(userId: number, phone: string): Promise<void> {
+  const chatId = normalizeContactPhone(phone);
+  await ensureConversationEpochColumns().catch(() => {});
+  await sql`
+    UPDATE contacts
+    SET memory_summary = NULL, memory_updated_at = NULL, updated_at = NOW()
+    WHERE user_id = ${userId} AND phone = ${chatId}
+  `;
+}
+
+/**
+ * Démarre une conversation « neuve » pour une campagne :
+ * - si c'est la même campagne (relance / reprise) → ne touche à rien
+ * - si nouvelle campagne → wipe mémoire + score + epoch = maintenant
+ */
+export async function beginFreshCampaignConversation(
+  userId: number,
+  phone: string,
+  automationId: number
+): Promise<{ fresh: boolean }> {
+  await ensureConversationEpochColumns();
+  const chatId = normalizeContactPhone(phone);
+
+  // Garantir que le contact existe
+  await saveContact(userId, { phone: chatId, status: "en_conversation", autoReply: true });
+
+  const contact = await getContact(userId, chatId);
+  if (contact?.conversation_campaign_id === automationId) {
+    return { fresh: false };
+  }
+
+  await sql`
+    UPDATE contacts
+    SET memory_summary = NULL,
+        memory_updated_at = NULL,
+        lead_score = 0,
+        handoff_status = NULL,
+        -- Marge de 5 min pour inclure l'opener / le message entrant qui déclenche la campagne
+        conversation_epoch_at = NOW() - INTERVAL '5 minutes',
+        conversation_campaign_id = ${automationId},
+        status = CASE WHEN status = 'stop' THEN status ELSE 'en_conversation' END,
+        updated_at = NOW()
+    WHERE user_id = ${userId} AND phone = ${chatId}
+  `;
+  console.log(
+    `🆕 Conversation neuve → ${chatId} (campagne #${automationId})${contact?.conversation_campaign_id ? ` — oubli ancienne #${contact.conversation_campaign_id}` : ""}`
+  );
+  return { fresh: true };
 }
 
 export async function setContactHandoff(userId: number, phone: string, status: string | null): Promise<void> {
@@ -1409,6 +1506,7 @@ export async function haltAutomationMessaging(
         name: t.target_label ?? undefined,
         autoReply: false,
       });
+      await clearContactMemory(userId, t.target_id);
       disabledContacts++;
     } catch {
       /* best effort */

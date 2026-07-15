@@ -6,6 +6,7 @@ import {
   saveContact,
   getContact,
   getContactChatHistory,
+  beginFreshCampaignConversation,
   type Automation,
   type TargetStatus,
 } from "./db.js";
@@ -162,6 +163,8 @@ export async function passesReplyGate(
   const inbound = await findMatchingInboundClosingCampaign(userId, text);
   if (inbound) {
     try {
+      // Nouveau déclencheur e-commerce = nouvelle conversation (sauf si déjà cette campagne)
+      await beginFreshCampaignConversation(userId, chatId, inbound.id);
       await setContactAutoReply(userId, chatId, true);
       await saveContact(userId, { phone: chatId, status: "en_conversation", autoReply: true });
     } catch {

@@ -99,6 +99,11 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
 
     try {
       if (item.media_url && item.media_type) {
+        // Opener campagne (pas une relance séquence) → conversation neuve si autre campagne
+        if (item.automation_id != null && item.sequence_id == null) {
+          const { beginFreshCampaignConversation } = await import("./db.js");
+          await beginFreshCampaignConversation(userId, item.recipient, item.automation_id);
+        }
         await sendWhatsAppMedia(userId, item.recipient, {
           url: item.media_url,
           type: item.media_type as "image" | "document" | "audio",
@@ -118,6 +123,10 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           }
         }
       } else if (item.message) {
+        if (item.automation_id != null && item.sequence_id == null) {
+          const { beginFreshCampaignConversation } = await import("./db.js");
+          await beginFreshCampaignConversation(userId, item.recipient, item.automation_id);
+        }
         // Conserver / renforcer auto_reply pour les envois de campagne
         await sendWhatsAppMessage(userId, item.recipient, item.message, {
           enableAutoReply: item.automation_id != null,

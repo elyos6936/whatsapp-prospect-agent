@@ -10,7 +10,7 @@ import { createLlmClient } from "./llm.js";
 export async function getMemoryContextBlock(userId: number, chatId: string): Promise<string> {
   const contact = await getContact(userId, chatId);
   if (!contact?.memory_summary?.trim()) return "";
-  return `Résumé des échanges précédents avec ce contact :\n${contact.memory_summary}`;
+  return `Résumé des échanges de la campagne en cours avec ce contact :\n${contact.memory_summary}`;
 }
 
 export async function refreshContactMemory(userId: number, chatId: string): Promise<void> {
