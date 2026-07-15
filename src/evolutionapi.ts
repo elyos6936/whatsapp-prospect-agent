@@ -12,6 +12,12 @@ import {
 } from "./db.js";
 import { config } from "./config.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
+import {
+  waitOutboundSpacingForUser,
+  markOutboundSentForUser,
+  clampPresenceMs,
+  clampTextDelayMs,
+} from "./anti-ban.js";
 
 export interface EvolutionCredentials {
   baseUrl: string;
@@ -279,7 +285,8 @@ function buildTextOptionsBody(options?: TextSendOptions): Record<string, unknown
   if (options.mentionsEveryOne) extra.mentionsEveryOne = true;
   if (typeof options.linkPreview === "boolean") extra.linkPreview = options.linkPreview;
   if (typeof options.delay === "number" && options.delay > 0) {
-    extra.delay = Math.min(Math.round(options.delay), 20_000);
+    const d = clampTextDelayMs(options.delay);
+    if (d) extra.delay = d;
   }
   return extra;
 }
@@ -1063,20 +1070,12 @@ export async function leaveWhatsAppGroup(userId: number, groupIdOrName: string):
   });
 }
 
-let lastOutboundAt = 0;
-let nextOutboundGapMs = 0;
-
-async function waitOutboundSpacing(): Promise<void> {
-  if (!lastOutboundAt || !nextOutboundGapMs) return;
-  const wait = lastOutboundAt + nextOutboundGapMs - Date.now();
-  if (wait <= 0) return;
-  console.log(`⏳ Espacement anti-spam : attente ${Math.ceil(wait / 1000)}s…`);
-  await new Promise((r) => setTimeout(r, wait));
+async function waitOutboundSpacing(userId: number): Promise<void> {
+  await waitOutboundSpacingForUser(userId);
 }
 
-function markOutboundSent(): void {
-  lastOutboundAt = Date.now();
-  nextOutboundGapMs = 45_000 + Math.floor(Math.random() * 75_000);
+function markOutboundSent(userId: number): void {
+  markOutboundSentForUser(userId);
 }
 
 function extractMessageId(data: unknown): string {
@@ -1105,12 +1104,12 @@ export async function sendWhatsAppMessage(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const safeMessage = sanitizeOutboundWhatsAppText(message);
   const data = await sendTextViaEvolution(creds, chatId, safeMessage, opts.textOptions);
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   void import("./whatsapp-connection.js")
     .then((m) => m.markWhatsAppOpen(userId))
@@ -1218,7 +1217,7 @@ export async function sendWhatsAppMedia(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   // Evolution accepte l'URL ou le base64 dans le même champ `media`. On retire un
@@ -1253,7 +1252,7 @@ export async function sendWhatsAppMedia(
     confirmed = false;
   }
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const source = input.url.startsWith("data:") ? "[base64]" : input.url;
   const label = input.caption || `[${input.type}] ${source}`;
 
@@ -1292,7 +1291,7 @@ export async function sendWhatsAppVoice(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const payload = audio.startsWith("data:") ? audio.slice(audio.indexOf(",") + 1) : audio;
@@ -1302,7 +1301,7 @@ export async function sendWhatsAppVoice(
     body: { number, audio: payload },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
 
   await saveWhatsAppMessage(userId, {
@@ -1336,7 +1335,7 @@ export async function sendWhatsAppLocation(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const data = await evolutionFetch<unknown>(creds, `/message/sendLocation/${creds.instanceName}`, {
@@ -1350,7 +1349,7 @@ export async function sendWhatsAppLocation(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   const label = `[localisation] ${input.name || ""} (${input.latitude}, ${input.longitude})`.trim();
 
@@ -1391,7 +1390,7 @@ export async function sendWhatsAppContact(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const wuid = contact.phone.replace(/\D/g, "");
@@ -1413,7 +1412,7 @@ export async function sendWhatsAppContact(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   const label = `[contact] ${contact.fullName} — ${contact.phone}`;
 
@@ -1452,7 +1451,7 @@ export async function sendWhatsAppPoll(
   if (values.length < 2) throw new EvolutionApiError("Un sondage nécessite au moins 2 options.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const selectableCount = Math.min(Math.max(input.selectableCount ?? 1, 1), values.length);
@@ -1467,7 +1466,7 @@ export async function sendWhatsAppPoll(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
@@ -1503,7 +1502,7 @@ export async function sendWhatsAppList(
   if (!input.sections?.length) throw new EvolutionApiError("La liste nécessite au moins une section.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const sections = input.sections.map((s) => ({
@@ -1528,7 +1527,7 @@ export async function sendWhatsAppList(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
@@ -1552,7 +1551,7 @@ export async function sendWhatsAppSticker(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const payload = sticker.startsWith("data:") ? sticker.slice(sticker.indexOf(",") + 1) : sticker;
@@ -1565,7 +1564,7 @@ export async function sendWhatsAppSticker(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
@@ -2246,7 +2245,7 @@ export async function sendWhatsAppPresence(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const number = formatEvolutionSendNumber(chatId);
-  const delay = Math.min(Math.max(Math.round(durationMs), 500), 20_000);
+  const delay = clampPresenceMs(durationMs);
   await evolutionFetch(creds, `/chat/sendPresence/${creds.instanceName}`, {
     method: "POST",
     body: {
