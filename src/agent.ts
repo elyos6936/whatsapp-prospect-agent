@@ -1,7 +1,7 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT } from "./persona.js";
-import { getAppSettings, getRecentAgentMessages, listAutomations, type AgentMessage, type AppSettings } from "./db.js";
+import { getAppSettings, getAgentThread, getAutomation, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
 import { testEvolutionConnection } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
@@ -9,6 +9,7 @@ import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekC
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
+  buildThreadCampaignBlockNudge,
   wantsCampaignSimulation,
 } from "./campaign-briefing.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
@@ -138,7 +139,8 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
 async function buildBusinessContext(
   userId: number,
   settings: AppSettings,
-  connection: { connected: boolean; state: string; message: string }
+  connection: { connected: boolean; state: string; message: string },
+  threadId: number
 ): Promise<string> {
   const lines: string[] = [];
   lines.push(
@@ -173,18 +175,20 @@ async function buildBusinessContext(
   );
 
   try {
-    const autos = await listAutomations(userId, { limit: 20 });
-    if (autos.length) {
-      const rows = autos
-        .slice(0, 12)
-        .map(
-          (a) =>
-            `#${a.id} « ${a.name} » [${a.status}] type=${a.type}`
-        )
-        .join("\n");
+    const thread = await getAgentThread(userId, threadId);
+    if (thread?.automation_id) {
+      const auto = await getAutomation(userId, thread.automation_id);
+      if (auto) {
+        lines.push(
+          `## Campagne de ce fil (unique)\n` +
+            `#${auto.id} « ${auto.name} » [${auto.status}] type=${auto.type}\n\n` +
+            `Ce fil ne gère qu'UNE automatisation. Pour une nouvelle campagne → l'utilisateur doit cliquer « Nouvelle automatisation » dans la barre latérale.\n` +
+            `Modifications → update_automation_config ou create_automation **avec** automation_id=${auto.id}.`
+        );
+      }
+    } else {
       lines.push(
-        `## Campagnes existantes\n${rows}\n\n` +
-          `Si l'utilisateur veut (re)lancer une prospection / vente : pose d'abord « nouvelle campagne ou modifier une existante ? » avant le brief.`
+        `## Fil vide\nAucune campagne liée à ce fil. Tu peux en créer une via create_automation après le briefing complet.`
       );
     }
   } catch {
@@ -201,7 +205,7 @@ function toOpenAiMessages(history: AgentMessage[]): OpenAI.Chat.Completions.Chat
   }));
 }
 
-export async function chatWithAgent(userId: number, userMessage: string): Promise<string> {
+export async function chatWithAgent(userId: number, userMessage: string, threadId: number): Promise<string> {
   const connection = await testEvolutionConnection(userId);
   if (!connection.connected) {
     return (
@@ -214,12 +218,13 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
   }
 
   const client = await getOpenAiClient(userId);
-  const [settings, history] = await Promise.all([
+  const [settings, history, thread] = await Promise.all([
     getAppSettings(userId),
-    getRecentAgentMessages(userId, CHAT_HISTORY_LIMIT),
+    getRecentAgentMessages(userId, threadId, CHAT_HISTORY_LIMIT),
+    getAgentThread(userId, threadId),
   ]);
 
-  const businessContext = await buildBusinessContext(userId, settings, connection);
+  const businessContext = await buildBusinessContext(userId, settings, connection, threadId);
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
     { role: "system", content: businessContext },
@@ -229,6 +234,11 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
   const last = history[history.length - 1];
   if (!last || last.role !== "user" || last.content !== userMessage) {
     messages.push({ role: "user", content: userMessage });
+  }
+
+  const threadBlock = buildThreadCampaignBlockNudge(thread?.automation_id ?? null, userMessage);
+  if (threadBlock) {
+    messages.push({ role: "system", content: threadBlock });
   }
 
   const briefing = assessCampaignBriefing(history, userMessage);
@@ -374,7 +384,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
         }
 
         try {
-          result = await executeTool(userId, toolCall.function.name, args);
+          result = await executeTool(userId, threadId, toolCall.function.name, args);
         } catch (err) {
           result = JSON.stringify({
             error: err instanceof Error ? err.message : String(err),

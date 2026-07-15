@@ -176,39 +176,261 @@ function mapAgentMessage(row: Record<string, unknown>): AgentMessage {
   };
 }
 
-export async function saveAgentMessage(userId: number, role: AgentRole, content: string): Promise<AgentMessage> {
+let agentThreadsSchemaReady: Promise<void> | null = null;
+
+/** Schéma fils agent — best-effort si la migration SQL n'a pas encore été appliquée. */
+export async function ensureAgentThreadsSchema(): Promise<void> {
+  if (!agentThreadsSchemaReady) {
+    agentThreadsSchemaReady = (async () => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS agent_threads (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          title TEXT NOT NULL DEFAULT 'Automatisation',
+          automation_id BIGINT REFERENCES automations(id) ON DELETE SET NULL,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS idx_agent_threads_user ON agent_threads(user_id, updated_at DESC)`;
+      await sql`ALTER TABLE agent_conversation ADD COLUMN IF NOT EXISTS thread_id BIGINT REFERENCES agent_threads(id) ON DELETE CASCADE`;
+      await sql`ALTER TABLE automations ADD COLUMN IF NOT EXISTS agent_thread_id BIGINT REFERENCES agent_threads(id) ON DELETE SET NULL`;
+      await sql`CREATE INDEX IF NOT EXISTS idx_agent_conversation_thread ON agent_conversation(user_id, thread_id, id)`;
+
+      // Backfill : 1 fil par user avec messages orphelins
+      await sql`
+        INSERT INTO agent_threads (user_id, title, updated_at)
+        SELECT DISTINCT ac.user_id, 'Automatisation', NOW()
+        FROM agent_conversation ac
+        WHERE ac.user_id IS NOT NULL
+          AND ac.thread_id IS NULL
+          AND NOT EXISTS (SELECT 1 FROM agent_threads t WHERE t.user_id = ac.user_id)
+      `;
+      await sql`
+        UPDATE agent_conversation ac
+        SET thread_id = t.id
+        FROM agent_threads t
+        WHERE ac.user_id = t.user_id
+          AND ac.thread_id IS NULL
+          AND t.id = (SELECT MIN(t2.id) FROM agent_threads t2 WHERE t2.user_id = ac.user_id)
+      `;
+    })().catch((err) => {
+      agentThreadsSchemaReady = null;
+      throw err;
+    });
+  }
+  await agentThreadsSchemaReady;
+}
+
+export interface AgentThread {
+  id: number;
+  user_id: number;
+  title: string;
+  automation_id: number | null;
+  created_at: string;
+  updated_at: string;
+  automation_status?: string | null;
+  automation_name?: string | null;
+}
+
+function mapAgentThread(row: Record<string, unknown>): AgentThread {
+  return {
+    id: Number(row.id),
+    user_id: Number(row.user_id),
+    title: String(row.title),
+    automation_id: row.automation_id != null ? Number(row.automation_id) : null,
+    created_at: formatTs(row.created_at),
+    updated_at: formatTs(row.updated_at),
+    automation_status: row.automation_status != null ? String(row.automation_status) : null,
+    automation_name: row.automation_name != null ? String(row.automation_name) : null,
+  };
+}
+
+export async function listAgentThreads(userId: number, limit = 50): Promise<AgentThread[]> {
+  await ensureAgentThreadsSchema().catch(() => {});
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO agent_conversation (user_id, role, content)
-    VALUES (${userId}, ${role}, ${content})
+    SELECT
+      t.id, t.user_id, t.title, t.automation_id, t.created_at, t.updated_at,
+      a.status AS automation_status,
+      a.name AS automation_name
+    FROM agent_threads t
+    LEFT JOIN automations a ON a.id = t.automation_id AND a.user_id = t.user_id
+    WHERE t.user_id = ${userId}
+    ORDER BY t.updated_at DESC, t.id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map(mapAgentThread);
+}
+
+export async function getAgentThread(userId: number, threadId: number): Promise<AgentThread | null> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT
+      t.id, t.user_id, t.title, t.automation_id, t.created_at, t.updated_at,
+      a.status AS automation_status,
+      a.name AS automation_name
+    FROM agent_threads t
+    LEFT JOIN automations a ON a.id = t.automation_id AND a.user_id = t.user_id
+    WHERE t.user_id = ${userId} AND t.id = ${threadId}
+    LIMIT 1
+  `;
+  return rows[0] ? mapAgentThread(rows[0]) : null;
+}
+
+export async function createAgentThread(userId: number, title = "Automatisation"): Promise<AgentThread> {
+  await ensureAgentThreadsSchema().catch(() => {});
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO agent_threads (user_id, title)
+    VALUES (${userId}, ${title.trim() || "Automatisation"})
+    RETURNING id, user_id, title, automation_id, created_at, updated_at
+  `;
+  return mapAgentThread(rows[0]);
+}
+
+export async function ensureDefaultAgentThread(userId: number): Promise<AgentThread> {
+  const existing = await listAgentThreads(userId, 1);
+  if (existing[0]) return existing[0];
+  return createAgentThread(userId);
+}
+
+export async function updateAgentThreadTitle(userId: number, threadId: number, title: string): Promise<AgentThread | null> {
+  const rows = await sql<Record<string, unknown>[]>`
+    UPDATE agent_threads
+    SET title = ${title.trim() || "Automatisation"}, updated_at = NOW()
+    WHERE user_id = ${userId} AND id = ${threadId}
+    RETURNING id, user_id, title, automation_id, created_at, updated_at
+  `;
+  return rows[0] ? mapAgentThread(rows[0]) : null;
+}
+
+export async function touchAgentThread(userId: number, threadId: number): Promise<void> {
+  await sql`
+    UPDATE agent_threads SET updated_at = NOW()
+    WHERE user_id = ${userId} AND id = ${threadId}
+  `;
+}
+
+export async function deleteAgentThread(userId: number, threadId: number): Promise<boolean> {
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) return false;
+  if (thread.automation_id) {
+    await sql`
+      UPDATE automations SET agent_thread_id = NULL
+      WHERE user_id = ${userId} AND id = ${thread.automation_id}
+    `;
+  }
+  await sql`DELETE FROM agent_threads WHERE user_id = ${userId} AND id = ${threadId}`;
+  return true;
+}
+
+export async function threadHasCampaign(userId: number, threadId: number): Promise<boolean> {
+  const thread = await getAgentThread(userId, threadId);
+  return Boolean(thread?.automation_id);
+}
+
+export async function resolveThreadIdForAutomation(userId: number, automationId: number): Promise<number | null> {
+  const rows = await sql<{ agent_thread_id: number | null }[]>`
+    SELECT agent_thread_id FROM automations WHERE user_id = ${userId} AND id = ${automationId} LIMIT 1
+  `;
+  if (rows[0]?.agent_thread_id) return Number(rows[0].agent_thread_id);
+  const fallback = await sql<{ id: number }[]>`
+    SELECT id FROM agent_threads WHERE user_id = ${userId} AND automation_id = ${automationId} LIMIT 1
+  `;
+  return fallback[0] ? Number(fallback[0].id) : null;
+}
+
+export async function linkAutomationToThread(
+  userId: number,
+  threadId: number,
+  automationId: number,
+  title?: string
+): Promise<void> {
+  const name = title?.trim();
+  await sql`
+    UPDATE agent_threads
+    SET automation_id = ${automationId},
+        title = COALESCE(${name ?? null}, title),
+        updated_at = NOW()
+    WHERE user_id = ${userId} AND id = ${threadId}
+  `;
+  await sql`
+    UPDATE automations
+    SET agent_thread_id = ${threadId}, updated_at = NOW()
+    WHERE user_id = ${userId} AND id = ${automationId}
+  `;
+}
+
+export async function automationBelongsToThread(
+  userId: number,
+  threadId: number,
+  automationId: number
+): Promise<boolean> {
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) return false;
+  if (thread.automation_id === automationId) return true;
+  const rows = await sql`SELECT 1 FROM automations WHERE user_id = ${userId} AND id = ${automationId} AND agent_thread_id = ${threadId} LIMIT 1`;
+  return rows.length > 0;
+}
+
+export async function saveAgentMessage(
+  userId: number,
+  threadId: number,
+  role: AgentRole,
+  content: string
+): Promise<AgentMessage> {
+  const rows = await sql<Record<string, unknown>[]>`
+    INSERT INTO agent_conversation (user_id, thread_id, role, content)
+    VALUES (${userId}, ${threadId}, ${role}, ${content})
     RETURNING id, role, content, created_at
   `;
+  await touchAgentThread(userId, threadId);
   return mapAgentMessage(rows[0]);
 }
 
-export async function getRecentAgentMessages(userId: number, limit = 50): Promise<AgentMessage[]> {
+export async function saveAgentMessageForAutomation(
+  userId: number,
+  automationId: number,
+  role: AgentRole,
+  content: string
+): Promise<AgentMessage | null> {
+  const threadId = await resolveThreadIdForAutomation(userId, automationId);
+  if (!threadId) return null;
+  return saveAgentMessage(userId, threadId, role, content);
+}
+
+export async function getRecentAgentMessages(
+  userId: number,
+  threadId: number,
+  limit = 50
+): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
-    WHERE user_id = ${userId}
+    WHERE user_id = ${userId} AND thread_id = ${threadId}
     ORDER BY id DESC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage).reverse();
 }
 
-export async function getAgentMessagesSince(userId: number, sinceId = 0, limit = 50): Promise<AgentMessage[]> {
+export async function getAgentMessagesSince(
+  userId: number,
+  threadId: number,
+  sinceId = 0,
+  limit = 50
+): Promise<AgentMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, role, content, created_at
     FROM agent_conversation
-    WHERE user_id = ${userId} AND id > ${sinceId}
+    WHERE user_id = ${userId} AND thread_id = ${threadId} AND id > ${sinceId}
     ORDER BY id ASC
     LIMIT ${limit}
   `;
   return rows.map(mapAgentMessage);
 }
 
-export async function clearAgentConversation(userId: number): Promise<void> {
-  await sql`DELETE FROM agent_conversation WHERE user_id = ${userId}`;
+export async function clearAgentConversation(userId: number, threadId: number): Promise<void> {
+  await sql`DELETE FROM agent_conversation WHERE user_id = ${userId} AND thread_id = ${threadId}`;
+  await touchAgentThread(userId, threadId);
 }
 
 export interface WhatsAppMessage {
@@ -1849,11 +2071,21 @@ export async function updateAutomationMeta(
 export async function findReusableAutomation(
   userId: number,
   type: AutomationType,
-  opts: { automationId?: number; groupId?: string; name?: string } = {}
+  opts: { automationId?: number; groupId?: string; name?: string; threadId?: number } = {}
 ): Promise<Automation | null> {
   if (opts.automationId != null && Number.isFinite(opts.automationId)) {
     const byId = await getAutomation(userId, opts.automationId);
     if (byId && byId.type === type) return byId;
+  }
+
+  if (opts.threadId != null) {
+    const thread = await getAgentThread(userId, opts.threadId);
+    if (!thread) return null;
+    if (thread.automation_id) {
+      const linked = await getAutomation(userId, thread.automation_id);
+      if (linked && linked.type === type) return linked;
+    }
+    return null;
   }
 
   const open = await listAutomations(userId, { limit: 100 });

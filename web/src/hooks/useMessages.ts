@@ -7,8 +7,6 @@ function tsValue(created_at: string): number {
 
 function sortMessages(msgs: ChatMessage[]): ChatMessage[] {
   return [...msgs].sort((a, b) => {
-    // `seq` (ordre d'arrivée client) est la clé de tri fiable : les horodatages
-    // serveur (locaux, sans fuseau) et optimistes ne sont pas comparables directement.
     if (a.seq != null && b.seq != null && a.seq !== b.seq) return a.seq - b.seq;
     return tsValue(a.created_at) - tsValue(b.created_at);
   });
@@ -22,12 +20,9 @@ function nowLocalTs(): string {
 }
 
 /**
- * Gère UNIQUEMENT la conversation avec l'Agent. Les messages WhatsApp
- * (entrants/sortants échangés avec les prospects) ne sont volontairement pas
- * affichés ici : le chat est un espace de dialogue avec l'Agent, pas une
- * console WhatsApp. La console dédiée reste disponible dans son onglet.
+ * Gère UNIQUEMENT la conversation avec l'Agent pour un fil donné.
  */
-export function useMessages(enabled: boolean) {
+export function useMessages(enabled: boolean, threadId: number | null) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -36,9 +31,14 @@ export function useMessages(enabled: boolean) {
   const seqCounter = useRef(0);
 
   const loadHistory = useCallback(async () => {
+    if (threadId == null) {
+      setMessages([]);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     try {
-      const agentMsgs = await fetchAgentHistory();
+      const agentMsgs = await fetchAgentHistory(threadId);
       seenIds.current.clear();
       lastAgentId.current = 0;
       seqCounter.current = 0;
@@ -60,7 +60,7 @@ export function useMessages(enabled: boolean) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [threadId]);
 
   const appendLocal = useCallback((msg: ChatMessage) => {
     const agentMatch = msg.id.match(/^agent-(\d+)$/);

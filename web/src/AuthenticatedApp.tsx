@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
+import { ThreadStatsPanel } from '@/components/chat/ThreadStatsPanel';
 import { ConnectWhatsAppGate } from '@/components/whatsapp/ConnectWhatsAppGate';
 import { useAuth } from '@/lib/auth';
 import { useMessages } from '@/hooks/useMessages';
@@ -11,20 +12,32 @@ import {
   buildUserMessageDisplayText,
   type ChatAttachment,
 } from '@/lib/chat-attachments';
-import { clearHistory, sendChatMessage } from '@/lib/api';
-import type { MainView } from '@/lib/navigation';
+import {
+  createThread,
+  deleteThread,
+  fetchThreads,
+  sendChatMessage,
+  type AgentThreadSummary,
+} from '@/lib/api';
+import type { OverlayView } from '@/lib/navigation';
 import { AutomationPage } from '@/pages/AutomationPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 
 export default function AuthenticatedApp() {
   const { user, refreshUser } = useAuth();
-  const [mainView, setMainView] = useState<MainView>('chat');
+  const [overlayView, setOverlayView] = useState<OverlayView>(null);
   const [collapsed, toggle] = useSidebarCollapsed();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const chatEnabled = mainView === 'chat' && !!user?.whatsapp?.connected;
-  const { messages, loading, appendLocal, appendOptimisticUser, clear, loadHistory } =
-    useMessages(chatEnabled);
+  const [threads, setThreads] = useState<AgentThreadSummary[]>([]);
+  const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
+  const [creatingThread, setCreatingThread] = useState(false);
+  const [threadsLoading, setThreadsLoading] = useState(true);
+  const [statsOpen, setStatsOpen] = useState(false);
+
+  const chatEnabled = overlayView == null && !!user?.whatsapp?.connected && activeThreadId != null;
+  const { messages, loading, appendLocal, appendOptimisticUser, clear } =
+    useMessages(chatEnabled, activeThreadId);
   const [isSending, setIsSending] = useState(false);
   const [clearing, setClearing] = useState(false);
 
@@ -32,14 +45,25 @@ export default function AuthenticatedApp() {
   const [gateConfirmed, setGateConfirmed] = useState(false);
   const neverConnected = user?.whatsapp?.state === 'not_configured';
 
-  // Rafraîchir le statut WhatsApp toutes les 30s (moins agressif)
+  const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
+
+  const refreshThreads = useCallback(async (preferId?: number | null) => {
+    const list = await fetchThreads();
+    setThreads(list);
+    setActiveThreadId((prev) => {
+      if (preferId != null && list.some((t) => t.id === preferId)) return preferId;
+      if (prev != null && list.some((t) => t.id === prev)) return prev;
+      return list[0]?.id ?? null;
+    });
+    return list;
+  }, []);
+
   useEffect(() => {
     if (!user) return;
     const id = setInterval(() => void refreshUser(), 30_000);
     return () => clearInterval(id);
   }, [user, refreshUser]);
 
-  // N'afficher le QR-gate qu'après une déconnexion confirmée (pas un simple flake API)
   useEffect(() => {
     if (waConnected) {
       setGateConfirmed(false);
@@ -53,16 +77,46 @@ export default function AuthenticatedApp() {
     return () => clearTimeout(t);
   }, [waConnected, neverConnected]);
 
-  const handleNavigate = useCallback(
-    (view: MainView) => {
-      if (!waConnected && view !== 'settings') return;
-      setMainView(view);
-    },
-    [waConnected],
-  );
+  useEffect(() => {
+    if (!user?.onboarding_completed || !waConnected) return;
+    let cancelled = false;
+    setThreadsLoading(true);
+    void refreshThreads()
+      .catch(() => {
+        if (!cancelled) setThreads([]);
+      })
+      .finally(() => {
+        if (!cancelled) setThreadsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.onboarding_completed, waConnected, refreshThreads]);
+
+  const handleNewThread = useCallback(async () => {
+    setCreatingThread(true);
+    try {
+      const thread = await createThread();
+      await refreshThreads(thread.id);
+      setOverlayView(null);
+      setStatsOpen(false);
+      clear();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Erreur');
+    } finally {
+      setCreatingThread(false);
+    }
+  }, [clear, refreshThreads]);
+
+  const handleSelectThread = useCallback((id: number) => {
+    setActiveThreadId(id);
+    setOverlayView(null);
+    setStatsOpen(false);
+  }, []);
 
   const handleSend = useCallback(
     async (text: string, attachments: ChatAttachment[] = []) => {
+      if (activeThreadId == null) return;
       const displayText = buildUserMessageDisplayText(text, attachments);
       const apiText = buildUserMessageApiText(text, attachments);
       if (!apiText.trim()) return;
@@ -71,7 +125,7 @@ export default function AuthenticatedApp() {
 
       setIsSending(true);
       try {
-        const result = await sendChatMessage(apiText);
+        const result = await sendChatMessage(apiText, activeThreadId);
         appendLocal({
           id: `agent-${result.id}`,
           kind: result.error ? 'error' : 'assistant',
@@ -80,6 +134,7 @@ export default function AuthenticatedApp() {
           label: 'Agent',
         });
         void refreshUser();
+        void refreshThreads(activeThreadId);
       } catch (err) {
         appendLocal({
           id: `err-${Date.now()}`,
@@ -92,22 +147,33 @@ export default function AuthenticatedApp() {
         setIsSending(false);
       }
     },
-    [appendLocal, appendOptimisticUser, refreshUser],
+    [activeThreadId, appendLocal, appendOptimisticUser, refreshUser, refreshThreads],
   );
 
   const handleClearHistory = useCallback(async () => {
-    if (!confirm("Effacer l'historique de conversation agent ?")) return;
+    if (activeThreadId == null) return;
+    if (
+      !confirm(
+        'Supprimer cette automatisation (historique chat) ? La campagne WhatsApp reste disponible dans Paramètres → Automatisation.',
+      )
+    ) {
+      return;
+    }
     setClearing(true);
     try {
-      await clearHistory();
+      await deleteThread(activeThreadId);
       clear();
-      await loadHistory();
+      const list = await refreshThreads();
+      if (!list.length) {
+        const created = await createThread();
+        await refreshThreads(created.id);
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Erreur');
     } finally {
       setClearing(false);
     }
-  }, [clear, loadHistory]);
+  }, [activeThreadId, clear, refreshThreads]);
 
   if (!user) return null;
 
@@ -124,8 +190,11 @@ export default function AuthenticatedApp() {
       <AppSidebar
         collapsed={collapsed}
         onToggleCollapsed={toggle}
-        mainView={mainView}
-        onNavigate={handleNavigate}
+        threads={threads}
+        activeThreadId={activeThreadId}
+        onSelectThread={handleSelectThread}
+        onNewThread={() => void handleNewThread()}
+        creatingThread={creatingThread}
         waConnected={waConnected}
         mobileOpen={mobileNavOpen}
         onMobileClose={() => setMobileNavOpen(false)}
@@ -133,26 +202,37 @@ export default function AuthenticatedApp() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <AppHeader
-          mainView={mainView}
-          onGoToChat={() => handleNavigate('chat')}
-          onClearHistory={mainView === 'chat' ? handleClearHistory : undefined}
+          overlayView={overlayView}
+          threadTitle={activeThread?.title ?? 'Automatisation'}
+          hasCampaign={Boolean(activeThread?.automation_id)}
+          onGoToChat={() => setOverlayView(null)}
+          onOpenSettings={() => setOverlayView('settings')}
+          onOpenAutomation={() => setOverlayView('automation')}
+          onOpenStats={
+            activeThread?.automation_id ? () => setStatsOpen(true) : undefined
+          }
+          onClearHistory={overlayView == null ? handleClearHistory : undefined}
           clearing={clearing}
           onOpenMobileNav={() => setMobileNavOpen(true)}
         />
 
-        {mainView === 'chat' && (
+        {overlayView === 'settings' && <SettingsPage />}
+        {overlayView === 'automation' && <AutomationPage />}
+
+        {overlayView == null && (
           <ChatWorkspace
             messages={messages}
-            messagesLoading={loading}
+            messagesLoading={loading || threadsLoading}
             isSending={isSending}
             onSend={handleSend}
-            isFreshSession={messages.length === 0 && !loading}
+            isFreshSession={messages.length === 0 && !loading && !threadsLoading}
           />
         )}
-
-        {mainView === 'automation' && <AutomationPage />}
-        {mainView === 'settings' && <SettingsPage />}
       </div>
+
+      {statsOpen && activeThreadId != null && (
+        <ThreadStatsPanel threadId={activeThreadId} onClose={() => setStatsOpen(false)} />
+      )}
     </div>
   );
 }

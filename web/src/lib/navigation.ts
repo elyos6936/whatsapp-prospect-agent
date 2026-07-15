@@ -1,11 +1,7 @@
-export type MainView = 'chat' | 'automation' | 'settings';
+export type OverlayView = 'settings' | 'automation' | null;
 
-export const MAIN_NAV: { id: MainView; label: string }[] = [
-  { id: 'chat', label: 'Chat' },
-  { id: 'automation', label: 'Automatisation' },
-  { id: 'settings', label: 'Réglages' },
-];
-
-export function getViewTitle(view: MainView): string {
-  return MAIN_NAV.find((n) => n.id === view)?.label ?? 'Klanvio';
+export function getOverlayTitle(view: OverlayView): string {
+  if (view === 'settings') return 'Réglages';
+  if (view === 'automation') return 'Automatisation';
+  return 'Klanvio';
 }

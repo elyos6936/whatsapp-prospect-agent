@@ -17,6 +17,7 @@ import {
   fetchAutomations,
   reloadAutomationMembers,
   sendChatMessage,
+  createThread,
   updateAutomationStatus,
   type AutomationDetail,
   type AutomationSummary,
@@ -230,7 +231,8 @@ export function ManualBuilder({
     setMessages((m) => [...m, { role: 'user', content: value }]);
     setSending(true);
     try {
-      const res = await sendChatMessage(value);
+      const thread = await createThread('Automatisation (manuel)');
+      const res = await sendChatMessage(value, thread.id);
       setMessages((m) => [...m, { role: 'assistant', content: res.reply }]);
       onRefresh();
     } catch (err) {

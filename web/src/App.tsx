@@ -1,4 +1,5 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense } from 'react';
+import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { getStoredToken } from '@/lib/auth-storage';
 import type { LegalKind } from '@/pages/LegalPage';
@@ -16,8 +17,6 @@ const LegalPage = lazy(() =>
   import('@/pages/LegalPage').then((m) => ({ default: m.LegalPage })),
 );
 const AuthenticatedApp = lazy(() => import('@/AuthenticatedApp'));
-
-type AuthScreen = 'landing' | 'login' | 'register' | LegalKind;
 
 function FullScreen({ children }: { children: React.ReactNode }) {
   return (
@@ -62,38 +61,23 @@ function SessionRetry({
   );
 }
 
-function AnonymousScreens({
-  authScreen,
-  setAuthScreen,
-}: {
-  authScreen: AuthScreen;
-  setAuthScreen: (s: AuthScreen) => void;
-}) {
-  if (authScreen === 'mentions' || authScreen === 'confidentialite' || authScreen === 'contact') {
-    return <LegalPage kind={authScreen} onBack={() => setAuthScreen('landing')} />;
-  }
-  if (authScreen === 'login') {
-    return (
-      <LoginPage
-        onGoRegister={() => setAuthScreen('register')}
-        onGoBack={() => setAuthScreen('landing')}
-      />
-    );
-  }
-  if (authScreen === 'register') {
-    return (
-      <RegisterPage
-        onGoLogin={() => setAuthScreen('login')}
-        onGoBack={() => setAuthScreen('landing')}
-      />
-    );
-  }
+function LegalRoute({ kind }: { kind: LegalKind }) {
+  const navigate = useNavigate();
+  return <LegalPage kind={kind} onBack={() => navigate('/')} />;
+}
+
+function PublicRoutes() {
   return (
-    <LandingPage
-      onLogin={() => setAuthScreen('login')}
-      onRegister={() => setAuthScreen('register')}
-      onOpenLegal={(kind) => setAuthScreen(kind)}
-    />
+    <Routes>
+      <Route path="/" element={<LandingPage />} />
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+      <Route path="/mentions" element={<LegalRoute kind="mentions" />} />
+      <Route path="/confidentialite" element={<LegalRoute kind="confidentialite" />} />
+      <Route path="/contact" element={<LegalRoute kind="contact" />} />
+      <Route path="/app" element={<Navigate to="/login" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 
@@ -105,18 +89,13 @@ export default function App() {
     retrySession,
     logout,
   } = useAuth();
-  const [authScreen, setAuthScreen] = useState<AuthScreen>(() =>
-    typeof window !== 'undefined' && window.location.pathname.startsWith('/app')
-      ? 'login'
-      : 'landing',
-  );
 
   const hasToken = typeof window !== 'undefined' && !!getStoredToken();
 
   if (!user && !hasToken) {
     return (
       <Suspense fallback={<FullScreen>Chargement…</FullScreen>}>
-        <AnonymousScreens authScreen={authScreen} setAuthScreen={setAuthScreen} />
+        <PublicRoutes />
       </Suspense>
     );
   }
@@ -138,14 +117,18 @@ export default function App() {
   if (!user) {
     return (
       <Suspense fallback={<FullScreen>Chargement…</FullScreen>}>
-        <AnonymousScreens authScreen={authScreen} setAuthScreen={setAuthScreen} />
+        <PublicRoutes />
       </Suspense>
     );
   }
 
   return (
     <Suspense fallback={<FullScreen>Chargement…</FullScreen>}>
-      <AuthenticatedApp />
+      <Routes>
+        <Route path="/login" element={<Navigate to="/app" replace />} />
+        <Route path="/register" element={<Navigate to="/app" replace />} />
+        <Route path="/*" element={<AuthenticatedApp />} />
+      </Routes>
     </Suspense>
   );
 }

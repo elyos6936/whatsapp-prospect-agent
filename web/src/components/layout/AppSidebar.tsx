@@ -1,85 +1,134 @@
 import { useEffect } from 'react';
-import {
-  MessageSquare,
-  Menu,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Settings,
-  X,
-  Zap,
-} from 'lucide-react';
+import { Menu, PanelLeftClose, PanelLeftOpen, Plus, X } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
-import { MAIN_NAV, type MainView } from '@/lib/navigation';
+import type { AgentThreadSummary } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
-const NAV_ICONS = {
-  chat: MessageSquare,
-  automation: Zap,
-  settings: Settings,
-} as const;
+const STATUS_LABELS: Record<string, string> = {
+  draft: 'Brouillon',
+  active: 'Active',
+  paused: 'Pause',
+  completed: 'Terminée',
+  failed: 'Échouée',
+};
 
 type AppSidebarProps = {
   collapsed: boolean;
   onToggleCollapsed: () => void;
-  mainView: MainView;
-  onNavigate: (view: MainView) => void;
+  threads: AgentThreadSummary[];
+  activeThreadId: number | null;
+  onSelectThread: (id: number) => void;
+  onNewThread: () => void;
+  creatingThread?: boolean;
   waConnected?: boolean;
   mobileOpen: boolean;
   onMobileClose: () => void;
 };
 
-function NavItems({
+function ThreadList({
   collapsed,
-  mainView,
-  onNavigate,
+  threads,
+  activeThreadId,
+  onSelectThread,
+  onNewThread,
+  creatingThread,
   waConnected,
   onAfterNavigate,
 }: {
   collapsed: boolean;
-  mainView: MainView;
-  onNavigate: (view: MainView) => void;
+  threads: AgentThreadSummary[];
+  activeThreadId: number | null;
+  onSelectThread: (id: number) => void;
+  onNewThread: () => void;
+  creatingThread?: boolean;
   waConnected: boolean;
   onAfterNavigate?: () => void;
 }) {
   return (
-    <nav className="shrink-0 space-y-0.5 px-2 py-3" aria-label="Navigation principale">
-      {MAIN_NAV.map((item) => {
-        const Icon = NAV_ICONS[item.id];
-        const active = mainView === item.id;
-        const disabled = !waConnected && item.id !== 'settings';
-        return (
-          <button
-            key={item.id}
-            type="button"
-            disabled={disabled}
-            onClick={() => {
-              onNavigate(item.id);
-              onAfterNavigate?.();
-            }}
-            title={collapsed ? item.label : disabled ? "Connectez WhatsApp d'abord" : undefined}
-            className={cn(
-              'flex w-full items-center rounded-lg text-left text-sm transition-colors',
-              collapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5',
-              disabled && 'cursor-not-allowed opacity-40',
-              active
-                ? 'border border-brand-border bg-brand-muted font-medium text-brand'
-                : 'text-text-400 hover:bg-bg-200 hover:text-text-100',
-            )}
-          >
-            <Icon className={cn('h-4 w-4 shrink-0', active ? 'text-brand' : 'text-text-500')} />
-            {!collapsed && <span className="font-medium">{item.label}</span>}
-          </button>
-        );
-      })}
-    </nav>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="shrink-0 px-2 py-3">
+        <button
+          type="button"
+          disabled={!waConnected || creatingThread}
+          onClick={() => {
+            onNewThread();
+            onAfterNavigate?.();
+          }}
+          title={collapsed ? 'Nouvelle automatisation' : undefined}
+          className={cn(
+            'flex w-full items-center rounded-lg text-left text-sm font-medium transition-colors',
+            collapsed ? 'justify-center px-2 py-2.5' : 'gap-2.5 px-3 py-2.5',
+            !waConnected || creatingThread
+              ? 'cursor-not-allowed opacity-40'
+              : 'bg-brand text-white hover:bg-brand-dark',
+          )}
+        >
+          <Plus className="h-4 w-4 shrink-0" />
+          {!collapsed && <span>{creatingThread ? 'Création…' : 'Nouvelle automatisation'}</span>}
+        </button>
+      </div>
+
+      <nav
+        className="min-h-0 flex-1 space-y-0.5 overflow-y-auto px-2 pb-3 custom-scrollbar"
+        aria-label="Automatisations"
+      >
+        {threads.map((thread) => {
+          const active = activeThreadId === thread.id;
+          const status = thread.automation_status;
+          const badge = status ? STATUS_LABELS[status] || status : 'Vide';
+          return (
+            <button
+              key={thread.id}
+              type="button"
+              disabled={!waConnected}
+              onClick={() => {
+                onSelectThread(thread.id);
+                onAfterNavigate?.();
+              }}
+              title={collapsed ? thread.title : undefined}
+              className={cn(
+                'flex w-full flex-col rounded-lg text-left text-sm transition-colors',
+                collapsed ? 'items-center px-2 py-2.5' : 'gap-0.5 px-3 py-2.5',
+                !waConnected && 'cursor-not-allowed opacity-40',
+                active
+                  ? 'border border-brand-border bg-brand-muted font-medium text-brand'
+                  : 'text-text-400 hover:bg-bg-200 hover:text-text-100',
+              )}
+            >
+              {collapsed ? (
+                <span className="text-xs font-semibold">#{thread.id}</span>
+              ) : (
+                <>
+                  <span className="truncate font-medium">{thread.title}</span>
+                  <span
+                    className={cn(
+                      'text-[11px]',
+                      active ? 'text-brand/80' : 'text-text-500',
+                    )}
+                  >
+                    {badge}
+                  </span>
+                </>
+              )}
+            </button>
+          );
+        })}
+        {!threads.length && !collapsed && (
+          <p className="px-3 py-2 text-xs text-text-500">Aucune automatisation.</p>
+        )}
+      </nav>
+    </div>
   );
 }
 
 export function AppSidebar({
   collapsed,
   onToggleCollapsed,
-  mainView,
-  onNavigate,
+  threads,
+  activeThreadId,
+  onSelectThread,
+  onNewThread,
+  creatingThread,
   waConnected = true,
   mobileOpen,
   onMobileClose,
@@ -110,7 +159,7 @@ export function AppSidebar({
         >
           <button
             type="button"
-            onClick={() => onNavigate('chat')}
+            onClick={() => activeThreadId && onSelectThread(activeThreadId)}
             className="shrink-0 rounded-lg transition hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40"
             aria-label="Accueil Klanvio"
           >
@@ -125,10 +174,13 @@ export function AppSidebar({
             {collapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
           </button>
         </div>
-        <NavItems
+        <ThreadList
           collapsed={collapsed}
-          mainView={mainView}
-          onNavigate={onNavigate}
+          threads={threads}
+          activeThreadId={activeThreadId}
+          onSelectThread={onSelectThread}
+          onNewThread={onNewThread}
+          creatingThread={creatingThread}
           waConnected={waConnected}
         />
       </aside>
@@ -159,10 +211,13 @@ export function AppSidebar({
             <X className="h-4 w-4" />
           </button>
         </div>
-        <NavItems
+        <ThreadList
           collapsed={false}
-          mainView={mainView}
-          onNavigate={onNavigate}
+          threads={threads}
+          activeThreadId={activeThreadId}
+          onSelectThread={onSelectThread}
+          onNewThread={onNewThread}
+          creatingThread={creatingThread}
           waConnected={waConnected}
           onAfterNavigate={onMobileClose}
         />

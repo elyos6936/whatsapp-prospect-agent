@@ -25,11 +25,13 @@ import { HeroGridBackdrop } from '@/components/ui/hero-grid-backdrop';
 import { ShaderBackdrop } from '@/components/ui/shader-backdrop';
 import { ShinyButton } from '@/components/ui/shiny-button';
 import type { LegalKind } from '@/pages/LegalPage';
+import { useNavigate } from 'react-router-dom';
 
 type LandingPageProps = {
-  onLogin: () => void;
-  onRegister: () => void;
-  onOpenLegal: (kind: LegalKind) => void;
+  // kept optional for legacy unused landing components
+  onLogin?: () => void;
+  onRegister?: () => void;
+  onOpenLegal?: (kind: LegalKind) => void;
 };
 
 const NAV_LINKS = [
@@ -176,8 +178,14 @@ function CellMark({ value }: { value: boolean | 'limité' }) {
   return <Minus className="h-4 w-4 text-text-500/50" strokeWidth={2} aria-label="Non" />;
 }
 
-export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPageProps) {
+export function LandingPage(props: LandingPageProps = {}) {
+  const { onLogin, onRegister, onOpenLegal } = props;
+  const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+
+  const goLogin = onLogin ?? (() => navigate('/login'));
+  const goRegister = onRegister ?? (() => navigate('/register'));
+  const goLegal = onOpenLegal ?? ((kind: LegalKind) => navigate(`/${kind}`));
 
   const scrollTo = (id: string) => {
     setMenuOpen(false);
@@ -208,12 +216,12 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
           <div className="hidden shrink-0 items-center gap-2.5 lg:flex">
             <button
               type="button"
-              onClick={onLogin}
+              onClick={goLogin}
               className="inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-black/10 bg-white px-3.5 text-[0.8125rem] font-semibold text-text-200 shadow-sm transition hover:border-black/15 hover:bg-white hover:text-text-100"
             >
               Connexion
             </button>
-            <ShinyButton size="sm" onClick={onRegister}>
+            <ShinyButton size="sm" onClick={goRegister}>
               Essai gratuit
             </ShinyButton>
           </div>
@@ -245,12 +253,12 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
               <div className="mt-2 flex flex-col gap-2.5 border-t border-black/[0.06] pt-3 sm:flex-row sm:items-center">
                 <button
                   type="button"
-                  onClick={onLogin}
+                  onClick={goLogin}
                   className="inline-flex h-10 w-full cursor-pointer items-center justify-center rounded-full border border-black/10 bg-white px-3.5 text-[0.8125rem] font-semibold text-text-200 shadow-sm sm:w-auto"
                 >
                   Connexion
                 </button>
-                <ShinyButton size="sm" onClick={onRegister} className="w-full sm:w-auto">
+                <ShinyButton size="sm" onClick={goRegister} className="w-full sm:w-auto">
                   Essai gratuit
                 </ShinyButton>
               </div>
@@ -277,7 +285,7 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
               </p>
 
               <div className="mt-5 flex w-full justify-center">
-                <ShinyButton onClick={onRegister} className="max-w-full">
+                <ShinyButton onClick={goRegister} className="max-w-full">
                   Essayer gratuitement 7 jours
                   <ArrowRight className="h-4 w-4 shrink-0" />
                 </ShinyButton>
@@ -429,7 +437,7 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
 
         {/* BILLING */}
         <AnimatedContainer>
-          <BillingSection onStartTrial={onRegister} />
+          <BillingSection onStartTrial={goRegister} />
         </AnimatedContainer>
 
         <LandingFaq />
@@ -442,7 +450,7 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
               title="Prêt à laisser Klanvio automatiser tout votre WhatsApp ?"
               description="Prospection, closing, groupes, statuts, anti-blocage. Connectez votre numéro et laissez l’agent travailler."
               buttonLabel="Commencer gratuitement"
-              onButtonClick={onRegister}
+              onButtonClick={goRegister}
             />
           </AnimatedContainer>
         </div>
@@ -473,21 +481,21 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
           <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-text-500 md:justify-end">
             <button
               type="button"
-              onClick={() => onOpenLegal('mentions')}
+              onClick={() => goLegal('mentions')}
               className="cursor-pointer transition hover:text-text-100"
             >
               Mentions légales
             </button>
             <button
               type="button"
-              onClick={() => onOpenLegal('confidentialite')}
+              onClick={() => goLegal('confidentialite')}
               className="cursor-pointer transition hover:text-text-100"
             >
               Confidentialité
             </button>
             <button
               type="button"
-              onClick={() => onOpenLegal('contact')}
+              onClick={() => goLegal('contact')}
               className="cursor-pointer transition hover:text-text-100"
             >
               Contact

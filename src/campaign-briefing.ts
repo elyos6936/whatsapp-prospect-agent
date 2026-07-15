@@ -176,6 +176,27 @@ export function assessCampaignBriefing(
   };
 }
 
+const NEW_CAMPAIGN_IN_THREAD_RE =
+  /\b(nouvelle|autre|deuxi[eè]me|2e|second|encore\s+une|une\s+autre|relance\s+une\s+autre)\s+(campagne|automatisation|prospection|s[eé]quence)\b/i;
+
+/** Bloque une 2e campagne dans un fil qui en a déjà une. */
+export function buildThreadCampaignBlockNudge(
+  automationId: number | null,
+  userMessage: string
+): string | null {
+  if (!automationId) return null;
+  if (!isCampaignIntent(userMessage) && !NEW_CAMPAIGN_IN_THREAD_RE.test(userMessage)) return null;
+  if (NEW_CAMPAIGN_IN_THREAD_RE.test(userMessage)) {
+    return (
+      `## BLOCAGE TECHNIQUE — fil occupé\n` +
+      `Ce fil gère déjà l'automatisation #${automationId}. INTERDIT d'appeler create_automation sans automation_id.\n` +
+      `Explique à l'utilisateur qu'il doit cliquer « Nouvelle automatisation » dans la barre latérale pour créer une autre campagne.\n` +
+      `Pour modifier la campagne actuelle → update_automation_config ou create_automation avec automation_id=${automationId}.`
+    );
+  }
+  return null;
+}
+
 export function buildBriefingNudge(assessment: BriefingAssessment): string | null {
   if (!assessment.inCampaignFlow) return null;
   if (assessment.readyForDraft) {
@@ -206,7 +227,6 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
     `Si objectif = rendez-vous → tu DOIS obtenir le **lien de réservation** (URL) avant tout brouillon.\n` +
     `N'oublie pas le **planning** : fenêtre horaire d'envoi + jour/heure de lancement (une question à la fois).\n` +
     `Avant activation : demande aussi si l'utilisateur veut des **stickers** dans les conversations (oui/non).\n` +
-    `S'il a déjà des campagnes listées dans le contexte → demande d'abord « nouvelle ou modifier une existante ? ».\n` +
     `Valable pour TOUS produits / services / support client.`
   );
 }

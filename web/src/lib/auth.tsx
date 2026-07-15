@@ -50,9 +50,19 @@ function toMe(user: AuthUser, fallbackWhatsApp?: MeResponse['whatsapp']): MeResp
 
 function syncAppUrl(loggedIn: boolean): void {
   if (typeof window === 'undefined') return;
-  const target = loggedIn ? '/app' : '/';
-  if (window.location.pathname !== target) {
-    window.history.replaceState(null, '', target);
+  const path = window.location.pathname;
+  if (loggedIn) {
+    // Après connexion : quitter landing / auth vers l'app
+    if (path === '/' || path === '/login' || path === '/register') {
+      window.history.pushState(null, '', '/app');
+      window.dispatchEvent(new PopStateEvent('popstate'));
+    }
+    return;
+  }
+  // Après déconnexion : quitter seulement l'espace app
+  if (path === '/app' || path.startsWith('/app/')) {
+    window.history.pushState(null, '', '/');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   }
 }
 

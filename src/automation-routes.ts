@@ -12,6 +12,7 @@ import {
   saveAgentMessage,
   getRecentAgentMessages,
   clearAgentConversation,
+  ensureDefaultAgentThread,
   updateAutomationConfig,
   updateAutomationStatus,
   pauseAutomation,
@@ -163,8 +164,9 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
   // --- Constructeur d'automatisation (page Automatisation → Manuel) : chat IA dédié ---
   app.get("/api/automations/builder/history", async (request) => {
     const userId = requireUserId(request);
-    const messages = await getRecentAgentMessages(userId, 100);
-    return { messages };
+    const thread = await ensureDefaultAgentThread(userId);
+    const messages = await getRecentAgentMessages(userId, thread.id, 100);
+    return { messages, thread_id: thread.id };
   });
 
   app.post<{ Body: { message?: string } }>("/api/automations/builder/chat", async (req, reply) => {
@@ -174,21 +176,23 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       return reply.status(400).send({ error: "Le champ « message » est requis." });
     }
 
-    await saveAgentMessage(userId, "user", message);
+    const thread = await ensureDefaultAgentThread(userId);
+    await saveAgentMessage(userId, thread.id, "user", message);
     try {
-      const assistantReply = await chatWithAgent(userId, message);
-      const saved = await saveAgentMessage(userId, "assistant", assistantReply);
+      const assistantReply = await chatWithAgent(userId, message, thread.id);
+      const saved = await saveAgentMessage(userId, thread.id, "assistant", assistantReply);
       return { id: saved.id, reply: saved.content, created_at: saved.created_at };
     } catch (err) {
       const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
-      const saved = await saveAgentMessage(userId, "assistant", `❌ ${errorText}`);
+      const saved = await saveAgentMessage(userId, thread.id, "assistant", `❌ ${errorText}`);
       return { id: saved.id, reply: saved.content, created_at: saved.created_at, error: true };
     }
   });
 
   app.delete("/api/automations/builder/history", async (request) => {
     const userId = requireUserId(request);
-    await clearAgentConversation(userId);
+    const thread = await ensureDefaultAgentThread(userId);
+    await clearAgentConversation(userId, thread.id);
     return { ok: true };
   });
 

@@ -13,7 +13,7 @@ import {
   getBlockedContactIds,
   getContact,
   isContactBlocked,
-  saveAgentMessage,
+  saveAgentMessageForAutomation,
   unblockContact,
   updateAutomationStats,
   updateAutomationStatus,
@@ -309,7 +309,7 @@ async function maybeSendDailyReport(userId: number, auto: Automation): Promise<v
 
   try {
     const text = await buildDailyReportText(userId, auto);
-    await saveAgentMessage(userId, "assistant", text);
+    await saveAgentMessageForAutomation(userId, auto.id, "assistant", text);
     await updateAutomationStats(userId, auto.id, {
       lastReportDate: today,
       lastActionAt: new Date().toISOString(),

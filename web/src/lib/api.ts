@@ -101,9 +101,9 @@ export async function fetchSettings(): Promise<AppSettings> {
   return request<AppSettings>('/api/settings');
 }
 
-export async function fetchAgentHistory(): Promise<ChatMessage[]> {
+export async function fetchAgentHistory(threadId: number): Promise<ChatMessage[]> {
   const data = await request<{ messages: Array<{ id: number; role: string; content: string; created_at: string }> }>(
-    '/api/history',
+    `/api/history?thread_id=${threadId}`,
   );
   return (data.messages ?? []).map((m) => ({
     id: `agent-${m.id}`,
@@ -114,9 +114,9 @@ export async function fetchAgentHistory(): Promise<ChatMessage[]> {
   }));
 }
 
-export async function fetchAgentMessagesSince(since: number): Promise<ChatMessage[]> {
+export async function fetchAgentMessagesSince(threadId: number, since: number): Promise<ChatMessage[]> {
   const data = await request<{ messages: Array<{ id: number; role: string; content: string; created_at: string }> }>(
-    `/api/history/since?since=${since}`,
+    `/api/history/since?since=${since}&thread_id=${threadId}`,
   );
   return (data.messages ?? []).map((m) => ({
     id: `agent-${m.id}`,
@@ -153,7 +153,7 @@ export async function fetchWhatsAppMessagesSince(since: number): Promise<ChatMes
   });
 }
 
-export async function sendChatMessage(message: string): Promise<{
+export async function sendChatMessage(message: string, threadId: number): Promise<{
   id: number;
   reply: string;
   created_at: string;
@@ -161,12 +161,46 @@ export async function sendChatMessage(message: string): Promise<{
 }> {
   return request('/api/chat', {
     method: 'POST',
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ message, thread_id: threadId }),
   });
 }
 
-export async function clearHistory(): Promise<void> {
-  await request('/api/history', { method: 'DELETE' });
+export async function clearHistory(threadId: number): Promise<void> {
+  await request(`/api/history?thread_id=${threadId}`, { method: 'DELETE' });
+}
+
+export interface AgentThreadSummary {
+  id: number;
+  title: string;
+  automation_id: number | null;
+  automation_status?: string | null;
+  automation_name?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export async function fetchThreads(): Promise<AgentThreadSummary[]> {
+  const data = await request<{ threads: AgentThreadSummary[] }>('/api/threads');
+  return data.threads ?? [];
+}
+
+export async function createThread(title?: string): Promise<AgentThreadSummary> {
+  const data = await request<{ thread: AgentThreadSummary }>('/api/threads', {
+    method: 'POST',
+    body: JSON.stringify({ title: title ?? 'Automatisation' }),
+  });
+  return data.thread;
+}
+
+export async function deleteThread(threadId: number): Promise<void> {
+  await request(`/api/threads/${threadId}`, { method: 'DELETE' });
+}
+
+export async function fetchThreadCampaign(threadId: number): Promise<{
+  detail: AutomationDetail;
+  stats: Record<string, number | string | null>;
+}> {
+  return request(`/api/threads/${threadId}/campaign`);
 }
 
 /** Transcrit un enregistrement audio en texte (dictée vocale de l'input de chat). */

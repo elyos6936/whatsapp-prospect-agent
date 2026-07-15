@@ -17,6 +17,8 @@ import {
   pauseAllActiveAutomations,
   getAppSettings,
   getAgentMessagesSince,
+  getAgentThread,
+  getAutomationDetail,
   getContactThread,
   getDailyBilan,
   getIncomingMessagesSince,
@@ -24,6 +26,11 @@ import {
   getWhatsAppMessagesSince,
   isAutoReplyEnabled,
   listContacts,
+  listAgentThreads,
+  createAgentThread,
+  deleteAgentThread,
+  ensureDefaultAgentThread,
+  updateAgentThreadTitle,
   maskSecret,
   saveAgentMessage,
   saveBusinessProfile,
@@ -219,9 +226,20 @@ app.post("/api/evolution/webhook", async (request) => {
   return { ok: true, processed };
 });
 
-app.get("/api/history", async (request) => ({
-  messages: await getRecentAgentMessages(requireUserId(request), 100),
-}));
+app.get("/api/history", async (request, reply) => {
+  const userId = requireUserId(request);
+  const threadId = Number((request.query as { thread_id?: string }).thread_id);
+  if (!Number.isFinite(threadId)) {
+    return reply.status(400).send({ error: "Le paramètre « thread_id » est requis." });
+  }
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
+  return {
+    messages: await getRecentAgentMessages(userId, threadId, 100),
+  };
+});
 
 app.get("/api/incoming", async (request) => {
   const userId = requireUserId(request);
@@ -236,10 +254,18 @@ app.get("/api/whatsapp", async (request) => {
   return { messages: await getWhatsAppMessagesSince(userId, since, limit) };
 });
 
-app.get("/api/history/since", async (request) => {
+app.get("/api/history/since", async (request, reply) => {
   const userId = requireUserId(request);
   const since = Number((request.query as { since?: string }).since) || 0;
-  return { messages: await getAgentMessagesSince(userId, since) };
+  const threadId = Number((request.query as { thread_id?: string }).thread_id);
+  if (!Number.isFinite(threadId)) {
+    return reply.status(400).send({ error: "Le paramètre « thread_id » est requis." });
+  }
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
+  return { messages: await getAgentMessagesSince(userId, threadId, since) };
 });
 
 app.post<{ Body: { enabled?: boolean } }>("/api/settings/auto-reply", async (request, reply) => {
@@ -374,27 +400,139 @@ app.post<{
   }
 });
 
-app.delete("/api/history", async (request) => {
-  await clearAgentConversation(requireUserId(request));
+app.get("/api/threads", async (request) => {
+  const userId = requireUserId(request);
+  let threads = await listAgentThreads(userId);
+  if (!threads.length) {
+    const created = await ensureDefaultAgentThread(userId);
+    threads = [created];
+  }
+  return { threads };
+});
+
+app.post<{ Body: { title?: string } }>("/api/threads", async (request) => {
+  const userId = requireUserId(request);
+  const thread = await createAgentThread(userId, request.body?.title?.trim() || "Automatisation");
+  return { thread };
+});
+
+app.patch<{ Params: { id: string }; Body: { title?: string } }>("/api/threads/:id", async (request, reply) => {
+  const userId = requireUserId(request);
+  const id = Number(request.params.id);
+  if (!Number.isFinite(id)) {
+    return reply.status(400).send({ error: "ID invalide." });
+  }
+  const title = request.body?.title?.trim();
+  if (!title) {
+    return reply.status(400).send({ error: "Le champ « title » est requis." });
+  }
+  const thread = await updateAgentThreadTitle(userId, id, title);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
+  return { thread };
+});
+
+app.delete<{ Params: { id: string } }>("/api/threads/:id", async (request, reply) => {
+  const userId = requireUserId(request);
+  const id = Number(request.params.id);
+  if (!Number.isFinite(id)) {
+    return reply.status(400).send({ error: "ID invalide." });
+  }
+  const ok = await deleteAgentThread(userId, id);
+  if (!ok) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
   return { ok: true };
 });
 
-app.post<{ Body: { message?: string } }>("/api/chat", async (request, reply) => {
+app.get<{ Params: { id: string } }>("/api/threads/:id/campaign", async (request, reply) => {
+  const userId = requireUserId(request);
+  const threadId = Number(request.params.id);
+  if (!Number.isFinite(threadId)) {
+    return reply.status(400).send({ error: "ID invalide." });
+  }
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
+  if (!thread.automation_id) {
+    return reply.status(404).send({ error: "Aucune campagne liée à ce fil." });
+  }
+  const detail = await getAutomationDetail(userId, thread.automation_id);
+  if (!detail) {
+    return reply.status(404).send({ error: "Campagne introuvable." });
+  }
+  const auto = detail.automation;
+  const targets = detail.targets;
+  const contacted = targets.filter((t) => t.status !== "pending").length;
+  const replied = targets.filter((t) => t.status === "replied" || t.status === "interested").length;
+  const interested = targets.filter((t) => t.status === "interested").length;
+  const pending = targets.filter((t) => t.status === "pending").length;
+  const stopped = targets.filter((t) => t.status === "stopped").length;
+  const messagesSent = (Number(auto.stats.outboundUsed) || 0) || contacted;
+  const messagesHandled = Number(auto.stats.messagesHandled) || 0;
+  const responseRate = contacted > 0 ? Math.round((replied / contacted) * 100) : null;
+  const bilan = await getDailyBilan(userId).catch(() => null);
+  return {
+    thread_id: threadId,
+    detail,
+    stats: {
+      targetsTotal: targets.length,
+      contacted,
+      pending,
+      replied,
+      interested,
+      stopped,
+      messagesSent,
+      messagesHandled,
+      responseRatePercent: responseRate,
+      conversions: Number(auto.stats.conversions) || 0,
+      lastActionAt: auto.stats.lastActionAt ?? null,
+      report: typeof auto.stats.report === "string" ? auto.stats.report : null,
+    },
+    today: bilan ? { date: bilan.date, incoming: bilan.incoming, outgoing: bilan.outgoing } : null,
+  };
+});
+
+app.delete("/api/history", async (request, reply) => {
+  const userId = requireUserId(request);
+  const threadId = Number((request.query as { thread_id?: string }).thread_id);
+  if (!Number.isFinite(threadId)) {
+    return reply.status(400).send({ error: "Le paramètre « thread_id » est requis." });
+  }
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
+  await clearAgentConversation(userId, threadId);
+  return { ok: true };
+});
+
+app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async (request, reply) => {
   const userId = requireUserId(request);
   const message = request.body?.message?.trim();
+  const threadId = Number(request.body?.thread_id);
   if (!message) {
     return reply.status(400).send({ error: "Le champ « message » est requis." });
   }
+  if (!Number.isFinite(threadId)) {
+    return reply.status(400).send({ error: "Le champ « thread_id » est requis." });
+  }
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
 
-  await saveAgentMessage(userId, "user", message);
+  await saveAgentMessage(userId, threadId, "user", message);
 
   try {
-    const assistantReply = await chatWithAgent(userId, message);
-    const saved = await saveAgentMessage(userId, "assistant", assistantReply);
+    const assistantReply = await chatWithAgent(userId, message, threadId);
+    const saved = await saveAgentMessage(userId, threadId, "assistant", assistantReply);
     return { id: saved.id, reply: saved.content, created_at: saved.created_at };
   } catch (err) {
     const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
-    const saved = await saveAgentMessage(userId, "assistant", `❌ ${errorText}`);
+    const saved = await saveAgentMessage(userId, threadId, "assistant", `❌ ${errorText}`);
     return {
       id: saved.id,
       reply: saved.content,

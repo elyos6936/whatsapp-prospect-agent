@@ -92,6 +92,10 @@ import {
   updateAutomationConfig,
   updateAutomationMeta,
   findReusableAutomation,
+  linkAutomationToThread,
+  automationBelongsToThread,
+  threadHasCampaign,
+  getAgentThread,
   haltAutomationMessaging,
   resumeAutomationMessaging,
   setAutoReplyEnabled,
@@ -1787,7 +1791,12 @@ function formatContact(c: {
   };
 }
 
-export async function executeTool(userId: number, name: string, args: Record<string, unknown>): Promise<string> {
+export async function executeTool(
+  userId: number,
+  threadId: number,
+  name: string,
+  args: Record<string, unknown>
+): Promise<string> {
   if (!LOCAL_TOOLS.has(name)) {
     if (!(await getEvolutionCredentials(userId))) {
       return JSON.stringify({
@@ -3182,6 +3191,27 @@ export async function executeTool(userId: number, name: string, args: Record<str
         return JSON.stringify({ error: "type invalide." });
       }
 
+      const explicitAutomationId =
+        args.automation_id != null && Number.isFinite(Number(args.automation_id))
+          ? Number(args.automation_id)
+          : undefined;
+
+      if (!explicitAutomationId && (await threadHasCampaign(userId, threadId))) {
+        const thread = await getAgentThread(userId, threadId);
+        return JSON.stringify({
+          error: `Ce fil gère déjà une automatisation (#${thread?.automation_id ?? "?"}). Cliquez sur « Nouvelle automatisation » dans la barre latérale pour en créer une autre.`,
+        });
+      }
+
+      if (explicitAutomationId) {
+        const belongs = await automationBelongsToThread(userId, threadId, explicitAutomationId);
+        if (!belongs) {
+          return JSON.stringify({
+            error: `La campagne #${explicitAutomationId} n'appartient pas à ce fil. Utilisez « Nouvelle automatisation » pour une autre campagne.`,
+          });
+        }
+      }
+
       const config = buildAutomationConfigFromArgs(args, type);
 
       // Interdit de stocker des crochets dans les textes de campagne (ils finiraient chez les prospects).
@@ -3257,6 +3287,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
           automationId: explicitId,
           groupId: cfg.groupId,
           name: args.name ? String(args.name) : undefined,
+          threadId,
         });
 
         const name = String(args.name ?? reusable?.name ?? "Campagne");
@@ -3289,6 +3320,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
           if (reusable.status === "active") {
             await resumeAutomationMessaging(userId, reusable.id);
           }
+          await linkAutomationToThread(userId, threadId, reusable.id, name);
           const fresh = await getAutomationDetail(userId, reusable.id);
           return JSON.stringify({
             success: true,
@@ -3315,6 +3347,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
           budgetFcfa: budget,
           status: "draft",
         });
+        await linkAutomationToThread(userId, threadId, auto.id, name);
         return JSON.stringify({
           success: true,
           updated: false,
@@ -3415,6 +3448,11 @@ export async function executeTool(userId: number, name: string, args: Record<str
       const id = Number(args.automation_id);
       if (!Number.isFinite(id)) {
         return JSON.stringify({ error: "automation_id invalide." });
+      }
+      if (!(await automationBelongsToThread(userId, threadId, id))) {
+        return JSON.stringify({
+          error: `La campagne #${id} n'appartient pas à ce fil. Utilisez « Nouvelle automatisation » pour une autre campagne.`,
+        });
       }
       const detail = await getAutomationDetail(userId, id);
       if (!detail) {

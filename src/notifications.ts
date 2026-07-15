@@ -32,7 +32,7 @@ import {
   findUnansweredInboundMessages,
   hasOutboundReplyAfter,
   setContactWhatsappLid,
-  saveAgentMessage,
+  saveAgentMessageForAutomation,
   setContactAutoReply,
   saveContact,
   incrementAutoStopped,
@@ -871,8 +871,9 @@ async function runAutoReply(
         }
         await cancelSequencesForContact(userId, chatId);
         await incrementAutoStopped(userId, activeCampaign.id);
-        await saveAgentMessage(
+        await saveAgentMessageForAutomation(
           userId,
+          activeCampaign.id,
           "assistant",
           `⚠️ Prospection arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(stopReason)}. Campagne « ${activeCampaign.name} » (#${activeCampaign.id}). Relances annulées.`
         );
@@ -913,8 +914,9 @@ async function runAutoReply(
               notes: "Conversion / intention d'achat détectée",
             });
           }
-          await saveAgentMessage(
+          await saveAgentMessageForAutomation(
             userId,
+            activeCampaign.id,
             "assistant",
             `🎉 Conversion détectée avec ${senderName} (${chatIdToDisplay(chatId)}) — campagne « ${activeCampaign.name} ».`
           );

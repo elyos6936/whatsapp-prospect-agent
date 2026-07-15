@@ -1,14 +1,11 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { AuthUI } from '@/components/ui/auth-fuse';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 
-type AuthPageProps = {
-  onGoRegister: () => void;
-  onGoBack?: () => void;
-};
-
-export function LoginPage({ onGoRegister, onGoBack }: AuthPageProps) {
+export function LoginPage() {
+  const navigate = useNavigate();
   const { login, loginGoogle } = useAuth();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -16,9 +13,9 @@ export function LoginPage({ onGoRegister, onGoBack }: AuthPageProps) {
   return (
     <AuthUI
       initialSignIn
-      onBack={onGoBack}
+      onBack={() => navigate('/')}
       onModeChange={(isSignIn) => {
-        if (!isSignIn) onGoRegister();
+        if (!isSignIn) navigate('/register');
       }}
       handlers={{
         busy,
@@ -35,7 +32,7 @@ export function LoginPage({ onGoRegister, onGoBack }: AuthPageProps) {
           }
         },
         onSignUp: async () => {
-          onGoRegister();
+          navigate('/register');
         },
         onGoogle: async (accessToken) => {
           setError('');
