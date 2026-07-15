@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   CheckCircle2,
+  CreditCard,
   LogOut,
   QrCode,
   RefreshCw,
@@ -19,7 +20,7 @@ import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { qrImageSrc } from '@/lib/qr';
 
-type SettingsTab = 'connection' | 'business';
+type SettingsTab = 'connection' | 'business' | 'billing';
 
 function Feedback({ text, type }: { text: string; type?: 'ok' | 'err' }) {
   if (!text) return null;
@@ -51,6 +52,8 @@ export function SettingsPage() {
   const [autoReplyOn, setAutoReplyOn] = useState(true);
   const [autoReplyBusy, setAutoReplyBusy] = useState(false);
   const [autoReplyFb, setAutoReplyFb] = useState('');
+  const [billingNote, setBillingNote] = useState<string | null>(null);
+  const [billingBusy, setBillingBusy] = useState(false);
 
   const [qrData, setQrData] = useState<{
     connected: boolean;
@@ -150,46 +153,55 @@ export function SettingsPage() {
   const tabs: { id: SettingsTab; label: string; icon: typeof Smartphone }[] = [
     { id: 'connection', label: 'WhatsApp', icon: Smartphone },
     { id: 'business', label: 'Profil business', icon: Store },
+    { id: 'billing', label: 'Facturation', icon: CreditCard },
   ];
 
+  const tabLabels: Record<SettingsTab, { short: string; full: string }> = {
+    connection: { short: 'WhatsApp', full: 'WhatsApp' },
+    business: { short: 'Business', full: 'Profil business' },
+    billing: { short: 'Facturation', full: 'Facturation' },
+  };
+
   return (
-    <div className="flex-1 overflow-y-auto custom-scrollbar">
+    <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto custom-scrollbar">
       <div className="brand-radial">
-        <div className="mx-auto max-w-2xl px-4 py-8 sm:px-6">
+        <div className="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6">
           {/* En-tête */}
-          <div className="mb-8 flex items-start justify-between gap-4">
-            <div>
+          <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
+            <div className="min-w-0">
               <h1 className="font-serif text-2xl font-light text-text-100">Réglages</h1>
-              <p className="mt-1 text-sm text-text-400">{user?.email}</p>
+              <p className="mt-1 truncate text-sm text-text-400">{user?.email}</p>
             </div>
             <button
               type="button"
               onClick={logout}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300"
+              className="inline-flex shrink-0 items-center justify-center gap-1.5 self-start rounded-xl border border-black/10 px-3 py-2 text-sm text-text-400 transition hover:border-red-500/40 hover:bg-red-500/10 hover:text-red-300"
             >
-              <LogOut className="h-4 w-4" />
-              Se déconnecter
+              <LogOut className="h-4 w-4 shrink-0" />
+              <span className="whitespace-nowrap">Se déconnecter</span>
             </button>
           </div>
 
-          {/* Onglets */}
-          <div className="mb-6 inline-flex rounded-xl border border-black/10 bg-bg-100 p-1">
+          {/* Onglets — grille égale, pas de débordement horizontal */}
+          <div className="mb-6 grid w-full grid-cols-3 gap-1 rounded-xl border border-black/10 bg-bg-100 p-1">
             {tabs.map((t) => {
               const Icon = t.icon;
+              const labels = tabLabels[t.id];
               return (
                 <button
                   key={t.id}
                   type="button"
                   onClick={() => setTab(t.id)}
                   className={cn(
-                    'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium transition',
+                    'inline-flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-center text-[11px] font-medium transition sm:flex-row sm:gap-2 sm:px-3 sm:text-sm',
                     tab === t.id
                       ? 'bg-brand text-white shadow-sm'
                       : 'text-text-400 hover:bg-bg-200 hover:text-text-200',
                   )}
                 >
-                  <Icon className="h-4 w-4" />
-                  {t.label}
+                  <Icon className="h-4 w-4 shrink-0" />
+                  <span className="truncate sm:hidden">{labels.short}</span>
+                  <span className="hidden truncate sm:inline">{labels.full}</span>
                 </button>
               );
             })}
@@ -330,7 +342,7 @@ export function SettingsPage() {
                 </div>
               )}
             </div>
-          ) : (
+          ) : tab === 'business' ? (
             <div className="panel p-6">
               <div className="mb-5 flex items-center gap-2">
                 <Store className="h-4 w-4 text-brand" />
@@ -395,6 +407,48 @@ export function SettingsPage() {
                   type={businessFb.includes('Erreur') ? 'err' : 'ok'}
                 />
               </div>
+            </div>
+          ) : (
+            <div className="panel min-w-0 space-y-5 overflow-hidden p-4 sm:p-5">
+              <div className="min-w-0">
+                <h2 className="text-sm font-semibold text-text-100">Abonnement Klanvio</h2>
+                <p className="mt-1 text-xs leading-relaxed text-text-400">
+                  Plan Pro · 15€/mois · 7 jours d’essai inclus à l’inscription
+                </p>
+              </div>
+
+              <div className="rounded-xl border border-black/10 bg-bg-0 px-4 py-3">
+                <div className="flex flex-wrap items-end gap-1">
+                  <span className="text-3xl font-semibold tracking-tight text-text-100">15€</span>
+                  <span className="mb-1 text-sm text-text-400">/mois</span>
+                </div>
+                <p className="mt-1 text-xs text-text-500">Tout inclus · résiliable à tout moment</p>
+              </div>
+
+              <button
+                type="button"
+                disabled={billingBusy}
+                onClick={() => {
+                  setBillingBusy(true);
+                  setBillingNote(null);
+                  window.setTimeout(() => {
+                    setBillingBusy(false);
+                    setBillingNote(
+                      'Le paiement sera bientôt disponible. L’API de paiement sera branchée ici.',
+                    );
+                  }, 450);
+                }}
+                className="inline-flex w-full max-w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-60"
+              >
+                <CreditCard className="h-4 w-4 shrink-0" />
+                <span className="truncate">{billingBusy ? 'Redirection…' : 'Payer 15€ / mois'}</span>
+              </button>
+
+              {billingNote && (
+                <p className="break-words rounded-xl border border-brand/20 bg-brand/5 px-3 py-2.5 text-xs leading-relaxed text-text-400">
+                  {billingNote}
+                </p>
+              )}
             </div>
           )}
         </div>

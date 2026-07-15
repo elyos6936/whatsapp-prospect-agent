@@ -16,13 +16,20 @@ export default defineConfig({
     // (chat) pour qu'ils ne soient pas téléchargés dès la landing page.
     modulePreload: {
       resolveDependencies: (_filename, deps) =>
-        deps.filter((dep) => !/syntax-highlighter|markdown/.test(dep)),
+        deps.filter(
+          (dep) =>
+            !/syntax-highlighter|markdown|motion|AuthenticatedApp|shaders|recharts|paper-design/.test(
+              dep,
+            ),
+        ),
     },
     rollupOptions: {
       output: {
         manualChunks(id) {
           if (!id.includes('node_modules')) return;
-          if (id.includes('react-syntax-highlighter') || id.includes('refractor')) {
+          if (id.includes('@paper-design/shaders')) return 'shaders';
+          if (id.includes('recharts') || id.includes('d3-')) return 'recharts';
+          if (id.includes('react-syntax-highlighter') || id.includes('refractor') || id.includes('prismjs')) {
             return 'syntax-highlighter';
           }
           if (id.includes('react-markdown') || id.includes('remark-') || id.includes('micromark')) {
