@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { getAppSettings, getContactChatHistory } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel } from "./llm.js";
+import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens } from "./llm.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un expert WhatsApp business (20+ ans) qui répond aux messages entrants pour un entrepreneur en Afrique francophone.
@@ -236,14 +236,14 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max). Directe, humaine, selon 
         { role: "system", content: WHATSAPP_REPLY_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: 150,
+      max_tokens: recommendedMaxTokens(config.openaiModel, 150),
       temperature: 0.65,
       presence_penalty: 0.4,
       frequency_penalty: 0.35,
     })
   );
 
-  const reply = response?.choices[0]?.message?.content?.trim();
+  const reply = extractAssistantContent(response?.choices[0]?.message);
   if (!reply) {
     throw new Error(`${llmProviderLabel()} n'a pas généré de réponse.`);
   }
