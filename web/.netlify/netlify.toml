@@ -7,7 +7,7 @@ plugins = []
 [functions."*"]
 
 [build]
-publish = "C:\\Projets\\whatsapp-prospect-agent\\web\\web\\dist"
+publish = "C:\\Projets\\whatsapp-prospect-agent\\web\\dist"
 publishOrigin = "config"
 commandOrigin = "config"
 base = "C:\\Projets\\whatsapp-prospect-agent\\web"

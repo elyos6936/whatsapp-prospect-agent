@@ -1,12 +1,16 @@
 import { lazy, Suspense, useState } from 'react';
 import { useAuth } from '@/lib/auth';
-import { LandingPage } from '@/pages/LandingPage';
-import { LoginPage } from '@/pages/LoginPage';
-import { RegisterPage } from '@/pages/RegisterPage';
+import { getStoredToken } from '@/lib/auth-storage';
 
-// Toute l'expérience connectée (chat, markdown, coloration syntaxique,
-// automations, réglages) est isolée dans un chunk chargé à la demande, pour que
-// la landing et l'authentification restent ultra-légères au premier affichage.
+const LandingPage = lazy(() =>
+  import('@/pages/LandingPage').then((m) => ({ default: m.LandingPage })),
+);
+const LoginPage = lazy(() =>
+  import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })),
+);
+const RegisterPage = lazy(() =>
+  import('@/pages/RegisterPage').then((m) => ({ default: m.RegisterPage })),
+);
 const AuthenticatedApp = lazy(() => import('@/AuthenticatedApp'));
 
 type AuthScreen = 'landing' | 'login' | 'register';
@@ -68,6 +72,32 @@ export default function App() {
       : 'landing',
   );
 
+  const hasToken = typeof window !== 'undefined' && !!getStoredToken();
+
+  // Anonymous visitors: show marketing immediately (don't block on auth check).
+  if (!user && !hasToken) {
+    return (
+      <Suspense fallback={<FullScreen>Chargement…</FullScreen>}>
+        {authScreen === 'landing' ? (
+          <LandingPage
+            onLogin={() => setAuthScreen('login')}
+            onRegister={() => setAuthScreen('register')}
+          />
+        ) : authScreen === 'login' ? (
+          <LoginPage
+            onGoRegister={() => setAuthScreen('register')}
+            onGoBack={() => setAuthScreen('landing')}
+          />
+        ) : (
+          <RegisterPage
+            onGoLogin={() => setAuthScreen('login')}
+            onGoBack={() => setAuthScreen('landing')}
+          />
+        )}
+      </Suspense>
+    );
+  }
+
   if (authLoading && !user) {
     return <FullScreen>Chargement…</FullScreen>;
   }
@@ -83,24 +113,25 @@ export default function App() {
   }
 
   if (!user) {
-    if (authScreen === 'landing') {
-      return (
-        <LandingPage
-          onLogin={() => setAuthScreen('login')}
-          onRegister={() => setAuthScreen('register')}
-        />
-      );
-    }
-    return authScreen === 'login' ? (
-      <LoginPage
-        onGoRegister={() => setAuthScreen('register')}
-        onGoBack={() => setAuthScreen('landing')}
-      />
-    ) : (
-      <RegisterPage
-        onGoLogin={() => setAuthScreen('login')}
-        onGoBack={() => setAuthScreen('landing')}
-      />
+    return (
+      <Suspense fallback={<FullScreen>Chargement…</FullScreen>}>
+        {authScreen === 'landing' ? (
+          <LandingPage
+            onLogin={() => setAuthScreen('login')}
+            onRegister={() => setAuthScreen('register')}
+          />
+        ) : authScreen === 'login' ? (
+          <LoginPage
+            onGoRegister={() => setAuthScreen('register')}
+            onGoBack={() => setAuthScreen('landing')}
+          />
+        ) : (
+          <RegisterPage
+            onGoLogin={() => setAuthScreen('login')}
+            onGoBack={() => setAuthScreen('landing')}
+          />
+        )}
+      </Suspense>
     );
   }
 
