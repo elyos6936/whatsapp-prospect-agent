@@ -449,13 +449,13 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
       </main>
 
       <footer className="border-t border-black/[0.06] bg-white">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 py-8 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
-          <div className="flex flex-col items-center gap-2 lg:items-start">
+        <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-5 px-4 py-8 sm:px-6 md:grid-cols-3 md:gap-4">
+          <div className="flex flex-col items-center gap-1.5 md:items-start">
             <KlanvioLogo variant="full" size="sm" />
             <span className="text-xs text-text-500">© 2026 Klanvio</span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-center gap-2">
             {SOCIAL_LINKS.map(({ label, href, icon: Icon }) => (
               <a
                 key={label}
@@ -470,7 +470,7 @@ export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPagePro
             ))}
           </div>
 
-          <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-text-500">
+          <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-text-500 md:justify-end">
             <button
               type="button"
               onClick={() => onOpenLegal('mentions')}
