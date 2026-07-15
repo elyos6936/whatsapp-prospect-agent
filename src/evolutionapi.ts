@@ -12,6 +12,12 @@ import {
 } from "./db.js";
 import { config } from "./config.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
+import {
+  waitOutboundSpacingForUser,
+  markOutboundSentForUser,
+  clampPresenceMs,
+  clampTextDelayMs,
+} from "./anti-ban.js";
 
 export interface EvolutionCredentials {
   baseUrl: string;
@@ -279,7 +285,8 @@ function buildTextOptionsBody(options?: TextSendOptions): Record<string, unknown
   if (options.mentionsEveryOne) extra.mentionsEveryOne = true;
   if (typeof options.linkPreview === "boolean") extra.linkPreview = options.linkPreview;
   if (typeof options.delay === "number" && options.delay > 0) {
-    extra.delay = Math.min(Math.round(options.delay), 20_000);
+    const d = clampTextDelayMs(options.delay);
+    if (d) extra.delay = d;
   }
   return extra;
 }
@@ -363,6 +370,7 @@ export async function createInstance(userId: number): Promise<void> {
             "GROUPS_UPSERT",
             "GROUP_UPDATE",
             "GROUP_PARTICIPANTS_UPDATE",
+            "CONNECTION_UPDATE",
           ],
         },
       },
@@ -386,9 +394,27 @@ export async function createInstance(userId: number): Promise<void> {
   }
 }
 
+const CONNECTION_STATE_CACHE = new Map<
+  number,
+  { result: EvolutionConnectionState; expiresAt: number }
+>();
+const CONNECTION_STATE_TTL_MS = 25_000;
+const CONNECTION_ERROR_TTL_MS = 8_000;
+
+export type EvolutionConnectionState = {
+  connected: boolean;
+  state: string;
+  message: string;
+};
+
+export function invalidateConnectionStateCache(userId?: number): void {
+  if (typeof userId === "number") CONNECTION_STATE_CACHE.delete(userId);
+  else CONNECTION_STATE_CACHE.clear();
+}
+
 export async function diagnoseEvolutionApi(userId: number): Promise<{
   configured: boolean;
-  connection: Awaited<ReturnType<typeof testEvolutionConnection>>;
+  connection: EvolutionConnectionState;
   outboundToday: number;
   outboundLimit: number;
   sendFormatHint: string;
@@ -406,26 +432,15 @@ export async function diagnoseEvolutionApi(userId: number): Promise<{
   };
 }
 
-const CONNECTION_STATE_CACHE = new Map<
-  number,
-  { result: Awaited<ReturnType<typeof testEvolutionConnection>>; expiresAt: number }
->();
-const CONNECTION_STATE_TTL_MS = 20_000;
-
-const GROUPS_LIST_CACHE = new Map<
-  number,
-  { groups: Array<{ id: string; name: string; type: string }>; expiresAt: number }
->();
-const GROUPS_LIST_TTL_MS = 60_000;
-
-export async function testEvolutionConnection(userId: number): Promise<{
-  connected: boolean;
-  state: string;
-  message: string;
-}> {
-  const cached = CONNECTION_STATE_CACHE.get(userId);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.result;
+export async function testEvolutionConnection(
+  userId: number,
+  opts: { bypassCache?: boolean } = {}
+): Promise<EvolutionConnectionState> {
+  if (!opts.bypassCache) {
+    const cached = CONNECTION_STATE_CACHE.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
   }
 
   const creds = await getEvolutionCredentials(userId);
@@ -436,11 +451,12 @@ export async function testEvolutionConnection(userId: number): Promise<{
   try {
     const data = await evolutionFetch<{ instance?: { state?: string; instanceName?: string } }>(
       creds,
-      `/instance/connectionState/${creds.instanceName}`
+      `/instance/connectionState/${creds.instanceName}`,
+      { timeoutMs: 12_000 }
     );
     const state = data.instance?.state ?? "unknown";
     const ok = state === "open";
-    const result = {
+    const result: EvolutionConnectionState = {
       connected: ok,
       state,
       message: ok
@@ -451,13 +467,32 @@ export async function testEvolutionConnection(userId: number): Promise<{
             ? "WhatsApp déconnecté — reconnectez l'instance Evolution API."
             : `État WhatsApp : ${state}`,
     };
-    CONNECTION_STATE_CACHE.set(userId, { result, expiresAt: Date.now() + CONNECTION_STATE_TTL_MS });
+    CONNECTION_STATE_CACHE.set(userId, {
+      result,
+      expiresAt: Date.now() + CONNECTION_STATE_TTL_MS,
+    });
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { connected: false, state: "error", message: msg };
+    const result: EvolutionConnectionState = {
+      connected: false,
+      state: "error",
+      message: msg,
+    };
+    // Cache court les erreurs pour ne pas marteler Evolution / faire flapper l'UI
+    CONNECTION_STATE_CACHE.set(userId, {
+      result,
+      expiresAt: Date.now() + CONNECTION_ERROR_TTL_MS,
+    });
+    return result;
   }
 }
+
+const GROUPS_LIST_CACHE = new Map<
+  number,
+  { groups: Array<{ id: string; name: string; type: string }>; expiresAt: number }
+>();
+const GROUPS_LIST_TTL_MS = 60_000;
 
 export async function requireEvolutionConnected(userId: number, context = "cette opération"): Promise<void> {
   const state = await testEvolutionConnection(userId);
@@ -1035,20 +1070,12 @@ export async function leaveWhatsAppGroup(userId: number, groupIdOrName: string):
   });
 }
 
-let lastOutboundAt = 0;
-let nextOutboundGapMs = 0;
-
-async function waitOutboundSpacing(): Promise<void> {
-  if (!lastOutboundAt || !nextOutboundGapMs) return;
-  const wait = lastOutboundAt + nextOutboundGapMs - Date.now();
-  if (wait <= 0) return;
-  console.log(`⏳ Espacement anti-spam : attente ${Math.ceil(wait / 1000)}s…`);
-  await new Promise((r) => setTimeout(r, wait));
+async function waitOutboundSpacing(userId: number): Promise<void> {
+  await waitOutboundSpacingForUser(userId);
 }
 
-function markOutboundSent(): void {
-  lastOutboundAt = Date.now();
-  nextOutboundGapMs = 45_000 + Math.floor(Math.random() * 75_000);
+function markOutboundSent(userId: number): void {
+  markOutboundSentForUser(userId);
 }
 
 function extractMessageId(data: unknown): string {
@@ -1077,13 +1104,16 @@ export async function sendWhatsAppMessage(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const safeMessage = sanitizeOutboundWhatsAppText(message);
   const data = await sendTextViaEvolution(creds, chatId, safeMessage, opts.textOptions);
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
+  void import("./whatsapp-connection.js")
+    .then((m) => m.markWhatsAppOpen(userId))
+    .catch(() => {});
 
   await saveWhatsAppMessage(userId, {
     contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
@@ -1187,7 +1217,7 @@ export async function sendWhatsAppMedia(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   // Evolution accepte l'URL ou le base64 dans le même champ `media`. On retire un
@@ -1222,7 +1252,7 @@ export async function sendWhatsAppMedia(
     confirmed = false;
   }
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const source = input.url.startsWith("data:") ? "[base64]" : input.url;
   const label = input.caption || `[${input.type}] ${source}`;
 
@@ -1261,7 +1291,7 @@ export async function sendWhatsAppVoice(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const payload = audio.startsWith("data:") ? audio.slice(audio.indexOf(",") + 1) : audio;
@@ -1271,7 +1301,7 @@ export async function sendWhatsAppVoice(
     body: { number, audio: payload },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
 
   await saveWhatsAppMessage(userId, {
@@ -1305,7 +1335,7 @@ export async function sendWhatsAppLocation(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const data = await evolutionFetch<unknown>(creds, `/message/sendLocation/${creds.instanceName}`, {
@@ -1319,7 +1349,7 @@ export async function sendWhatsAppLocation(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   const label = `[localisation] ${input.name || ""} (${input.latitude}, ${input.longitude})`.trim();
 
@@ -1360,7 +1390,7 @@ export async function sendWhatsAppContact(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const wuid = contact.phone.replace(/\D/g, "");
@@ -1382,7 +1412,7 @@ export async function sendWhatsAppContact(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   const label = `[contact] ${contact.fullName} — ${contact.phone}`;
 
@@ -1421,7 +1451,7 @@ export async function sendWhatsAppPoll(
   if (values.length < 2) throw new EvolutionApiError("Un sondage nécessite au moins 2 options.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const selectableCount = Math.min(Math.max(input.selectableCount ?? 1, 1), values.length);
@@ -1436,7 +1466,7 @@ export async function sendWhatsAppPoll(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
@@ -1472,7 +1502,7 @@ export async function sendWhatsAppList(
   if (!input.sections?.length) throw new EvolutionApiError("La liste nécessite au moins une section.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const sections = input.sections.map((s) => ({
@@ -1497,7 +1527,7 @@ export async function sendWhatsAppList(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
@@ -1521,7 +1551,7 @@ export async function sendWhatsAppSticker(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing();
+  await waitOutboundSpacing(userId);
 
   const number = formatEvolutionSendNumber(chatId);
   const payload = sticker.startsWith("data:") ? sticker.slice(sticker.indexOf(",") + 1) : sticker;
@@ -1534,7 +1564,7 @@ export async function sendWhatsAppSticker(
     },
   });
 
-  markOutboundSent();
+  markOutboundSent(userId);
   const idMessage = extractMessageId(data);
   await saveWhatsAppMessage(userId, {
     contactPhone: normalizeGroupParticipantId(chatId),
@@ -2215,7 +2245,7 @@ export async function sendWhatsAppPresence(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   const number = formatEvolutionSendNumber(chatId);
-  const delay = Math.min(Math.max(Math.round(durationMs), 500), 20_000);
+  const delay = clampPresenceMs(durationMs);
   await evolutionFetch(creds, `/chat/sendPresence/${creds.instanceName}`, {
     method: "POST",
     body: {
@@ -2594,38 +2624,66 @@ export async function getInstanceQr(userId: number): Promise<{
   connected: boolean;
   message: string;
 }> {
-  const state = await testEvolutionConnection(userId);
-  if (state.connected) {
+  // Sticky d'abord : ne PAS régénérer un QR pendant une flap / heal
+  const { getWhatsAppConnectionStatus, healWhatsAppSession, isWhatsAppStickyOpen } =
+    await import("./whatsapp-connection.js");
+  const sticky = await getWhatsAppConnectionStatus(userId);
+  if (sticky.connected) {
     return {
       base64: null,
       pairingCode: null,
-      state: state.state,
+      state: sticky.state,
+      connected: true,
+      message: sticky.message || "WhatsApp est déjà connecté à cette instance.",
+    };
+  }
+
+  const raw = await testEvolutionConnection(userId, { bypassCache: true });
+  if (raw.connected && raw.state === "open") {
+    return {
+      base64: null,
+      pairingCode: null,
+      state: raw.state,
       connected: true,
       message: "WhatsApp est déjà connecté à cette instance.",
     };
   }
 
-  // Assure l'existence de l'instance dédiée avant de demander le QR (idempotent).
+  // Si session récemment ouverte ou en close flaky → restart doux, JAMAIS connect (QR)
+  if (isWhatsAppStickyOpen(userId) || raw.state === "close" || raw.state === "connecting") {
+    await healWhatsAppSession(userId, "getInstanceQr-avoid-qr-churn");
+    await new Promise((r) => setTimeout(r, 2500));
+    const after = await getWhatsAppConnectionStatus(userId, { bypassCache: true });
+    if (after.connected) {
+      return {
+        base64: null,
+        pairingCode: null,
+        state: after.state,
+        connected: true,
+        message: after.message || "Session WhatsApp restaurée.",
+      };
+    }
+    // Encore close après heal : seulement là on autorise un vrai QR
+  }
+
   await createInstance(userId);
 
-  // Garantit que le webhook pointe vers ce backend, même pour une instance
-  // pré-existante (ex. PUBLIC_URL modifiée). Le poller d'historique sert de repli.
   try {
     await setEvolutionWebhook(userId, `${config.publicUrl}/api/evolution/webhook`);
   } catch (err) {
     console.warn(`⚠️ Webhook non (re)configuré pour user ${userId}:`, err instanceof Error ? err.message : err);
   }
 
-  const raw = await connectInstance(userId);
-  const { base64, pairingCode } = parseConnectQrPayload(raw);
+  const rawQr = await connectInstance(userId);
+  const { base64, pairingCode } = parseConnectQrPayload(rawQr);
   return {
     base64,
     pairingCode,
-    state: state.state,
+    state: raw.state,
     connected: false,
     message: base64 || pairingCode
       ? "Scannez le QR code avec WhatsApp (Appareils connectés)."
-      : state.message,
+      : raw.message,
   };
 }
 

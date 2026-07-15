@@ -109,6 +109,7 @@ import {
 } from "./automation-engine.js";
 import { getContactPresence } from "./notifications.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
+import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -466,7 +467,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             enum: ["composing", "recording", "available", "unavailable", "paused"],
             description: "Type de présence à afficher",
           },
-          duration_ms: { type: "number", description: "Durée d'affichage en ms (défaut 3000, max 20000)" },
+          duration_ms: { type: "number", description: "Durée d'affichage en ms (défaut 3000, max 6000 anti-ban)" },
         },
         required: ["recipient", "presence"],
         additionalProperties: false,
@@ -1674,6 +1675,7 @@ function buildAutomationConfigFromArgs(
       : undefined;
 
   const relanceEnabled = args.relance_enabled === true;
+  const relanceExplicitOff = args.relance_enabled === false;
   const relanceDelays = Array.isArray(args.relance_delays_days)
     ? args.relance_delays_days.map((d) => Number(d)).filter((n) => Number.isFinite(n) && n > 0)
     : [];
@@ -1692,9 +1694,11 @@ function buildAutomationConfigFromArgs(
     maxPerDay:
       args.max_per_day != null && Number.isFinite(Number(args.max_per_day)) && Number(args.max_per_day) > 0
         ? Math.round(Number(args.max_per_day))
-        : undefined,
-    minDelaySeconds: clampSeconds(args.min_delay_seconds),
-    maxDelaySeconds: clampSeconds(args.max_delay_seconds),
+        : isOutbound
+          ? ANTI_BAN.defaultCampaignMaxPerDay
+          : undefined,
+    minDelaySeconds: clampSeconds(args.min_delay_seconds) ?? (isOutbound ? 60 : undefined),
+    maxDelaySeconds: clampSeconds(args.max_delay_seconds) ?? (isOutbound ? 180 : undefined),
     enableAutoReply: true, // Toujours ON — désactivation = pause / désactiver la campagne
     conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
     triggerPhrases,
@@ -1732,9 +1736,13 @@ function buildAutomationConfigFromArgs(
   const qEnd = args.quiet_hours_end != null ? Number(args.quiet_hours_end) : NaN;
   if (Number.isFinite(qStart) && qStart >= 0 && qStart <= 23) {
     config.quietHoursStart = Math.round(qStart);
+  } else if (isOutbound) {
+    config.quietHoursStart = 9;
   }
   if (Number.isFinite(qEnd) && qEnd >= 0 && qEnd <= 23) {
     config.quietHoursEnd = Math.round(qEnd);
+  } else if (isOutbound) {
+    config.quietHoursEnd = 20;
   }
   if (args.scheduled_start_at) {
     const raw = String(args.scheduled_start_at).trim();
@@ -1748,11 +1756,14 @@ function buildAutomationConfigFromArgs(
       hour:
         args.relance_hour != null && Number.isFinite(Number(args.relance_hour))
           ? Number(args.relance_hour)
-          : undefined,
+          : ANTI_BAN.defaultRelanceHour,
       messages: Array.isArray(args.relance_messages)
         ? args.relance_messages.map(String).filter(Boolean)
-        : undefined,
+        : [...ANTI_BAN.defaultRelanceMessages],
     };
+  } else if (isOutbound && !relanceExplicitOff && !config.sequenceSteps?.length) {
+    // Relances ON par défaut (anti-oubli) — sauf désactivation explicite
+    config.relance = defaultRelanceConfig();
   }
 
   return config;
@@ -3458,12 +3469,36 @@ export async function executeTool(userId: number, name: string, args: Record<str
             "Impossible d'activer : le premier message contient encore des crochets […]. Corrige-le avec de vraies valeurs.",
         });
       }
+
+      const isOutbound =
+        auto.type === "group_prospect" ||
+        auto.type === "contact_prospect" ||
+        auto.config.mode === "outbound_prospect";
+      if (isOutbound) {
+        try {
+          await requireEvolutionConnected(userId, "l'activation de la campagne");
+        } catch (err) {
+          return JSON.stringify({
+            error: err instanceof Error ? err.message : "WhatsApp non connecté — impossible d'activer.",
+          });
+        }
+      }
+
+      // Sécurité anti-ban : relances + plafonds si absents
+      let safeConfig = { ...auto.config, enableAutoReply: true as boolean };
+      if (isOutbound) {
+        if (!safeConfig.maxPerDay || safeConfig.maxPerDay <= 0) {
+          safeConfig.maxPerDay = ANTI_BAN.defaultCampaignMaxPerDay;
+        }
+        if (safeConfig.quietHoursStart == null) safeConfig.quietHoursStart = 9;
+        if (safeConfig.quietHoursEnd == null) safeConfig.quietHoursEnd = 20;
+        if (!safeConfig.relance?.enabled && !safeConfig.sequenceSteps?.length) {
+          safeConfig.relance = defaultRelanceConfig();
+        }
+      }
+
       let targetsAdded = 0;
-      // Auto-reply OBLIGATOIRE dès qu'une campagne est active (global + contacts)
-      await updateAutomationConfig(userId, id, {
-        ...auto.config,
-        enableAutoReply: true,
-      });
+      await updateAutomationConfig(userId, id, safeConfig);
       await setAutoReplyEnabled(userId, true);
 
       if (auto.type === "group_prospect") {

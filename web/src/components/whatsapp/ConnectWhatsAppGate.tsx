@@ -8,9 +8,10 @@ import { useAuth } from '@/lib/auth';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import { qrImageSrc } from '@/lib/qr';
 
-// Un QR Evolution/Baileys reste valide ~30-60 s. On ne le régénère donc que
-// périodiquement (et non à chaque poll) pour laisser le temps de le scanner.
-const QR_REFRESH_MS = 30000;
+// Un QR Evolution/Baileys reste valide ~45-60 s. On évite de le régénérer
+// trop souvent : chaque /qr peut appeler /instance/connect et casser la session.
+const QR_REFRESH_MS = 55_000;
+const STATE_POLL_MS = 5_000;
 
 export function ConnectWhatsAppGate() {
   const { refreshUser } = useAuth();
@@ -22,6 +23,7 @@ export function ConnectWhatsAppGate() {
   } | null>(null);
   const [loading, setLoading] = useState(true);
   const lastQrAt = useRef(0);
+  const consecutiveClose = useRef(0);
 
   const loadQr = useCallback(
     async (silent = false) => {
@@ -47,25 +49,29 @@ export function ConnectWhatsAppGate() {
 
   useEffect(() => {
     void loadQr();
-    // On poll uniquement l'ÉTAT de connexion (léger, ne régénère pas le QR).
-    // Le QR affiché reste stable ; on ne le rafraîchit qu'avant son expiration.
     const id = setInterval(() => {
       void (async () => {
         try {
           const state = await fetchEvolutionState();
           if (state.connected) {
+            consecutiveClose.current = 0;
             setQrData({ connected: true, message: state.message });
             void refreshUser();
             return;
           }
-          if (Date.now() - lastQrAt.current > QR_REFRESH_MS) {
+          consecutiveClose.current += 1;
+          // Ne régénérer le QR qu'après plusieurs close confirmés + délai d'expiration QR
+          if (
+            consecutiveClose.current >= 3 &&
+            Date.now() - lastQrAt.current > QR_REFRESH_MS
+          ) {
             void loadQr(true);
           }
         } catch {
-          /* ignore poll errors */
+          /* ignore poll errors — ne pas déclencher de QR */
         }
       })();
-    }, 3000);
+    }, STATE_POLL_MS);
     return () => clearInterval(id);
   }, [loadQr, refreshUser]);
 

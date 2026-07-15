@@ -8,6 +8,7 @@ import {
   isContactBlocked,
   listDueSequences,
   postponeSequence,
+  repairStuckSequences,
   type ContactSequence,
   type SequenceStep,
 } from "./db.js";
@@ -52,6 +53,11 @@ async function startNurtureAfterReply(
 }
 
 async function processDueSequencesForUser(userId: number): Promise<number> {
+  const repaired = await repairStuckSequences(userId);
+  if (repaired > 0) {
+    console.log(`🔧 ${repaired} séquence(s) relance réparée(s) (user ${userId})`);
+  }
+
   const due = await listDueSequences(userId, 15);
   let queued = 0;
 

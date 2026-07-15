@@ -3,7 +3,7 @@ import { config, evolutionInstanceName } from "./config.js";
 import { getUserById } from "./users.js";
 import { matchesAnyTriggerPhrase } from "./phrase-matching.js";
 
-export const DAILY_OUTBOUND_LIMIT = 30;
+export const DAILY_OUTBOUND_LIMIT = 25;
 export const CONTACT_STATUSES = ["nouveau", "en_conversation", "interesse", "stop"] as const;
 export type ContactStatus = (typeof CONTACT_STATUSES)[number];
 
@@ -871,7 +871,25 @@ export async function getOutboundQuotaBonus(userId: number): Promise<number> {
 }
 
 export async function getEffectiveOutboundLimit(userId: number): Promise<number> {
-  return (await getDailyOutboundLimit(userId)) + (await getOutboundQuotaBonus(userId));
+  const base = await getDailyOutboundLimit(userId);
+  const bonus = await getOutboundQuotaBonus(userId);
+  // Warmup : comptes récents plafonnés même si limite user plus haute
+  let warmCap = base;
+  try {
+    const { getUserById } = await import("./users.js");
+    const { warmupDailyCap } = await import("./anti-ban.js");
+    const user = await getUserById(userId);
+    if (user?.created_at) {
+      const created = new Date(user.created_at.includes("T") ? user.created_at : user.created_at.replace(" ", "T"));
+      if (!Number.isNaN(created.getTime())) {
+        const days = (Date.now() - created.getTime()) / 86_400_000;
+        warmCap = Math.min(base, warmupDailyCap(days));
+      }
+    }
+  } catch {
+    /* best effort */
+  }
+  return warmCap + bonus;
 }
 
 export async function setDailyOutboundLimit(userId: number, limit: number): Promise<number> {
@@ -2203,6 +2221,18 @@ export async function postponeSequence(
     SET next_step_at = ${next}
     WHERE user_id = ${userId} AND id = ${id} AND status = 'active'
   `;
+}
+
+/** Remet en file les séquences actives coincées sans next_step_at. */
+export async function repairStuckSequences(userId: number): Promise<number> {
+  const result = await sql`
+    UPDATE contact_sequences
+    SET next_step_at = NOW() + INTERVAL '15 minutes'
+    WHERE user_id = ${userId}
+      AND status = 'active'
+      AND next_step_at IS NULL
+  `;
+  return Number(result.count ?? 0);
 }
 
 export async function cancelSequencesForContact(userId: number, phone: string): Promise<void> {

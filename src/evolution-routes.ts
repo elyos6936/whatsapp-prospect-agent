@@ -48,7 +48,8 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
 
     let instance: Awaited<ReturnType<typeof testEvolutionConnection>>;
     try {
-      instance = await testEvolutionConnection(userId);
+      const { getWhatsAppConnectionStatus } = await import("./whatsapp-connection.js");
+      instance = await getWhatsAppConnectionStatus(userId);
     } catch (err) {
       instance = {
         connected: false,
@@ -265,7 +266,8 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
   app.get("/api/evolution/instance/state", async (request, reply) => {
     const userId = requireUserId(request);
     try {
-      return await testEvolutionConnection(userId);
+      const { getWhatsAppConnectionStatus } = await import("./whatsapp-connection.js");
+      return await getWhatsAppConnectionStatus(userId);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(502).send({ connected: false, state: "error", message: msg });

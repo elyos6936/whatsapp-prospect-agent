@@ -12,7 +12,6 @@ import {
   completeOnboarding,
   publicUser,
 } from "./users.js";
-import { testEvolutionConnection } from "./evolutionapi.js";
 
 let googleClient: OAuth2Client | null = null;
 function getGoogleClient(): OAuth2Client {
@@ -184,7 +183,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
     let whatsapp = { connected: false, state: "not_configured", message: "Non configuré" };
     try {
-      whatsapp = await testEvolutionConnection(userId);
+      const { getWhatsAppConnectionStatus } = await import("./whatsapp-connection.js");
+      whatsapp = await getWhatsAppConnectionStatus(userId);
     } catch (err) {
       whatsapp = {
         connected: false,

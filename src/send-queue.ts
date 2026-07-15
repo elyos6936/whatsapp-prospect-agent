@@ -16,8 +16,8 @@ import { listActiveUserIds } from "./users.js";
 
 const DEFAULT_QUIET_START = 22;
 const DEFAULT_QUIET_END = 7;
-/** Priorité campagne (openers) : envoi immédiat même hors horaires « calmes ». */
-const CAMPAIGN_OPENER_MIN_PRIORITY = 6;
+/** Priorité « urgence manuelle » uniquement — les openers campagne NE bypassent PLUS les quiet hours. */
+const QUIET_BYPASS_MIN_PRIORITY = 10;
 
 let queueRunning = false;
 
@@ -28,7 +28,7 @@ function isQuietHours(start = DEFAULT_QUIET_START, end = DEFAULT_QUIET_END): boo
 }
 
 function bypassQuietHours(item: QueueItem): boolean {
-  return (item.priority ?? 0) >= CAMPAIGN_OPENER_MIN_PRIORITY;
+  return (item.priority ?? 0) >= QUIET_BYPASS_MIN_PRIORITY;
 }
 
 async function quietHoursForItem(

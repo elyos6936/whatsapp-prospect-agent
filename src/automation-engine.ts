@@ -209,6 +209,21 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
           automationId: auto.id,
         });
       }
+    } else if (auto.type === "group_prospect" || auto.type === "contact_prospect") {
+      // Filet de sécurité : relances défaut si oubliées à la config
+      const { defaultRelanceConfig } = await import("./anti-ban.js");
+      const relance = defaultRelanceConfig();
+      const steps = relance.delaysDays.map((delayDays, i) => ({
+        delayDays,
+        message: relance.messages[i] ?? relance.messages[0],
+        condition: "no_reply" as const,
+      }));
+      await startSequenceForContact(userId, {
+        contactPhone: target.target_id,
+        name: `Séquence — ${auto.name}`,
+        steps,
+        automationId: auto.id,
+      });
     }
 
     await updateAutomationTarget(userId, auto.id, target.target_id, { status: "contacted" });
