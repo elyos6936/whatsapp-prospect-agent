@@ -1,6 +1,7 @@
 import { lazy, Suspense, useState } from 'react';
 import { useAuth } from '@/lib/auth';
 import { getStoredToken } from '@/lib/auth-storage';
+import type { LegalKind } from '@/pages/LegalPage';
 
 const LandingPage = lazy(() =>
   import('@/pages/LandingPage').then((m) => ({ default: m.LandingPage })),
@@ -11,9 +12,12 @@ const LoginPage = lazy(() =>
 const RegisterPage = lazy(() =>
   import('@/pages/RegisterPage').then((m) => ({ default: m.RegisterPage })),
 );
+const LegalPage = lazy(() =>
+  import('@/pages/LegalPage').then((m) => ({ default: m.LegalPage })),
+);
 const AuthenticatedApp = lazy(() => import('@/AuthenticatedApp'));
 
-type AuthScreen = 'landing' | 'login' | 'register';
+type AuthScreen = 'landing' | 'login' | 'register' | LegalKind;
 
 function FullScreen({ children }: { children: React.ReactNode }) {
   return (
@@ -58,6 +62,41 @@ function SessionRetry({
   );
 }
 
+function AnonymousScreens({
+  authScreen,
+  setAuthScreen,
+}: {
+  authScreen: AuthScreen;
+  setAuthScreen: (s: AuthScreen) => void;
+}) {
+  if (authScreen === 'mentions' || authScreen === 'confidentialite' || authScreen === 'contact') {
+    return <LegalPage kind={authScreen} onBack={() => setAuthScreen('landing')} />;
+  }
+  if (authScreen === 'login') {
+    return (
+      <LoginPage
+        onGoRegister={() => setAuthScreen('register')}
+        onGoBack={() => setAuthScreen('landing')}
+      />
+    );
+  }
+  if (authScreen === 'register') {
+    return (
+      <RegisterPage
+        onGoLogin={() => setAuthScreen('login')}
+        onGoBack={() => setAuthScreen('landing')}
+      />
+    );
+  }
+  return (
+    <LandingPage
+      onLogin={() => setAuthScreen('login')}
+      onRegister={() => setAuthScreen('register')}
+      onOpenLegal={(kind) => setAuthScreen(kind)}
+    />
+  );
+}
+
 export default function App() {
   const {
     user,
@@ -74,26 +113,10 @@ export default function App() {
 
   const hasToken = typeof window !== 'undefined' && !!getStoredToken();
 
-  // Anonymous visitors: show marketing immediately (don't block on auth check).
   if (!user && !hasToken) {
     return (
       <Suspense fallback={<FullScreen>Chargement…</FullScreen>}>
-        {authScreen === 'landing' ? (
-          <LandingPage
-            onLogin={() => setAuthScreen('login')}
-            onRegister={() => setAuthScreen('register')}
-          />
-        ) : authScreen === 'login' ? (
-          <LoginPage
-            onGoRegister={() => setAuthScreen('register')}
-            onGoBack={() => setAuthScreen('landing')}
-          />
-        ) : (
-          <RegisterPage
-            onGoLogin={() => setAuthScreen('login')}
-            onGoBack={() => setAuthScreen('landing')}
-          />
-        )}
+        <AnonymousScreens authScreen={authScreen} setAuthScreen={setAuthScreen} />
       </Suspense>
     );
   }
@@ -115,22 +138,7 @@ export default function App() {
   if (!user) {
     return (
       <Suspense fallback={<FullScreen>Chargement…</FullScreen>}>
-        {authScreen === 'landing' ? (
-          <LandingPage
-            onLogin={() => setAuthScreen('login')}
-            onRegister={() => setAuthScreen('register')}
-          />
-        ) : authScreen === 'login' ? (
-          <LoginPage
-            onGoRegister={() => setAuthScreen('register')}
-            onGoBack={() => setAuthScreen('landing')}
-          />
-        ) : (
-          <RegisterPage
-            onGoLogin={() => setAuthScreen('login')}
-            onGoBack={() => setAuthScreen('landing')}
-          />
-        )}
+        <AnonymousScreens authScreen={authScreen} setAuthScreen={setAuthScreen} />
       </Suspense>
     );
   }

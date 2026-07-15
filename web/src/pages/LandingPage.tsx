@@ -13,18 +13,23 @@ import {
   X,
 } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
+import { FacebookIcon, LinkedinIcon, YoutubeIcon } from '@/components/brand/SocialIcons';
 import { AnimatedContainer } from '@/components/landing/AnimatedContainer';
 import { BillingSection } from '@/components/landing/BillingSection';
+import { LandingFaq } from '@/components/landing/LandingFaq';
+import { TrustStrip } from '@/components/landing/TrustStrip';
 import { FeatureCard } from '@/components/ui/grid-feature-cards';
 import { HowGlassSteps } from '@/components/ui/glass-cards';
 import { CTASection } from '@/components/ui/hero-dithering-card';
 import { HeroGridBackdrop } from '@/components/ui/hero-grid-backdrop';
 import { ShaderBackdrop } from '@/components/ui/shader-backdrop';
 import { ShinyButton } from '@/components/ui/shiny-button';
+import type { LegalKind } from '@/pages/LegalPage';
 
 type LandingPageProps = {
   onLogin: () => void;
   onRegister: () => void;
+  onOpenLegal: (kind: LegalKind) => void;
 };
 
 const NAV_LINKS = [
@@ -32,6 +37,25 @@ const NAV_LINKS = [
   ['how', 'Comment ça marche'],
   ['compare', 'Comparatif'],
   ['pricing', 'Tarif'],
+  ['faq', 'FAQ'],
+] as const;
+
+const SOCIAL_LINKS = [
+  {
+    label: 'Facebook',
+    href: 'https://www.facebook.com/profile.php?id=61591310081649',
+    icon: FacebookIcon,
+  },
+  {
+    label: 'LinkedIn',
+    href: 'https://www.linkedin.com/company/klanvio/',
+    icon: LinkedinIcon,
+  },
+  {
+    label: 'YouTube',
+    href: 'https://youtube.com/@klanvio',
+    icon: YoutubeIcon,
+  },
 ] as const;
 
 const CAPABILITIES = [
@@ -152,7 +176,7 @@ function CellMark({ value }: { value: boolean | 'limité' }) {
   return <Minus className="h-4 w-4 text-text-500/50" strokeWidth={2} aria-label="Non" />;
 }
 
-export function LandingPage({ onLogin, onRegister }: LandingPageProps) {
+export function LandingPage({ onLogin, onRegister, onOpenLegal }: LandingPageProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   const scrollTo = (id: string) => {
@@ -272,6 +296,8 @@ export function LandingPage({ onLogin, onRegister }: LandingPageProps) {
             </AnimatedContainer>
           </div>
         </section>
+
+        <TrustStrip />
 
         {/* HOW — glass steps */}
         <section id="how" className="landing-section mx-auto max-w-6xl px-4 sm:px-6">
@@ -406,6 +432,8 @@ export function LandingPage({ onLogin, onRegister }: LandingPageProps) {
           <BillingSection onStartTrial={onRegister} />
         </AnimatedContainer>
 
+        <LandingFaq />
+
         {/* FINAL CTA — dither only here (+ features) */}
         <div className="pb-4 sm:pb-6">
           <AnimatedContainer>
@@ -421,17 +449,50 @@ export function LandingPage({ onLogin, onRegister }: LandingPageProps) {
       </main>
 
       <footer className="border-t border-black/[0.06] bg-white">
-        <div className="mx-auto flex max-w-6xl flex-col items-center gap-4 px-4 py-8 text-center text-sm text-text-500 sm:flex-row sm:justify-between sm:px-6 sm:text-left">
-          <div className="flex items-center gap-3">
+        <div className="mx-auto flex max-w-6xl flex-col items-center gap-6 px-4 py-8 sm:px-6 lg:flex-row lg:items-center lg:justify-between lg:gap-4">
+          <div className="flex flex-col items-center gap-2 lg:items-start">
             <KlanvioLogo variant="full" size="sm" />
-            <span className="hidden text-text-500 sm:inline">© 2026 Klanvio</span>
+            <span className="text-xs text-text-500">© 2026 Klanvio</span>
           </div>
-          <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2">
-            <span>Mentions légales</span>
-            <span>Confidentialité</span>
-            <span>Contact</span>
+
+          <div className="flex items-center gap-2">
+            {SOCIAL_LINKS.map(({ label, href, icon: Icon }) => (
+              <a
+                key={label}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label={label}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-black/[0.08] bg-white text-text-300 transition hover:border-brand/25 hover:text-brand"
+              >
+                <Icon className="h-4 w-4" />
+              </a>
+            ))}
           </div>
-          <span className="text-text-500 sm:hidden">© 2026 Klanvio</span>
+
+          <nav className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm text-text-500">
+            <button
+              type="button"
+              onClick={() => onOpenLegal('mentions')}
+              className="cursor-pointer transition hover:text-text-100"
+            >
+              Mentions légales
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenLegal('confidentialite')}
+              className="cursor-pointer transition hover:text-text-100"
+            >
+              Confidentialité
+            </button>
+            <button
+              type="button"
+              onClick={() => onOpenLegal('contact')}
+              className="cursor-pointer transition hover:text-text-100"
+            >
+              Contact
+            </button>
+          </nav>
         </div>
       </footer>
     </div>
