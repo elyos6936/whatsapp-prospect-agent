@@ -5,7 +5,8 @@ import {
   getContactChatHistory,
   updateContactMemory,
 } from "./db.js";
-import { createLlmClient } from "./llm.js";
+import { createLlmClient, deepseekChatExtras } from "./llm.js";
+import type OpenAI from "openai";
 
 export async function getMemoryContextBlock(userId: number, chatId: string): Promise<string> {
   const contact = await getContact(userId, chatId);
@@ -44,8 +45,8 @@ export async function refreshContactMemory(userId: number, chatId: string): Prom
     ],
     max_tokens: 300,
     temperature: 0.3,
-  });
-
+    ...deepseekChatExtras({ enableThinking: false }),
+  } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
   const summary = response.choices[0]?.message?.content?.trim();
   if (summary) await updateContactMemory(userId, chatId, summary);
 }

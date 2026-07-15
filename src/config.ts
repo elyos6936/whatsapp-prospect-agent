@@ -52,7 +52,7 @@ export const config = {
       ? "https://api.openai.com/v1"
       : "https://api.deepseek.com")
   ).replace(/\/$/, ""),
-  /** Modèle chat + tool calling. Défaut DeepSeek V4 Pro (qualité / tools). */
+  /** Modèle chat + tool calling. Défaut DeepSeek V4 Pro (qualité / tools / thinking). */
   openaiModel:
     process.env.LLM_MODEL?.trim() ||
     process.env.OPENAI_MODEL?.trim() ||

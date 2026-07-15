@@ -181,7 +181,8 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
   if (assessment.readyForDraft) {
     return (
       "Briefing campagne : les éléments essentiels semblent réunis (≥5 questions). " +
-      "Tu peux créer le brouillon (create_automation draft), puis proposer une simulation courte (3-4 messages via show_campaign_simulation)."
+      "Avant create/activate : pose UNE question si pas encore fait — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) ». " +
+      "Puis tu peux créer le brouillon (create_automation draft) et proposer une simulation courte (3-4 messages via show_campaign_simulation)."
     );
   }
 
@@ -204,6 +205,7 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
     `Même si l'utilisateur dit « c'est un test », « plus tard », « comme tu veux » → insiste pour une réponse concrète exploitable.\n` +
     `Si objectif = rendez-vous → tu DOIS obtenir le **lien de réservation** (URL) avant tout brouillon.\n` +
     `N'oublie pas le **planning** : fenêtre horaire d'envoi + jour/heure de lancement (une question à la fois).\n` +
+    `Avant activation : demande aussi si l'utilisateur veut des **stickers** dans les conversations (oui/non).\n` +
     `S'il a déjà des campagnes listées dans le contexte → demande d'abord « nouvelle ou modifier une existante ? ».\n` +
     `Valable pour TOUS produits / services / support client.`
   );

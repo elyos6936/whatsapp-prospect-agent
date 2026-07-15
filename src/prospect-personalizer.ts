@@ -1,7 +1,8 @@
 import { config } from "./config.js";
 import { getAppSettings } from "./db.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel } from "./llm.js";
+import { createLlmClient, llmProviderLabel, deepseekChatExtras } from "./llm.js";
+import type OpenAI from "openai";
 
 export async function generatePersonalizedOpener(userId: number, input: {
   template: string;
@@ -22,7 +23,7 @@ export async function generatePersonalizedOpener(userId: number, input: {
             {
               role: "system",
               content:
-                "Tu personnalises un premier message WhatsApp de prospection. Court (2-4 phrases), humain, en français. Pas de placeholders. Utilise le prénom si disponible.",
+                "Tu personnalises un premier message WhatsApp de prospection. Court (2-4 phrases), très humain, en français naturel. Pas de placeholders ni de ton robot. Utilise le prénom si disponible.",
             },
             {
               role: "user",
@@ -35,7 +36,8 @@ Génère UNIQUEMENT le texte du message.`,
           ],
           max_tokens: 200,
           temperature: 0.8,
-        }),
+          ...deepseekChatExtras({ enableThinking: false }),
+        } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
       { maxRetries: 6 }
     );
 

@@ -1,12 +1,18 @@
 /**
  * Anti-ban WhatsApp — rythme humain, warmup, plafonds.
- * Objectif : WhatsApp ne doit jamais « sentir » l'automatisation.
+ *
+ * - Campagnes / openers : espacement 40–80 s (moy. ~60 s) entre envois froids.
+ * - Auto-reply : chaque prospect répond ~60 s après SON message (timer indépendant) ;
+ *   à l'envoi, seul un micro-écart 2–5 s évite deux API calls strictement simultanés.
  */
 
 export const ANTI_BAN = {
-  /** Espacement entre 2 envois (par utilisateur) */
-  minGapMs: 60_000,
-  maxGapMs: 180_000,
+  /** Espacement openers / campagnes (par utilisateur) — moyenne ~60 s */
+  minGapMs: 40_000,
+  maxGapMs: 80_000,
+  /** Micro-écart anti-collision pour auto-replies indépendants */
+  autoReplyMinGapMs: 2_000,
+  autoReplyMaxGapMs: 5_000,
   /** Présence « en train d'écrire » — court = plus naturel */
   presenceMinMs: 1_500,
   presenceMaxMs: 6_000,
@@ -25,42 +31,149 @@ export const ANTI_BAN = {
   ],
 } as const;
 
-const lastOutboundByUser = new Map<number, number>();
-const nextGapByUser = new Map<number, number>();
+export type OutboundGapOpts = {
+  minDelaySeconds?: number;
+  maxDelaySeconds?: number;
+  /** auto_reply = 2–5 s ; campaign / défaut = 40–80 s */
+  profile?: "campaign" | "auto_reply";
+};
 
-function clampGapMs(minSec?: number, maxSec?: number): { min: number; max: number } {
+/** Prochain créneau d'envoi autorisé (epoch ms) — openers / campagnes. */
+const nextSlotAtByUser = new Map<number, number>();
+/** Dernier envoi réel (epoch ms) — utilisé pour micro-collision auto-reply. */
+const lastOutboundAtByUser = new Map<number, number>();
+/** File de promesses : un seul wait→send→mark à la fois par user. */
+const mutexTailByUser = new Map<number, Promise<void>>();
+/** Release du mutex courant (appelé par mark ou release). */
+const heldByUser = new Map<number, { release: () => void; opts?: OutboundGapOpts }>();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function resolveGapMs(opts?: OutboundGapOpts): { min: number; max: number } {
+  if (opts?.profile === "auto_reply") {
+    return {
+      min: ANTI_BAN.autoReplyMinGapMs,
+      max: Math.max(ANTI_BAN.autoReplyMinGapMs + 500, ANTI_BAN.autoReplyMaxGapMs),
+    };
+  }
+
+  const hasCustom =
+    (opts?.minDelaySeconds != null && Number(opts.minDelaySeconds) > 0) ||
+    (opts?.maxDelaySeconds != null && Number(opts.maxDelaySeconds) > 0);
+
+  if (!hasCustom) {
+    return { min: ANTI_BAN.minGapMs, max: Math.max(ANTI_BAN.minGapMs + 5_000, ANTI_BAN.maxGapMs) };
+  }
+
   const min = Math.max(
     ANTI_BAN.minGapMs,
-    Number.isFinite(minSec) && (minSec as number) > 0 ? Math.round((minSec as number) * 1000) : ANTI_BAN.minGapMs
+    Math.round(Number(opts!.minDelaySeconds ?? ANTI_BAN.minGapMs / 1000) * 1000)
   );
-  const maxRaw = Number.isFinite(maxSec) && (maxSec as number) > 0 ? Math.round((maxSec as number) * 1000) : ANTI_BAN.maxGapMs;
-  const max = Math.max(min, Math.min(Math.max(maxRaw, ANTI_BAN.maxGapMs), 300_000));
-  return { min, max: Math.max(min + 5_000, max) };
+  const maxRaw = Math.round(Number(opts!.maxDelaySeconds ?? ANTI_BAN.maxGapMs / 1000) * 1000);
+  const max = Math.max(min + 5_000, Math.min(Math.max(maxRaw, min), 300_000));
+  return { min, max };
 }
 
-/** Attend l'espacement anti-spam pour CET utilisateur. */
+function randomGapMs(opts?: OutboundGapOpts): number {
+  const { min, max } = resolveGapMs(opts);
+  return min + Math.floor(Math.random() * (max - min + 1));
+}
+
+/** Temps restant avant le prochain créneau campagne (0 = libre). */
+export function getOutboundSlotWaitMs(userId: number): number {
+  const slot = nextSlotAtByUser.get(userId) ?? 0;
+  return Math.max(0, slot - Date.now());
+}
+
+/**
+ * Attend le créneau anti-spam et **prend le mutex** jusqu'à
+ * markOutboundSentForUser / releaseOutboundSlot.
+ *
+ * - campaign / défaut : respecte nextSlot (40–80 s)
+ * - auto_reply : ignore le slot campagne ; attend seulement 2 s mini
+ *   depuis le dernier envoi (conversations indépendantes ~60 s)
+ */
 export async function waitOutboundSpacingForUser(
   userId: number,
-  opts?: { minDelaySeconds?: number; maxDelaySeconds?: number }
+  opts?: OutboundGapOpts
 ): Promise<void> {
-  const last = lastOutboundByUser.get(userId) ?? 0;
-  const gap = nextGapByUser.get(userId) ?? 0;
-  if (!last || !gap) return;
-  const wait = last + gap - Date.now();
-  if (wait <= 0) return;
-  console.log(`⏳ Espacement anti-spam (user ${userId}) : ${Math.ceil(wait / 1000)}s…`);
-  await new Promise((r) => setTimeout(r, wait));
-  void opts;
+  let release!: () => void;
+  const gate = new Promise<void>((r) => {
+    release = r;
+  });
+
+  const prev = mutexTailByUser.get(userId) ?? Promise.resolve();
+  mutexTailByUser.set(
+    userId,
+    prev.then(() => gate).catch(() => gate)
+  );
+
+  await prev.catch(() => undefined);
+
+  let wait = 0;
+  if (opts?.profile === "auto_reply") {
+    const last = lastOutboundAtByUser.get(userId) ?? 0;
+    wait = Math.max(0, last + ANTI_BAN.autoReplyMinGapMs - Date.now());
+  } else {
+    wait = getOutboundSlotWaitMs(userId);
+  }
+
+  if (wait > 0) {
+    const label = opts?.profile === "auto_reply" ? "micro-collision auto-reply" : "anti-spam campagne";
+    console.log(`⏳ ${label} (user ${userId}) : ${Math.ceil(wait / 1000)}s…`);
+    await sleep(wait);
+  }
+
+  heldByUser.set(userId, { release, opts });
 }
 
-/** Enregistre un envoi et tire le prochain gap aléatoire (humain). */
-export function markOutboundSentForUser(
+/**
+ * Après un envoi réussi : met à jour lastOutbound + prochain créneau, libère le mutex.
+ */
+export function markOutboundSentForUser(userId: number, opts?: OutboundGapOpts): void {
+  const held = heldByUser.get(userId);
+  const gapOpts = opts ?? held?.opts;
+  const now = Date.now();
+  lastOutboundAtByUser.set(userId, now);
+  const gap = randomGapMs(gapOpts);
+
+  if (gapOpts?.profile === "auto_reply") {
+    // Ne raccourcit pas un créneau campagne déjà planifié plus loin
+    const existing = nextSlotAtByUser.get(userId) ?? 0;
+    nextSlotAtByUser.set(userId, Math.max(existing, now + gap));
+  } else {
+    nextSlotAtByUser.set(userId, now + gap);
+  }
+
+  heldByUser.delete(userId);
+  held?.release();
+
+  if (gapOpts?.profile !== "auto_reply") {
+    console.log(
+      `🛡️ Prochain opener/campagne user ${userId} dans ~${Math.round(gap / 1000)}s`
+    );
+  }
+}
+
+/**
+ * En cas d'échec d'envoi après waitOutboundSpacing : libère le mutex
+ * sans consommer un créneau.
+ */
+export function releaseOutboundSlot(userId: number): void {
+  const held = heldByUser.get(userId);
+  if (!held) return;
+  heldByUser.delete(userId);
+  held.release();
+}
+
+/** @deprecated alias — préférer waitOutboundSpacingForUser */
+export async function acquireOutboundSlot(
   userId: number,
-  opts?: { minDelaySeconds?: number; maxDelaySeconds?: number }
-): void {
-  const { min, max } = clampGapMs(opts?.minDelaySeconds, opts?.maxDelaySeconds);
-  lastOutboundByUser.set(userId, Date.now());
-  nextGapByUser.set(userId, min + Math.floor(Math.random() * (max - min + 1)));
+  opts?: OutboundGapOpts
+): Promise<void> {
+  await waitOutboundSpacingForUser(userId, opts);
 }
 
 /** Clamp durée de présence typing. */

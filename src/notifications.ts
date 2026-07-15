@@ -5,6 +5,7 @@ import {
   isLidJid,
   resolveInboundChatId,
   sendWhatsAppMessage,
+  sendWhatsAppPresence,
   testEvolutionConnection,
   getLastIncomingMessages,
   normalizeGroupParticipantId,
@@ -52,12 +53,13 @@ import {
 } from "./media-understanding.js";
 import {
   generateWhatsAppReply,
-  getAdaptiveReplyDelay,
   getStopConfirmationReply,
   isPromptInjection,
   isStopRequest,
   nowFr,
 } from "./whatsapp-reply.js";
+import { enqueueAutoReply } from "./auto-reply-queue.js";
+import { ANTI_BAN, clampPresenceMs } from "./anti-ban.js";
 import { shouldStopConversation, stopReasonLabel, getStopFarewellReply } from "./stop-policy.js";
 import type { Automation } from "./db.js";
 
@@ -586,8 +588,7 @@ function isAutoReplyEligible(text: string, remoteJid: string): boolean {
   return true;
 }
 
-const pendingReplyTimers = new Map<string, ReturnType<typeof setTimeout>>();
-const pendingReplyPayloads = new Map<string, { userId: number; senderName: string; text: string }>();
+
 
 const authCache = new Map<number, { checkedAtMs: number; ok: boolean }>();
 
@@ -689,7 +690,7 @@ function buildActiveCampaignContext(auto: Automation): string {
     "",
     `PARCOURS CONVERSATION (obligatoire) :`,
     `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair.`,
-    `2. Si le prospect demande qui tu es / est surpris → présente-toi brièvement + rappel de l'offre, puis une question utile.`,
+    `2. Si le prospect demande qui tu es / est surpris → réponds brièvement (prénom business SEULEMENT s'il est dans le contexte ; sinon neutre, SANS inventer de nom) + rappel offre + question utile.`,
     `3. Si intéressé / pose des questions → réponds, qualifie, puis avance vers l'objectif (${goal}).`,
     `4. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
     `5. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
@@ -880,6 +881,7 @@ async function runAutoReply(
         const sent = await sendWhatsAppMessage(userId, chatId, reply, {
           enableAutoReply: false,
           countsTowardQuota: false,
+          outboundProfile: "auto_reply",
         });
         console.log(`✅ Clôture envoyée → ${senderName} à ${nowFr()} (${sent.idMessage})`);
         return;
@@ -941,9 +943,21 @@ async function runAutoReply(
       });
     }
 
+    // Présence « écrit… » juste avant l'envoi (rythme commercial humain).
+    try {
+      const typingMs = clampPresenceMs(
+        ANTI_BAN.presenceMinMs +
+          Math.floor(Math.random() * (ANTI_BAN.presenceMaxMs - ANTI_BAN.presenceMinMs + 1))
+      );
+      await sendWhatsAppPresence(userId, chatId, "composing", typingMs);
+    } catch {
+      /* best effort — l'envoi suit quand même */
+    }
+
     const sent = await sendWhatsAppMessage(userId, chatId, reply, {
       enableAutoReply: false,
       countsTowardQuota: false,
+      outboundProfile: "auto_reply",
     });
     if (activeCampaign) {
       await incrementMessagesHandled(userId, activeCampaign.id);
@@ -957,25 +971,9 @@ async function runAutoReply(
 }
 
 function scheduleAutoReply(userId: number, chatId: string, senderName: string, text: string): void {
-  const timerKey = `${userId}:${chatId}`;
-  pendingReplyPayloads.set(timerKey, { userId, senderName, text });
-  const existing = pendingReplyTimers.get(timerKey);
-  if (existing) clearTimeout(existing);
-
-  void (async () => {
-    const delay = await getAdaptiveReplyDelay(userId, chatId);
-    console.log(`⏳ Réponse auto à ${senderName} dans ${Math.round(delay / 1000)}s…`);
-
-    const timer = setTimeout(() => {
-      pendingReplyTimers.delete(timerKey);
-      const payload = pendingReplyPayloads.get(timerKey);
-      pendingReplyPayloads.delete(timerKey);
-      if (!payload) return;
-      void runAutoReply(payload.userId, chatId, payload.senderName, payload.text);
-    }, delay);
-
-    pendingReplyTimers.set(timerKey, timer);
-  })();
+  enqueueAutoReply({ userId, chatId, senderName, text }, async (job) => {
+    await runAutoReply(job.userId, job.chatId, job.senderName, job.text);
+  });
 }
 
 async function resolveInboundForStorage(

@@ -15,6 +15,7 @@ import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 import {
   waitOutboundSpacingForUser,
   markOutboundSentForUser,
+  releaseOutboundSlot,
   clampPresenceMs,
   clampTextDelayMs,
 } from "./anti-ban.js";
@@ -1070,12 +1071,21 @@ export async function leaveWhatsAppGroup(userId: number, groupIdOrName: string):
   });
 }
 
-async function waitOutboundSpacing(userId: number): Promise<void> {
-  await waitOutboundSpacingForUser(userId);
-}
-
-function markOutboundSent(userId: number): void {
-  markOutboundSentForUser(userId);
+/** wait → fn → mark ; libère le slot si fn échoue. */
+async function withOutboundSpacing<T>(
+  userId: number,
+  fn: () => Promise<T>,
+  gapOpts?: import("./anti-ban.js").OutboundGapOpts
+): Promise<T> {
+  await waitOutboundSpacingForUser(userId, gapOpts);
+  try {
+    const result = await fn();
+    markOutboundSentForUser(userId, gapOpts);
+    return result;
+  } catch (err) {
+    releaseOutboundSlot(userId);
+    throw err;
+  }
 }
 
 function extractMessageId(data: unknown): string {
@@ -1098,49 +1108,58 @@ export async function sendWhatsAppMessage(
     enableAutoReply?: boolean;
     countsTowardQuota?: boolean;
     textOptions?: TextSendOptions;
+    /** auto_reply = délai indépendant ~60 s déjà appliqué ; micro-gap 2–5 s à l'envoi */
+    outboundProfile?: "campaign" | "auto_reply";
   } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const safeMessage = sanitizeOutboundWhatsAppText(message);
-  const data = await sendTextViaEvolution(creds, chatId, safeMessage, opts.textOptions);
+  const gapOpts =
+    opts.outboundProfile === "auto_reply" ? { profile: "auto_reply" as const } : undefined;
 
-  markOutboundSent(userId);
-  const idMessage = extractMessageId(data);
-  void import("./whatsapp-connection.js")
-    .then((m) => m.markWhatsAppOpen(userId))
-    .catch(() => {});
+  return withOutboundSpacing(
+    userId,
+    async () => {
+      const safeMessage = sanitizeOutboundWhatsAppText(message);
+      const data = await sendTextViaEvolution(creds, chatId, safeMessage, opts.textOptions);
 
-  await saveWhatsAppMessage(userId, {
-    contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: safeMessage,
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
+      const idMessage = extractMessageId(data);
+      void import("./whatsapp-connection.js")
+        .then((m) => m.markWhatsAppOpen(userId))
+        .catch(() => {});
 
-  const normalized = normalizeGroupParticipantId(chatId);
-  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
-    try {
-      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
-    } catch {
-      /* best effort */
-    }
-  } else if (normalized.endsWith("@c.us")) {
-    try {
-      if (!(await getContact(userId, normalized))) {
-        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: false });
+      await saveWhatsAppMessage(userId, {
+        contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
+        direction: "sortant",
+        body: safeMessage,
+        greenApiId: idMessage,
+        countsTowardQuota: opts.countsTowardQuota !== false,
+      });
+
+      const normalized = normalizeGroupParticipantId(chatId);
+      if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+        try {
+          await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+        } catch {
+          /* best effort */
+        }
+      } else if (normalized.endsWith("@c.us")) {
+        try {
+          if (!(await getContact(userId, normalized))) {
+            await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: false });
+          }
+        } catch {
+          /* best effort */
+        }
       }
-    } catch {
-      /* best effort */
-    }
-  }
 
-  return { idMessage, chatId: normalized.endsWith("@g.us") ? chatId : normalized };
+      return { idMessage, chatId: normalized.endsWith("@g.us") ? chatId : normalized };
+    },
+    gapOpts
+  );
 }
 
 /**
@@ -1217,63 +1236,63 @@ export async function sendWhatsAppMedia(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const number = formatEvolutionSendNumber(chatId);
-  // Evolution accepte l'URL ou le base64 dans le même champ `media`. On retire un
-  // éventuel préfixe data:...;base64, car l'API attend le base64 nu.
-  const media = input.url.startsWith("data:")
-    ? input.url.slice(input.url.indexOf(",") + 1)
-    : input.url;
+  return withOutboundSpacing(userId, async () => {
+    const number = formatEvolutionSendNumber(chatId);
+    // Evolution accepte l'URL ou le base64 dans le même champ `media`. On retire un
+    // éventuel préfixe data:...;base64, car l'API attend le base64 nu.
+    const media = input.url.startsWith("data:")
+      ? input.url.slice(input.url.indexOf(",") + 1)
+      : input.url;
 
-  // Les vidéos / gros fichiers : Evolution télécharge, ré-encode puis ré-uploade
-  // le média vers WhatsApp → largement plus long que 30 s. On laisse 120 s, et si
-  // Evolution ne répond pas à temps on considère l'envoi probablement réussi
-  // (même bug connu que sendStatus : le média part quand même côté serveur).
-  let idMessage: string;
-  let confirmed = true;
-  try {
-    const data = await evolutionFetch<unknown>(creds, `/message/sendMedia/${creds.instanceName}`, {
-      method: "POST",
-      body: {
-        number,
-        mediatype: input.type,
-        media,
-        caption: input.caption,
-        fileName: input.fileName,
-        ...(input.mimetype ? { mimetype: input.mimetype } : {}),
-      },
-      timeoutMs: 120_000,
-    });
-    idMessage = extractMessageId(data);
-  } catch (err) {
-    if (!isEvolutionTimeoutError(err)) throw err;
-    idMessage = `media-${Date.now()}`;
-    confirmed = false;
-  }
-
-  markOutboundSent(userId);
-  const source = input.url.startsWith("data:") ? "[base64]" : input.url;
-  const label = input.caption || `[${input.type}] ${source}`;
-
-  await saveWhatsAppMessage(userId, {
-    contactPhone: normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: label,
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
-
-  const normalized = normalizeGroupParticipantId(chatId);
-  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+    // Les vidéos / gros fichiers : Evolution télécharge, ré-encode puis ré-uploade
+    // le média vers WhatsApp → largement plus long que 30 s. On laisse 120 s, et si
+    // Evolution ne répond pas à temps on considère l'envoi probablement réussi
+    // (même bug connu que sendStatus : le média part quand même côté serveur).
+    let idMessage: string;
+    let confirmed = true;
     try {
-      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
-    } catch {
-      /* best effort */
+      const data = await evolutionFetch<unknown>(creds, `/message/sendMedia/${creds.instanceName}`, {
+        method: "POST",
+        body: {
+          number,
+          mediatype: input.type,
+          media,
+          caption: input.caption,
+          fileName: input.fileName,
+          ...(input.mimetype ? { mimetype: input.mimetype } : {}),
+        },
+        timeoutMs: 120_000,
+      });
+      idMessage = extractMessageId(data);
+    } catch (err) {
+      if (!isEvolutionTimeoutError(err)) throw err;
+      idMessage = `media-${Date.now()}`;
+      confirmed = false;
     }
-  }
 
-  return { idMessage, chatId: normalized, confirmed };
+    const source = input.url.startsWith("data:") ? "[base64]" : input.url;
+    const label = input.caption || `[${input.type}] ${source}`;
+
+    await saveWhatsAppMessage(userId, {
+      contactPhone: normalizeGroupParticipantId(chatId),
+      direction: "sortant",
+      body: label,
+      greenApiId: idMessage,
+      countsTowardQuota: opts.countsTowardQuota !== false,
+    });
+
+    const normalized = normalizeGroupParticipantId(chatId);
+    if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+      try {
+        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+      } catch {
+        /* best effort */
+      }
+    }
+
+    return { idMessage, chatId: normalized, confirmed };
+  });
 }
 
 /**
@@ -1291,37 +1310,37 @@ export async function sendWhatsAppVoice(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const number = formatEvolutionSendNumber(chatId);
-  const payload = audio.startsWith("data:") ? audio.slice(audio.indexOf(",") + 1) : audio;
+  return withOutboundSpacing(userId, async () => {
+    const number = formatEvolutionSendNumber(chatId);
+    const payload = audio.startsWith("data:") ? audio.slice(audio.indexOf(",") + 1) : audio;
 
-  const data = await evolutionFetch<unknown>(creds, `/message/sendWhatsAppAudio/${creds.instanceName}`, {
-    method: "POST",
-    body: { number, audio: payload },
-  });
+    const data = await evolutionFetch<unknown>(creds, `/message/sendWhatsAppAudio/${creds.instanceName}`, {
+      method: "POST",
+      body: { number, audio: payload },
+    });
 
-  markOutboundSent(userId);
-  const idMessage = extractMessageId(data);
+    const idMessage = extractMessageId(data);
 
-  await saveWhatsAppMessage(userId, {
-    contactPhone: normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: "[note vocale]",
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
+    await saveWhatsAppMessage(userId, {
+      contactPhone: normalizeGroupParticipantId(chatId),
+      direction: "sortant",
+      body: "[note vocale]",
+      greenApiId: idMessage,
+      countsTowardQuota: opts.countsTowardQuota !== false,
+    });
 
-  const normalized = normalizeGroupParticipantId(chatId);
-  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
-    try {
-      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
-    } catch {
-      /* best effort */
+    const normalized = normalizeGroupParticipantId(chatId);
+    if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+      try {
+        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+      } catch {
+        /* best effort */
+      }
     }
-  }
 
-  return { idMessage, chatId: normalized };
+    return { idMessage, chatId: normalized };
+  });
 }
 
 /** Envoie une localisation (épingle carte) avec nom et adresse/description. */
@@ -1335,42 +1354,42 @@ export async function sendWhatsAppLocation(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const number = formatEvolutionSendNumber(chatId);
-  const data = await evolutionFetch<unknown>(creds, `/message/sendLocation/${creds.instanceName}`, {
-    method: "POST",
-    body: {
-      number,
-      name: input.name,
-      address: input.address,
-      latitude: input.latitude,
-      longitude: input.longitude,
-    },
-  });
+  return withOutboundSpacing(userId, async () => {
+    const number = formatEvolutionSendNumber(chatId);
+    const data = await evolutionFetch<unknown>(creds, `/message/sendLocation/${creds.instanceName}`, {
+      method: "POST",
+      body: {
+        number,
+        name: input.name,
+        address: input.address,
+        latitude: input.latitude,
+        longitude: input.longitude,
+      },
+    });
 
-  markOutboundSent(userId);
-  const idMessage = extractMessageId(data);
-  const label = `[localisation] ${input.name || ""} (${input.latitude}, ${input.longitude})`.trim();
+    const idMessage = extractMessageId(data);
+    const label = `[localisation] ${input.name || ""} (${input.latitude}, ${input.longitude})`.trim();
 
-  await saveWhatsAppMessage(userId, {
-    contactPhone: normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: label,
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
+    await saveWhatsAppMessage(userId, {
+      contactPhone: normalizeGroupParticipantId(chatId),
+      direction: "sortant",
+      body: label,
+      greenApiId: idMessage,
+      countsTowardQuota: opts.countsTowardQuota !== false,
+    });
 
-  const normalized = normalizeGroupParticipantId(chatId);
-  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
-    try {
-      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
-    } catch {
-      /* best effort */
+    const normalized = normalizeGroupParticipantId(chatId);
+    if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+      try {
+        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+      } catch {
+        /* best effort */
+      }
     }
-  }
 
-  return { idMessage, chatId: normalized };
+    return { idMessage, chatId: normalized };
+  });
 }
 
 /** Envoie une carte contact (vCard) : nom, entreprise, téléphone, email, URL. */
@@ -1390,50 +1409,50 @@ export async function sendWhatsAppContact(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const number = formatEvolutionSendNumber(chatId);
-  const wuid = contact.phone.replace(/\D/g, "");
+  return withOutboundSpacing(userId, async () => {
+    const number = formatEvolutionSendNumber(chatId);
+    const wuid = contact.phone.replace(/\D/g, "");
 
-  const data = await evolutionFetch<unknown>(creds, `/message/sendContact/${creds.instanceName}`, {
-    method: "POST",
-    body: {
-      number,
-      contact: [
-        {
-          fullName: contact.fullName,
-          wuid,
-          phoneNumber: contact.phone,
-          organization: contact.organization,
-          email: contact.email,
-          url: contact.url,
-        },
-      ],
-    },
-  });
+    const data = await evolutionFetch<unknown>(creds, `/message/sendContact/${creds.instanceName}`, {
+      method: "POST",
+      body: {
+        number,
+        contact: [
+          {
+            fullName: contact.fullName,
+            wuid,
+            phoneNumber: contact.phone,
+            organization: contact.organization,
+            email: contact.email,
+            url: contact.url,
+          },
+        ],
+      },
+    });
 
-  markOutboundSent(userId);
-  const idMessage = extractMessageId(data);
-  const label = `[contact] ${contact.fullName} — ${contact.phone}`;
+    const idMessage = extractMessageId(data);
+    const label = `[contact] ${contact.fullName} — ${contact.phone}`;
 
-  await saveWhatsAppMessage(userId, {
-    contactPhone: normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: label,
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
+    await saveWhatsAppMessage(userId, {
+      contactPhone: normalizeGroupParticipantId(chatId),
+      direction: "sortant",
+      body: label,
+      greenApiId: idMessage,
+      countsTowardQuota: opts.countsTowardQuota !== false,
+    });
 
-  const normalized = normalizeGroupParticipantId(chatId);
-  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
-    try {
-      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
-    } catch {
-      /* best effort */
+    const normalized = normalizeGroupParticipantId(chatId);
+    if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+      try {
+        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+      } catch {
+        /* best effort */
+      }
     }
-  }
 
-  return { idMessage, chatId: normalized };
+    return { idMessage, chatId: normalized };
+  });
 }
 
 /** Envoie un SONDAGE (poll). Les votes reviennent via le webhook (best-effort). */
@@ -1451,32 +1470,32 @@ export async function sendWhatsAppPoll(
   if (values.length < 2) throw new EvolutionApiError("Un sondage nécessite au moins 2 options.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const number = formatEvolutionSendNumber(chatId);
-  const selectableCount = Math.min(Math.max(input.selectableCount ?? 1, 1), values.length);
-  const data = await evolutionFetch<unknown>(creds, `/message/sendPoll/${creds.instanceName}`, {
-    method: "POST",
-    body: {
-      number,
-      name: input.name.trim(),
-      selectableCount,
-      values,
-      ...(input.delay && input.delay > 0 ? { delay: Math.min(Math.round(input.delay), 20_000) } : {}),
-    },
+  return withOutboundSpacing(userId, async () => {
+    const number = formatEvolutionSendNumber(chatId);
+    const selectableCount = Math.min(Math.max(input.selectableCount ?? 1, 1), values.length);
+    const data = await evolutionFetch<unknown>(creds, `/message/sendPoll/${creds.instanceName}`, {
+      method: "POST",
+      body: {
+        number,
+        name: input.name.trim(),
+        selectableCount,
+        values,
+        ...(input.delay && input.delay > 0 ? { delay: Math.min(Math.round(input.delay), 20_000) } : {}),
+      },
+    });
+
+    const idMessage = extractMessageId(data);
+    await saveWhatsAppMessage(userId, {
+      contactPhone: normalizeGroupParticipantId(chatId),
+      direction: "sortant",
+      body: `[sondage] ${input.name.trim()} — ${values.join(" / ")}`,
+      greenApiId: idMessage,
+      countsTowardQuota: opts.countsTowardQuota !== false,
+    });
+
+    return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
   });
-
-  markOutboundSent(userId);
-  const idMessage = extractMessageId(data);
-  await saveWhatsAppMessage(userId, {
-    contactPhone: normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: `[sondage] ${input.name.trim()} — ${values.join(" / ")}`,
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
-
-  return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
 }
 
 /** Envoie une LISTE interactive (menu de sélection). Expérimental côté WhatsApp. */
@@ -1502,42 +1521,42 @@ export async function sendWhatsAppList(
   if (!input.sections?.length) throw new EvolutionApiError("La liste nécessite au moins une section.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const number = formatEvolutionSendNumber(chatId);
-  const sections = input.sections.map((s) => ({
-    title: s.title,
-    rows: s.rows.map((r, i) => ({
-      title: r.title,
-      description: r.description ?? "",
-      rowId: r.rowId ?? `row_${i + 1}`,
-    })),
-  }));
+  return withOutboundSpacing(userId, async () => {
+    const number = formatEvolutionSendNumber(chatId);
+    const sections = input.sections.map((s) => ({
+      title: s.title,
+      rows: s.rows.map((r, i) => ({
+        title: r.title,
+        description: r.description ?? "",
+        rowId: r.rowId ?? `row_${i + 1}`,
+      })),
+    }));
 
-  const data = await evolutionFetch<unknown>(creds, `/message/sendList/${creds.instanceName}`, {
-    method: "POST",
-    body: {
-      number,
-      title: input.title,
-      description: input.description,
-      buttonText: input.buttonText,
-      footerText: input.footerText ?? "",
-      sections,
-      ...(input.delay && input.delay > 0 ? { delay: Math.min(Math.round(input.delay), 20_000) } : {}),
-    },
+    const data = await evolutionFetch<unknown>(creds, `/message/sendList/${creds.instanceName}`, {
+      method: "POST",
+      body: {
+        number,
+        title: input.title,
+        description: input.description,
+        buttonText: input.buttonText,
+        footerText: input.footerText ?? "",
+        sections,
+        ...(input.delay && input.delay > 0 ? { delay: Math.min(Math.round(input.delay), 20_000) } : {}),
+      },
+    });
+
+    const idMessage = extractMessageId(data);
+    await saveWhatsAppMessage(userId, {
+      contactPhone: normalizeGroupParticipantId(chatId),
+      direction: "sortant",
+      body: `[liste] ${input.title} — ${input.buttonText}`,
+      greenApiId: idMessage,
+      countsTowardQuota: opts.countsTowardQuota !== false,
+    });
+
+    return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
   });
-
-  markOutboundSent(userId);
-  const idMessage = extractMessageId(data);
-  await saveWhatsAppMessage(userId, {
-    contactPhone: normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: `[liste] ${input.title} — ${input.buttonText}`,
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
-
-  return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
 }
 
 /** Envoie un STICKER (image statique WebP/PNG/JPEG). `sticker` = URL ou base64. */
@@ -1551,30 +1570,30 @@ export async function sendWhatsAppSticker(
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
   await assertCanSendTo(userId, chatId);
-  await waitOutboundSpacing(userId);
 
-  const number = formatEvolutionSendNumber(chatId);
-  const payload = sticker.startsWith("data:") ? sticker.slice(sticker.indexOf(",") + 1) : sticker;
-  const data = await evolutionFetch<unknown>(creds, `/message/sendSticker/${creds.instanceName}`, {
-    method: "POST",
-    body: {
-      number,
-      sticker: payload,
-      ...(opts.delay && opts.delay > 0 ? { delay: Math.min(Math.round(opts.delay), 20_000) } : {}),
-    },
+  return withOutboundSpacing(userId, async () => {
+    const number = formatEvolutionSendNumber(chatId);
+    const payload = sticker.startsWith("data:") ? sticker.slice(sticker.indexOf(",") + 1) : sticker;
+    const data = await evolutionFetch<unknown>(creds, `/message/sendSticker/${creds.instanceName}`, {
+      method: "POST",
+      body: {
+        number,
+        sticker: payload,
+        ...(opts.delay && opts.delay > 0 ? { delay: Math.min(Math.round(opts.delay), 20_000) } : {}),
+      },
+    });
+
+    const idMessage = extractMessageId(data);
+    await saveWhatsAppMessage(userId, {
+      contactPhone: normalizeGroupParticipantId(chatId),
+      direction: "sortant",
+      body: "[sticker]",
+      greenApiId: idMessage,
+      countsTowardQuota: opts.countsTowardQuota !== false,
+    });
+
+    return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
   });
-
-  markOutboundSent(userId);
-  const idMessage = extractMessageId(data);
-  await saveWhatsAppMessage(userId, {
-    contactPhone: normalizeGroupParticipantId(chatId),
-    direction: "sortant",
-    body: "[sticker]",
-    greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
-  });
-
-  return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
 }
 
 export async function findGroupByNameOrId(

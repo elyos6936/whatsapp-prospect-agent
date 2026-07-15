@@ -5,18 +5,19 @@ import { getAppSettings, getRecentAgentMessages, listAutomations, type AgentMess
 import { testEvolutionConnection } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel } from "./llm.js";
+import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens } from "./llm.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
   wantsCampaignSimulation,
 } from "./campaign-briefing.js";
+import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
 
 const MAX_TOOL_ROUNDS = 8;
 // Historique injecté à chaque tour : assez pour le contexte, pas trop pour
 // limiter la consommation de tokens (et donc les 429 de limite de vitesse).
 const CHAT_HISTORY_LIMIT = 30;
-const CHAT_MAX_TOKENS = 2048;
+const CHAT_MAX_TOKENS = 1024;
 
 /**
  * Détecte une réponse « amorce vide » : le modèle annonce un contenu
@@ -81,7 +82,26 @@ const ACTIVATION_AFTER_SIMULATION_NUDGE =
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
   "avec exactement 3 ou 4 tours (speaker toi/prospect, textes réels SANS crochets, prix/lien déjà collectés). " +
-  "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 4 messages (coût tokens).";
+  "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 4 messages (coût tokens). " +
+  "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
+  "la simulation s'affiche UNIQUEMENT dans ce chat — aucun envoi WhatsApp réel.";
+
+/** Outils d'envoi réel — bloqués pendant une demande de simulation. */
+const OUTBOUND_SEND_TOOLS = new Set([
+  "send_whatsapp_message",
+  "send_whatsapp_media",
+  "send_whatsapp_voice",
+  "send_whatsapp_sticker",
+  "send_whatsapp_poll",
+  "send_whatsapp_list",
+  "send_whatsapp_status",
+  "send_whatsapp_reaction",
+  "send_location",
+  "send_contact",
+  "send_channel_message",
+  "schedule_whatsapp_message",
+  "message_all_group_members",
+]);
 
 function shouldBlockDuplicateSimulation(history: AgentMessage[], userMessage: string): boolean {
   if (!recentHistoryHasSimulation(history)) return false;
@@ -130,7 +150,7 @@ async function buildBusinessContext(
   );
   lines.push(
     `## Profil business (RAPPEL TECHNIQUE — PAS une vérité absolue)\n` +
-      `Prénom / nom enregistré : ${settings.business_owner_name || "(non configuré)"}\n` +
+      `Prénom / nom enregistré : ${settings.business_owner_name || "(non configuré — INTERDIT d'inventer un prénom ; rester neutre)"}\n` +
       `Offre enregistrée (peut être OBSOLÈTE) : ${settings.business_offer || "(non configuré)"}\n` +
       `Tarif enregistré : ${settings.business_price || "(non communiqué)"}\n\n` +
       `⚠️ RÈGLE STRICTE : ce profil est un **indice optionnel**, PAS la source de vérité pour une campagne.\n` +
@@ -140,11 +160,12 @@ async function buildBusinessContext(
       `- Tu peux mentionner l'ancienne offre SEULEMENT comme question de confirmation : ` +
       `"Ton profil indiquait autrefois « … » — c'est toujours ça, ou ça a changé ?"\n` +
       `- N'utilise l'offre/prix du profil dans create_automation / messages WhatsApp ` +
-      `QUE si l'utilisateur les a **confirmés explicitement** dans cette conversation.`
+      `QUE si l'utilisateur les a **confirmés explicitement** dans cette conversation.\n` +
+      `- **Identité** : si prénom non configuré, ne te présente JAMAIS avec un nom (Will, etc.). Reste neutre.`
   );
   lines.push(
     `## Rappel campagnes\n` +
-      `Parle comme un expert WhatsApp humain, créatif et concis. ` +
+      `Parle comme un pro WhatsApp humain, créatif et concis — sans te donner de prénom inventé. ` +
       `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois). ` +
       `Après « nouvelle campagne » → 1ʳᵉ question = offre ACTUELLE (ouverte, sans inventer). ` +
       `Demande aussi la fenêtre horaire d'envoi et le jour/heure de lancement. ` +
@@ -198,9 +219,10 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
     getRecentAgentMessages(userId, CHAT_HISTORY_LIMIT),
   ]);
 
+  const businessContext = await buildBusinessContext(userId, settings, connection);
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
     { role: "system", content: SYSTEM_PROMPT },
-    { role: "system", content: await buildBusinessContext(userId, settings, connection) },
+    { role: "system", content: businessContext },
     ...toOpenAiMessages(history),
   ];
 
@@ -214,6 +236,23 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
   const forceSim =
     wantsCampaignSimulation(userMessage, history) &&
     (!hasSimAlready || userWantsSimulationChange(userMessage));
+
+  // Chemin fiable : simu sans tools / sans tool_choice (DeepSeek v4 thinking = 400 sinon).
+  if (forceSim) {
+    const recentTranscript = history
+      .slice(-16)
+      .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
+      .join("\n\n");
+    try {
+      const display = await generateCampaignSimulationDirect(client, {
+        businessContext,
+        recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
+      });
+      if (display?.trim()) return display.trim();
+    } catch (err) {
+      console.warn("[agent] simulation directe échouée, fallback boucle outils:", err);
+    }
+  }
 
   if (forceSim) {
     messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
@@ -231,11 +270,7 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
 
-    const toolChoice: OpenAI.Chat.Completions.ChatCompletionToolChoiceOption =
-      forceSim && !forcedSimUsed && rounds <= 2
-        ? { type: "function", function: { name: "show_campaign_simulation" } }
-        : "auto";
-
+    // Toujours "auto" : DeepSeek thinking refuse tool_choice forcé (HTTP 400).
     let response: OpenAI.Chat.Completions.ChatCompletion;
     try {
       response = await callOpenAiWithRetry(() =>
@@ -243,9 +278,12 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
           model: config.openaiModel,
           messages,
           tools: TOOL_DEFINITIONS,
-          tool_choice: toolChoice,
-          max_tokens: CHAT_MAX_TOKENS,
-        })
+          tool_choice: "auto",
+          max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
+            thinkingEnabled: true,
+          }),
+          ...deepseekChatExtras({ enableThinking: true }),
+        } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
       throw new Error(describeOpenAiError(err));
@@ -259,17 +297,31 @@ export async function chatWithAgent(userId: number, userMessage: string): Promis
     const assistantMsg = choice.message;
 
     if (assistantMsg.tool_calls?.length) {
-      messages.push({
-        role: "assistant",
-        content: assistantMsg.content ?? null,
-        tool_calls: assistantMsg.tool_calls,
-      });
+      // DeepSeek thinking : rejouer reasoning_content avec les tool_calls
+      messages.push(toAssistantHistoryMessage(assistantMsg));
 
       for (const toolCall of assistantMsg.tool_calls) {
         if (toolCall.type !== "function") continue;
 
         if (toolCall.function.name === "show_campaign_simulation") {
           forcedSimUsed = true;
+        }
+
+        // Simulation demandée : bloquer tout envoi WhatsApp réel (même tour ou suivant)
+        if (forceSim && OUTBOUND_SEND_TOOLS.has(toolCall.function.name)) {
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({
+              error:
+                "Simulation en cours : INTERDIT d'envoyer sur WhatsApp. " +
+                "Appelle UNIQUEMENT show_campaign_simulation (aperçu dans le chat, 0 envoi réel).",
+            }),
+          });
+          if (!forcedSimUsed) {
+            messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
+          }
+          continue;
         }
 
         // Pendant un briefing incomplet : bloquer create/activate

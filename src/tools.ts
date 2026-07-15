@@ -109,6 +109,7 @@ import {
 } from "./automation-engine.js";
 import { getContactPresence } from "./notifications.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
+import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -1073,7 +1074,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "send_whatsapp_sticker",
       description:
-        "Envoie un STICKER (image statique WebP/PNG/JPEG). La source peut être une URL publique ou du base64.",
+        "Envoie un STICKER WhatsApp (image WebP/PNG/JPEG, URL ou base64). À n'appeler QUE si l'utilisateur a explicitement autorisé les stickers dans la conversation (oui aux stickers). Sinon, demande d'abord son accord — ne jamais envoyer de sticker de façon autonome.",
       parameters: {
         type: "object",
         properties: {
@@ -3762,7 +3763,7 @@ export async function executeTool(userId: number, name: string, args: Record<str
           error: "La simulation doit contenir exactement 3 ou 4 messages (turns).",
         });
       }
-      const lines: string[] = [];
+      const turns: SimulationTurn[] = [];
       for (const raw of rawTurns) {
         if (!raw || typeof raw !== "object") {
           return JSON.stringify({ error: "Chaque turn doit avoir speaker + text." });
@@ -3777,26 +3778,29 @@ export async function executeTool(userId: number, name: string, args: Record<str
           });
         }
         if (speaker === "toi") {
-          lines.push(`Toi → « ${text} »`);
+          turns.push({ speaker: "toi", text });
         } else if (speaker === "prospect") {
-          const name = String(turn.name ?? "Prospect").trim() || "Prospect";
-          lines.push(`${name} → « ${text} »`);
+          turns.push({
+            speaker: "prospect",
+            name: String(turn.name ?? "Prospect").trim() || "Prospect",
+            text,
+          });
         } else {
           return JSON.stringify({ error: "speaker doit être « toi » ou « prospect »." });
         }
       }
-      const display =
-        lines.join("\n") +
-        "\n\n---\n" +
-        "*(Simulation courte — 3 à 4 messages max.)*\n\n" +
-        "Dis-moi concrètement :\n" +
-        "• ce qui te convient\n" +
-        "• ce que tu veux changer (ton, accroche, CTA, prix, lien…)\n\n" +
-        "Ou réponds « c'est bon » si on peut passer à l'activation.";
+      let display: string;
+      try {
+        display = formatCampaignSimulationDisplay(turns);
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
       return JSON.stringify({
         success: true,
         display,
-        turns: rawTurns.length,
+        turns: turns.length,
         message: "Simulation prête. Affiche le champ display tel quel à l'utilisateur.",
       });
     }
