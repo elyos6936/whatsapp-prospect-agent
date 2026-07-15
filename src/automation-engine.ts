@@ -33,9 +33,10 @@ import {
 } from "./evolutionapi.js";
 import { generatePersonalizedOpener } from "./prospect-personalizer.js";
 import { startSequenceForContact } from "./sequences.js";
-import { listActiveUserIds } from "./users.js";
+import { listActiveUserIds, getUserById } from "./users.js";
 import { getActiveCampaignTargetIds } from "./campaign-gating.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
+import { isResendConfigured, sendDailyReportEmail } from "./mail/resend.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -263,7 +264,7 @@ function todayLocal(): string {
 }
 
 /** Construit le texte du rapport quotidien d'une campagne (prospection ou closing e-commerce). */
-async function buildDailyReportText(userId: number, auto: Automation): Promise<string> {
+export async function buildDailyReportText(userId: number, auto: Automation): Promise<string> {
   const stats = auto.stats ?? {};
   const today = todayLocal();
   const targets = await listAutomationTargets(userId, auto.id, { limit: 1000 });
@@ -273,7 +274,7 @@ async function buildDailyReportText(userId: number, auto: Automation): Promise<s
   const sentToday = nonPending.filter((t) => isToday(t.last_action_at)).length;
   const replied = targets.filter((t) => t.status === "replied" || t.status === "interested").length;
   const interested = targets.filter((t) => t.status === "interested").length;
-  const pending = targets.filter((t) => t.status === "pending").length;
+  const pendingCount = targets.filter((t) => t.status === "pending").length;
 
   const lines: string[] = [
     `📊 Rapport du jour — Campagne « ${auto.name} » (#${auto.id}) · statut : ${auto.status}`,
@@ -288,7 +289,7 @@ async function buildDailyReportText(userId: number, auto: Automation): Promise<s
   } else {
     lines.push(
       `• Messages envoyés aujourd'hui : ${sentToday}`,
-      `• Total contactés : ${nonPending.length}${pending ? ` (restants à contacter : ${pending})` : ""}`,
+      `• Total contactés : ${nonPending.length}${pendingCount ? ` (restants à contacter : ${pendingCount})` : ""}`,
       `• Réponses reçues : ${replied} · intéressés : ${interested}`
     );
   }
@@ -300,7 +301,7 @@ async function buildDailyReportText(userId: number, auto: Automation): Promise<s
   return lines.join("\n");
 }
 
-/** Poste un rapport quotidien dans le chat de l'agent, au plus une fois par jour et par campagne. */
+/** Poste un rapport quotidien dans le chat (+ email Resend si configuré). Une fois / jour / campagne. */
 async function maybeSendDailyReport(userId: number, auto: Automation): Promise<void> {
   if (new Date().getHours() < DAILY_REPORT_HOUR) return;
   const today = todayLocal();
@@ -314,6 +315,31 @@ async function maybeSendDailyReport(userId: number, auto: Automation): Promise<v
       lastActionAt: new Date().toISOString(),
     });
     console.log(`📊 Rapport quotidien posté — campagne #${auto.id} (user ${userId})`);
+
+    if (isResendConfigured()) {
+      try {
+        const user = await getUserById(userId);
+        const to = user?.email?.trim();
+        if (!to) {
+          console.warn(`📧 Rapport #${auto.id} : pas d'email user ${userId}`);
+        } else {
+          const mail = await sendDailyReportEmail({
+            to,
+            campaignName: auto.name,
+            campaignId: auto.id,
+            text,
+          });
+          if (mail.ok) {
+            console.log(`📧 Rapport email envoyé — campagne #${auto.id} → ${to} (${mail.id})`);
+            await updateAutomationStats(userId, auto.id, { emailReportSentAt: new Date().toISOString() });
+          } else {
+            console.error(`📧 Rapport email échoué — campagne #${auto.id}:`, mail.error);
+          }
+        }
+      } catch (mailErr) {
+        console.error(`📧 Rapport email campagne #${auto.id} exception:`, mailErr);
+      }
+    }
   } catch (err) {
     console.error(`📊 Rapport quotidien campagne #${auto.id} échoué:`, err);
   }

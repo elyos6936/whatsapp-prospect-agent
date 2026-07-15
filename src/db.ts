@@ -1275,6 +1275,8 @@ export interface AutomationStats {
   outboundUsed?: number;
   lastActionAt?: string;
   lastReportDate?: string;
+  /** ISO — dernier envoi email Resend du rapport quotidien. */
+  emailReportSentAt?: string;
   report?: string;
   /** True une fois tous les premiers messages partis (campagne reste active). */
   openersDone?: boolean;
@@ -1413,6 +1415,7 @@ async function recomputeAutomationStats(userId: number, automationId: number): P
     stats.lastActionAt = auto.stats.lastActionAt;
     stats.autoStopped = auto.stats.autoStopped;
     stats.lastReportDate = auto.stats.lastReportDate;
+    stats.emailReportSentAt = auto.stats.emailReportSentAt;
     stats.conversions = auto.stats.conversions;
     stats.revenueFcfa = auto.stats.revenueFcfa;
     stats.openersDone = auto.stats.openersDone;
