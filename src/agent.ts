@@ -129,15 +129,24 @@ async function buildBusinessContext(
     }`
   );
   lines.push(
-    `## Profil business\n` +
-      `Prénom / nom : ${settings.business_owner_name || "(non configuré)"}\n` +
-      `Offre / formation : ${settings.business_offer || "(non configuré)"}\n` +
-      `Tarif (FCFA) : ${settings.business_price || "(non communiqué)"}`
+    `## Profil business (RAPPEL TECHNIQUE — PAS une vérité absolue)\n` +
+      `Prénom / nom enregistré : ${settings.business_owner_name || "(non configuré)"}\n` +
+      `Offre enregistrée (peut être OBSOLÈTE) : ${settings.business_offer || "(non configuré)"}\n` +
+      `Tarif enregistré : ${settings.business_price || "(non communiqué)"}\n\n` +
+      `⚠️ RÈGLE STRICTE : ce profil est un **indice optionnel**, PAS la source de vérité pour une campagne.\n` +
+      `- Pour une **NOUVELLE campagne** : pose TOUJOURS une question ouverte sur l'offre actuelle ` +
+      `("Qu'est-ce que tu proposes concrètement à ces personnes ?"). ` +
+      `N'affirme JAMAIS "tu vends X" / "produits cosmétiques" / etc. d'après ce profil.\n` +
+      `- Tu peux mentionner l'ancienne offre SEULEMENT comme question de confirmation : ` +
+      `"Ton profil indiquait autrefois « … » — c'est toujours ça, ou ça a changé ?"\n` +
+      `- N'utilise l'offre/prix du profil dans create_automation / messages WhatsApp ` +
+      `QUE si l'utilisateur les a **confirmés explicitement** dans cette conversation.`
   );
   lines.push(
     `## Rappel campagnes\n` +
       `Parle comme un expert WhatsApp humain, créatif et concis. ` +
       `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois). ` +
+      `Après « nouvelle campagne » → 1ʳᵉ question = offre ACTUELLE (ouverte, sans inventer). ` +
       `Demande aussi la fenêtre horaire d'envoi et le jour/heure de lancement. ` +
       `Objectif RDV → lien de réservation. Simulation = 3-4 messages max + feedback.`
   );

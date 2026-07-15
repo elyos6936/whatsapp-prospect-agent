@@ -187,6 +187,13 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
 
   const next = assessment.missing[0] ?? "un détail concret encore flou";
   const q = assessment.questionsAsked;
+  if (next.includes("offre")) {
+    return (
+      `Briefing campagne (${q} question(s)) : offre pas encore confirmée par l'utilisateur. ` +
+      `Pose UNE question OUVERTE (« Qu'est-ce que tu proposes concrètement ? »). ` +
+      `N'affirme JAMAIS l'offre du profil business — elle peut être obsolète.`
+    );
+  }
   return (
     `## Briefing campagne EN COURS (obligatoire)\n` +
     `Questions déjà posées ≈ ${q}/5 minimum. Éléments encore manquants : ${
