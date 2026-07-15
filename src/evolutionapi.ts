@@ -363,6 +363,7 @@ export async function createInstance(userId: number): Promise<void> {
             "GROUPS_UPSERT",
             "GROUP_UPDATE",
             "GROUP_PARTICIPANTS_UPDATE",
+            "CONNECTION_UPDATE",
           ],
         },
       },
@@ -386,9 +387,27 @@ export async function createInstance(userId: number): Promise<void> {
   }
 }
 
+const CONNECTION_STATE_CACHE = new Map<
+  number,
+  { result: EvolutionConnectionState; expiresAt: number }
+>();
+const CONNECTION_STATE_TTL_MS = 25_000;
+const CONNECTION_ERROR_TTL_MS = 8_000;
+
+export type EvolutionConnectionState = {
+  connected: boolean;
+  state: string;
+  message: string;
+};
+
+export function invalidateConnectionStateCache(userId?: number): void {
+  if (typeof userId === "number") CONNECTION_STATE_CACHE.delete(userId);
+  else CONNECTION_STATE_CACHE.clear();
+}
+
 export async function diagnoseEvolutionApi(userId: number): Promise<{
   configured: boolean;
-  connection: Awaited<ReturnType<typeof testEvolutionConnection>>;
+  connection: EvolutionConnectionState;
   outboundToday: number;
   outboundLimit: number;
   sendFormatHint: string;
@@ -406,26 +425,15 @@ export async function diagnoseEvolutionApi(userId: number): Promise<{
   };
 }
 
-const CONNECTION_STATE_CACHE = new Map<
-  number,
-  { result: Awaited<ReturnType<typeof testEvolutionConnection>>; expiresAt: number }
->();
-const CONNECTION_STATE_TTL_MS = 20_000;
-
-const GROUPS_LIST_CACHE = new Map<
-  number,
-  { groups: Array<{ id: string; name: string; type: string }>; expiresAt: number }
->();
-const GROUPS_LIST_TTL_MS = 60_000;
-
-export async function testEvolutionConnection(userId: number): Promise<{
-  connected: boolean;
-  state: string;
-  message: string;
-}> {
-  const cached = CONNECTION_STATE_CACHE.get(userId);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.result;
+export async function testEvolutionConnection(
+  userId: number,
+  opts: { bypassCache?: boolean } = {}
+): Promise<EvolutionConnectionState> {
+  if (!opts.bypassCache) {
+    const cached = CONNECTION_STATE_CACHE.get(userId);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
   }
 
   const creds = await getEvolutionCredentials(userId);
@@ -436,11 +444,12 @@ export async function testEvolutionConnection(userId: number): Promise<{
   try {
     const data = await evolutionFetch<{ instance?: { state?: string; instanceName?: string } }>(
       creds,
-      `/instance/connectionState/${creds.instanceName}`
+      `/instance/connectionState/${creds.instanceName}`,
+      { timeoutMs: 12_000 }
     );
     const state = data.instance?.state ?? "unknown";
     const ok = state === "open";
-    const result = {
+    const result: EvolutionConnectionState = {
       connected: ok,
       state,
       message: ok
@@ -451,13 +460,32 @@ export async function testEvolutionConnection(userId: number): Promise<{
             ? "WhatsApp déconnecté — reconnectez l'instance Evolution API."
             : `État WhatsApp : ${state}`,
     };
-    CONNECTION_STATE_CACHE.set(userId, { result, expiresAt: Date.now() + CONNECTION_STATE_TTL_MS });
+    CONNECTION_STATE_CACHE.set(userId, {
+      result,
+      expiresAt: Date.now() + CONNECTION_STATE_TTL_MS,
+    });
     return result;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { connected: false, state: "error", message: msg };
+    const result: EvolutionConnectionState = {
+      connected: false,
+      state: "error",
+      message: msg,
+    };
+    // Cache court les erreurs pour ne pas marteler Evolution / faire flapper l'UI
+    CONNECTION_STATE_CACHE.set(userId, {
+      result,
+      expiresAt: Date.now() + CONNECTION_ERROR_TTL_MS,
+    });
+    return result;
   }
 }
+
+const GROUPS_LIST_CACHE = new Map<
+  number,
+  { groups: Array<{ id: string; name: string; type: string }>; expiresAt: number }
+>();
+const GROUPS_LIST_TTL_MS = 60_000;
 
 export async function requireEvolutionConnected(userId: number, context = "cette opération"): Promise<void> {
   const state = await testEvolutionConnection(userId);
@@ -1084,6 +1112,9 @@ export async function sendWhatsAppMessage(
 
   markOutboundSent();
   const idMessage = extractMessageId(data);
+  void import("./whatsapp-connection.js")
+    .then((m) => m.markWhatsAppOpen(userId))
+    .catch(() => {});
 
   await saveWhatsAppMessage(userId, {
     contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
@@ -2594,38 +2625,66 @@ export async function getInstanceQr(userId: number): Promise<{
   connected: boolean;
   message: string;
 }> {
-  const state = await testEvolutionConnection(userId);
-  if (state.connected) {
+  // Sticky d'abord : ne PAS régénérer un QR pendant une flap / heal
+  const { getWhatsAppConnectionStatus, healWhatsAppSession, isWhatsAppStickyOpen } =
+    await import("./whatsapp-connection.js");
+  const sticky = await getWhatsAppConnectionStatus(userId);
+  if (sticky.connected) {
     return {
       base64: null,
       pairingCode: null,
-      state: state.state,
+      state: sticky.state,
+      connected: true,
+      message: sticky.message || "WhatsApp est déjà connecté à cette instance.",
+    };
+  }
+
+  const raw = await testEvolutionConnection(userId, { bypassCache: true });
+  if (raw.connected && raw.state === "open") {
+    return {
+      base64: null,
+      pairingCode: null,
+      state: raw.state,
       connected: true,
       message: "WhatsApp est déjà connecté à cette instance.",
     };
   }
 
-  // Assure l'existence de l'instance dédiée avant de demander le QR (idempotent).
+  // Si session récemment ouverte ou en close flaky → restart doux, JAMAIS connect (QR)
+  if (isWhatsAppStickyOpen(userId) || raw.state === "close" || raw.state === "connecting") {
+    await healWhatsAppSession(userId, "getInstanceQr-avoid-qr-churn");
+    await new Promise((r) => setTimeout(r, 2500));
+    const after = await getWhatsAppConnectionStatus(userId, { bypassCache: true });
+    if (after.connected) {
+      return {
+        base64: null,
+        pairingCode: null,
+        state: after.state,
+        connected: true,
+        message: after.message || "Session WhatsApp restaurée.",
+      };
+    }
+    // Encore close après heal : seulement là on autorise un vrai QR
+  }
+
   await createInstance(userId);
 
-  // Garantit que le webhook pointe vers ce backend, même pour une instance
-  // pré-existante (ex. PUBLIC_URL modifiée). Le poller d'historique sert de repli.
   try {
     await setEvolutionWebhook(userId, `${config.publicUrl}/api/evolution/webhook`);
   } catch (err) {
     console.warn(`⚠️ Webhook non (re)configuré pour user ${userId}:`, err instanceof Error ? err.message : err);
   }
 
-  const raw = await connectInstance(userId);
-  const { base64, pairingCode } = parseConnectQrPayload(raw);
+  const rawQr = await connectInstance(userId);
+  const { base64, pairingCode } = parseConnectQrPayload(rawQr);
   return {
     base64,
     pairingCode,
-    state: state.state,
+    state: raw.state,
     connected: false,
     message: base64 || pairingCode
       ? "Scannez le QR code avec WhatsApp (Appareils connectés)."
-      : state.message,
+      : raw.message,
   };
 }
 

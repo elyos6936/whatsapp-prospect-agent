@@ -439,13 +439,20 @@ try {
   console.log(`🕐 Fuseau horaire : ${config.timezone} (process.env.TZ=${process.env.TZ})`);
   console.log(`   LLM : ${config.llmProvider} (${config.openaiModel}) @ ${config.llmBaseUrl}`);
   console.log(`   Ouvrez l'app → Connexions → Evolution API + WhatsApp QR\n`);
-  startNotificationPoller(3000);
+  startNotificationPoller(12_000);
   startScheduler(5000);
   startAutomationEngine(15000);
   setInterval(() => {
     void processSendQueue(2);
     void processDueSequences();
   }, 8000);
+  // Watchdog sessions WhatsApp — restaure les close silencieux sans QR
+  const { watchWhatsAppConnections } = await import("./whatsapp-connection.js");
+  const { listActiveUserIds } = await import("./users.js");
+  setInterval(() => {
+    void watchWhatsAppConnections(listActiveUserIds).catch(() => {});
+  }, 60_000);
+  void watchWhatsAppConnections(listActiveUserIds).catch(() => {});
 } catch (err) {
   app.log.error(err);
   process.exit(1);

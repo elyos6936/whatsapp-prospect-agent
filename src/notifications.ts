@@ -120,11 +120,12 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
   const isUpsert = event.includes("MESSAGES_UPSERT");
   const isUpdate = event.includes("MESSAGES_UPDATE") || event.includes("MESSAGES_EDITED") || event.includes("SEND_MESSAGE_UPDATE");
   const isPresence = event.includes("PRESENCE_UPDATE");
+  const isConnection = event.includes("CONNECTION_UPDATE");
   const isGroup =
     event.includes("GROUPS_UPSERT") ||
     event.includes("GROUP_UPDATE") ||
     event.includes("GROUP_PARTICIPANTS");
-  if (!isUpsert && !isUpdate && !isPresence && !isGroup) return 0;
+  if (!isUpsert && !isUpdate && !isPresence && !isGroup && !isConnection) return 0;
 
   const instance = String(body.instance ?? body.instanceName ?? "");
   const userId = await userIdFromInstanceName(instance);
@@ -135,6 +136,11 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
 
   const data = body.data;
   const items = Array.isArray(data) ? data : data ? [data] : [];
+
+  if (isConnection) {
+    const { handleConnectionUpdate } = await import("./whatsapp-connection.js");
+    return handleConnectionUpdate(userId, data ?? body);
+  }
 
   if (isGroup) {
     return handleGroupWebhookEvent(userId, event, data);

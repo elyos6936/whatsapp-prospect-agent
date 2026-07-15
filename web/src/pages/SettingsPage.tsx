@@ -113,18 +113,16 @@ export function SettingsPage() {
     }
   }, [refreshUser]);
 
-  // Charge un QR uniquement quand on est déconnecté et sur l'onglet WhatsApp.
+  // Charge un QR uniquement au premier affichage déconnecté — pas en boucle (connect tue la session).
   useEffect(() => {
     if (tab !== 'connection' || connected) return;
     void loadQr();
-    const id = setInterval(() => void loadQr(), 30000);
-    return () => clearInterval(id);
   }, [tab, connected, loadQr]);
 
-  // Quand déconnecté, on poll l'état pour basculer dès qu'un nouveau numéro se connecte.
+  // Quand déconnecté, on poll l'état (léger) pour basculer dès que la session revient.
   useEffect(() => {
     if (tab !== 'connection' || connected) return;
-    const id = setInterval(() => void refreshUser(), 4000);
+    const id = setInterval(() => void refreshUser(), 5_000);
     return () => clearInterval(id);
   }, [tab, connected, refreshUser]);
 

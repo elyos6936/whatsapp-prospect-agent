@@ -29,13 +29,29 @@ export default function AuthenticatedApp() {
   const [clearing, setClearing] = useState(false);
 
   const waConnected = user?.whatsapp?.connected ?? false;
+  const [gateConfirmed, setGateConfirmed] = useState(false);
+  const neverConnected = user?.whatsapp?.state === 'not_configured';
 
-  // Rafraîchir le statut WhatsApp toutes les 15s
+  // Rafraîchir le statut WhatsApp toutes les 30s (moins agressif)
   useEffect(() => {
     if (!user) return;
-    const id = setInterval(() => void refreshUser(), 15_000);
+    const id = setInterval(() => void refreshUser(), 30_000);
     return () => clearInterval(id);
   }, [user, refreshUser]);
+
+  // N'afficher le QR-gate qu'après une déconnexion confirmée (pas un simple flake API)
+  useEffect(() => {
+    if (waConnected) {
+      setGateConfirmed(false);
+      return;
+    }
+    if (neverConnected) {
+      setGateConfirmed(true);
+      return;
+    }
+    const t = setTimeout(() => setGateConfirmed(true), 45_000);
+    return () => clearTimeout(t);
+  }, [waConnected, neverConnected]);
 
   const handleNavigate = useCallback(
     (view: MainView) => {
@@ -99,7 +115,7 @@ export default function AuthenticatedApp() {
     return <OnboardingPage />;
   }
 
-  if (!waConnected) {
+  if (!waConnected && gateConfirmed) {
     return <ConnectWhatsAppGate />;
   }
 
