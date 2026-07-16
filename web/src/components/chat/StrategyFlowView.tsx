@@ -54,7 +54,7 @@ function metaFor(kind: string) {
   return (
     KIND_META[kind] ?? {
       label: 'Étape',
-      hint: 'Étape de la campagne',
+      hint: 'Étape du parcours',
       ring: 'border-slate-200 bg-white',
       badge: 'bg-slate-700 text-white',
     }
@@ -171,9 +171,9 @@ export function StrategyFlowView({ plan, className }: StrategyFlowViewProps) {
       )}
     >
       <div className="shrink-0 border-b border-black/[0.06] px-4 py-3">
-        <p className="text-xs font-semibold text-text-200">Parcours de la campagne</p>
+        <p className="text-xs font-semibold text-text-200">Parcours de la simulation</p>
         <p className="mt-0.5 text-[11px] leading-relaxed text-text-500">
-          Chaque bloc = une étape. Suis les flèches de haut en bas.
+          Chaque bloc = une étape. Teste le fil à droite avant de lancer.
         </p>
       </div>
 

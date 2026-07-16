@@ -12,7 +12,7 @@ function openerFromPlan(plan: AutomationVisualPlan): string {
     (n) => n.kind === 'message' || /message|accroche|opener|ouverture/i.test(n.label ?? ''),
   );
   const text = (msg?.subtitle || msg?.label || '').trim();
-  return text || 'Bonjour ! Je me permets de vous écrire rapidement 🙂';
+  return text || 'Bonjour ! Je me permets de vous écrire rapidement.';
 }
 
 function guideFromPlan(plan: AutomationVisualPlan): string | undefined {

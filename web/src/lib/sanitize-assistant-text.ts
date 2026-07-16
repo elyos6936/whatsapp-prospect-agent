@@ -10,13 +10,24 @@ export function sanitizeAssistantText(text: string): string {
   out = out.replace(/\n+STATUT\s*:\s*[^\n]+/gi, '');
   out = out.replace(/\n+DETAIL\s*:\s*[^\n]+/gi, '');
 
-  // Masquer les numéros techniques de campagne (#56, Campagne 16, etc.)
-  out = out.replace(/\bcampagne\s*#\s*\d+\b/gi, 'campagne');
+  // Masquer les numéros techniques (#56, etc.)
+  out = out.replace(/\bcampagne\s*#\s*\d+\b/gi, 'automatisation');
   out = out.replace(/\bautomatisation\s*#\s*\d+\b/gi, 'automatisation');
   out = out.replace(/\(\s*#\d+\s*\)/g, '');
-  out = out.replace(/\bcampagne\s+\d{1,5}\b/gi, 'campagne');
+  out = out.replace(/\bcampagne\s+\d{1,5}\b/gi, 'automatisation');
   out = out.replace(/(«[^»]+»)\s*#\d+/g, '$1');
-  out = out.replace(/#\d{1,6}\b/g, ''); // ex. « campagne #56 ? »
+  out = out.replace(/#\d{1,6}\b/g, '');
+
+  // Vocabulaire UI : panneau / carte → simulation
+  out = out.replace(/\b(ouvre|voir|ouvre[rz]?)\s+(la\s+)?(carte|panneau)\b/gi, 'ouvre la simulation');
+  out = out.replace(/\bpanneau\s+à\s+droite\b/gi, 'simulation à droite');
+  out = out.replace(/\bVoir le panneau à droite\b/gi, 'Tester la simulation à droite');
+  out = out.replace(/\bCampagne\s+[«"]([^»"]+)[»"]\s+créée en brouillon\b/gi, '« $1 » est prêt — ouvre la simulation');
+  out = out.replace(/\bCampagne\s+[«"]([^»"]+)[»"]\s+mise à jour\b/gi, '« $1 » mis à jour');
+  out = out.replace(/\bVoici le plan[^.]*\./gi, 'Ouvre la simulation à droite pour tester.');
+  out = out.replace(/\bavant simulation\b/gi, 'via la simulation');
+  out = out.replace(/\bCampagne «/g, '«');
+  out = out.replace(/\bcampagne «/gi, '«');
 
   out = out.replace(/`[^`\n]{8,}`/g, (match) => {
     const inner = match.slice(1, -1);

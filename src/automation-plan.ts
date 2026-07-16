@@ -49,7 +49,7 @@ export function formatPlanFence(plan: AutomationVisualPlan): string {
 export function formatPlanDisplay(plan: AutomationVisualPlan, intro?: string): string {
   const head =
     intro?.trim() ||
-    `Voici le **plan de ton automatisation** « ${plan.title} ». Ouvre la carte pour le voir graphiquement.`;
+    `Voici le déroulé de « ${plan.title} ». Ouvre la **simulation** à droite pour tester les réponses.`;
   return `${head}\n\n${formatPlanFence(plan)}`;
 }
 
@@ -145,11 +145,35 @@ export function buildAutomationVisualPlan(
     add({
       id: "hours",
       label: "Fenêtre d'envoi",
-      subtitle: `${cfg.quietHoursEnd}h–${cfg.quietHoursStart}h · anti-ban`,
+      subtitle: `${cfg.quietHoursEnd}h–${cfg.quietHoursStart}h · anti-blocage`,
       kind: "delay",
     });
     pushEdge(edges, last, "hours");
     last = "hours";
+  }
+
+  // Espacement proportionnel au volume (cohérent avec recommendOutboundGaps)
+  if (
+    (auto.type === "group_prospect" || auto.type === "contact_prospect") &&
+    (cfg.minDelaySeconds != null || cfg.maxDelaySeconds != null)
+  ) {
+    const minS = cfg.minDelaySeconds ?? 45;
+    const maxS = cfg.maxDelaySeconds ?? 90;
+    const n =
+      auto.type === "contact_prospect"
+        ? cfg.contactTargets?.length ?? 0
+        : cfg.maxMembers ?? 0;
+    add({
+      id: "spacing",
+      label: "Rythme d'envoi",
+      subtitle:
+        n > 0
+          ? `${minS}–${maxS} s entre messages · ${n} prospect(s)`
+          : `${minS}–${maxS} s entre messages`,
+      kind: "delay",
+    });
+    pushEdge(edges, last, "spacing");
+    last = "spacing";
   }
 
   // Premier message / première réponse
@@ -192,7 +216,15 @@ export function buildAutomationVisualPlan(
     add({
       id: "reply",
       label: "Réponses auto IA",
-      subtitle: clip(cfg.conversationGuide || cfg.salesScript, 60),
+      subtitle: clip(
+        [
+          cfg.conversationGuide || cfg.salesScript,
+          cfg.stickersEnabled ? "stickers OK" : "texte seul (sans sticker/emoji)",
+        ]
+          .filter(Boolean)
+          .join(" · "),
+        72
+      ),
       kind: "reply",
     });
     pushEdge(edges, last, "reply", "si répond");
@@ -224,7 +256,7 @@ export function buildAutomationVisualPlan(
           ? "Objectif : lien"
           : cfg.closingGoal === "delivery"
             ? "Objectif : livraison"
-            : "Objectif campagne";
+            : "Objectif";
 
   add({
     id: "goal",

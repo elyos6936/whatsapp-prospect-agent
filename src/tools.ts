@@ -3526,12 +3526,12 @@ export async function executeTool(
             planDisplay: plan
               ? formatPlanDisplay(
                   plan,
-                  `Campagne « ${name} » mise à jour. Voici le plan à jour — ouvre la carte pour confirmer le déroulé.`
+                  `« ${name} » est prêt. Ouvre la **simulation** à droite pour tester les réponses avant de lancer.`
                 )
               : undefined,
-            message: `Campagne « ${name} » mise à jour — pas de doublon créé. Prochaine étape : simulation si besoin, puis activate_automation si brouillon.`,
+            message: `« ${name} » mis à jour — pas de doublon. Prochaine étape : simulation à droite, puis lancement si tu valides.`,
             simulationHint:
-              "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
+              "Invite à ouvrir la simulation à droite : jouer le prospect, jusqu'à 7 messages, sans WhatsApp réel.",
             completedAt: nowFr(),
           });
         }
@@ -3560,14 +3560,14 @@ export async function executeTool(
           planDisplay: plan
             ? formatPlanDisplay(
                 plan,
-                `Campagne « ${auto.name} » créée en brouillon. Voici le plan — ouvre la carte pour valider le déroulé avant simulation.`
+                `« ${auto.name} » est prêt en brouillon. Ouvre la **simulation** à droite pour valider le déroulé avant le lancement.`
               )
             : undefined,
-          message: `Campagne « ${auto.name} » créée en brouillon${
+          message: `« ${auto.name} » prêt en brouillon${
             extra?.resolvedCount != null ? ` avec ${extra.resolvedCount} contact(s)` : ""
-          }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""} Prochaine étape : simulation puis activate_automation après confirmation.`,
+          }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""} Prochaine étape : simulation à droite, puis lancement après confirmation.`,
           simulationHint:
-            "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
+            "Invite à ouvrir la simulation à droite : jouer le prospect, jusqu'à 7 messages, sans WhatsApp réel.",
           completedAt: nowFr(),
         });
       };
@@ -3886,7 +3886,10 @@ export async function executeTool(
         config: updated?.config,
         plan,
         planDisplay: plan
-          ? formatPlanDisplay(plan, `Campagne « ${detail.automation.name} » mise à jour. Voici le plan actualisé.`)
+          ? formatPlanDisplay(
+              plan,
+              `« ${detail.automation.name} » mis à jour. Relance la **simulation** à droite pour vérifier les réponses.`
+            )
           : undefined,
         message: `Campagne « ${detail.automation.name} » mise à jour${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}.`,
       });

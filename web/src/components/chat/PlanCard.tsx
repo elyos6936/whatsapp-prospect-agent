@@ -7,7 +7,7 @@ type PlanCardProps = {
   onOpen: () => void;
 };
 
-/** Petit rappel dans le chat — la stratégie s’affiche à droite. */
+/** Petit rappel dans le chat — ouvre la simulation à droite. */
 export function PlanCard({ plan, onOpen }: PlanCardProps) {
   const steps = plan.nodes?.length ?? 0;
   return (
@@ -22,9 +22,9 @@ export function PlanCard({ plan, onOpen }: PlanCardProps) {
       <LayoutTemplate className="h-4 w-4 shrink-0 text-brand" strokeWidth={1.75} />
       <div className="min-w-0 flex-1">
         <p className="truncate text-xs font-medium text-text-100">
-          Stratégie mise à jour{steps ? ` · ${steps} étapes` : ''}
+          Simulation prête{steps ? ` · ${steps} étapes` : ''}
         </p>
-        <p className="truncate text-[11px] text-text-500">Voir le panneau à droite</p>
+        <p className="truncate text-[11px] text-text-500">Tester la simulation à droite</p>
       </div>
     </button>
   );
