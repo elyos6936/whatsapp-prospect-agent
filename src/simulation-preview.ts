@@ -14,7 +14,7 @@ export type SimPreviewTurn = {
   text: string;
 };
 
-const MAX_TURNS = 4;
+const MAX_TURNS = 7;
 
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
@@ -70,7 +70,7 @@ export async function replyInSimulationPreview(
       history: history.slice(0, MAX_TURNS),
       done: true,
       feedbackPrompt:
-        "Fin de la simulation (max 4 messages).\n\nDis-moi ce qui va / ce qu'il faut changer (ton, accroche, CTA…), puis on recommence ici. Si c'est bon, valide dans le chat du milieu.",
+        "Fin de la simulation (max 7 messages).\n\nDis-moi ce qui va / ce qu'il faut changer (ton, accroche, CTA…), puis on recommence ici. Si c'est bon, valide dans le chat du milieu.",
     };
   }
 
@@ -86,6 +86,7 @@ export async function replyInSimulationPreview(
   const client = await getOpenAiClient(userId);
   const system =
     "Tu es le commercial WhatsApp de l'utilisateur (simulation). " +
+    "Relis TOUT l'historique et réponds de façon personnelle et pertinente, comme un vrai commercial. " +
     "Réponds en UN seul message court, naturel, sans crochets [], sans markdown. " +
     "Style WhatsApp humain. Ne propose pas d'envoyer un vrai message WhatsApp. " +
     "Pas de prix+lien dans le même message si c'est encore tôt dans la conversation.\n" +
@@ -101,12 +102,12 @@ export async function replyInSimulationPreview(
         {
           role: "user",
           content:
-            `Fil de simulation:\n${transcript}\n\n` +
-            `Réponds maintenant comme « Toi » (1 message WhatsApp, 1-3 phrases max).`,
+            `Fil de simulation (historique complet — tiens-en compte) :\n${transcript}\n\n` +
+            `Réponds maintenant comme « Toi » (1 message WhatsApp, 1-3 phrases max), adapté à ce que le prospect vient de dire.`,
         },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 220, { thinkingEnabled: true }),
-      temperature: 0.7,
+      max_tokens: recommendedMaxTokens(config.openaiModel, 280, { thinkingEnabled: true }),
+      temperature: 0.75,
       ...deepseekChatExtras({ enableThinking: true }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
@@ -125,7 +126,7 @@ export async function replyInSimulationPreview(
     history,
     done,
     feedbackPrompt: done
-      ? "Fin de la simulation (max 4 messages).\n\nDis-moi ce qui va / ce qu'il faut changer, puis on recommence. Si c'est bon, valide dans le chat du milieu."
+      ? "Fin de la simulation (max 7 messages).\n\nDis-moi ce qui va / ce qu'il faut changer, puis on recommence. Si c'est bon, valide dans le chat du milieu."
       : null,
   };
 }

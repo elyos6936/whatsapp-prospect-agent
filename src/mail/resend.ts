@@ -98,7 +98,7 @@ export async function sendDailyReportEmail(opts: {
 }): Promise<SendEmailResult> {
   return sendEmail({
     to: opts.to,
-    subject: `Rapport du jour — ${opts.campaignName} (#${opts.campaignId})`,
+    subject: `Rapport du jour — ${opts.campaignName}`,
     text: opts.text,
   });
 }

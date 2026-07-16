@@ -33,6 +33,8 @@ export interface AutomationVisualPlan {
   updatedAt: string;
   automationId?: number;
   type?: AutomationType;
+  /** Texte complet du 1er message (simulation — non tronqué). */
+  openerText?: string;
   nodes: AutomationPlanNode[];
   edges: AutomationPlanEdge[];
 }
@@ -163,7 +165,7 @@ export function buildAutomationVisualPlan(
     add({
       id: "open",
       label: "Message d'ouverture",
-      subtitle: clip(cfg.initialMessage),
+      subtitle: cfg.initialMessage?.trim() || undefined,
       kind: "message",
     });
     pushEdge(edges, last, "open", "membres");
@@ -171,7 +173,7 @@ export function buildAutomationVisualPlan(
     add({
       id: "open",
       label: "Message d'ouverture",
-      subtitle: clip(cfg.initialMessage),
+      subtitle: cfg.initialMessage?.trim() || undefined,
       kind: "message",
     });
     pushEdge(edges, last, "open", "envoi");
@@ -254,6 +256,8 @@ export function buildAutomationVisualPlan(
     updatedAt: now,
     automationId: auto.id,
     type: auto.type,
+    /** Texte complet du 1er message (jamais tronqué — pour la simulation). */
+    openerText: cfg.initialMessage?.trim() || undefined,
     nodes,
     edges,
   };

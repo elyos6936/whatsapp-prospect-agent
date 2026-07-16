@@ -5,6 +5,7 @@ import {
   enqueueSend,
   getAutomation,
   claimNextPendingTarget,
+  listRecentCampaignOpeners,
   listActiveAutomations,
   listAutomationTargets,
   saveContact,
@@ -139,16 +140,20 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   }
 
   const shouldPersonalize =
-    auto.config.personalizeMessages !== false &&
-    (auto.config.mode === "outbound_prospect" || auto.config.personalizeMessages === true);
+    auto.config.mode === "outbound_prospect" ||
+    auto.type === "group_prospect" ||
+    auto.type === "contact_prospect" ||
+    auto.config.personalizeMessages === true;
 
   if (shouldPersonalize) {
     try {
+      const recentOpeners = await listRecentCampaignOpeners(userId, auto.id, 40);
       message = await generatePersonalizedOpener(userId, {
         template: message,
         memberName: target.target_label || chatIdToDisplay(target.target_id),
         groupName: auto.config.groupName || "groupe",
         conversationGuide: auto.config.conversationGuide,
+        recentOpeners,
       });
     } catch (err) {
       // generatePersonalizedOpener ne devrait plus throw (fallback interne),
@@ -246,7 +251,7 @@ export async function buildDailyReportText(userId: number, auto: Automation): Pr
   const pendingCount = targets.filter((t) => t.status === "pending").length;
 
   const lines: string[] = [
-    `📊 Rapport du jour — Campagne « ${auto.name} » (#${auto.id}) · statut : ${auto.status}`,
+    `📊 Rapport du jour — « ${auto.name} » · statut : ${auto.status}`,
   ];
 
   if (auto.config.mode === "inbound_closing" || auto.type === "keyword_sales") {

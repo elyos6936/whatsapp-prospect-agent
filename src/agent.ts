@@ -82,9 +82,9 @@ const ACTIVATION_AFTER_SIMULATION_NUDGE =
 
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
-  "avec exactement 3 ou 4 tours (speaker toi/prospect, textes réels SANS crochets). " +
+  "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
   "Le 1er tour « toi » = accroche A.I.D.A. Attention (PAS de prix/lien). " +
-  "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 4 messages (coût tokens). " +
+  "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +
   "Après l'outil, le message contient déjà la demande de feedback — ne l'oublie pas. " +
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
   "la simulation s'affiche UNIQUEMENT dans ce chat — aucun envoi WhatsApp réel.";
@@ -173,8 +173,8 @@ async function buildBusinessContext(
       `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois). ` +
       `Après « nouvelle campagne » → 1ʳᵉ question = offre ACTUELLE (ouverte, sans inventer). ` +
       `Demande aussi la fenêtre horaire d'envoi et le jour/heure de lancement. ` +
-      `Objectif RDV → lien de réservation. Simulation = 3-4 messages max + feedback.`
-  );
+      `Objectif RDV → lien de réservation. Simulation = 6-7 messages max + feedback.`
+    );
 
   try {
     const thread = await getAgentThread(userId, threadId);
@@ -183,9 +183,9 @@ async function buildBusinessContext(
       if (auto) {
         lines.push(
           `## Campagne de ce fil (unique)\n` +
-            `#${auto.id} « ${auto.name} » [${auto.status}] type=${auto.type}\n\n` +
+            `« ${auto.name} » [${auto.status}] type=${auto.type}\n\n` +
             `Ce fil ne gère qu'UNE automatisation. Pour une nouvelle campagne → l'utilisateur doit cliquer « Nouvelle automatisation » dans la barre latérale.\n` +
-            `Modifications → update_automation_config ou create_automation **avec** automation_id=${auto.id}.`
+            `Modifications → update_automation_config (ne cite JAMAIS d'identifiant numérique de campagne à l'utilisateur).`
         );
       }
     } else {
@@ -467,7 +467,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       messages.push({
         role: "system",
         content:
-          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète dans UN seul message : si c'est une simulation, appelle l'outil show_campaign_simulation (3-4 tours Toi/Prospect) OU écris directement le fil « Toi → «\u00A0…\u00A0» » / « Prospect → «\u00A0…\u00A0» ». Ne termine JAMAIS sur «\u00A0:\u00A0».",
+          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète dans UN seul message : si c'est une simulation, appelle l'outil show_campaign_simulation (6-7 tours Toi/Prospect) OU écris directement le fil « Toi → «\u00A0…\u00A0» » / « Prospect → «\u00A0…\u00A0» ». Ne termine JAMAIS sur «\u00A0:\u00A0».",
       });
       continue;
     }
@@ -490,7 +490,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       messages.push({
         role: "system",
         content:
-          "INTERDIT : tu as annoncé une simulation/aperçu SANS écrire le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 3 ou 4 tours (speaker toi/prospect + texte réel sans crochets), OU écris le fil complet dans ce message au format :\nToi → «\u00A0…\u00A0»\nProspect → «\u00A0…\u00A0»\nToi → «\u00A0…\u00A0»\nPuis demande ce qu'il faut changer ou garder. Aucune phrase qui finit par «\u00A0:\u00A0» sans le fil juste après. MAX 4 messages.",
+          "INTERDIT : tu as annoncé une simulation/aperçu SANS écrire le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 6 ou 7 tours (speaker toi/prospect + texte réel sans crochets), OU écris le fil complet dans ce message au format :\nToi → «\u00A0…\u00A0»\nProspect → «\u00A0…\u00A0»\nToi → «\u00A0…\u00A0»\nPuis demande ce qu'il faut changer ou garder. Aucune phrase qui finit par «\u00A0:\u00A0» sans le fil juste après. MAX 7 messages.",
       });
       continue;
     }

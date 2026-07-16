@@ -3442,10 +3442,10 @@ export async function executeTool(
             planDisplay: plan
               ? formatPlanDisplay(
                   plan,
-                  `Campagne « ${name} » mise à jour (#${reusable.id}). Voici le plan à jour — ouvre la carte pour confirmer le déroulé.`
+                  `Campagne « ${name} » mise à jour. Voici le plan à jour — ouvre la carte pour confirmer le déroulé.`
                 )
               : undefined,
-            message: `Campagne « ${name} » mise à jour (#${reusable.id}) — pas de doublon créé. Prochaine étape : simulation si besoin, puis activate_automation si brouillon.`,
+            message: `Campagne « ${name} » mise à jour — pas de doublon créé. Prochaine étape : simulation si besoin, puis activate_automation si brouillon.`,
             simulationHint:
               "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
             completedAt: nowFr(),
@@ -3476,10 +3476,10 @@ export async function executeTool(
           planDisplay: plan
             ? formatPlanDisplay(
                 plan,
-                `Campagne « ${auto.name} » créée en brouillon (#${auto.id}). Voici le plan — ouvre la carte pour valider le déroulé avant simulation.`
+                `Campagne « ${auto.name} » créée en brouillon. Voici le plan — ouvre la carte pour valider le déroulé avant simulation.`
               )
             : undefined,
-          message: `Campagne « ${auto.name} » créée en brouillon (#${auto.id})${
+          message: `Campagne « ${auto.name} » créée en brouillon${
             extra?.resolvedCount != null ? ` avec ${extra.resolvedCount} contact(s)` : ""
           }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""} Prochaine étape : simulation puis activate_automation après confirmation.`,
           simulationHint:
@@ -3699,7 +3699,7 @@ export async function executeTool(
         targetsAdded,
         autoReply: true,
         stats: fresh?.automation.stats,
-        message: `Campagne #${id} « ${auto.name} » activée — auto-reply ON.${targetsAdded ? ` ${targetsAdded} membre(s) chargé(s).` : ""}`,
+        message: `Campagne « ${auto.name} » activée — auto-reply ON.${targetsAdded ? ` ${targetsAdded} membre(s) chargé(s).` : ""}`,
         completedAt: nowFr(),
       });
     }
@@ -3790,9 +3790,9 @@ export async function executeTool(
         config: updated?.config,
         plan,
         planDisplay: plan
-          ? formatPlanDisplay(plan, `Campagne #${id} mise à jour. Voici le plan actualisé.`)
+          ? formatPlanDisplay(plan, `Campagne « ${detail.automation.name} » mise à jour. Voici le plan actualisé.`)
           : undefined,
-        message: `Campagne #${id} mise à jour${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}.`,
+        message: `Campagne « ${detail.automation.name} » mise à jour${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}.`,
       });
     }
 
@@ -3803,14 +3803,15 @@ export async function executeTool(
       }
       const bound = await requireThreadAutomationId(userId, threadId, id);
       if (!bound.ok) return JSON.stringify({ error: bound.error });
+      const existing = await getAutomation(userId, id);
       const ok = await deleteAutomation(userId, id);
       if (!ok) {
-        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+        return JSON.stringify({ error: "Campagne introuvable." });
       }
       return JSON.stringify({
         success: true,
         automationId: id,
-        message: `Campagne #${id} supprimée.`,
+        message: `Campagne « ${existing?.name ?? "Automatisation"} » supprimée.`,
       });
     }
 
@@ -3939,10 +3940,10 @@ export async function executeTool(
         autoReply: updated.status === "active",
         message:
           status === "paused"
-            ? `Campagne #${id} désactivée — auto-reply OFF, plus aucun message automatique.`
+            ? `Campagne « ${updated.name} » désactivée — auto-reply OFF, plus aucun message automatique.`
             : status === "active"
-              ? `Campagne #${id} réactivée — auto-reply ON.`
-              : `Campagne #${id} terminée — auto-reply OFF.`,
+              ? `Campagne « ${updated.name} » réactivée — auto-reply ON.`
+              : `Campagne « ${updated.name} » terminée — auto-reply OFF.`,
       });
     }
 

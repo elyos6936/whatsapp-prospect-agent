@@ -16,14 +16,14 @@ export type SimulationTurn = {
 
 const SIM_FOOTER =
   "\n\n---\n" +
-  "*(Simulation courte — 3 à 4 messages max.)*\n\n" +
+  "*(Simulation — jusqu'à 7 messages.)*\n\n" +
   "Dis-moi concrètement :\n" +
   "• ce qui te convient\n" +
   "• ce que tu veux changer (ton, accroche, CTA, prix, lien…)\n\n" +
   "Ou réponds « c'est bon » si on peut passer à l'activation.";
 
 export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string {
-  const limited = turns.slice(0, 4);
+  const limited = turns.slice(0, 7);
   if (limited.length < 3) {
     throw new Error("La simulation doit contenir au moins 3 messages.");
   }
@@ -46,7 +46,7 @@ export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string
 
 function normalizeTurns(raw: unknown[]): SimulationTurn[] | null {
   if (!Array.isArray(raw) || raw.length < 3) return null;
-  const slice = raw.slice(0, 4);
+  const slice = raw.slice(0, 7);
   const out: SimulationTurn[] = [];
   for (const item of slice) {
     if (!item || typeof item !== "object") return null;
@@ -134,18 +134,18 @@ export async function generateCampaignSimulationDirect(
     "Réponds UNIQUEMENT avec un JSON valide de la forme :\n" +
     '{"turns":[{"speaker":"toi","text":"..."},{"speaker":"prospect","name":"Prospect","text":"..."},{"speaker":"toi","text":"..."}]}\n' +
     "Règles strictes :\n" +
-    "- Exactement 3 ou 4 turns (JAMAIS plus — coût tokens)\n" +
+    "- Exactement 6 ou 7 turns (JAMAIS plus)\n" +
     "- Alternance toi / prospect (commencer par toi)\n" +
     "- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet)\n" +
     "- Les tours suivants peuvent introduire intérêt / détail / CTA selon les réponses du prospect\n" +
     "- Textes réels, naturels, sans crochets [ ]\n" +
-    "- Inclure prix / lien seulement APRÈS que le prospect a engagé (tour 3 ou 4), s'ils sont dans le contexte\n" +
+    "- Inclure prix / lien seulement APRÈS que le prospect a engagé, s'ils sont dans le contexte\n" +
     "- Aucune phrase hors JSON";
 
   const user =
     `## Contexte business\n${opts.businessContext.slice(0, 3500)}\n\n` +
     `## Fil récent (agence)\n${opts.recentTranscript.slice(0, 4000)}\n\n` +
-    `Génère maintenant la simulation JSON (3 ou 4 turns max).`;
+    `Génère maintenant la simulation JSON (6 ou 7 turns max).`;
 
   const body: Record<string, unknown> = {
     model: config.openaiModel,

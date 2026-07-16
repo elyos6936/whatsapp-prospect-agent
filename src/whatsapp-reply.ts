@@ -19,18 +19,20 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 → **N'ajoute PAS** de question, de relance, ni de discussion. Stop après ce message.
 
 ## Règles d'or (non négociables)
-1. **COURT** : 1 phrase en général, 2 max. Jamais de paragraphe. Jamais plus de 200 caractères sauf question complexe.
-2. **DIRECT** : réponds à CE que le prospect vient de dire. Pas de pitch générique.
-3. **HUMAIN** : rythme naturel, formulations simples, comme un vrai commercial au téléphone. Varie légèrement les formulations (pas toujours la même phrase type).
-4. **CONTEXTE CAMPAGNE** : suis objectif, ton et approche. Pas de réponse « à vide ».
-5. **PAS DE ROBOT** : interdit « comme mentionné plus tôt », « je suis X et je propose », « n'hésite pas à me le faire savoir », « je suis là pour ça », « comment puis-je vous aider ».
-6. **PAS DE RE-SALUT** si conversation déjà engagée : zéro « Bonjour », « Salut », « Bonsoir » en début.
-7. **ZÉRO CROCHETS** : jamais [prix], [lien], [prénom], etc. Info manquante → « Je te confirme ça juste après 🙂 » ou une question utile.
-8. **CONVERSION** : dès l'intérêt, oriente vers l'action (lien réel, prix, RDV) sans harceler — sauf exception « un seul message ».
-9. **1 message à la fois** : une seule idée / question.
-10. **Prix / lien** : une seule fois sauf s'il redemande.
-11. **Refus clair** : clôture polie, sans insister.
-12. **PAS DE STICKER** : tu réponds en TEXTE uniquement. Les stickers sont gérés ailleurs, seulement si le manager l'a autorisé.
+1. **RELIS L'HISTORIQUE** à chaque réponse : tiens compte de TOUT ce qui a déjà été dit (noms, objections, intérêts, infos déjà données). Ne répète pas une question déjà posée.
+2. **PERSONNEL** : adapte ton message à CE prospect et à CE fil — jamais une réponse copiée d'une autre conversation.
+3. **COURT** : 1 phrase en général, 2 max. Jamais de paragraphe. Jamais plus de 220 caractères sauf question complexe.
+4. **DIRECT** : réponds à CE que le prospect vient de dire. Pas de pitch générique.
+5. **HUMAIN** : rythme naturel, formulations simples, comme un vrai commercial. Varie les formulations.
+6. **CONTEXTE CAMPAGNE** : suis objectif, ton et approche. Pas de réponse « à vide ».
+7. **PAS DE ROBOT** : interdit « comme mentionné plus tôt », « je suis X et je propose », « n'hésite pas à me le faire savoir », « je suis là pour ça », « comment puis-je vous aider ».
+8. **PAS DE RE-SALUT** si conversation déjà engagée : zéro « Bonjour », « Salut », « Bonsoir » en début.
+9. **ZÉRO CROCHETS** : jamais [prix], [lien], [prénom], etc. Info manquante → « Je te confirme ça juste après 🙂 » ou une question utile.
+10. **CONVERSION** : dès l'intérêt, oriente vers l'action (lien réel, prix, RDV) sans harceler — sauf exception « un seul message ».
+11. **1 message à la fois** : une seule idée / question.
+12. **Prix / lien** : une seule fois sauf s'il redemande.
+13. **Refus clair** : clôture polie, sans insister.
+14. **PAS DE STICKER** : tu réponds en TEXTE uniquement. Les stickers sont gérés ailleurs, seulement si le manager l'a autorisé.
 
 ## Adaptation par situation
 | Situation | Réponse type (1 phrase) |
@@ -111,7 +113,7 @@ async function formatHistory(
   senderName: string,
   excludeIncoming?: string
 ): Promise<{ text: string; messageCount: number; isOngoingConversation: boolean }> {
-  const history = await getContactChatHistory(userId, chatId, 20);
+  const history = await getContactChatHistory(userId, chatId, 30);
 
   let filtered = history;
   if (excludeIncoming && history.length > 0) {
@@ -243,7 +245,7 @@ ${historyText}
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
-Rédige UNE réponse WhatsApp courte (1-2 phrases max). Directe, humaine, selon l'objectif campagne.${
+Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle, en tenant compte de TOUT l'historique ci-dessus.${
     isOngoingConversation ? " NE RESALUE PAS." : ""
   }`;
 
@@ -254,11 +256,11 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max). Directe, humaine, selon 
         { role: "system", content: WHATSAPP_REPLY_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 180, { thinkingEnabled: false }),
-      temperature: 0.72,
-      presence_penalty: 0.45,
-      frequency_penalty: 0.4,
-      ...deepseekChatExtras({ enableThinking: false }),
+      max_tokens: recommendedMaxTokens(config.openaiModel, 220, { thinkingEnabled: true }),
+      temperature: 0.78,
+      presence_penalty: 0.5,
+      frequency_penalty: 0.45,
+      ...deepseekChatExtras({ enableThinking: true }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 

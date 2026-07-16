@@ -21,7 +21,9 @@ export function StrategyDock({ plan, onClose, className }: StrategyDockProps) {
     >
       <div className="flex shrink-0 items-center gap-2 border-b border-black/[0.06] px-3 py-2.5 sm:px-4">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-semibold text-text-100">{plan.title}</p>
+          <p className="text-sm font-semibold leading-snug text-text-100 break-words">
+            {plan.title.replace(/\s*#\d+\s*$/, '').replace(/^Campagne\s+\d+$/i, 'Automatisation')}
+          </p>
           <p className="text-[11px] text-text-500">Simulation · testez les réponses IA</p>
         </div>
         <button

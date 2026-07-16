@@ -233,11 +233,20 @@ export interface AgentThread {
   automation_name?: string | null;
 }
 
+function sanitizeThreadTitle(raw: string): string {
+  let clean = String(raw ?? "").trim() || "Automatisation";
+  clean = clean.replace(/\s*#\d+\s*$/g, "").trim();
+  if (/^campagne\s*\d+$/i.test(clean) || /^automatisation\s*\d+$/i.test(clean)) {
+    return "Automatisation";
+  }
+  return clean || "Automatisation";
+}
+
 function mapAgentThread(row: Record<string, unknown>): AgentThread {
   return {
     id: Number(row.id),
     user_id: Number(row.user_id),
-    title: String(row.title),
+    title: sanitizeThreadTitle(String(row.title)),
     automation_id: row.automation_id != null ? Number(row.automation_id) : null,
     created_at: formatTs(row.created_at),
     updated_at: formatTs(row.updated_at),
@@ -293,7 +302,12 @@ export async function ensureDefaultAgentThread(userId: number): Promise<AgentThr
 }
 
 export async function updateAgentThreadTitle(userId: number, threadId: number, title: string): Promise<AgentThread | null> {
-  const clean = title.trim() || "Automatisation";
+  let clean = title.trim() || "Automatisation";
+  clean = clean.replace(/\s*#\d+\s*$/g, "").trim();
+  if (/^campagne\s*\d+$/i.test(clean) || /^automatisation\s*\d+$/i.test(clean)) {
+    clean = "Automatisation";
+  }
+  if (!clean) clean = "Automatisation";
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE agent_threads
     SET title = ${clean}, updated_at = NOW()
@@ -2317,6 +2331,25 @@ function mapQueueItem(row: Record<string, unknown>): QueueItem {
     created_at: formatTs(row.created_at),
     sent_at: formatTsNullable(row.sent_at),
   };
+}
+
+export async function listRecentCampaignOpeners(
+  userId: number,
+  automationId: number,
+  limit = 30
+): Promise<string[]> {
+  const rows = await sql<{ message: string | null }[]>`
+    SELECT message FROM send_queue
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND sequence_id IS NULL
+      AND status IN ('sent', 'pending', 'processing')
+      AND message IS NOT NULL
+      AND length(trim(message)) > 0
+    ORDER BY id DESC
+    LIMIT ${limit}
+  `;
+  return rows.map((r) => String(r.message ?? "").trim()).filter(Boolean);
 }
 
 export async function cancelPendingSendQueueForRecipient(

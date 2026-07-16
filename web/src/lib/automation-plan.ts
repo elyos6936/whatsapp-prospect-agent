@@ -28,6 +28,8 @@ export interface AutomationVisualPlan {
   updatedAt: string;
   automationId?: number;
   type?: string;
+  /** Texte complet du 1er message (simulation). */
+  openerText?: string;
   nodes: AutomationPlanNode[];
   edges: AutomationPlanEdge[];
 }

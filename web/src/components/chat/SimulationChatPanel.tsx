@@ -7,8 +7,9 @@ import { cn } from '@/lib/utils';
 type Turn = { role: 'you' | 'prospect'; text: string };
 
 function openerFromPlan(plan: AutomationVisualPlan): string {
+  if (plan.openerText?.trim()) return plan.openerText.trim();
   const msg = plan.nodes?.find(
-    (n) => n.kind === 'message' || /message|accroche|opener/i.test(n.label ?? ''),
+    (n) => n.kind === 'message' || /message|accroche|opener|ouverture/i.test(n.label ?? ''),
   );
   const text = (msg?.subtitle || msg?.label || '').trim();
   return text || 'Bonjour ! Je me permets de vous écrire rapidement 🙂';
@@ -36,13 +37,14 @@ export function SimulationChatPanel({ plan, className }: SimulationChatPanelProp
   const [feedback, setFeedback] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
+  // Relance auto quand le plan / message change (feedback dans le chat du milieu)
   useEffect(() => {
     setHistory([{ role: 'you', text: opener }]);
     setDraft('');
     setError(null);
     setFeedback(null);
     setDone(false);
-  }, [opener, plan.updatedAt, plan.automationId]);
+  }, [opener, plan.updatedAt, plan.automationId, plan.title]);
 
   async function sendAsProspect() {
     const text = draft.trim();
@@ -79,8 +81,9 @@ export function SimulationChatPanel({ plan, className }: SimulationChatPanelProp
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
       <p className="mb-3 shrink-0 text-[12px] leading-relaxed text-text-500">
-        Jouez le prospect ici. L’IA répond comme votre agent — sans WhatsApp réel. Max 4
-        messages, puis feedback pour améliorer.
+        Jouez le prospect ici. L’IA répond comme votre agent — sans WhatsApp réel. Jusqu’à 7
+        messages, puis feedback. Si vous changez l’approche dans le chat du milieu, la
+        simulation se relance automatiquement.
       </p>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-xl bg-bg-100/80 p-3">
@@ -88,16 +91,16 @@ export function SimulationChatPanel({ plan, className }: SimulationChatPanelProp
           <div
             key={`${i}-${t.role}`}
             className={cn(
-              'max-w-[92%] rounded-2xl px-3 py-2 text-[13px] leading-snug',
+              'max-w-[95%] rounded-2xl px-3 py-2.5 text-[13px] leading-relaxed break-words whitespace-pre-wrap',
               t.role === 'you'
                 ? 'ml-auto bg-brand text-white'
                 : 'mr-auto border border-black/[0.06] bg-white text-text-100',
             )}
           >
-            <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide opacity-70">
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-wide opacity-70">
               {t.role === 'you' ? 'Agent' : 'Prospect (vous)'}
             </p>
-            {t.text}
+            <p className="whitespace-pre-wrap break-words">{t.text}</p>
           </div>
         ))}
         {loading && (

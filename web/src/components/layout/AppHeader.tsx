@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart3, Eye, Settings, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Eye, Settings } from 'lucide-react';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
 
@@ -10,7 +10,6 @@ type AppHeaderProps = {
   strategyOpen: boolean;
   onGoToChat: () => void;
   onOpenSettings: () => void;
-  onOpenAutomation: () => void;
   onOpenStats?: () => void;
   onToggleStrategy?: () => void;
   onOpenMobileNav?: () => void;
@@ -24,12 +23,10 @@ export function AppHeader({
   strategyOpen,
   onGoToChat,
   onOpenSettings,
-  onOpenAutomation,
   onOpenStats,
   onToggleStrategy,
   onOpenMobileNav,
 }: AppHeaderProps) {
-  // ... keep existing, just update button labels below
   const onChat = overlayView == null;
   const title = onChat ? threadTitle || 'Automatisation' : getOverlayTitle(overlayView);
 
@@ -78,18 +75,6 @@ export function AppHeader({
             <BarChart3 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Statistiques</span>
             <span className="sm:hidden">Stats</span>
-          </button>
-        )}
-
-        {onChat && hasCampaign && (
-          <button
-            type="button"
-            onClick={onOpenAutomation}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
-            title="Détail de l’automatisation"
-          >
-            <Zap className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Campagne</span>
           </button>
         )}
 

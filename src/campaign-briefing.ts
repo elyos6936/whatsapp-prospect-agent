@@ -210,7 +210,7 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
       "Briefing campagne : les éléments essentiels semblent réunis (≥6 questions). " +
       "Avant create/activate : pose UNE question si pas encore fait — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) ». " +
       "Puis crée le brouillon (create_automation draft) avec personalize_messages=true et un initial_message **A.I.D.A. Attention seulement** (accroche courte, SANS prix/lien/pitch complet). " +
-      "Propose ensuite une simulation courte (3-4 messages via show_campaign_simulation)."
+      "Propose ensuite une simulation (6-7 messages via show_campaign_simulation, puis feedback)."
     );
   }
 

@@ -10,6 +10,14 @@ export function sanitizeAssistantText(text: string): string {
   out = out.replace(/\n+STATUT\s*:\s*[^\n]+/gi, '');
   out = out.replace(/\n+DETAIL\s*:\s*[^\n]+/gi, '');
 
+  // Masquer les numéros techniques de campagne (#56, Campagne 16, etc.)
+  out = out.replace(/\bcampagne\s*#\s*\d+\b/gi, 'campagne');
+  out = out.replace(/\bautomatisation\s*#\s*\d+\b/gi, 'automatisation');
+  out = out.replace(/\(\s*#\d+\s*\)/g, '');
+  out = out.replace(/\bcampagne\s+\d{1,5}\b/gi, 'campagne');
+  out = out.replace(/(«[^»]+»)\s*#\d+/g, '$1');
+  out = out.replace(/#\d{1,6}\b/g, ''); // ex. « campagne #56 ? »
+
   out = out.replace(/`[^`\n]{8,}`/g, (match) => {
     const inner = match.slice(1, -1);
     if (

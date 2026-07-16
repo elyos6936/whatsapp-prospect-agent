@@ -24,7 +24,6 @@ import {
 } from '@/lib/api';
 import { extractPlanFromText, type AutomationVisualPlan } from '@/lib/automation-plan';
 import type { OverlayView } from '@/lib/navigation';
-import { AutomationPage } from '@/pages/AutomationPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 
@@ -304,7 +303,6 @@ export default function AuthenticatedApp() {
           strategyOpen={showStrategyDock}
           onGoToChat={() => setOverlayView(null)}
           onOpenSettings={() => setOverlayView('settings')}
-          onOpenAutomation={() => setOverlayView('automation')}
           onOpenStats={
             activeThread?.automation_id ? () => setOverlayView('stats') : undefined
           }
@@ -323,7 +321,6 @@ export default function AuthenticatedApp() {
         />
 
         {overlayView === 'settings' && <SettingsPage />}
-        {overlayView === 'automation' && <AutomationPage threadId={activeThreadId} />}
         {overlayView === 'stats' && activeThreadId != null && (
           <ThreadStatsPage threadId={activeThreadId} />
         )}

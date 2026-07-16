@@ -670,7 +670,7 @@ function buildActiveCampaignContext(auto: Automation): string {
     : "engager le prospect vers une action concrète";
 
   const lines = [
-    `=== CAMPAGNE ACTIVE : « ${auto.name} » (#${auto.id}) ===`,
+    `=== CAMPAGNE ACTIVE : « ${auto.name} » ===`,
     `Type : ${auto.type}`,
     `Objectif de la campagne : ${goal}`,
     cfg.initialMessage
@@ -875,7 +875,7 @@ async function runAutoReply(
           userId,
           activeCampaign.id,
           "assistant",
-          `⚠️ Prospection arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(stopReason)}. Campagne « ${activeCampaign.name} » (#${activeCampaign.id}). Relances annulées.`
+          `⚠️ Prospection arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(stopReason)}. Campagne « ${activeCampaign.name} ». Relances annulées.`
         );
         console.log(`🛑 Prospection arrêtée — ${stopReasonLabel(stopReason)} (${senderName})`);
 
