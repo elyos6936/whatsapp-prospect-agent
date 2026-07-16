@@ -139,7 +139,11 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     return;
   }
 
-  if (auto.config.personalizeMessages) {
+  const shouldPersonalize =
+    auto.config.personalizeMessages !== false &&
+    (auto.config.mode === "outbound_prospect" || auto.config.personalizeMessages === true);
+
+  if (shouldPersonalize) {
     try {
       message = await generatePersonalizedOpener(userId, {
         template: message,
@@ -167,7 +171,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     // Nouvelle campagne (id différent) → oubli mémoire + historique pré-campagne
     await beginFreshCampaignConversation(userId, target.target_id, auto.id);
 
-    const priority = auto.config.personalizeMessages ? 7 : 6;
+    const priority = shouldPersonalize ? 7 : 6;
     await enqueueSend(userId, {
       recipient: target.target_id,
       recipientLabel: target.target_label ?? undefined,

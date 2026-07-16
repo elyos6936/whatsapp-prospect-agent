@@ -20,6 +20,8 @@ type CampaignChartsProps = {
   reached: number;
   answered: number;
   interested: number;
+  /** Labels entonnoir adaptés à l'objectif (ex. RDV, Achats…) */
+  funnelLabels?: [string, string, string, string];
 };
 
 export function CampaignCharts({
@@ -28,12 +30,13 @@ export function CampaignCharts({
   reached,
   answered,
   interested,
+  funnelLabels = ['Cibles', 'Atteints', 'Réponses', 'Intéressés'],
 }: CampaignChartsProps) {
   const funnelData = [
-    { name: 'Cibles', value: totalTargets, fill: '#94a3b8' },
-    { name: 'Atteints', value: reached, fill: '#2057ce' },
-    { name: 'Réponses', value: answered, fill: '#0ea5e9' },
-    { name: 'Intéressés', value: interested, fill: '#10b981' },
+    { name: funnelLabels[0], value: totalTargets, fill: '#94a3b8' },
+    { name: funnelLabels[1], value: reached, fill: '#2057ce' },
+    { name: funnelLabels[2], value: answered, fill: '#0ea5e9' },
+    { name: funnelLabels[3], value: interested, fill: '#10b981' },
   ];
 
   const pieData = TARGET_ORDER.map((k) => ({

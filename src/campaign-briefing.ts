@@ -22,13 +22,18 @@ export function wantsCampaignSimulation(userMessage: string, history: AgentMessa
   const t = userMessage.trim();
   if (!t) return false;
   if (SIMULATION_ACCEPT_RE.test(t)) return true;
+  if (/\b(aper[cç]u|exemple\s+de\s+(fil|conversation)|montre[- ]moi)\b/i.test(t)) return true;
 
   // « oui » juste après que l'agent a proposé une simulation
   if (!SIMULATION_YES_RE.test(t)) return false;
-  for (let i = history.length - 1; i >= 0 && i >= history.length - 4; i--) {
+  for (let i = history.length - 1; i >= 0 && i >= history.length - 6; i--) {
     const m = history[i];
     if (m?.role !== "assistant") continue;
-    if (/simulation|simuler|aper[cç]u|fil de (discussion|conversation)/i.test(m.content)) {
+    if (
+      /simulation|simuler|aper[cç]u|fil de (discussion|conversation)|veux-tu une simulation|simulation courte/i.test(
+        m.content
+      )
+    ) {
       return true;
     }
     break;
@@ -154,7 +159,7 @@ export function assessCampaignBriefing(
     missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
   }
 
-  // Au moins 5 questions posées + aucun élément critique manquant
+  // Au moins 6 questions posées + aucun élément critique manquant
   const criticalMissing = missing.filter(
     (m) =>
       m.includes("lien de réservation") ||
@@ -164,9 +169,10 @@ export function assessCampaignBriefing(
       m.includes("offre") ||
       m.includes("objectif") ||
       m.includes("cible") ||
-      m.includes("horaires")
+      m.includes("horaires") ||
+      m.includes("rythme")
   );
-  const readyForDraft = questionsAsked >= 5 && criticalMissing.length === 0;
+  const readyForDraft = questionsAsked >= 6 && criticalMissing.length === 0;
 
   return {
     inCampaignFlow: true,
@@ -201,9 +207,10 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
   if (!assessment.inCampaignFlow) return null;
   if (assessment.readyForDraft) {
     return (
-      "Briefing campagne : les éléments essentiels semblent réunis (≥5 questions). " +
+      "Briefing campagne : les éléments essentiels semblent réunis (≥6 questions). " +
       "Avant create/activate : pose UNE question si pas encore fait — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) ». " +
-      "Puis tu peux créer le brouillon (create_automation draft) et proposer une simulation courte (3-4 messages via show_campaign_simulation)."
+      "Puis crée le brouillon (create_automation draft) avec personalize_messages=true et un initial_message **A.I.D.A. Attention seulement** (accroche courte, SANS prix/lien/pitch complet). " +
+      "Propose ensuite une simulation courte (3-4 messages via show_campaign_simulation)."
     );
   }
 
@@ -211,19 +218,19 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
   const q = assessment.questionsAsked;
   if (next.includes("offre")) {
     return (
-      `Briefing campagne (${q} question(s)) : offre pas encore confirmée par l'utilisateur. ` +
+      `Briefing campagne (${q}/6 question(s)) : offre pas encore confirmée par l'utilisateur. ` +
       `Pose UNE question OUVERTE (« Qu'est-ce que tu proposes concrètement ? »). ` +
       `N'affirme JAMAIS l'offre du profil business — elle peut être obsolète.`
     );
   }
   return (
     `## Briefing campagne EN COURS (obligatoire)\n` +
-    `Questions déjà posées ≈ ${q}/5 minimum. Éléments encore manquants : ${
+    `Questions déjà posées ≈ ${q}/6 minimum. Éléments encore manquants : ${
       assessment.missing.length ? assessment.missing.join(" ; ") : "à creuser"
     }.\n` +
     `Prochaine étape : pose **UNE seule** question précise sur « ${next} », puis ARRÊTE-TOI et attends.\n` +
     `INTERDIT : create_automation, activate_automation, show_campaign_simulation, rédiger le message final, ou sauter des questions.\n` +
-    `Même si l'utilisateur dit « c'est un test », « plus tard », « comme tu veux » → insiste pour une réponse concrète exploitable.\n` +
+    `Même si l'utilisateur dit « c'est un test », « plus tard », « comme tu veux », « fais simple » → insiste pour une réponse concrète exploitable. Un test = vrais paramètres.\n` +
     `Si objectif = rendez-vous → tu DOIS obtenir le **lien de réservation** (URL) avant tout brouillon.\n` +
     `N'oublie pas le **planning** : fenêtre horaire d'envoi + jour/heure de lancement (une question à la fois).\n` +
     `Avant activation : demande aussi si l'utilisateur veut des **stickers** dans les conversations (oui/non).\n` +

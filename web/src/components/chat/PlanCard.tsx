@@ -7,6 +7,7 @@ type PlanCardProps = {
   onOpen: () => void;
 };
 
+/** Petit rappel dans le chat — la stratégie s’affiche à droite. */
 export function PlanCard({ plan, onOpen }: PlanCardProps) {
   const steps = plan.nodes?.length ?? 0;
   return (
@@ -14,18 +15,16 @@ export function PlanCard({ plan, onOpen }: PlanCardProps) {
       type="button"
       onClick={onOpen}
       className={cn(
-        'group my-2 flex w-full max-w-md items-stretch overflow-hidden rounded-xl border border-brand/30 bg-bg-100 text-left',
-        'shadow-sm transition hover:border-brand/55 hover:bg-bg-200/80',
+        'group my-2 flex w-full max-w-sm items-center gap-2 rounded-xl border border-brand/25 bg-brand-muted/60 px-3 py-2 text-left',
+        'transition hover:border-brand/50 hover:bg-brand-muted',
       )}
     >
-      <div className="min-w-0 flex-1 px-3.5 py-3">
-        <p className="truncate text-sm font-medium text-text-100">{plan.title || 'Plan d’automatisation'}</p>
-        <p className="mt-0.5 text-xs text-text-500">
-          Plan interactif{steps ? ` · ${steps} étape${steps > 1 ? 's' : ''}` : ''}
+      <LayoutTemplate className="h-4 w-4 shrink-0 text-brand" strokeWidth={1.75} />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs font-medium text-text-100">
+          Stratégie mise à jour{steps ? ` · ${steps} étapes` : ''}
         </p>
-      </div>
-      <div className="flex w-14 shrink-0 items-center justify-center border-l border-brand/20 bg-brand-muted text-brand transition group-hover:bg-brand/20">
-        <LayoutTemplate className="h-5 w-5" strokeWidth={1.75} />
+        <p className="truncate text-[11px] text-text-500">Voir le panneau à droite</p>
       </div>
     </button>
   );

@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, Settings, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Eye, Settings, Zap } from 'lucide-react';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
 
@@ -7,10 +6,13 @@ type AppHeaderProps = {
   overlayView: OverlayView;
   threadTitle: string;
   hasCampaign: boolean;
+  hasStrategy: boolean;
+  strategyOpen: boolean;
   onGoToChat: () => void;
   onOpenSettings: () => void;
   onOpenAutomation: () => void;
   onOpenStats?: () => void;
+  onToggleStrategy?: () => void;
   onOpenMobileNav?: () => void;
 };
 
@@ -18,34 +20,17 @@ export function AppHeader({
   overlayView,
   threadTitle,
   hasCampaign,
+  hasStrategy,
+  strategyOpen,
   onGoToChat,
   onOpenSettings,
   onOpenAutomation,
   onOpenStats,
+  onToggleStrategy,
   onOpenMobileNav,
 }: AppHeaderProps) {
   const onChat = overlayView == null;
   const title = onChat ? threadTitle || 'Automatisation' : getOverlayTitle(overlayView);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!settingsOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setSettingsOpen(false);
-      }
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setSettingsOpen(false);
-    };
-    document.addEventListener('mousedown', onDoc);
-    window.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDoc);
-      window.removeEventListener('keydown', onKey);
-    };
-  }, [settingsOpen]);
 
   return (
     <header className="relative z-30 flex h-12 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-bg-0/95 px-3 backdrop-blur-md sm:h-14 sm:gap-4 sm:px-5">
@@ -69,6 +54,19 @@ export function AppHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+        {onChat && hasStrategy && onToggleStrategy && (
+          <button
+            type="button"
+            onClick={onToggleStrategy}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
+            title={strategyOpen ? 'Masquer la stratégie' : 'Afficher la stratégie'}
+            aria-pressed={strategyOpen}
+          >
+            <Eye className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">{strategyOpen ? 'Masquer' : 'Stratégie'}</span>
+          </button>
+        )}
+
         {onChat && hasCampaign && onOpenStats && (
           <button
             type="button"
@@ -82,45 +80,28 @@ export function AppHeader({
           </button>
         )}
 
-        <div className="relative" ref={menuRef}>
+        {onChat && hasCampaign && (
           <button
             type="button"
-            onClick={() => setSettingsOpen((o) => !o)}
+            onClick={onOpenAutomation}
             className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
-            title="Paramètres"
-            aria-expanded={settingsOpen}
+            title="Détail de l’automatisation"
           >
-            <Settings className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Paramètres</span>
+            <Zap className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Campagne</span>
           </button>
+        )}
 
-          {settingsOpen && (
-            <div className="absolute right-0 top-full z-50 mt-1 w-52 overflow-hidden rounded-xl border border-black/[0.08] bg-bg-0 py-1 shadow-lg">
-              <button
-                type="button"
-                onClick={() => {
-                  setSettingsOpen(false);
-                  onOpenSettings();
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-text-300 transition hover:bg-bg-200 hover:text-text-100"
-              >
-                <Settings className="h-4 w-4 text-text-500" />
-                Réglages
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setSettingsOpen(false);
-                  onOpenAutomation();
-                }}
-                className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-text-300 transition hover:bg-bg-200 hover:text-text-100"
-              >
-                <Zap className="h-4 w-4 text-text-500" />
-                Automatisation
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
+          title="Réglages"
+          aria-current={overlayView === 'settings' ? 'page' : undefined}
+        >
+          <Settings className="h-3.5 w-3.5" />
+          <span className="hidden sm:inline">Paramètres</span>
+        </button>
       </div>
     </header>
   );

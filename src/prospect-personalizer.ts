@@ -23,19 +23,26 @@ export async function generatePersonalizedOpener(userId: number, input: {
             {
               role: "system",
               content:
-                "Tu personnalises un premier message WhatsApp de prospection. Court (2-4 phrases), très humain, en français naturel. Pas de placeholders ni de ton robot. Utilise le prénom si disponible.",
+                "Tu rédiges le PREMIER message WhatsApp de prospection (étape A.I.D.A. = Attention uniquement).\n" +
+                "Règles strictes :\n" +
+                "- 1 à 2 phrases max, très humain, français naturel\n" +
+                "- Accrocher l'attention / curiosité — PAS de prix, PAS de lien, PAS de pitch complet, PAS de « réserve / paie maintenant »\n" +
+                "- Unique pour CE prospect (varie l'angle : question, observation, bénéfice court) — jamais un copier-coller générique\n" +
+                "- Utilise le prénom si disponible\n" +
+                "- Pas de placeholders ni de crochets [ ]\n" +
+                "- Réponds UNIQUEMENT avec le texte du message",
             },
             {
               role: "user",
-              content: `Groupe : ${input.groupName}
-Membre : ${input.memberName}
-Message modèle : ${input.template}
-Consignes : ${input.conversationGuide || "Rester naturel et professionnel"}
-Génère UNIQUEMENT le texte du message.`,
+              content: `Groupe / contexte : ${input.groupName}
+Prospect : ${input.memberName}
+Message modèle (à adapter, ne pas recopier tel quel) : ${input.template}
+Consignes campagne : ${input.conversationGuide || "Rester naturel et professionnel"}
+Génère UNIQUEMENT l'accroche personnalisée (Attention A.I.D.A.).`,
             },
           ],
-          max_tokens: 200,
-          temperature: 0.8,
+          max_tokens: 180,
+          temperature: 0.95,
           ...deepseekChatExtras({ enableThinking: false }),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
       { maxRetries: 6 }
@@ -56,8 +63,17 @@ function personalizeFallback(input: {
   memberName: string;
 }): string {
   const firstName = input.memberName.split(/\s+/)[0] || "";
+  const base = input.template
+    .replace(/https?:\/\/\S+/gi, "")
+    .replace(/\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  const short = base.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").slice(0, 220);
   if (firstName && firstName.length > 1) {
-    return input.template.replace(/\{nom\}/gi, firstName).replace(/^Bonjour,?/i, `Bonjour ${firstName},`);
+    if (/^bonjour/i.test(short)) {
+      return short.replace(/^Bonjour,?/i, `Bonjour ${firstName},`);
+    }
+    return `Bonjour ${firstName}, ${short.replace(/^bonjour\s*/i, "")}`.trim();
   }
-  return input.template;
+  return short || input.template;
 }

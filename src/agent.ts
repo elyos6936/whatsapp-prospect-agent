@@ -82,8 +82,10 @@ const ACTIVATION_AFTER_SIMULATION_NUDGE =
 
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
-  "avec exactement 3 ou 4 tours (speaker toi/prospect, textes réels SANS crochets, prix/lien déjà collectés). " +
+  "avec exactement 3 ou 4 tours (speaker toi/prospect, textes réels SANS crochets). " +
+  "Le 1er tour « toi » = accroche A.I.D.A. Attention (PAS de prix/lien). " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 4 messages (coût tokens). " +
+  "Après l'outil, le message contient déjà la demande de feedback — ne l'oublie pas. " +
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
   "la simulation s'affiche UNIQUEMENT dans ce chat — aucun envoi WhatsApp réel.";
 

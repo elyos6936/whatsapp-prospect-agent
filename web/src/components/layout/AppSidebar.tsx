@@ -1,5 +1,14 @@
-import { useEffect } from 'react';
-import { Menu, PanelLeftClose, PanelLeftOpen, Plus, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  Menu,
+  MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Pencil,
+  Plus,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import type { AgentThreadSummary } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -19,11 +28,87 @@ type AppSidebarProps = {
   activeThreadId: number | null;
   onSelectThread: (id: number) => void;
   onNewThread: () => void;
+  onRenameThread: (id: number, title: string) => Promise<void> | void;
+  onDeleteThread: (id: number) => Promise<void> | void;
   creatingThread?: boolean;
   waConnected?: boolean;
   mobileOpen: boolean;
   onMobileClose: () => void;
 };
+
+function ThreadActionsMenu({
+  thread,
+  onRename,
+  onDelete,
+}: {
+  thread: AgentThreadSummary;
+  onRename: () => void;
+  onDelete: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  return (
+    <div className="relative shrink-0" ref={ref}>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
+        className="rounded-md p-1 text-text-500 opacity-70 transition hover:bg-black/5 hover:text-text-200 hover:opacity-100"
+        aria-label={`Actions pour ${thread.title}`}
+        aria-expanded={open}
+      >
+        <MoreHorizontal className="h-4 w-4" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-xl border border-black/[0.08] bg-bg-0 py-1 shadow-lg">
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+              onRename();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-text-300 transition hover:bg-bg-200 hover:text-text-100"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            Renommer
+          </button>
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+              onDelete();
+            }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-500 transition hover:bg-red-500/10"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+            Supprimer
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ThreadList({
   collapsed,
@@ -31,6 +116,8 @@ function ThreadList({
   activeThreadId,
   onSelectThread,
   onNewThread,
+  onRenameThread,
+  onDeleteThread,
   creatingThread,
   waConnected,
   onAfterNavigate,
@@ -40,10 +127,58 @@ function ThreadList({
   activeThreadId: number | null;
   onSelectThread: (id: number) => void;
   onNewThread: () => void;
+  onRenameThread: (id: number, title: string) => Promise<void> | void;
+  onDeleteThread: (id: number) => Promise<void> | void;
   creatingThread?: boolean;
   waConnected: boolean;
   onAfterNavigate?: () => void;
 }) {
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const [renameValue, setRenameValue] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (renamingId != null) inputRef.current?.focus();
+  }, [renamingId]);
+
+  const startRename = (thread: AgentThreadSummary) => {
+    setRenamingId(thread.id);
+    setRenameValue(thread.title);
+  };
+
+  const commitRename = async (id: number) => {
+    const title = renameValue.trim();
+    setRenamingId(null);
+    if (!title) return;
+    const current = threads.find((t) => t.id === id);
+    if (current && current.title === title) return;
+    setBusyId(id);
+    try {
+      await onRenameThread(id, title);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const handleDelete = async (thread: AgentThreadSummary) => {
+    const label = thread.title || 'cette automatisation';
+    const hasCampaign = Boolean(thread.automation_id);
+    const ok = confirm(
+      hasCampaign
+        ? `Supprimer « ${label} » et sa campagne associée ? Cette action est définitive.`
+        : `Supprimer « ${label} » ? Cette action est définitive.`,
+    );
+    if (!ok) return;
+    setBusyId(thread.id);
+    try {
+      await onDeleteThread(thread.id);
+      onAfterNavigate?.();
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="shrink-0 px-2 py-3">
@@ -76,41 +211,98 @@ function ThreadList({
           const active = activeThreadId === thread.id;
           const status = thread.automation_status;
           const badge = status ? STATUS_LABELS[status] || status : 'Vide';
+          const isRenaming = renamingId === thread.id;
+          const isBusy = busyId === thread.id;
+
+          if (collapsed) {
+            return (
+              <button
+                key={thread.id}
+                type="button"
+                disabled={!waConnected}
+                onClick={() => {
+                  onSelectThread(thread.id);
+                  onAfterNavigate?.();
+                }}
+                title={thread.title}
+                className={cn(
+                  'flex w-full items-center justify-center rounded-lg px-2 py-2.5 text-sm transition-colors',
+                  !waConnected && 'cursor-not-allowed opacity-40',
+                  active
+                    ? 'border border-brand-border bg-brand-muted font-medium text-brand'
+                    : 'text-text-400 hover:bg-bg-200 hover:text-text-100',
+                )}
+              >
+                <span className="text-xs font-semibold">#{thread.id}</span>
+              </button>
+            );
+          }
+
           return (
-            <button
+            <div
               key={thread.id}
-              type="button"
-              disabled={!waConnected}
-              onClick={() => {
-                onSelectThread(thread.id);
-                onAfterNavigate?.();
-              }}
-              title={collapsed ? thread.title : undefined}
               className={cn(
-                'flex w-full flex-col rounded-lg text-left text-sm transition-colors',
-                collapsed ? 'items-center px-2 py-2.5' : 'gap-0.5 px-3 py-2.5',
-                !waConnected && 'cursor-not-allowed opacity-40',
+                'group relative flex w-full items-start gap-1 rounded-lg text-sm transition-colors',
+                !waConnected && 'opacity-40',
                 active
                   ? 'border border-brand-border bg-brand-muted font-medium text-brand'
                   : 'text-text-400 hover:bg-bg-200 hover:text-text-100',
+                isBusy && 'pointer-events-none opacity-60',
               )}
             >
-              {collapsed ? (
-                <span className="text-xs font-semibold">#{thread.id}</span>
+              {isRenaming ? (
+                <form
+                  className="min-w-0 flex-1 px-2 py-1.5"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void commitRename(thread.id);
+                  }}
+                >
+                  <input
+                    ref={inputRef}
+                    value={renameValue}
+                    onChange={(e) => setRenameValue(e.target.value)}
+                    onBlur={() => void commitRename(thread.id)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setRenamingId(null);
+                      }
+                    }}
+                    className="w-full rounded-md border border-brand-border bg-bg-0 px-2 py-1 text-sm text-text-100 outline-none focus:ring-2 focus:ring-brand/20"
+                    maxLength={80}
+                    aria-label="Nouveau nom"
+                  />
+                </form>
               ) : (
-                <>
-                  <span className="truncate font-medium">{thread.title}</span>
-                  <span
-                    className={cn(
-                      'text-[11px]',
-                      active ? 'text-brand/80' : 'text-text-500',
-                    )}
-                  >
+                <button
+                  type="button"
+                  disabled={!waConnected}
+                  onClick={() => {
+                    onSelectThread(thread.id);
+                    onAfterNavigate?.();
+                  }}
+                  className={cn(
+                    'min-w-0 flex-1 flex-col gap-0.5 px-3 py-2.5 text-left',
+                    !waConnected && 'cursor-not-allowed',
+                  )}
+                >
+                  <span className="block truncate font-medium">{thread.title}</span>
+                  <span className={cn('text-[11px]', active ? 'text-brand/80' : 'text-text-500')}>
                     {badge}
                   </span>
-                </>
+                </button>
               )}
-            </button>
+
+              {waConnected && !isRenaming && (
+                <div className="pr-1 pt-2">
+                  <ThreadActionsMenu
+                    thread={thread}
+                    onRename={() => startRename(thread)}
+                    onDelete={() => void handleDelete(thread)}
+                  />
+                </div>
+              )}
+            </div>
           );
         })}
         {!threads.length && !collapsed && (
@@ -128,6 +320,8 @@ export function AppSidebar({
   activeThreadId,
   onSelectThread,
   onNewThread,
+  onRenameThread,
+  onDeleteThread,
   creatingThread,
   waConnected = true,
   mobileOpen,
@@ -180,6 +374,8 @@ export function AppSidebar({
           activeThreadId={activeThreadId}
           onSelectThread={onSelectThread}
           onNewThread={onNewThread}
+          onRenameThread={onRenameThread}
+          onDeleteThread={onDeleteThread}
           creatingThread={creatingThread}
           waConnected={waConnected}
         />
@@ -217,6 +413,8 @@ export function AppSidebar({
           activeThreadId={activeThreadId}
           onSelectThread={onSelectThread}
           onNewThread={onNewThread}
+          onRenameThread={onRenameThread}
+          onDeleteThread={onDeleteThread}
           creatingThread={creatingThread}
           waConnected={waConnected}
           onAfterNavigate={onMobileClose}

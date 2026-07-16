@@ -1,5 +1,5 @@
-import { useCallback, useState } from 'react';
-import { Copy, Download, Maximize2, Minimize2, X } from 'lucide-react';
+import { useCallback } from 'react';
+import { Copy, Download, X } from 'lucide-react';
 import { PlanBoard } from '@/components/chat/PlanBoard';
 import type { AutomationVisualPlan } from '@/lib/automation-plan';
 import { planToDownloadJson } from '@/lib/automation-plan';
@@ -11,9 +11,10 @@ import {
 } from '@/lib/excalidraw-plan';
 import { cn } from '@/lib/utils';
 
-type PlanPanelProps = {
+type StrategyDockProps = {
   plan: AutomationVisualPlan;
   onClose: () => void;
+  className?: string;
 };
 
 function triggerDownload(blob: Blob, filename: string) {
@@ -25,9 +26,8 @@ function triggerDownload(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function PlanPanel({ plan, onClose }: PlanPanelProps) {
-  const [expanded, setExpanded] = useState(false);
-
+/** Panneau droit permanent : résumé / schéma de la stratégie de campagne. */
+export function StrategyDock({ plan, onClose, className }: StrategyDockProps) {
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(planToDownloadJson(plan));
@@ -66,75 +66,55 @@ export function PlanPanel({ plan, onClose }: PlanPanelProps) {
   }, [plan]);
 
   return (
-    <div
+    <aside
       className={cn(
-        'fixed inset-0 z-50 bg-black/40',
-        expanded ? 'flex items-center justify-center p-3 sm:p-5' : 'flex justify-end',
+        'flex h-full min-h-0 w-full flex-col border-l border-black/[0.06] bg-bg-0',
+        className,
       )}
-      onClick={onClose}
+      aria-label="Stratégie de campagne"
     >
-      <aside
-        className={cn(
-          'flex flex-col border border-black/[0.08] bg-bg-0 shadow-2xl',
-          expanded
-            ? 'h-full w-full max-w-6xl rounded-2xl'
-            : 'h-full w-full max-w-2xl rounded-none border-y-0 border-r-0',
-        )}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="flex shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 py-3">
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-text-100">{plan.title}</p>
-            <p className="text-[11px] text-text-500">Plan d’automatisation</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setExpanded((v) => !v)}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 hover:bg-bg-200 hover:text-text-100"
-            title={expanded ? 'Réduire' : 'Agrandir'}
-          >
-            {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
-            <span className="hidden sm:inline">{expanded ? 'Réduire' : 'Agrandir'}</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleCopy()}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 hover:bg-bg-200 hover:text-text-100"
-            title="Copier le JSON"
-          >
-            <Copy className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Copier</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleDownload()}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 hover:bg-bg-200 hover:text-text-100"
-            title="Télécharger en HTML (ouvrable dans le navigateur)"
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Télécharger</span>
-          </button>
-          <button
-            type="button"
-            onClick={onClose}
-            className="rounded-lg p-2 text-text-400 hover:bg-bg-200"
-            aria-label="Fermer"
-          >
-            <X className="h-4 w-4" />
-          </button>
+      <div className="flex shrink-0 items-center gap-2 border-b border-black/[0.06] px-3 py-2.5 sm:px-4">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold text-text-100">{plan.title}</p>
+          <p className="text-[11px] text-text-500">Stratégie · résumé permanent</p>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-          <PlanBoard
-            key={expanded ? 'expanded' : 'docked'}
-            plan={plan}
-            className="min-h-0 flex-1"
-          />
-          <p className="shrink-0 text-xs text-text-500">
-            Ce plan se met à jour quand tu modifies la campagne avec l’agent dans ce même fil.
-            Télécharge en HTML pour l’ouvrir directement dans un navigateur.
-          </p>
-        </div>
-      </aside>
-    </div>
+        <button
+          type="button"
+          onClick={() => void handleCopy()}
+          className="rounded-lg p-2 text-text-400 hover:bg-bg-200 hover:text-text-100"
+          title="Copier"
+        >
+          <Copy className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleDownload()}
+          className="rounded-lg p-2 text-text-400 hover:bg-bg-200 hover:text-text-100"
+          title="Télécharger"
+        >
+          <Download className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-lg p-2 text-text-400 hover:bg-bg-200 hover:text-text-100"
+          aria-label="Masquer la stratégie"
+          title="Masquer"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="flex min-h-0 flex-1 flex-col gap-2 p-3 sm:p-4">
+        <PlanBoard key={plan.updatedAt || plan.title} plan={plan} className="min-h-0 flex-1" />
+        <p className="shrink-0 text-[11px] leading-relaxed text-text-500">
+          Ce panneau reste visible pendant le chat. La simulation et la validation se font au centre ;
+          ici tu gardes le résumé de ta stratégie.
+        </p>
+      </div>
+    </aside>
   );
 }
+
+/** @deprecated utiliser StrategyDock */
+export { StrategyDock as PlanPanel };

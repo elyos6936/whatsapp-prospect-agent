@@ -1280,7 +1280,11 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description:
               "contact_prospect : liste des contacts à prospecter (numéros +229…, chatId, ou noms exacts présents dans les contacts). 1 ou plusieurs.",
           },
-          initial_message: { type: "string", description: "Premier message pour group_prospect / contact_prospect" },
+          initial_message: {
+            type: "string",
+            description:
+              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases accrocheuses). INTERDIT : prix, lien paiement/RDV, pitch complet. Les détails vont dans price / closing_link / conversation_guide.",
+          },
           max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
           max_per_day: {
             type: "number",
@@ -1361,7 +1365,11 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description: "Messages de relance (sans crochets)",
           },
           budget_fcfa: { type: "number" },
-          personalize_messages: { type: "boolean" },
+          personalize_messages: {
+            type: "boolean",
+            description:
+              "Personnaliser chaque accroche (différente par prospect). Défaut true en prospection sortante — recommandé toujours ON.",
+          },
           stop_on_dissatisfaction: { type: "boolean" },
           stop_on_unknown_question: { type: "boolean" },
           ab_variants: { type: "array", items: { type: "object" } },
@@ -1541,13 +1549,14 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "show_campaign_simulation",
       description:
-        "OBLIGATOIRE dès que l'utilisateur accepte une simulation. Affiche un fil court (EXACTEMENT 3 ou 4 messages max — économie tokens) dans le chat agent — aucun envoi WhatsApp. Après affichage, l'utilisateur doit dire ce qu'il change ou valide. Ne jamais annoncer « Voici comment… : » sans cet outil.",
+        "OBLIGATOIRE dès que l'utilisateur accepte une simulation. Affiche un fil court (EXACTEMENT 3 ou 4 messages max — économie tokens) dans le chat agent — aucun envoi WhatsApp. Le 1er message « toi » = accroche A.I.D.A. Attention (sans prix/lien). Après affichage, demande TOUJOURS ce qu'il veut changer ou garder. Ne jamais annoncer « Voici comment… : » sans cet outil.",
       parameters: {
         type: "object",
         properties: {
           turns: {
             type: "array",
-            description: "Exactement 3 ou 4 répliques alternées Toi / Prospect (JAMAIS plus de 4)",
+            description:
+              "Exactement 3 ou 4 répliques alternées Toi / Prospect (JAMAIS plus de 4). Tour 1 toi = Attention seulement.",
             minItems: 3,
             maxItems: 4,
             items: {
@@ -1788,7 +1797,12 @@ function buildAutomationConfigFromArgs(
       : undefined,
     stopOnDissatisfaction: args.stop_on_dissatisfaction !== false,
     stopOnUnknownQuestion: args.stop_on_unknown_question !== false,
-    personalizeMessages: args.personalize_messages === true,
+    personalizeMessages:
+      args.personalize_messages === false
+        ? false
+        : isOutbound
+          ? true
+          : args.personalize_messages === true,
     abVariants: Array.isArray(args.ab_variants)
       ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
           id: v.id || `v${i + 1}`,
@@ -3343,6 +3357,18 @@ export async function executeTool(
         return JSON.stringify({
           error: "initial_message contient des crochets. Remplace-les par de vraies valeurs.",
         });
+      }
+      if (config.initialMessage) {
+        const opener = config.initialMessage;
+        const hasUrl = /https?:\/\/\S+/i.test(opener);
+        const hasPrice = /\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)\b/i.test(opener);
+        const tooLong = opener.trim().length > 280;
+        if (hasUrl || (hasPrice && tooLong) || (hasUrl && hasPrice)) {
+          return JSON.stringify({
+            error:
+              "initial_message viole A.I.D.A. (Attention). Le 1er message doit être une accroche courte SANS lien et SANS prix/pitch complet. Mets le lien dans closing_link et le prix dans price ; garde les détails dans conversation_guide. Réécris initial_message (1-2 phrases) puis réessaie.",
+          });
+        }
       }
 
       /** Persist draft — update existing if reusable, else create. */

@@ -8,8 +8,6 @@ import {
   type AutomationSummary,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { PlanBoard } from '@/components/chat/PlanBoard';
-import type { AutomationVisualPlan } from '@/lib/automation-plan';
 import { outreachMetrics } from '@/lib/campaign-metrics';
 
 const TYPE_LABELS: Record<string, string> = {
@@ -154,7 +152,6 @@ export function AutomationPage({ threadId }: AutomationPageProps) {
   const stats = a?.stats ?? {};
   const metrics = a ? outreachMetrics(stats as Record<string, number>) : null;
   const handled = Number(stats.messagesHandled ?? 0);
-  const visualPlan = (a?.config as { visualPlan?: AutomationVisualPlan } | undefined)?.visualPlan;
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -232,12 +229,10 @@ export function AutomationPage({ threadId }: AutomationPageProps) {
                 <StatusBadge status={a.status} />
               </header>
 
-              {visualPlan && visualPlan.nodes?.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-text-200">Plan de l’automatisation</h3>
-                  <PlanBoard plan={visualPlan} className="h-[420px] min-h-[320px]" />
-                </section>
-              )}
+              <div className="rounded-xl border border-brand/20 bg-brand-muted/40 px-4 py-3 text-sm text-text-400">
+                Le schéma de stratégie s’affiche dans le <strong className="font-medium text-text-200">panneau de droite</strong> du chat
+                (bouton « Stratégie »). Ici : statut et actions de la campagne.
+              </div>
 
               <div className="flex flex-wrap gap-3 text-sm text-text-400">
                 {isOutboundType(a.type) ? (

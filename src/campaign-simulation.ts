@@ -23,8 +23,12 @@ const SIM_FOOTER =
   "Ou réponds « c'est bon » si on peut passer à l'activation.";
 
 export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string {
+  const limited = turns.slice(0, 4);
+  if (limited.length < 3) {
+    throw new Error("La simulation doit contenir au moins 3 messages.");
+  }
   const lines: string[] = [];
-  for (const turn of turns) {
+  for (const turn of limited) {
     const text = String(turn.text ?? "").trim();
     if (!text) throw new Error("Un message de la simulation est vide.");
     if (hasTemplatePlaceholders(text)) {
@@ -41,9 +45,10 @@ export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string
 }
 
 function normalizeTurns(raw: unknown[]): SimulationTurn[] | null {
-  if (!Array.isArray(raw) || raw.length < 3 || raw.length > 4) return null;
+  if (!Array.isArray(raw) || raw.length < 3) return null;
+  const slice = raw.slice(0, 4);
   const out: SimulationTurn[] = [];
-  for (const item of raw) {
+  for (const item of slice) {
     if (!item || typeof item !== "object") return null;
     const t = item as { speaker?: string; name?: string; text?: string };
     const speaker = String(t.speaker ?? "").toLowerCase();
@@ -61,7 +66,7 @@ function normalizeTurns(raw: unknown[]): SimulationTurn[] | null {
       return null;
     }
   }
-  return out;
+  return out.length >= 3 ? out : null;
 }
 
 function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
@@ -78,6 +83,18 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
     if (normalized) return normalized;
   } catch {
     /* fall through → lignes Toi → */
+  }
+
+  // Tentative : extraire un objet JSON imbriqué dans du texte
+  const brace = /\{[\s\S]*"turns"\s*:\s*\[[\s\S]*\][\s\S]*\}/.exec(trimmed);
+  if (brace) {
+    try {
+      const parsed = JSON.parse(brace[0]) as { turns?: unknown[] };
+      const normalized = normalizeTurns(parsed.turns ?? []);
+      if (normalized) return normalized;
+    } catch {
+      /* continue */
+    }
   }
 
   const lines = trimmed.split(/\n/).map((l) => l.trim()).filter(Boolean);
@@ -97,6 +114,7 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
     } else {
       turns.push({ speaker: "prospect", name: who || "Prospect", text });
     }
+    if (turns.length >= 4) break;
   }
   return turns.length >= 3 && turns.length <= 4 ? turns : null;
 }
@@ -116,16 +134,18 @@ export async function generateCampaignSimulationDirect(
     "Réponds UNIQUEMENT avec un JSON valide de la forme :\n" +
     '{"turns":[{"speaker":"toi","text":"..."},{"speaker":"prospect","name":"Prospect","text":"..."},{"speaker":"toi","text":"..."}]}\n' +
     "Règles strictes :\n" +
-    "- Exactement 3 ou 4 turns\n" +
-    "- Alternance toi / prospect\n" +
+    "- Exactement 3 ou 4 turns (JAMAIS plus — coût tokens)\n" +
+    "- Alternance toi / prospect (commencer par toi)\n" +
+    "- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet)\n" +
+    "- Les tours suivants peuvent introduire intérêt / détail / CTA selon les réponses du prospect\n" +
     "- Textes réels, naturels, sans crochets [ ]\n" +
-    "- Inclure prix / lien s'ils sont connus dans le contexte\n" +
+    "- Inclure prix / lien seulement APRÈS que le prospect a engagé (tour 3 ou 4), s'ils sont dans le contexte\n" +
     "- Aucune phrase hors JSON";
 
   const user =
     `## Contexte business\n${opts.businessContext.slice(0, 3500)}\n\n` +
     `## Fil récent (agence)\n${opts.recentTranscript.slice(0, 4000)}\n\n` +
-    `Génère maintenant la simulation JSON.`;
+    `Génère maintenant la simulation JSON (3 ou 4 turns max).`;
 
   const body: Record<string, unknown> = {
     model: config.openaiModel,
@@ -133,7 +153,7 @@ export async function generateCampaignSimulationDirect(
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    max_tokens: recommendedMaxTokens(config.openaiModel, 900),
+    max_tokens: recommendedMaxTokens(config.openaiModel, 900, { thinkingEnabled: false }),
   };
 
   // Désactive le thinking pour cette requête isolée (pas d'outils) → plus fiable.
@@ -149,11 +169,15 @@ export async function generateCampaignSimulationDirect(
 
   const content = response.choices[0]?.message?.content?.trim() ?? "";
   const turns = parseTurnsFromModelText(content);
-  if (!turns) return null;
+  if (!turns) {
+    console.warn("[simulation] parse failed, raw:", content.slice(0, 400));
+    return null;
+  }
 
   try {
     return formatCampaignSimulationDisplay(turns);
-  } catch {
+  } catch (err) {
+    console.warn("[simulation] format failed:", err);
     return null;
   }
 }

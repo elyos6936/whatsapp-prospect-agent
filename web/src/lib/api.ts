@@ -192,6 +192,14 @@ export async function createThread(title?: string): Promise<AgentThreadSummary> 
   return data.thread;
 }
 
+export async function renameThread(threadId: number, title: string): Promise<AgentThreadSummary> {
+  const data = await request<{ thread: AgentThreadSummary }>(`/api/threads/${threadId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ title }),
+  });
+  return data.thread;
+}
+
 export async function deleteThread(threadId: number): Promise<void> {
   await request(`/api/threads/${threadId}`, { method: 'DELETE' });
 }

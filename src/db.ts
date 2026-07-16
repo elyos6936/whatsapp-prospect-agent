@@ -293,13 +293,21 @@ export async function ensureDefaultAgentThread(userId: number): Promise<AgentThr
 }
 
 export async function updateAgentThreadTitle(userId: number, threadId: number, title: string): Promise<AgentThread | null> {
+  const clean = title.trim() || "Automatisation";
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE agent_threads
-    SET title = ${title.trim() || "Automatisation"}, updated_at = NOW()
+    SET title = ${clean}, updated_at = NOW()
     WHERE user_id = ${userId} AND id = ${threadId}
     RETURNING id, user_id, title, automation_id, created_at, updated_at
   `;
-  return rows[0] ? mapAgentThread(rows[0]) : null;
+  const thread = rows[0] ? mapAgentThread(rows[0]) : null;
+  if (thread?.automation_id) {
+    await sql`
+      UPDATE automations SET name = ${clean}, updated_at = NOW()
+      WHERE user_id = ${userId} AND id = ${thread.automation_id}
+    `;
+  }
+  return thread;
 }
 
 export async function touchAgentThread(userId: number, threadId: number): Promise<void> {
@@ -312,13 +320,16 @@ export async function touchAgentThread(userId: number, threadId: number): Promis
 export async function deleteAgentThread(userId: number, threadId: number): Promise<boolean> {
   const thread = await getAgentThread(userId, threadId);
   if (!thread) return false;
-  if (thread.automation_id) {
-    await sql`
-      UPDATE automations SET agent_thread_id = NULL
-      WHERE user_id = ${userId} AND id = ${thread.automation_id}
-    `;
-  }
+  const automationId = thread.automation_id;
+  // Délier avant suppression cascade / FK
+  await sql`
+    UPDATE automations SET agent_thread_id = NULL
+    WHERE user_id = ${userId} AND agent_thread_id = ${threadId}
+  `;
   await sql`DELETE FROM agent_threads WHERE user_id = ${userId} AND id = ${threadId}`;
+  if (automationId) {
+    await deleteAutomation(userId, automationId);
+  }
   return true;
 }
 

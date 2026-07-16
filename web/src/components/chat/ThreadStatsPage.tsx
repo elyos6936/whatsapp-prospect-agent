@@ -1,22 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { CampaignCharts } from '@/components/automation/CampaignCharts';
-import { PlanBoard } from '@/components/chat/PlanBoard';
 import { fetchThreadCampaign, type AutomationDetail } from '@/lib/api';
-import type { AutomationVisualPlan } from '@/lib/automation-plan';
-import { outreachMetrics, pct, TARGET_META, TARGET_ORDER } from '@/lib/campaign-metrics';
+import { goalAwareStatCards, outreachMetrics, TARGET_META, TARGET_ORDER } from '@/lib/campaign-metrics';
 import { cn } from '@/lib/utils';
 
 const TYPE_LABELS: Record<string, string> = {
   group_prospect: 'Prospection groupe',
   contact_prospect: 'Prospection contacts',
-  keyword_sales: 'Vente sur mots-clés',
+  keyword_sales: 'Vente / support mots-clés',
   custom_followup: 'Suivi personnalisé',
 };
-
-function isOutboundType(type: string): boolean {
-  return type === 'group_prospect' || type === 'contact_prospect';
-}
 
 function fmtTime(iso?: string): string {
   if (!iso) return '—';
@@ -56,14 +50,25 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
   const targets = detail?.targets ?? [];
   const logs = detail?.logs ?? [];
   const metrics = outreachMetrics(stats as Record<string, number>);
+  const config = (a?.config ?? {}) as {
+    closingGoal?: string;
+    productName?: string;
+    mode?: string;
+  };
+  const goalPack = a
+    ? goalAwareStatCards({
+        type: a.type,
+        closingGoal: config.closingGoal,
+        productName: config.productName || a.name,
+        stats: stats as Record<string, number>,
+      })
+    : null;
   const counts = TARGET_ORDER.reduce<Record<string, number>>((acc, s) => {
     acc[s] = targets.filter((t) => t.status === s).length;
     return acc;
   }, {});
   const totalTargets = targets.length;
-  const handled = Number(stats.messagesHandled ?? 0);
-  const conversions = Number(stats.conversions ?? 0);
-  const visualPlan = (a?.config as { visualPlan?: AutomationVisualPlan } | undefined)?.visualPlan;
+  const isOutbound = a?.type === 'group_prospect' || a?.type === 'contact_prospect';
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
@@ -73,7 +78,7 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
             <div>
               <h1 className="font-serif text-2xl font-light text-text-100">Statistiques</h1>
               <p className="mt-1 text-sm text-text-400">
-                Campagne liée à cette automatisation — isolation complète des autres fils.
+                Indicateurs adaptés à l’objectif de cette campagne uniquement.
               </p>
             </div>
             <button
@@ -95,7 +100,7 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
             </div>
           )}
 
-          {a && (
+          {a && goalPack && (
             <div className="mt-6 space-y-5">
               <header className="panel flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
                 <div className="min-w-0">
@@ -103,62 +108,47 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
                   <p className="mt-1 text-sm text-text-500">
                     {TYPE_LABELS[a.type] || a.type} · {a.status} · {fmtTime(a.created_at)}
                   </p>
+                  <p className="mt-2 text-sm text-brand">
+                    {goalPack.title}
+                    <span className="text-text-500"> — {goalPack.subtitle}</span>
+                  </p>
                 </div>
               </header>
 
-              {visualPlan && visualPlan.nodes?.length > 0 && (
-                <section className="space-y-2">
-                  <h3 className="text-sm font-semibold text-text-200">Plan de l’automatisation</h3>
-                  <PlanBoard plan={visualPlan} className="h-[420px] min-h-[320px]" />
-                </section>
-              )}
-
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-                {isOutboundType(a.type) ? (
-                  <>
-                    <div className="panel-inset p-4">
-                      <span className="text-xs text-text-500">Atteints</span>
-                      <p className="mt-1 text-2xl font-semibold text-text-100">{metrics.reached}</p>
-                    </div>
-                    <div className="panel-inset p-4">
-                      <span className="text-xs text-text-500">Réponses</span>
-                      <p className="mt-1 text-2xl font-semibold text-text-100">{metrics.answered}</p>
-                    </div>
-                    <div className="panel-inset p-4">
-                      <span className="text-xs text-text-500">Taux</span>
-                      <p className="mt-1 text-2xl font-semibold text-text-100">
-                        {metrics.rate != null ? `${metrics.rate}%` : '—'}
-                      </p>
-                    </div>
-                    <div className="panel-inset p-4">
-                      <span className="text-xs text-text-500">Intéressés</span>
-                      <p className="mt-1 text-2xl font-semibold text-emerald-600">{metrics.interested}</p>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="panel-inset p-4">
-                      <span className="text-xs text-text-500">Messages</span>
-                      <p className="mt-1 text-2xl font-semibold text-text-100">{handled}</p>
-                    </div>
-                    <div className="panel-inset p-4">
-                      <span className="text-xs text-text-500">Conversions</span>
-                      <p className="mt-1 text-2xl font-semibold text-text-100">
-                        {conversions}
-                        {handled ? ` (${pct(conversions, handled)}%)` : ''}
-                      </p>
-                    </div>
-                  </>
-                )}
+                {goalPack.cards.map((card) => (
+                  <div key={card.key} className="panel-inset p-4">
+                    <span className="text-xs text-text-500">{card.label}</span>
+                    <p
+                      className={cn(
+                        'mt-1 text-2xl font-semibold',
+                        card.accent === 'success' && 'text-emerald-600',
+                        card.accent === 'warn' && 'text-amber-600',
+                        (!card.accent || card.accent === 'default') && 'text-text-100',
+                      )}
+                    >
+                      {card.value}
+                    </p>
+                    {card.hint && <p className="mt-1 text-[11px] text-text-500">{card.hint}</p>}
+                  </div>
+                ))}
               </div>
 
-              {isOutboundType(a.type) && totalTargets > 0 && (
+              {isOutbound && totalTargets > 0 && (
                 <CampaignCharts
                   counts={counts}
                   totalTargets={totalTargets}
                   reached={metrics.reached}
                   answered={metrics.answered}
-                  interested={metrics.interested}
+                  interested={
+                    Number(stats.conversions ?? 0) > 0 &&
+                    (config.closingGoal === 'appointment' ||
+                      config.closingGoal === 'payment' ||
+                      config.closingGoal === 'link')
+                      ? Number(stats.conversions)
+                      : metrics.interested
+                  }
+                  funnelLabels={goalPack.funnelLabels}
                 />
               )}
 
@@ -198,6 +188,12 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
                 </section>
               )}
             </div>
+          )}
+
+          {!loading && !a && !error && (
+            <p className="mt-8 text-sm text-text-500">
+              Aucune campagne liée à cette automatisation pour le moment.
+            </p>
           )}
         </div>
       </div>
