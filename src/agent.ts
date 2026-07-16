@@ -391,13 +391,46 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           });
         }
 
-        // Si l'outil a déjà formaté le fil de simulation, on l'affiche tel quel
-        // (évite que le modèle annonce encore « Voici comment… : » sans contenu).
+        // Si l'outil a déjà formaté le fil de simulation / le plan, on l'affiche tel quel
         if (toolCall.function.name === "show_campaign_simulation") {
           try {
             const parsed = JSON.parse(result) as { success?: boolean; display?: string };
             if (parsed.success && parsed.display?.trim()) {
               return parsed.display.trim();
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+
+        if (toolCall.function.name === "show_automation_plan") {
+          try {
+            const parsed = JSON.parse(result) as { success?: boolean; display?: string };
+            if (parsed.success && parsed.display?.trim()) {
+              return parsed.display.trim();
+            }
+          } catch {
+            /* fall through */
+          }
+        }
+
+        // Après create/update : forcer l'affichage du plan graphique (sans toucher persona)
+        if (
+          toolCall.function.name === "create_automation" ||
+          toolCall.function.name === "update_automation_config"
+        ) {
+          try {
+            const parsed = JSON.parse(result) as {
+              success?: boolean;
+              planDisplay?: string;
+            };
+            if (parsed.success && parsed.planDisplay?.trim()) {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: result,
+              });
+              return parsed.planDisplay.trim();
             }
           } catch {
             /* fall through */

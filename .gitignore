@@ -1,4 +1,6 @@
 scripts/configure.ts
+scripts/out/
+*.tgz
 node_modules/
 dist/
 web/dist/

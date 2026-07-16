@@ -12,7 +12,8 @@
     "db:migrate": "node scripts/migrate-sqlite-to-supabase.mjs",
     "deploy:netlify": "node scripts/inject-netlify-config.mjs && npx netlify deploy --prod --dir=public",
     "deploy:hostinger": "bash deploy/hostinger/deploy.sh",
-    "mail:test-report": "tsx scripts/send-test-report-email.ts"
+    "mail:test-report": "tsx scripts/send-test-report-email.ts",
+    "plan:preview": "tsx scripts/preview-automation-plan.ts"
   },
   "engines": {
     "node": ">=20"

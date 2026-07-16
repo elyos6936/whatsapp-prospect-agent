@@ -1484,6 +1484,16 @@ export interface AutomationConfig {
   quietHoursEnd?: number;
   /** ISO ou datetime locale : ne pas démarrer les openers avant cette date. */
   scheduledStartAt?: string;
+  /** Plan graphique (nodes/edges) pour la carte visuelle — généré côté serveur. */
+  visualPlan?: {
+    version: 1;
+    title: string;
+    updatedAt: string;
+    automationId?: number;
+    type?: string;
+    nodes: Array<{ id: string; label: string; subtitle?: string; kind: string }>;
+    edges: Array<{ from: string; to: string; label?: string }>;
+  };
 }
 
 export interface AutomationStats {

@@ -8,6 +8,8 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
+      // Excalidraw embarque mermaid → katex ; on ne s’en sert pas pour les plans
+      katex: path.resolve(__dirname, './src/stubs/empty.ts'),
     },
   },
   build: {
@@ -18,11 +20,12 @@ export default defineConfig({
       resolveDependencies: (_filename, deps) =>
         deps.filter(
           (dep) =>
-            !/syntax-highlighter|markdown|motion|AuthenticatedApp|shaders|recharts|paper-design/.test(
+            !/syntax-highlighter|markdown|motion|AuthenticatedApp|shaders|recharts|paper-design|excalidraw/.test(
               dep,
             ),
         ),
     },
+
     rollupOptions: {
       output: {
         manualChunks(id) {
@@ -40,9 +43,13 @@ export default defineConfig({
           }
           if (id.includes('date-fns')) return 'date-fns';
           if (id.includes('lucide-react')) return 'icons';
+          if (id.includes('@excalidraw')) return 'excalidraw';
           if (id.includes('react-dom') || id.includes('/react/')) return 'react-vendor';
         },
       },
     },
+  },
+  optimizeDeps: {
+    include: ['@excalidraw/excalidraw'],
   },
 });

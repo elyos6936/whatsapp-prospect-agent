@@ -72,12 +72,12 @@ import {
   createAutomation,
   createGroupReplyRule,
   getEffectiveOutboundLimit,
+  getAutomation,
   getAutomationDetail,
   getAppSettings,
   getContact,
   getContactThread,
   getDailyBilan,
-  listAutomations,
   listContacts,
   listIncomingMessages,
   listScheduledMessages,
@@ -101,7 +101,6 @@ import {
   setAutoReplyEnabled,
   deleteAutomation,
   listProspectedContacts,
-  type AutomationStatus,
   type AutomationType,
   type ContactStatus,
   type AutomationConfig,
@@ -114,6 +113,11 @@ import {
 import { getContactPresence } from "./notifications.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
+import {
+  buildAutomationVisualPlan,
+  formatPlanDisplay,
+  type AutomationVisualPlan,
+} from "./automation-plan.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
@@ -1576,6 +1580,30 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "show_automation_plan",
+      description:
+        "Affiche le plan graphique de l'automatisation du fil courant (carte visuelle dans le chat). " +
+        "À appeler après création / mise à jour d'une campagne, ou quand l'utilisateur demande le plan / le schéma / la vue d'ensemble. " +
+        "Ne regarde PAS d'autres fils. Sans automation_id → utilise la campagne liée à ce fil.",
+      parameters: {
+        type: "object",
+        properties: {
+          automation_id: {
+            type: "number",
+            description: "ID de la campagne du fil (optionnel si déjà liée)",
+          },
+          intro: {
+            type: "string",
+            description: "Court texte d'intro avant la carte (1-2 phrases)",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_group_rule",
       description:
         "Crée une règle de réponse automatique dans un groupe WhatsApp. L'IA répond publiquement quand un message contient un mot-clé.",
@@ -1625,8 +1653,51 @@ const LOCAL_TOOLS = new Set([
   "delete_automation",
   "list_prospected_contacts",
   "show_campaign_simulation",
+  "show_automation_plan",
   "create_group_rule",
 ]);
+
+async function requireThreadAutomationId(
+  userId: number,
+  threadId: number,
+  requestedId?: number
+): Promise<{ ok: true; automationId: number } | { ok: false; error: string }> {
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return { ok: false, error: "Fil introuvable." };
+  }
+  const linked = thread.automation_id;
+  if (requestedId != null && Number.isFinite(requestedId)) {
+    if (!(await automationBelongsToThread(userId, threadId, requestedId))) {
+      return {
+        ok: false,
+        error: `La campagne #${requestedId} n'appartient pas à ce fil. Impossible d'y accéder depuis cette automatisation.`,
+      };
+    }
+    return { ok: true, automationId: requestedId };
+  }
+  if (!linked) {
+    return {
+      ok: false,
+      error: "Aucune campagne liée à ce fil. Crée d'abord une automatisation ici (create_automation).",
+    };
+  }
+  return { ok: true, automationId: linked };
+}
+
+async function persistVisualPlan(
+  userId: number,
+  automationId: number
+): Promise<AutomationVisualPlan | null> {
+  const auto = await getAutomation(userId, automationId);
+  if (!auto) return null;
+  const plan = buildAutomationVisualPlan(auto);
+  await updateAutomationConfig(userId, automationId, {
+    ...auto.config,
+    visualPlan: plan,
+  });
+  return plan;
+}
 
 async function resolveRecipient(userId: number, recipient: string): Promise<string> {
   const trimmed = recipient.trim();
@@ -3321,6 +3392,7 @@ export async function executeTool(
             await resumeAutomationMessaging(userId, reusable.id);
           }
           await linkAutomationToThread(userId, threadId, reusable.id, name);
+          const plan = await persistVisualPlan(userId, reusable.id);
           const fresh = await getAutomationDetail(userId, reusable.id);
           return JSON.stringify({
             success: true,
@@ -3332,6 +3404,13 @@ export async function executeTool(
             config: fresh?.automation.config,
             resolvedContacts: extra?.resolvedCount,
             unresolved: extra?.unresolved,
+            plan,
+            planDisplay: plan
+              ? formatPlanDisplay(
+                  plan,
+                  `Campagne « ${name} » mise à jour (#${reusable.id}). Voici le plan à jour — ouvre la carte pour confirmer le déroulé.`
+                )
+              : undefined,
             message: `Campagne « ${name} » mise à jour (#${reusable.id}) — pas de doublon créé. Prochaine étape : simulation si besoin, puis activate_automation si brouillon.`,
             simulationHint:
               "Propose une simulation : joue le prospect et déroule le début de conversation en chat uniquement.",
@@ -3348,6 +3427,7 @@ export async function executeTool(
           status: "draft",
         });
         await linkAutomationToThread(userId, threadId, auto.id, name);
+        const plan = await persistVisualPlan(userId, auto.id);
         return JSON.stringify({
           success: true,
           updated: false,
@@ -3358,6 +3438,13 @@ export async function executeTool(
           config: auto.config,
           resolvedContacts: extra?.resolvedCount,
           unresolved: extra?.unresolved,
+          plan,
+          planDisplay: plan
+            ? formatPlanDisplay(
+                plan,
+                `Campagne « ${auto.name} » créée en brouillon (#${auto.id}). Voici le plan — ouvre la carte pour valider le déroulé avant simulation.`
+              )
+            : undefined,
           message: `Campagne « ${auto.name} » créée en brouillon (#${auto.id})${
             extra?.resolvedCount != null ? ` avec ${extra.resolvedCount} contact(s)` : ""
           }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""} Prochaine étape : simulation puis activate_automation après confirmation.`,
@@ -3588,6 +3675,8 @@ export async function executeTool(
       if (!Number.isFinite(id)) {
         return JSON.stringify({ error: "automation_id invalide." });
       }
+      const bound = await requireThreadAutomationId(userId, threadId, id);
+      if (!bound.ok) return JSON.stringify({ error: bound.error });
       const detail = await getAutomationDetail(userId, id);
       if (!detail) {
         return JSON.stringify({ error: `Campagne #${id} introuvable.` });
@@ -3660,10 +3749,15 @@ export async function executeTool(
       if (detail.automation.status === "active") {
         await resumeAutomationMessaging(userId, id);
       }
+      const plan = await persistVisualPlan(userId, id);
       return JSON.stringify({
         success: true,
         automationId: id,
         config: updated?.config,
+        plan,
+        planDisplay: plan
+          ? formatPlanDisplay(plan, `Campagne #${id} mise à jour. Voici le plan actualisé.`)
+          : undefined,
         message: `Campagne #${id} mise à jour${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}.`,
       });
     }
@@ -3673,6 +3767,8 @@ export async function executeTool(
       if (!Number.isFinite(id)) {
         return JSON.stringify({ error: "automation_id invalide." });
       }
+      const bound = await requireThreadAutomationId(userId, threadId, id);
+      if (!bound.ok) return JSON.stringify({ error: bound.error });
       const ok = await deleteAutomation(userId, id);
       if (!ok) {
         return JSON.stringify({ error: `Campagne #${id} introuvable.` });
@@ -3685,10 +3781,15 @@ export async function executeTool(
     }
 
     case "list_prospected_contacts": {
-      const automationId = args.automation_id != null ? Number(args.automation_id) : undefined;
+      const requested =
+        args.automation_id != null && Number.isFinite(Number(args.automation_id))
+          ? Number(args.automation_id)
+          : undefined;
+      const bound = await requireThreadAutomationId(userId, threadId, requested);
+      if (!bound.ok) return JSON.stringify({ error: bound.error });
       const limit = args.limit != null ? Number(args.limit) : 200;
       const contacts = await listProspectedContacts(userId, {
-        automationId: Number.isFinite(automationId) ? automationId : undefined,
+        automationId: bound.automationId,
         limit,
       });
       return JSON.stringify({
@@ -3706,20 +3807,33 @@ export async function executeTool(
     }
 
     case "list_automations": {
-      const status = args.status ? (String(args.status) as AutomationStatus) : undefined;
-      const list = await listAutomations(userId, status ? { status, limit: 50 } : { limit: 50 });
+      const thread = await getAgentThread(userId, threadId);
+      if (!thread?.automation_id) {
+        return JSON.stringify({
+          count: 0,
+          automations: [],
+          message: "Aucune campagne liée à ce fil. (Les autres automatisations ne sont pas visibles ici.)",
+        });
+      }
+      const a = await getAutomation(userId, thread.automation_id);
+      if (!a) {
+        return JSON.stringify({ count: 0, automations: [] });
+      }
       return JSON.stringify({
-        count: list.length,
-        automations: list.map((a) => ({
-          id: a.id,
-          name: a.name,
-          type: a.type,
-          status: a.status,
-          summary: a.summary,
-          stats: a.stats,
-          budgetFcfa: a.budget_fcfa,
-          createdAt: a.created_at,
-        })),
+        count: 1,
+        automations: [
+          {
+            id: a.id,
+            name: a.name,
+            type: a.type,
+            status: a.status,
+            summary: a.summary,
+            stats: a.stats,
+            budgetFcfa: a.budget_fcfa,
+            createdAt: a.created_at,
+          },
+        ],
+        message: "Seul le plan de ce fil est listé (isolation des automatisations).",
       });
     }
 
@@ -3728,6 +3842,8 @@ export async function executeTool(
       if (!Number.isFinite(id)) {
         return JSON.stringify({ error: "automation_id invalide." });
       }
+      const bound = await requireThreadAutomationId(userId, threadId, id);
+      if (!bound.ok) return JSON.stringify({ error: bound.error });
       const detail = await getAutomationDetail(userId, id);
       if (!detail) {
         return JSON.stringify({ error: `Automatisation #${id} introuvable.` });
@@ -3760,6 +3876,8 @@ export async function executeTool(
       if (!Number.isFinite(id) || !["active", "paused", "completed"].includes(status)) {
         return JSON.stringify({ error: "Paramètres invalides." });
       }
+      const bound = await requireThreadAutomationId(userId, threadId, id);
+      if (!bound.ok) return JSON.stringify({ error: bound.error });
       let updated;
       if (status === "paused") {
         updated = await pauseAutomation(userId, id);
@@ -3791,6 +3909,26 @@ export async function executeTool(
             : status === "active"
               ? `Campagne #${id} réactivée — auto-reply ON.`
               : `Campagne #${id} terminée — auto-reply OFF.`,
+      });
+    }
+
+    case "show_automation_plan": {
+      const requested =
+        args.automation_id != null && Number.isFinite(Number(args.automation_id))
+          ? Number(args.automation_id)
+          : undefined;
+      const bound = await requireThreadAutomationId(userId, threadId, requested);
+      if (!bound.ok) return JSON.stringify({ error: bound.error });
+      const plan = await persistVisualPlan(userId, bound.automationId);
+      if (!plan) {
+        return JSON.stringify({ error: "Impossible de générer le plan." });
+      }
+      const intro = args.intro ? String(args.intro) : undefined;
+      return JSON.stringify({
+        success: true,
+        automationId: bound.automationId,
+        plan,
+        display: formatPlanDisplay(plan, intro),
       });
     }
 

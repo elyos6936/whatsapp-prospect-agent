@@ -5,8 +5,10 @@ import ReactMarkdown from 'react-markdown';
 import { Bot, MessageCircle } from 'lucide-react';
 import { LazyCodeBlock } from './LazyCodeBlock';
 import { ChatMedia } from './ChatMedia';
+import { PlanCard } from './PlanCard';
 import { cn } from '@/lib/utils';
 import { sanitizeAssistantText } from '@/lib/sanitize-assistant-text';
+import { extractPlanFromText, type AutomationVisualPlan } from '@/lib/automation-plan';
 import { classifyMediaUrl, isProxiableMediaUrl, normalizeMediaUrl } from '@/lib/media';
 import type { ChatMessage } from '@/lib/api';
 
@@ -14,6 +16,9 @@ const markdownComponents = {
   code({ className, children, ...props }: ComponentProps<'code'> & { className?: string }) {
     const match = /language-(\w+)/.exec(className ?? '');
     const code = String(children).replace(/\n$/, '');
+    if (match?.[1] === 'klanvio-plan') {
+      return null;
+    }
     if (match) {
       return <LazyCodeBlock language={match[1]} code={code} />;
     }
@@ -53,9 +58,10 @@ const markdownComponents = {
 interface MessageBubbleProps {
   message: ChatMessage;
   isStreaming?: boolean;
+  onOpenPlan?: (plan: AutomationVisualPlan) => void;
 }
 
-export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming, onOpenPlan }: MessageBubbleProps) {
   const isUser = message.kind === 'user';
   const isAssistant = message.kind === 'assistant' || message.kind === 'error';
   const isWaIn = message.kind === 'whatsapp-in';
@@ -66,9 +72,11 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
     { locale: fr },
   );
 
-  const displayContent = isAssistant
-    ? sanitizeAssistantText(message.content)
-    : message.content;
+  const raw = isAssistant ? sanitizeAssistantText(message.content) : message.content;
+  const { plan, textWithoutPlan } = isAssistant
+    ? extractPlanFromText(raw)
+    : { plan: null, textWithoutPlan: raw };
+  const displayContent = textWithoutPlan;
 
   const bubbleClass = cn(
     'min-w-0 max-w-full rounded-2xl px-3 py-2 text-[13px] leading-[1.45] transition-all duration-200',
@@ -112,16 +120,19 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
             {message.label}
           </span>
         )}
-        <div className={bubbleClass}>
-          <div className="prose-klanvio">
-            <ReactMarkdown components={markdownComponents}>
-              {displayContent || (isStreaming ? ' ' : '')}
-            </ReactMarkdown>
-            {isStreaming && message.content && (
-              <span className="ml-0.5 inline-block animate-pulse text-text-300">▍</span>
-            )}
+        {(displayContent || isStreaming) && (
+          <div className={bubbleClass}>
+            <div className="prose-klanvio">
+              <ReactMarkdown components={markdownComponents}>
+                {displayContent || (isStreaming ? ' ' : '')}
+              </ReactMarkdown>
+              {isStreaming && message.content && (
+                <span className="ml-0.5 inline-block animate-pulse text-text-300">▍</span>
+              )}
+            </div>
           </div>
-        </div>
+        )}
+        {plan && onOpenPlan && <PlanCard plan={plan} onOpen={() => onOpenPlan(plan)} />}
         <time className="px-1 text-[10px] text-text-500" dateTime={message.created_at}>
           {time}
         </time>

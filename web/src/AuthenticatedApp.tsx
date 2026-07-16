@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
-import { ThreadStatsPanel } from '@/components/chat/ThreadStatsPanel';
+import { PlanPanel } from '@/components/chat/PlanPanel';
+import { ThreadStatsPage } from '@/components/chat/ThreadStatsPage';
 import { ConnectWhatsAppGate } from '@/components/whatsapp/ConnectWhatsAppGate';
 import { useAuth } from '@/lib/auth';
 import { useMessages } from '@/hooks/useMessages';
@@ -14,11 +15,11 @@ import {
 } from '@/lib/chat-attachments';
 import {
   createThread,
-  deleteThread,
   fetchThreads,
   sendChatMessage,
   type AgentThreadSummary,
 } from '@/lib/api';
+import type { AutomationVisualPlan } from '@/lib/automation-plan';
 import type { OverlayView } from '@/lib/navigation';
 import { AutomationPage } from '@/pages/AutomationPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
@@ -33,13 +34,12 @@ export default function AuthenticatedApp() {
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
   const [creatingThread, setCreatingThread] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(true);
-  const [statsOpen, setStatsOpen] = useState(false);
+  const [openPlan, setOpenPlan] = useState<AutomationVisualPlan | null>(null);
 
   const chatEnabled = overlayView == null && !!user?.whatsapp?.connected && activeThreadId != null;
   const { messages, loading, appendLocal, appendOptimisticUser, clear } =
     useMessages(chatEnabled, activeThreadId);
   const [isSending, setIsSending] = useState(false);
-  const [clearing, setClearing] = useState(false);
 
   const waConnected = user?.whatsapp?.connected ?? false;
   const [gateConfirmed, setGateConfirmed] = useState(false);
@@ -99,7 +99,7 @@ export default function AuthenticatedApp() {
       const thread = await createThread();
       await refreshThreads(thread.id);
       setOverlayView(null);
-      setStatsOpen(false);
+      setOpenPlan(null);
       clear();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Erreur');
@@ -111,7 +111,7 @@ export default function AuthenticatedApp() {
   const handleSelectThread = useCallback((id: number) => {
     setActiveThreadId(id);
     setOverlayView(null);
-    setStatsOpen(false);
+    setOpenPlan(null);
   }, []);
 
   const handleSend = useCallback(
@@ -150,31 +150,6 @@ export default function AuthenticatedApp() {
     [activeThreadId, appendLocal, appendOptimisticUser, refreshUser, refreshThreads],
   );
 
-  const handleClearHistory = useCallback(async () => {
-    if (activeThreadId == null) return;
-    if (
-      !confirm(
-        'Supprimer cette automatisation (historique chat) ? La campagne WhatsApp reste disponible dans Paramètres → Automatisation.',
-      )
-    ) {
-      return;
-    }
-    setClearing(true);
-    try {
-      await deleteThread(activeThreadId);
-      clear();
-      const list = await refreshThreads();
-      if (!list.length) {
-        const created = await createThread();
-        await refreshThreads(created.id);
-      }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur');
-    } finally {
-      setClearing(false);
-    }
-  }, [activeThreadId, clear, refreshThreads]);
-
   if (!user) return null;
 
   if (!user.onboarding_completed) {
@@ -209,15 +184,16 @@ export default function AuthenticatedApp() {
           onOpenSettings={() => setOverlayView('settings')}
           onOpenAutomation={() => setOverlayView('automation')}
           onOpenStats={
-            activeThread?.automation_id ? () => setStatsOpen(true) : undefined
+            activeThread?.automation_id ? () => setOverlayView('stats') : undefined
           }
-          onClearHistory={overlayView == null ? handleClearHistory : undefined}
-          clearing={clearing}
           onOpenMobileNav={() => setMobileNavOpen(true)}
         />
 
         {overlayView === 'settings' && <SettingsPage />}
         {overlayView === 'automation' && <AutomationPage />}
+        {overlayView === 'stats' && activeThreadId != null && (
+          <ThreadStatsPage threadId={activeThreadId} />
+        )}
 
         {overlayView == null && (
           <ChatWorkspace
@@ -226,13 +202,12 @@ export default function AuthenticatedApp() {
             isSending={isSending}
             onSend={handleSend}
             isFreshSession={messages.length === 0 && !loading && !threadsLoading}
+            onOpenPlan={setOpenPlan}
           />
         )}
       </div>
 
-      {statsOpen && activeThreadId != null && (
-        <ThreadStatsPanel threadId={activeThreadId} onClose={() => setStatsOpen(false)} />
-      )}
+      {openPlan && <PlanPanel plan={openPlan} onClose={() => setOpenPlan(null)} />}
     </div>
   );
 }

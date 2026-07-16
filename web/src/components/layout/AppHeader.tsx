@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, BarChart3, Settings, Trash2, Zap } from 'lucide-react';
+import { ArrowLeft, Settings, Zap } from 'lucide-react';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
 
@@ -11,8 +11,6 @@ type AppHeaderProps = {
   onOpenSettings: () => void;
   onOpenAutomation: () => void;
   onOpenStats?: () => void;
-  onClearHistory?: () => void;
-  clearing?: boolean;
   onOpenMobileNav?: () => void;
 };
 
@@ -24,8 +22,6 @@ export function AppHeader({
   onOpenSettings,
   onOpenAutomation,
   onOpenStats,
-  onClearHistory,
-  clearing,
   onOpenMobileNav,
 }: AppHeaderProps) {
   const onChat = overlayView == null;
@@ -80,21 +76,8 @@ export function AppHeader({
             className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
             title="Statistiques de la campagne"
           >
-            <BarChart3 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Statistiques</span>
-          </button>
-        )}
-
-        {onChat && onClearHistory && (
-          <button
-            type="button"
-            onClick={onClearHistory}
-            disabled={clearing}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100 disabled:opacity-50"
-            title="Effacer l'historique de ce fil"
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">Effacer</span>
+            <span className="sm:hidden">Stats</span>
           </button>
         )}
 

@@ -24,6 +24,8 @@ import {
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import { CampaignCharts } from '@/components/automation/CampaignCharts';
+import { PlanBoard } from '@/components/chat/PlanBoard';
+import type { AutomationVisualPlan } from '@/lib/automation-plan';
 import {
   outreachMetrics,
   pct,
@@ -667,6 +669,18 @@ export function AutomationPage() {
                 </div>
                 <StatusBadge status={a.status} />
               </header>
+
+              {(() => {
+                const visualPlan = (a.config as { visualPlan?: AutomationVisualPlan } | undefined)
+                  ?.visualPlan;
+                if (!visualPlan?.nodes?.length) return null;
+                return (
+                  <section className="space-y-2">
+                    <h3 className="text-sm font-semibold text-text-200">Plan de l’automatisation</h3>
+                    <PlanBoard plan={visualPlan} className="h-[420px] min-h-[320px]" />
+                  </section>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
                 {isOutboundType(a.type) ? (
