@@ -178,10 +178,10 @@ async function buildBusinessContext(
 ): Promise<string> {
   const lines: string[] = [];
   lines.push(
-    `## État WhatsApp (Evolution API)\n${
+    `## État WhatsApp\n${
       connection.connected
         ? "WhatsApp est connecté — les outils d'envoi sont disponibles."
-        : `WhatsApp NON connecté (état : ${connection.state}). ${connection.message} Les outils qui envoient des messages échoueront tant que la connexion n'est pas établie — invite l'utilisateur à connecter WhatsApp via « Connexions ».`
+        : `WhatsApp NON connecté (état : ${connection.state}). ${connection.message} Les outils qui envoient des messages échoueront tant que la connexion n'est pas établie — invite l'utilisateur à reconnecter WhatsApp via Paramètres (popup QR).`
     }`
   );
   lines.push(

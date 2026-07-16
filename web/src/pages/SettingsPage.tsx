@@ -3,22 +3,20 @@ import {
   CheckCircle2,
   CreditCard,
   LogOut,
-  QrCode,
-  RefreshCw,
   Smartphone,
   Store,
   Unplug,
 } from 'lucide-react';
 import {
   disconnectWhatsApp,
-  fetchEvolutionQr,
   fetchSettings,
   saveBusinessProfile,
   setAutoReply,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
-import { qrImageSrc } from '@/lib/qr';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
+import { WhatsAppConnectModal } from '@/components/whatsapp/WhatsAppConnectModal';
 
 type SettingsTab = 'connection' | 'business' | 'billing';
 
@@ -55,14 +53,10 @@ export function SettingsPage() {
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
 
-  const [qrData, setQrData] = useState<{
-    connected: boolean;
-    message: string;
-    base64?: string;
-    pairingCode?: string;
-  } | null>(null);
-  const [qrLoading, setQrLoading] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [connectModalOpen, setConnectModalOpen] = useState(false);
+  const [disconnectError, setDisconnectError] = useState('');
 
   const connected = user?.whatsapp?.connected ?? false;
 
@@ -100,51 +94,31 @@ export function SettingsPage() {
     }
   }, [autoReplyOn]);
 
-  const loadQr = useCallback(async () => {
-    setQrLoading(true);
-    try {
-      const data = await fetchEvolutionQr();
-      setQrData(data);
-      if (data.connected) void refreshUser();
-    } catch (err) {
-      setQrData({
-        connected: false,
-        message: err instanceof Error ? err.message : 'Erreur QR',
-      });
-    } finally {
-      setQrLoading(false);
-    }
-  }, [refreshUser]);
-
-  // Charge un QR uniquement au premier affichage déconnecté — pas en boucle (connect tue la session).
+  // Quand déconnecté (et modal ouverte), poll léger pour basculer dès que la session revient.
   useEffect(() => {
-    if (tab !== 'connection' || connected) return;
-    void loadQr();
-  }, [tab, connected, loadQr]);
-
-  // Quand déconnecté, on poll l'état (léger) pour basculer dès que la session revient.
-  useEffect(() => {
-    if (tab !== 'connection' || connected) return;
+    if (connected || !connectModalOpen) return;
     const id = setInterval(() => void refreshUser(), 5_000);
     return () => clearInterval(id);
-  }, [tab, connected, refreshUser]);
+  }, [connected, connectModalOpen, refreshUser]);
+
+  // Après connexion réussie, fermer la popup.
+  useEffect(() => {
+    if (connected && connectModalOpen) setConnectModalOpen(false);
+  }, [connected, connectModalOpen]);
 
   const handleDisconnect = async () => {
-    if (
-      !confirm(
-        'Déconnecter ce numéro WhatsApp ? Tu pourras ensuite en connecter un autre en scannant un nouveau QR code.',
-      )
-    ) {
-      return;
-    }
+    setConfirmDisconnect(false);
     setDisconnecting(true);
+    setDisconnectError('');
     try {
       await disconnectWhatsApp();
-      setQrData(null);
       await refreshUser();
-      await loadQr();
+      // Reconnexion immédiate via popup centrée
+      setConnectModalOpen(true);
     } catch (err) {
-      alert(err instanceof Error ? err.message : 'Échec de la déconnexion.');
+      setDisconnectError(
+        err instanceof Error ? err.message : 'Échec de la déconnexion.',
+      );
     } finally {
       setDisconnecting(false);
     }
@@ -242,15 +216,15 @@ export function SettingsPage() {
                   </div>
                 </div>
 
-                {connected && (
-                  <div className="mt-5 border-t border-black/10 pt-4">
+                <div className="mt-5 border-t border-black/10 pt-4">
+                  {connected ? (
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <p className="text-xs text-text-500">
-                        Pour utiliser un autre numéro, déconnecte celui-ci puis scanne un nouveau QR.
+                        Pour changer de numéro, déconnecte puis reconnecte via le QR.
                       </p>
                       <button
                         type="button"
-                        onClick={handleDisconnect}
+                        onClick={() => setConfirmDisconnect(true)}
                         disabled={disconnecting}
                         className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
                       >
@@ -258,8 +232,25 @@ export function SettingsPage() {
                         {disconnecting ? 'Déconnexion…' : 'Déconnecter'}
                       </button>
                     </div>
-                  </div>
-                )}
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs text-text-500">
+                        Relie ton compte en quelques secondes via un QR code.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setConnectModalOpen(true)}
+                        className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark"
+                      >
+                        <Smartphone className="h-4 w-4" />
+                        Connecter WhatsApp
+                      </button>
+                    </div>
+                  )}
+                  {disconnectError && (
+                    <p className="mt-2 text-xs text-red-400">{disconnectError}</p>
+                  )}
+                </div>
               </div>
 
               {/* Interrupteur réponses auto */}
@@ -295,52 +286,6 @@ export function SettingsPage() {
                 <Feedback text={autoReplyFb} type={autoReplyFb.includes('Erreur') ? 'err' : 'ok'} />
               </div>
 
-              {/* Panneau QR quand non connecté */}
-              {!connected && (
-                <div className="panel p-5">
-                  <div className="flex flex-col items-center text-center">
-                    {qrLoading && !qrData ? (
-                      <div className="flex h-[240px] w-[240px] items-center justify-center rounded-2xl border border-black/10 bg-bg-0">
-                        <RefreshCw className="h-6 w-6 animate-spin text-text-500" />
-                      </div>
-                    ) : qrData?.base64 ? (
-                      <img
-                        src={qrImageSrc(qrData.base64)}
-                        alt="QR WhatsApp"
-                        className="h-[240px] w-[240px] rounded-2xl border-4 border-white bg-white object-contain p-1 shadow-lg"
-                      />
-                    ) : (
-                      <div className="flex h-[240px] w-[240px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-black/15 bg-bg-0 text-text-500">
-                        <QrCode className="h-8 w-8" />
-                        <span className="text-xs">QR indisponible</span>
-                      </div>
-                    )}
-
-                    {qrData?.pairingCode && (
-                      <p className="mt-4 font-mono text-lg tracking-widest text-text-100">
-                        {qrData.pairingCode}
-                      </p>
-                    )}
-
-                    <div className="mt-4 max-w-sm text-xs leading-relaxed text-text-400">
-                      Ouvre <strong className="text-text-200">WhatsApp</strong> →{' '}
-                      <strong className="text-text-200">Appareils connectés</strong> →{' '}
-                      <strong className="text-text-200">Lier un appareil</strong>, puis scanne ce
-                      code.
-                    </div>
-
-                    <button
-                      type="button"
-                      onClick={() => void loadQr()}
-                      disabled={qrLoading}
-                      className="mt-4 inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-4 py-2 text-sm text-text-300 transition hover:bg-bg-200 disabled:opacity-50"
-                    >
-                      <RefreshCw className={cn('h-4 w-4', qrLoading && 'animate-spin')} />
-                      Actualiser le QR
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           ) : tab === 'business' ? (
             <div className="panel p-6">
@@ -453,6 +398,26 @@ export function SettingsPage() {
           )}
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmDisconnect}
+        title="Déconnecter WhatsApp ?"
+        message="Tu pourras reconnecter ce numéro (ou un autre) immédiatement en scannant un nouveau QR code."
+        confirmLabel="Oui, déconnecter"
+        cancelLabel="Non"
+        danger
+        onConfirm={() => void handleDisconnect()}
+        onCancel={() => setConfirmDisconnect(false)}
+      />
+
+      <WhatsAppConnectModal
+        open={connectModalOpen}
+        dismissible
+        title="Reconnecter WhatsApp"
+        subtitle="Scanne le QR avec WhatsApp → Appareils connectés → Lier un appareil. Tu peux utiliser le même numéro ou un autre."
+        onClose={() => setConnectModalOpen(false)}
+        onConnected={() => setConnectModalOpen(false)}
+      />
     </div>
   );
 }

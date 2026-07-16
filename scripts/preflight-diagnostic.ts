@@ -116,6 +116,57 @@ async function main() {
     detail: serverSrc.includes("www.klanvio.com") ? "défaut OK" : "manquant",
   });
 
+  // 8. Chat async (anti Failed to fetch)
+  checks.push({
+    name: "Chat async 202",
+    ok: serverSrc.includes("pending: true") && serverSrc.includes("status(202)"),
+    detail: "POST /api/chat → 202 + job fond",
+  });
+
+  // 9. Liste groupes rapide
+  const agentSrc = fs.readFileSync(path.join(root, "src/agent.ts"), "utf8");
+  const evoSrc = fs.readFileSync(path.join(root, "src/evolutionapi.ts"), "utf8");
+  checks.push({
+    name: "Fast-path liste groupes",
+    ok: agentSrc.includes("detectQuickListIntent") && evoSrc.includes("GROUPS_LIST_CACHE"),
+    detail: "chemin rapide + cache groupes",
+  });
+  checks.push({
+    name: "Messages connexion sans Evolution",
+    ok:
+      !evoSrc.includes("WhatsApp connecté (Evolution API)") &&
+      evoSrc.includes('WhatsApp connecté.'),
+    detail: "messages user-facing nettoyés",
+  });
+
+  // 10. UI popup WhatsApp
+  const modalSrc = fs.readFileSync(
+    path.join(root, "web/src/components/whatsapp/WhatsAppConnectModal.tsx"),
+    "utf8"
+  );
+  const settingsSrc = fs.readFileSync(path.join(root, "web/src/pages/SettingsPage.tsx"), "utf8");
+  checks.push({
+    name: "Popup connexion WhatsApp",
+    ok: modalSrc.includes("WhatsAppConnectModal") && settingsSrc.includes("WhatsAppConnectModal"),
+    detail: "modale centrée + reconnect après déconnexion",
+  });
+
+  // 11. Persona : jamais Evolution à l'utilisateur
+  const personaSrc = fs.readFileSync(path.join(root, "src/persona.ts"), "utf8");
+  checks.push({
+    name: "Agent ne cite pas Evolution",
+    ok: personaSrc.includes("N'évoque JAMAIS") && personaSrc.includes("Evolution API"),
+    detail: "règle confidentialité technique",
+  });
+
+  // 12. DeepSeek Pro forcé
+  const configSrc = fs.readFileSync(path.join(root, "src/config.ts"), "utf8");
+  checks.push({
+    name: "Flash bloqué",
+    ok: configSrc.includes("jamais Flash") || configSrc.includes("deepseek-v4-pro"),
+    detail: "config LLM",
+  });
+
   console.log("\n=== DIAGNOSTIC KLANVIO ===\n");
   let allOk = true;
   for (const c of checks) {

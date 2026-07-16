@@ -446,7 +446,11 @@ export async function testEvolutionConnection(
 
   const creds = await getEvolutionCredentials(userId);
   if (!creds) {
-    return { connected: false, state: "not_configured", message: "Evolution API non configurée." };
+    return {
+      connected: false,
+      state: "not_configured",
+      message: "WhatsApp n'est pas encore configuré sur ce compte.",
+    };
   }
 
   try {
@@ -461,11 +465,11 @@ export async function testEvolutionConnection(
       connected: ok,
       state,
       message: ok
-        ? "WhatsApp connecté (Evolution API)."
+        ? "WhatsApp connecté."
         : state === "connecting"
-          ? "Connexion en cours — scannez le QR code Evolution API."
+          ? "Connexion en cours — scannez le QR code WhatsApp."
           : state === "close"
-            ? "WhatsApp déconnecté — reconnectez l'instance Evolution API."
+            ? "WhatsApp déconnecté — scannez un nouveau QR pour reconnecter."
             : `État WhatsApp : ${state}`,
     };
     CONNECTION_STATE_CACHE.set(userId, {
@@ -505,7 +509,7 @@ export async function requireEvolutionConnected(userId: number, context = "cette
   if (!state.connected) {
     const hint =
       state.state === "connecting"
-        ? "L'instance se connecte encore — attendez ou scannez le QR code."
+        ? "WhatsApp se connecte encore — attendez ou scannez le QR code."
         : state.message;
     throw new EvolutionApiError(
       `WhatsApp non connecté (état : ${state.state}) — impossible d'exécuter ${context}. ${hint}`

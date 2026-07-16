@@ -37,6 +37,11 @@ export function sanitizeAssistantText(text: string): string {
   out = out.replace(/\bmessage_id\s*:\s*\S+/gi, '');
   out = out.replace(/\b\d{10,}@g\.us\b/g, '');
   out = out.replace(/\b\d+@s\.whatsapp\.net\b/g, '');
+  // Ne jamais exposer Evolution / stack technique
+  out = out.replace(/\bEvolution\s*API\b/gi, 'WhatsApp');
+  out = out.replace(/\bEvolution\b/gi, 'Klanvio');
+  out = out.replace(/\bBaileys\b/gi, 'WhatsApp');
+
   out = out.replace(/^\s*[-–—]\s*$/gm, '');
   out = out.replace(/\n{3,}/g, '\n\n');
 

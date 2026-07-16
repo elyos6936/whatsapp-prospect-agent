@@ -15,7 +15,7 @@ export function userFacingError(err: unknown): string {
   if (/429|rate limit|tpm|tokens per min/i.test(m)) {
     return "Je suis un peu saturé pour le moment. Réessayez dans quelques secondes.";
   }
-  if (/evolution|whatsapp.*(connect|déconnect|non connect)/i.test(m)) {
+  if (/evolution|whatsapp.*(connect|déconnect|non connect)|non configur/i.test(m)) {
     return "WhatsApp ne répond pas pour le moment. Vérifiez la connexion dans Paramètres, puis réessayez.";
   }
   if (/401|session|jwt|unauthorized|expiré/i.test(m)) {
@@ -25,8 +25,11 @@ export function userFacingError(err: unknown): string {
     return "Je ne trouve pas ce groupe. Vérifiez le nom exact (ou collez l’identifiant du groupe) et réessayez.";
   }
 
-  // Ne jamais renvoyer du JSON / stack / HTTP brut
-  if (/^\s*[{[]/.test(raw) || /error:\s|at\s+\S+\(|HTTP\s*\d{3}/i.test(raw)) {
+  // Ne jamais renvoyer du JSON / stack / HTTP / Evolution brut
+  if (
+    /^\s*[{[]/.test(raw) ||
+    /error:\s|at\s+\S+\(|HTTP\s*\d{3}|evolution|baileys/i.test(raw)
+  ) {
     return "Je n’ai pas pu terminer cette action. Reformulez ou réessayez dans un instant.";
   }
 
