@@ -10,3 +10,6 @@ data/
 *.log
 .DS_Store
 remotion/public/*.mp4
+
+# Local Netlify folder
+.netlify

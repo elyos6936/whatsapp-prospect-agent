@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Settings, Zap } from 'lucide-react';
+import { ArrowLeft, BarChart3, Settings, Zap } from 'lucide-react';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
 
@@ -76,6 +76,7 @@ export function AppHeader({
             className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
             title="Statistiques de la campagne"
           >
+            <BarChart3 className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Statistiques</span>
             <span className="sm:hidden">Stats</span>
           </button>

@@ -190,7 +190,7 @@ export default function AuthenticatedApp() {
         />
 
         {overlayView === 'settings' && <SettingsPage />}
-        {overlayView === 'automation' && <AutomationPage />}
+        {overlayView === 'automation' && <AutomationPage threadId={activeThreadId} />}
         {overlayView === 'stats' && activeThreadId != null && (
           <ThreadStatsPage threadId={activeThreadId} />
         )}

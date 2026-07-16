@@ -1,37 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { Bot, MessageSquare, Pause, Play, RefreshCw, Users } from 'lucide-react';
 import {
-  ArrowLeft,
-  BarChart3,
-  Bot,
-  MessageSquare,
-  Pause,
-  Play,
-  Plus,
-  RefreshCw,
-  Send,
-  Sparkles,
-  Users,
-} from 'lucide-react';
-import {
-  fetchAutomationDetail,
-  fetchAutomations,
+  fetchThreadCampaign,
   reloadAutomationMembers,
-  sendChatMessage,
-  createThread,
   updateAutomationStatus,
   type AutomationDetail,
   type AutomationSummary,
 } from '@/lib/api';
 import { cn } from '@/lib/utils';
-import { CampaignCharts } from '@/components/automation/CampaignCharts';
 import { PlanBoard } from '@/components/chat/PlanBoard';
 import type { AutomationVisualPlan } from '@/lib/automation-plan';
-import {
-  outreachMetrics,
-  pct,
-  TARGET_META,
-  TARGET_ORDER,
-} from '@/lib/campaign-metrics';
+import { outreachMetrics } from '@/lib/campaign-metrics';
 
 const TYPE_LABELS: Record<string, string> = {
   group_prospect: 'Prospection groupe',
@@ -47,12 +26,6 @@ const STATUS_LABELS: Record<string, string> = {
   completed: 'Terminée',
   failed: 'Échouée',
 };
-
-const SUGGESTIONS = [
-  'Lundi à 8h, envoie « Bonjour, on est ouvert ! » à +229…',
-  'Prospecte ces contacts pour ma formation',
-  'Relance les personnes qui n’ont pas répondu',
-];
 
 function fmtTime(iso?: string): string {
   if (!iso) return '—';
@@ -70,67 +43,6 @@ function needsMemberReload(a: AutomationSummary): boolean {
   return a.status === 'failed' || (m.reached === 0 && m.pending === 0);
 }
 
-function StatCard({
-  label,
-  value,
-  hint,
-  accent,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-  accent?: string;
-}) {
-  return (
-    <div className="panel-inset p-4">
-      <span className="text-xs text-text-500">{label}</span>
-      <p className="mt-1 text-2xl font-semibold" style={accent ? { color: accent } : { color: 'var(--text-100)' }}>
-        {value}
-      </p>
-      {hint && <p className="mt-0.5 text-[11px] text-text-500">{hint}</p>}
-    </div>
-  );
-}
-
-// Vue d'ensemble agrégée sur toutes les campagnes (tableau de bord).
-function OverviewStats({ automations }: { automations: AutomationSummary[] }) {
-  const outbound = automations.filter((a) => isOutboundType(a.type));
-  const active = automations.filter((a) => a.status === 'active').length;
-  const reached = outbound.reduce((s, a) => s + outreachMetrics(a.stats as Record<string, number>).reached, 0);
-  const answered = outbound.reduce((s, a) => s + outreachMetrics(a.stats as Record<string, number>).answered, 0);
-  const interested = outbound.reduce(
-    (s, a) => s + outreachMetrics(a.stats as Record<string, number>).interested,
-    0,
-  );
-  const globalRate = pct(answered, reached);
-
-  const items = [
-    { label: 'Campagnes', value: automations.length, hint: `${active} active(s)`, color: '#0f172a' },
-    { label: 'Atteints', value: reached, hint: 'prospects contactés', color: '#2057ce' },
-    {
-      label: 'Réponses',
-      value: answered,
-      hint: reached ? `${globalRate}% de réponse` : undefined,
-      color: '#0ea5e9',
-    },
-    { label: 'Intéressés', value: interested, color: '#10b981' },
-  ];
-
-  return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {items.map((it) => (
-        <div key={it.label} className="panel p-4">
-          <span className="text-xs text-text-500">{it.label}</span>
-          <p className="mt-1 text-2xl font-semibold" style={{ color: it.color }}>
-            {it.value}
-          </p>
-          {it.hint && <p className="mt-0.5 text-[11px] text-text-500">{it.hint}</p>}
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function StatusBadge({ status }: { status: string }) {
   return (
     <span
@@ -143,7 +55,7 @@ function StatusBadge({ status }: { status: string }) {
         status === 'completed' && 'bg-black/[0.06] text-text-400',
       )}
     >
-      {(status === 'active') && <span className="status-dot" style={{ background: '#34d399' }} />}
+      {status === 'active' && <span className="status-dot" style={{ background: '#34d399' }} />}
       {STATUS_LABELS[status] || status}
     </span>
   );
@@ -152,16 +64,12 @@ function StatusBadge({ status }: { status: string }) {
 function StatusControls({
   auto,
   onChange,
-  size = 'sm',
 }: {
   auto: AutomationSummary;
   onChange: () => void | Promise<void>;
-  size?: 'sm' | 'md';
 }) {
-  const cls = cn(
-    'inline-flex items-center gap-1.5 rounded-lg font-semibold transition shadow-sm',
-    size === 'sm' ? 'px-3 py-1.5 text-xs' : 'px-4 py-2 text-sm',
-  );
+  const cls =
+    'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition shadow-sm';
   if (auto.status === 'active') {
     return (
       <button
@@ -176,7 +84,7 @@ function StatusControls({
         )}
         title="Stoppe les envois et les réponses automatiques"
       >
-        <Pause className={size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+        <Pause className="h-4 w-4" />
         Désactiver
       </button>
     );
@@ -191,7 +99,7 @@ function StatusControls({
         }}
         className={cn(cls, 'bg-brand text-white hover:bg-brand-dark')}
       >
-        <Play className={size === 'sm' ? 'h-3.5 w-3.5' : 'h-4 w-4'} />
+        <Play className="h-4 w-4" />
         {auto.status === 'draft' ? 'Activer' : 'Réactiver'}
       </button>
     );
@@ -199,261 +107,44 @@ function StatusControls({
   return null;
 }
 
-// ─── Chat builder (mode Manuel) ─────────────────────────────────────────────
-// NOTE: temporairement retiré de l'interface (voir AutomationPage). Le code est
-// conservé pour être réintégré plus tard avec un canal dédié (hors chat principal).
-type ChatMsg = { role: 'user' | 'assistant'; content: string };
+type AutomationPageProps = {
+  threadId: number | null;
+};
 
-export function ManualBuilder({
-  automations,
-  loading,
-  onRefresh,
-  onOpenStats,
-}: {
-  automations: AutomationSummary[];
-  loading: boolean;
-  onRefresh: () => void;
-  onOpenStats: (id: number) => void;
-}) {
-  const [messages, setMessages] = useState<ChatMsg[]>([]);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const taRef = useRef<HTMLTextAreaElement>(null);
-
-  useEffect(() => {
-    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages, sending]);
-
-  const send = async (text: string) => {
-    const value = text.trim();
-    if (!value || sending) return;
-    setInput('');
-    if (taRef.current) taRef.current.style.height = 'auto';
-    setMessages((m) => [...m, { role: 'user', content: value }]);
-    setSending(true);
-    try {
-      const thread = await createThread('Automatisation (manuel)');
-      const res = await sendChatMessage(value, thread.id);
-      setMessages((m) => [...m, { role: 'assistant', content: res.reply }]);
-      onRefresh();
-    } catch (err) {
-      setMessages((m) => [
-        ...m,
-        { role: 'assistant', content: err instanceof Error ? err.message : 'Erreur, réessaie.' },
-      ]);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  return (
-    <div className="mt-6 grid gap-4 lg:grid-cols-[1fr_340px]">
-      {/* Colonne chat */}
-      <div className="panel flex h-[68vh] min-h-[460px] flex-col overflow-hidden">
-        <div className="flex items-center gap-3 border-b border-black/10 bg-black/[0.02] px-4 py-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-muted text-brand">
-            <Sparkles className="h-4.5 w-4.5" />
-          </span>
-          <div>
-            <h3 className="text-sm font-semibold text-text-100">Créer une automatisation</h3>
-            <p className="text-xs text-text-400">Décris ce que tu veux, je le mets en place.</p>
-          </div>
-        </div>
-
-        <div ref={scrollRef} className="flex-1 space-y-4 overflow-y-auto custom-scrollbar p-4">
-          {messages.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center px-4 text-center">
-              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-muted text-brand">
-                <Bot className="h-7 w-7" />
-              </span>
-              <h4 className="mt-4 font-serif text-lg font-light text-text-100">
-                Qu’est-ce que tu veux automatiser ?
-              </h4>
-              <p className="mt-1 max-w-sm text-sm text-text-400">
-                Écris-le en langage naturel. Je te pose les bonnes questions et je demande
-                confirmation avant d’activer.
-              </p>
-              <div className="mt-5 flex w-full max-w-md flex-col gap-2">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    onClick={() => void send(s)}
-                    className="group flex items-center gap-2 rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-left text-sm text-text-300 transition hover:border-brand-border hover:bg-brand-muted hover:text-text-100"
-                  >
-                    <Plus className="h-4 w-4 shrink-0 text-text-500 transition group-hover:text-brand" />
-                    <span>{s}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            messages.map((m, i) => (
-              <div
-                key={i}
-                className={cn(
-                  'flex animate-rise-in items-end gap-2',
-                  m.role === 'user' ? 'justify-end' : 'justify-start',
-                )}
-              >
-                {m.role === 'assistant' && (
-                  <span className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-muted text-brand">
-                    <Bot className="h-4 w-4" />
-                  </span>
-                )}
-                <div
-                  className={cn(
-                    'max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-sm leading-relaxed',
-                    m.role === 'user'
-                      ? 'rounded-br-md bg-brand text-white'
-                      : 'rounded-bl-md border border-black/10 bg-bg-200 text-text-200',
-                  )}
-                >
-                  {m.content}
-                </div>
-              </div>
-            ))
-          )}
-          {sending && (
-            <div className="flex animate-rise-in items-end gap-2">
-              <span className="mb-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand-muted text-brand">
-                <Bot className="h-4 w-4" />
-              </span>
-              <div className="flex gap-1 rounded-2xl rounded-bl-md border border-black/10 bg-bg-200 px-4 py-3">
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-500 [animation-delay:-0.3s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-500 [animation-delay:-0.15s]" />
-                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-text-500" />
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="border-t border-black/10 bg-black/[0.02] p-3">
-          <div className="flex items-end gap-2 rounded-2xl border border-black/10 bg-bg-0 p-2 transition focus-within:border-brand-border focus-within:ring-2 focus-within:ring-brand/20">
-            <textarea
-              ref={taRef}
-              value={input}
-              onChange={(e) => {
-                setInput(e.target.value);
-                e.target.style.height = 'auto';
-                e.target.style.height = `${Math.min(e.target.scrollHeight, 128)}px`;
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void send(input);
-                }
-              }}
-              rows={1}
-              placeholder="Écris ton automatisation…"
-              className="max-h-32 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm text-text-100 outline-none placeholder:text-text-500"
-            />
-            <button
-              type="button"
-              onClick={() => void send(input)}
-              disabled={sending || !input.trim()}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white transition hover:bg-brand-dark disabled:opacity-40"
-            >
-              <Send className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Colonne automatisations */}
-      <div className="panel flex h-[68vh] min-h-[460px] flex-col overflow-hidden">
-        <div className="flex items-center justify-between border-b border-black/10 bg-black/[0.02] px-4 py-3">
-          <h3 className="text-sm font-semibold text-text-100">Mes automatisations</h3>
-          <button
-            type="button"
-            onClick={onRefresh}
-            className="flex h-7 w-7 items-center justify-center rounded-lg border border-black/10 text-text-400 transition hover:bg-bg-200 hover:text-text-100"
-            title="Actualiser"
-          >
-            <RefreshCw className={cn('h-3.5 w-3.5', loading && 'animate-spin')} />
-          </button>
-        </div>
-        <div className="flex-1 space-y-2.5 overflow-y-auto custom-scrollbar p-3">
-          {automations.length === 0 ? (
-            <div className="flex h-full flex-col items-center justify-center px-4 text-center">
-              <MessageSquare className="h-8 w-8 text-text-500" />
-              <p className="mt-3 text-sm text-text-400">
-                Aucune automatisation. Décris-en une dans le chat pour commencer.
-              </p>
-            </div>
-          ) : (
-            automations.map((auto) => (
-              <div key={auto.id} className="panel-inset p-3.5">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-text-100">{auto.name}</p>
-                    <span className="text-[11px] text-brand">
-                      {TYPE_LABELS[auto.type] || auto.type}
-                    </span>
-                  </div>
-                  <StatusBadge status={auto.status} />
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onOpenStats(auto.id)}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-3 py-1.5 text-xs font-semibold text-brand shadow-sm transition hover:bg-brand/20"
-                  >
-                    <BarChart3 className="h-3.5 w-3.5" />
-                    Statistiques
-                  </button>
-                  <StatusControls auto={auto} onChange={onRefresh} />
-                </div>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function AutomationPage() {
-  const [automations, setAutomations] = useState<AutomationSummary[]>([]);
+export function AutomationPage({ threadId }: AutomationPageProps) {
   const [detail, setDetail] = useState<AutomationDetail | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const loadAutomations = useCallback(async () => {
+  const load = useCallback(async () => {
+    if (threadId == null) {
+      setDetail(null);
+      setError(null);
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
-      setAutomations(await fetchAutomations());
+      const data = await fetchThreadCampaign(threadId);
+      setDetail(data.detail);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur');
+      setError(err instanceof Error ? err.message : 'Impossible de charger l’automatisation');
+      setDetail(null);
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  const showDetail = useCallback(async (id: number) => {
-    setLoading(true);
-    try {
-      setDetail(await fetchAutomationDetail(id));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Erreur');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+  }, [threadId]);
 
   useEffect(() => {
-    if (!detail) void loadAutomations();
-  }, [detail, loadAutomations]);
+    void load();
+  }, [load]);
 
-  const handleReloadMembers = async (id: number, onDone?: () => void) => {
+  const handleReloadMembers = async (id: number) => {
     if (!confirm('Recharger les membres du groupe ? WhatsApp doit être connecté.')) return;
     try {
       const data = await reloadAutomationMembers(id);
       alert(`${data.targetsAdded ?? 0} membre(s) ajouté(s).`);
-      if (onDone) await onDone();
-      else await loadAutomations();
+      await load();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Échec');
     }
@@ -461,27 +152,25 @@ export function AutomationPage() {
 
   const a = detail?.automation;
   const stats = a?.stats ?? {};
-  const targets = detail?.targets ?? [];
-  const logs = detail?.logs ?? [];
-  const metrics = outreachMetrics(stats as Record<string, number>);
+  const metrics = a ? outreachMetrics(stats as Record<string, number>) : null;
+  const handled = Number(stats.messagesHandled ?? 0);
+  const visualPlan = (a?.config as { visualPlan?: AutomationVisualPlan } | undefined)?.visualPlan;
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
       <div className="brand-radial">
         <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
-          {/* En-tête */}
           <div className="flex items-center justify-between gap-4">
             <div>
               <h1 className="font-serif text-2xl font-light text-text-100">Automatisation</h1>
               <p className="mt-1 text-sm text-text-400">
-                Retrouve ici les campagnes lancées depuis le chat, avec leur état et leurs
-                statistiques.
+                Campagne liée à ce chat — isolée des autres fils.
               </p>
             </div>
-            {!detail && (
+            {threadId != null && (
               <button
                 type="button"
-                onClick={loadAutomations}
+                onClick={() => void load()}
                 className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
               >
                 <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
@@ -492,169 +181,42 @@ export function AutomationPage() {
 
           {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
 
-          {/* ── CAMPAGNES ── */}
-          {!detail && automations.length > 0 && (
-            <div className="mt-6">
-              <OverviewStats automations={automations} />
-            </div>
-          )}
-          {!detail && (
-            <div className="mt-4 space-y-3">
-              {loading && automations.length === 0 ? (
-                <div className="space-y-3">
-                  <div className="panel h-28 animate-pulse" />
-                  <div className="panel h-28 animate-pulse" />
-                </div>
-              ) : automations.length === 0 ? (
-                <div className="panel flex flex-col items-center py-14 text-center">
-                  <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-muted text-brand">
-                    <Bot className="h-7 w-7" />
-                  </span>
-                  <h3 className="mt-4 font-serif text-lg font-light text-text-100">
-                    Aucune campagne pour l’instant
-                  </h3>
-                  <p className="mt-1 max-w-sm text-sm text-text-400">
-                    Demande à l’agent IA de lancer une campagne depuis le Chat. Elle apparaîtra ici
-                    automatiquement.
-                  </p>
-                </div>
-              ) : (
-                automations.map((auto) => {
-                  const m = outreachMetrics(auto.stats as Record<string, number>);
-                  const handled = (auto.stats?.messagesHandled as number) ?? 0;
-                  const totalT =
-                    m.waitingReply +
-                    m.pending +
-                    m.replied +
-                    m.interested +
-                    m.stopped +
-                    m.errors;
-                  const progress = pct(m.reached, totalT);
-
-                  return (
-                    <article
-                      key={auto.id}
-                      className="panel cursor-pointer p-4 transition hover:border-brand-border sm:p-5"
-                      onClick={() => void showDetail(auto.id)}
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <h3 className="font-medium text-text-100">{auto.name}</h3>
-                          <span className="text-xs text-brand">
-                            {TYPE_LABELS[auto.type] || auto.type}
-                          </span>
-                        </div>
-                        <StatusBadge status={auto.status} />
-                      </div>
-                      <p className="mt-2 line-clamp-2 text-sm text-text-400">{auto.summary || '—'}</p>
-
-                      <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-text-400 sm:gap-4">
-                        {isOutboundType(auto.type) ? (
-                          <>
-                            <span className="inline-flex items-center gap-1.5">
-                              <Users className="h-3.5 w-3.5 text-text-500" />
-                              {m.reached} atteint(s)
-                            </span>
-                            <span>{m.pending} restant(s)</span>
-                            <span className="inline-flex items-center gap-1.5">
-                              <MessageSquare className="h-3.5 w-3.5 text-text-500" />
-                              {m.answered} réponse(s)
-                              {m.rate != null && (
-                                <span className="text-text-500">· {m.rate}%</span>
-                              )}
-                            </span>
-                            {m.interested > 0 && (
-                              <span className="inline-flex items-center gap-1.5 text-emerald-600">
-                                {m.interested} intéressé(s)
-                              </span>
-                            )}
-                          </>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5">
-                            <MessageSquare className="h-3.5 w-3.5 text-text-500" />
-                            {handled} message(s) traité(s)
-                          </span>
-                        )}
-                      </div>
-
-                      {isOutboundType(auto.type) && totalT > 0 && (
-                        <div className="mt-3">
-                          <div className="flex justify-between text-[11px] text-text-500">
-                            <span>Progression</span>
-                            <span>{progress}%</span>
-                          </div>
-                          <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-black/[0.06]">
-                            <div
-                              className="h-full rounded-full bg-brand transition-all duration-500"
-                              style={{ width: `${progress}%` }}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      <div
-                        className="mt-4 flex flex-wrap gap-2"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <button
-                          type="button"
-                          onClick={() => void showDetail(auto.id)}
-                          className="inline-flex items-center gap-1.5 rounded-lg border border-brand/40 bg-brand/10 px-4 py-2 text-sm font-semibold text-brand shadow-sm transition hover:bg-brand/20"
-                        >
-                          <BarChart3 className="h-4 w-4" />
-                          Statistiques
-                        </button>
-                        {needsMemberReload(auto) && (
-                          <button
-                            type="button"
-                            onClick={() => void handleReloadMembers(auto.id)}
-                            className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-brand-dark"
-                          >
-                            <RefreshCw className="h-4 w-4" />
-                            Recharger membres
-                          </button>
-                        )}
-                        <StatusControls auto={auto} onChange={loadAutomations} size="md" />
-                      </div>
-                    </article>
-                  );
-                })
-              )}
+          {threadId == null && (
+            <div className="panel mt-6 flex flex-col items-center py-14 text-center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-muted text-brand">
+                <Bot className="h-7 w-7" />
+              </span>
+              <h3 className="mt-4 font-serif text-lg font-light text-text-100">Aucun fil sélectionné</h3>
+              <p className="mt-1 max-w-sm text-sm text-text-400">
+                Ouvre ou crée une automatisation dans la barre latérale pour voir son plan ici.
+              </p>
             </div>
           )}
 
-          {/* ── DÉTAIL / STATISTIQUES ── */}
-          {detail && a && (() => {
-            const counts = TARGET_ORDER.reduce<Record<string, number>>((acc, s) => {
-              acc[s] = targets.filter((t) => t.status === s).length;
-              return acc;
-            }, {});
-            const totalTargets = targets.length;
-            const handled = (stats.messagesHandled as number) ?? 0;
-            const conversions = (stats.conversions as number) ?? 0;
-            const convRate = pct(conversions, handled);
+          {threadId != null && loading && !a && (
+            <div className="mt-6 space-y-3">
+              <div className="panel h-28 animate-pulse" />
+              <div className="panel h-48 animate-pulse" />
+            </div>
+          )}
 
-            return (
+          {threadId != null && !loading && !a && !error && (
+            <div className="panel mt-6 flex flex-col items-center py-14 text-center">
+              <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-brand-muted text-brand">
+                <Bot className="h-7 w-7" />
+              </span>
+              <h3 className="mt-4 font-serif text-lg font-light text-text-100">
+                Pas encore de campagne
+              </h3>
+              <p className="mt-1 max-w-sm text-sm text-text-400">
+                Demande à l’agent de lancer une campagne dans ce chat. Le plan et les contrôles
+                apparaîtront ici.
+              </p>
+            </div>
+          )}
+
+          {a && metrics && (
             <div className="mt-6 space-y-5 sm:space-y-6">
-              <div className="flex items-center justify-between gap-3">
-                <button
-                  type="button"
-                  onClick={() => setDetail(null)}
-                  className="inline-flex items-center gap-1.5 text-sm text-brand hover:underline"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                  Retour
-                </button>
-                <button
-                  type="button"
-                  onClick={() => void showDetail(a.id)}
-                  className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
-                >
-                  <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-                  Actualiser
-                </button>
-              </div>
-
               <header className="panel flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
                 <div className="min-w-0">
                   <h2 className="text-lg font-medium text-text-100 sm:text-xl">{a.name}</h2>
@@ -670,73 +232,39 @@ export function AutomationPage() {
                 <StatusBadge status={a.status} />
               </header>
 
-              {(() => {
-                const visualPlan = (a.config as { visualPlan?: AutomationVisualPlan } | undefined)
-                  ?.visualPlan;
-                if (!visualPlan?.nodes?.length) return null;
-                return (
-                  <section className="space-y-2">
-                    <h3 className="text-sm font-semibold text-text-200">Plan de l’automatisation</h3>
-                    <PlanBoard plan={visualPlan} className="h-[420px] min-h-[320px]" />
-                  </section>
-                );
-              })()}
+              {visualPlan && visualPlan.nodes?.length > 0 && (
+                <section className="space-y-2">
+                  <h3 className="text-sm font-semibold text-text-200">Plan de l’automatisation</h3>
+                  <PlanBoard plan={visualPlan} className="h-[420px] min-h-[320px]" />
+                </section>
+              )}
 
-              <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <div className="flex flex-wrap gap-3 text-sm text-text-400">
                 {isOutboundType(a.type) ? (
                   <>
-                    <StatCard
-                      label="Atteints"
-                      value={metrics.reached}
-                      hint={totalTargets ? `sur ${totalTargets} cible(s)` : undefined}
-                      accent="#2057ce"
-                    />
-                    <StatCard
-                      label="Réponses"
-                      value={metrics.answered}
-                      hint={metrics.waitingReply ? `${metrics.waitingReply} sans réponse` : undefined}
-                      accent="#0ea5e9"
-                    />
-                    <StatCard
-                      label="Taux de réponse"
-                      value={metrics.rate != null ? `${metrics.rate}%` : '—'}
-                      hint="réponses ÷ atteints"
-                    />
-                    <StatCard
-                      label="Intéressés"
-                      value={metrics.interested}
-                      hint={
-                        metrics.interestRate != null
-                          ? `${metrics.interestRate}% des réponses`
-                          : undefined
-                      }
-                      accent="#10b981"
-                    />
+                    <span className="inline-flex items-center gap-1.5">
+                      <Users className="h-4 w-4 text-text-500" />
+                      {metrics.reached} atteint(s)
+                    </span>
+                    <span>{metrics.pending} restant(s)</span>
+                    <span className="inline-flex items-center gap-1.5">
+                      <MessageSquare className="h-4 w-4 text-text-500" />
+                      {metrics.answered} réponse(s)
+                      {metrics.rate != null && (
+                        <span className="text-text-500">· {metrics.rate}%</span>
+                      )}
+                    </span>
+                    {metrics.interested > 0 && (
+                      <span className="text-emerald-600">{metrics.interested} intéressé(s)</span>
+                    )}
                   </>
                 ) : (
-                  <>
-                    <StatCard label="Messages traités" value={handled} accent="#2057ce" />
-                    <StatCard label="Intéressés" value={metrics.interested} accent="#10b981" />
-                    <StatCard
-                      label="Conversions"
-                      value={conversions}
-                      hint={handled ? `${convRate}% de conversion` : undefined}
-                      accent="#0ea5e9"
-                    />
-                    <StatCard label="Budget" value={`${a.budget_fcfa || 0} FCFA`} />
-                  </>
+                  <span className="inline-flex items-center gap-1.5">
+                    <MessageSquare className="h-4 w-4 text-text-500" />
+                    {handled} message(s) traité(s)
+                  </span>
                 )}
               </div>
-
-              {isOutboundType(a.type) && totalTargets > 0 && (
-                <CampaignCharts
-                  counts={counts}
-                  totalTargets={totalTargets}
-                  reached={metrics.reached}
-                  answered={metrics.answered}
-                  interested={metrics.interested}
-                />
-              )}
 
               {typeof stats.report === 'string' && stats.report && (
                 <section className="panel p-5">
@@ -745,75 +273,21 @@ export function AutomationPage() {
                 </section>
               )}
 
-              {targets.length > 0 && (
-                <section className="panel p-5">
-                  <h3 className="text-sm font-semibold text-text-200">Cibles ({targets.length})</h3>
-                  <div className="mt-3 space-y-1.5">
-                    {targets.slice(0, 30).map((t) => {
-                      const meta = TARGET_META[t.status] ?? { label: t.status, color: '#94a3b8' };
-                      return (
-                        <div
-                          key={t.target_id}
-                          className="flex items-center justify-between rounded-lg bg-bg-0 px-3 py-2 text-sm"
-                        >
-                          <span className="truncate text-text-300">{t.target_label || t.target_id}</span>
-                          <span
-                            className="ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2 py-0.5 text-[11px] font-medium"
-                            style={{ background: `${meta.color}1f`, color: meta.color }}
-                          >
-                            <span className="h-1.5 w-1.5 rounded-full" style={{ background: meta.color }} />
-                            {meta.label}
-                          </span>
-                        </div>
-                      );
-                    })}
-                    {targets.length > 30 && (
-                      <p className="text-xs text-text-500">… et {targets.length - 30} autre(s)</p>
-                    )}
-                  </div>
-                </section>
-              )}
-
-              <section className="panel p-5">
-                <h3 className="text-sm font-semibold text-text-200">Journal récent</h3>
-                <div className="mt-3 space-y-1.5">
-                  {logs.length === 0 ? (
-                    <p className="text-sm text-text-500">Aucun événement.</p>
-                  ) : (
-                    logs.map((l, i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          'rounded-lg px-3 py-2 text-sm',
-                          l.level === 'error'
-                            ? 'bg-red-500/10 text-red-300'
-                            : 'bg-bg-0 text-text-300',
-                        )}
-                      >
-                        <span className="mr-2 text-xs text-text-500">{fmtTime(l.created_at)}</span>
-                        {l.message}
-                      </div>
-                    ))
-                  )}
-                </div>
-              </section>
-
               <div className="flex flex-wrap gap-2">
                 {needsMemberReload(a) && (
                   <button
                     type="button"
-                    onClick={() => void handleReloadMembers(a.id, () => showDetail(a.id))}
+                    onClick={() => void handleReloadMembers(a.id)}
                     className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-sm text-white hover:bg-brand-dark"
                   >
                     <RefreshCw className="h-4 w-4" />
                     Recharger les membres
                   </button>
                 )}
-                <StatusControls auto={a} onChange={() => showDetail(a.id)} size="md" />
+                <StatusControls auto={a} onChange={load} />
               </div>
             </div>
-            );
-          })()}
+          )}
         </div>
       </div>
     </div>

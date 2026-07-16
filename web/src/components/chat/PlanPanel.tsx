@@ -1,16 +1,33 @@
-import { useCallback } from 'react';
-import { Copy, Download, X } from 'lucide-react';
+import { useCallback, useState } from 'react';
+import { Copy, Download, Maximize2, Minimize2, X } from 'lucide-react';
 import { PlanBoard } from '@/components/chat/PlanBoard';
 import type { AutomationVisualPlan } from '@/lib/automation-plan';
 import { planToDownloadJson } from '@/lib/automation-plan';
-import { planToExcalidrawFile, planToExcalidrawSkeleton } from '@/lib/excalidraw-plan';
+import {
+  EXCALI_FONT,
+  planDownloadBasename,
+  planToExcalidrawSkeleton,
+  planToStandaloneHtml,
+} from '@/lib/excalidraw-plan';
+import { cn } from '@/lib/utils';
 
 type PlanPanelProps = {
   plan: AutomationVisualPlan;
   onClose: () => void;
 };
 
+function triggerDownload(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function PlanPanel({ plan, onClose }: PlanPanelProps) {
+  const [expanded, setExpanded] = useState(false);
+
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(planToDownloadJson(plan));
@@ -20,36 +37,49 @@ export function PlanPanel({ plan, onClose }: PlanPanelProps) {
   }, [plan]);
 
   const handleDownload = useCallback(async () => {
+    const base = planDownloadBasename(plan);
     try {
-      const { convertToExcalidrawElements } = await import('@excalidraw/excalidraw');
+      const { convertToExcalidrawElements, exportToSvg } = await import('@excalidraw/excalidraw');
       const skeleton = planToExcalidrawSkeleton(plan);
       const elements = convertToExcalidrawElements(
         skeleton as Parameters<typeof convertToExcalidrawElements>[0],
         { regenerateIds: false },
       );
-      const body = planToExcalidrawFile(plan, elements);
-      const blob = new Blob([body], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${(plan.title || 'plan-automatisation').replace(/[^\w\-]+/g, '_')}.excalidraw`;
-      a.click();
-      URL.revokeObjectURL(url);
+      const svg = await exportToSvg({
+        elements,
+        appState: {
+          exportBackground: true,
+          viewBackgroundColor: '#ffffff',
+          exportWithDarkMode: false,
+          currentItemFontFamily: EXCALI_FONT.Nunito,
+        },
+        files: null,
+      });
+      const html = planToStandaloneHtml(plan, svg.outerHTML);
+      triggerDownload(new Blob([html], { type: 'text/html;charset=utf-8' }), `${base}.html`);
     } catch {
-      const blob = new Blob([planToDownloadJson(plan)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${(plan.title || 'plan-automatisation').replace(/[^\w\-]+/g, '_')}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      triggerDownload(
+        new Blob([planToDownloadJson(plan)], { type: 'application/json' }),
+        `${base}.json`,
+      );
     }
   }, [plan]);
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-black/40" onClick={onClose}>
+    <div
+      className={cn(
+        'fixed inset-0 z-50 bg-black/40',
+        expanded ? 'flex items-center justify-center p-3 sm:p-5' : 'flex justify-end',
+      )}
+      onClick={onClose}
+    >
       <aside
-        className="flex h-full w-full max-w-2xl flex-col border-l border-black/[0.08] bg-bg-0 shadow-2xl"
+        className={cn(
+          'flex flex-col border border-black/[0.08] bg-bg-0 shadow-2xl',
+          expanded
+            ? 'h-full w-full max-w-6xl rounded-2xl'
+            : 'h-full w-full max-w-2xl rounded-none border-y-0 border-r-0',
+        )}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex shrink-0 items-center gap-2 border-b border-black/[0.06] px-4 py-3">
@@ -57,6 +87,15 @@ export function PlanPanel({ plan, onClose }: PlanPanelProps) {
             <p className="truncate text-sm font-semibold text-text-100">{plan.title}</p>
             <p className="text-[11px] text-text-500">Plan d’automatisation</p>
           </div>
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 hover:bg-bg-200 hover:text-text-100"
+            title={expanded ? 'Réduire' : 'Agrandir'}
+          >
+            {expanded ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+            <span className="hidden sm:inline">{expanded ? 'Réduire' : 'Agrandir'}</span>
+          </button>
           <button
             type="button"
             onClick={() => void handleCopy()}
@@ -70,7 +109,7 @@ export function PlanPanel({ plan, onClose }: PlanPanelProps) {
             type="button"
             onClick={() => void handleDownload()}
             className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 hover:bg-bg-200 hover:text-text-100"
-            title="Télécharger .excalidraw"
+            title="Télécharger en HTML (ouvrable dans le navigateur)"
           >
             <Download className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Télécharger</span>
@@ -85,9 +124,14 @@ export function PlanPanel({ plan, onClose }: PlanPanelProps) {
           </button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-3 p-4">
-          <PlanBoard plan={plan} className="min-h-0 flex-1" />
+          <PlanBoard
+            key={expanded ? 'expanded' : 'docked'}
+            plan={plan}
+            className="min-h-0 flex-1"
+          />
           <p className="shrink-0 text-xs text-text-500">
             Ce plan se met à jour quand tu modifies la campagne avec l’agent dans ce même fil.
+            Télécharge en HTML pour l’ouvrir directement dans un navigateur.
           </p>
         </div>
       </aside>
