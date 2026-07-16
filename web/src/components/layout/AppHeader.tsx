@@ -29,6 +29,7 @@ export function AppHeader({
   onToggleStrategy,
   onOpenMobileNav,
 }: AppHeaderProps) {
+  // ... keep existing, just update button labels below
   const onChat = overlayView == null;
   const title = onChat ? threadTitle || 'Automatisation' : getOverlayTitle(overlayView);
 
@@ -59,11 +60,11 @@ export function AppHeader({
             type="button"
             onClick={onToggleStrategy}
             className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
-            title={strategyOpen ? 'Masquer la stratégie' : 'Afficher la stratégie'}
+            title={strategyOpen ? 'Masquer la simulation' : 'Afficher la simulation'}
             aria-pressed={strategyOpen}
           >
             <Eye className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{strategyOpen ? 'Masquer' : 'Stratégie'}</span>
+            <span className="hidden sm:inline">{strategyOpen ? 'Masquer' : 'Simulation'}</span>
           </button>
         )}
 

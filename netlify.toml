@@ -14,6 +14,19 @@
   VITE_API_URL = "https://klanvio-api.srv1820011.hstgr.cloud"
   VITE_GOOGLE_CLIENT_ID = "505015578658-o30f55iuphed69go2klr2lnn1n3esj31.apps.googleusercontent.com"
 
+# Canonical : sous-domaine Netlify → domaine custom
+[[redirects]]
+  from = "https://klanvio1.netlify.app/*"
+  to = "https://www.klanvio.com/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "https://klanvio.netlify.app/*"
+  to = "https://www.klanvio.com/:splat"
+  status = 301
+  force = true
+
 [[redirects]]
   from = "/api/*"
   to = ":KLANVIO_API_URL/api/:splat"

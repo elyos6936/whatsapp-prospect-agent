@@ -340,7 +340,7 @@ export default function AuthenticatedApp() {
         )}
       </div>
 
-      {/* Droite : stratégie permanente (masquable) */}
+      {/* Droite : simulation conversation (masquable) */}
       {showStrategyDock && strategyPlan && (
         <>
           {/* Desktop : colonne fixe à droite */}
@@ -352,7 +352,7 @@ export default function AuthenticatedApp() {
             <button
               type="button"
               className="absolute inset-0 bg-black/35"
-              aria-label="Fermer la stratégie"
+              aria-label="Fermer la simulation"
               onClick={toggleStrategy}
             />
             <div className="relative z-10 flex h-full w-[min(92vw,380px)] shadow-2xl">

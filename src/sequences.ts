@@ -12,6 +12,7 @@ import {
   type ContactSequence,
   type SequenceStep,
 } from "./db.js";
+import { isAwaitingProspectReply } from "./outbound-safety.js";
 import { listActiveUserIds } from "./users.js";
 
 function defaultNurtureSteps(guide?: string): SequenceStep[] {
@@ -70,6 +71,12 @@ async function processDueSequencesForUser(userId: number): Promise<number> {
 
     if (await isContactBlocked(userId, seq.contact_phone)) {
       await cancelSequencesForContact(userId, seq.contact_phone);
+      continue;
+    }
+
+    // Jamais de relance si le dernier message est déjà un sortant (attente réponse)
+    if (await isAwaitingProspectReply(userId, seq.contact_phone)) {
+      await postponeSequence(userId, seq.id, 1);
       continue;
     }
 

@@ -2009,6 +2009,39 @@ export async function getNextPendingTarget(userId: number, automationId: number)
   return rows[0] ? mapAutomationTarget(rows[0]) : null;
 }
 
+/**
+ * Claim atomique : pending → queued pour éviter 2 openers sur le même prospect
+ * (race entre ticks moteur 15s).
+ */
+export async function claimNextPendingTarget(
+  userId: number,
+  automationId: number
+): Promise<AutomationTarget | null> {
+  // Débloque les claims abandonnés (crash entre claim et envoi)
+  await sql`
+    UPDATE automation_targets
+    SET status = 'pending'
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND status = 'queued'
+      AND last_action_at < NOW() - INTERVAL '3 minutes'
+  `;
+  const rows = await sql<Record<string, unknown>[]>`
+    UPDATE automation_targets
+    SET status = 'queued', last_action_at = NOW()
+    WHERE id = (
+      SELECT id FROM automation_targets
+      WHERE user_id = ${userId}
+        AND automation_id = ${automationId}
+        AND status = 'pending'
+      ORDER BY id ASC
+      LIMIT 1
+    )
+    RETURNING id, automation_id, target_id, target_label, status, last_action_at, notes, ab_variant, created_at
+  `;
+  return rows[0] ? mapAutomationTarget(rows[0]) : null;
+}
+
 export async function addAutomationLog(
   userId: number,
   automationId: number,
@@ -2286,6 +2319,24 @@ function mapQueueItem(row: Record<string, unknown>): QueueItem {
   };
 }
 
+export async function cancelPendingSendQueueForRecipient(
+  userId: number,
+  recipient: string
+): Promise<number> {
+  const digits = recipient.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
+  const result = await sql`
+    UPDATE send_queue
+    SET status = 'cancelled', error = 'Doublon / remplacé'
+    WHERE user_id = ${userId}
+      AND status = 'pending'
+      AND (
+        recipient = ${recipient}
+        OR (${digits} != '' AND replace(replace(recipient, '@c.us', ''), '@lid', '') = ${digits})
+      )
+  `;
+  return Number(result.count);
+}
+
 export async function enqueueSend(userId: number, input: {
   recipient: string;
   recipientLabel?: string;
@@ -2298,6 +2349,10 @@ export async function enqueueSend(userId: number, input: {
   sequenceId?: number;
   abVariant?: string;
 }): Promise<QueueItem> {
+  // Anti-doublon : une seule ligne pending par destinataire (sauf urgence manuelle).
+  if ((input.priority ?? 5) < 10) {
+    await cancelPendingSendQueueForRecipient(userId, input.recipient);
+  }
   const sendAt = input.sendAt ?? formatLocalDateTime(new Date());
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO send_queue (
@@ -2410,7 +2465,14 @@ export async function createContactSequence(userId: number, input: {
   automationId?: number;
 }): Promise<ContactSequence> {
   const phone = normalizeContactPhone(input.contactPhone);
-  const firstDelay = input.steps[0]?.delayDays ?? 0;
+  // Une seule séquence active par contact
+  await cancelSequencesForContact(userId, phone);
+  // Jamais de relance le jour même (delayDays 0 = spam)
+  const safeSteps = input.steps.map((s) => ({
+    ...s,
+    delayDays: Math.max(1, Number(s.delayDays) || 1),
+  }));
+  const firstDelay = safeSteps[0]?.delayDays ?? 1;
   const sendHour = await getRelanceHourForAutomation(userId, input.automationId);
   const nextAt = computeSequenceNextAt(firstDelay, sendHour);
   const rows = await sql<Record<string, unknown>[]>`
@@ -2420,7 +2482,7 @@ export async function createContactSequence(userId: number, input: {
       ${phone},
       ${input.automationId ?? null},
       ${input.name},
-      ${JSON.stringify(input.steps)},
+      ${JSON.stringify(safeSteps)},
       ${toTsParam(formatLocalDateTime(nextAt))}
     )
     RETURNING *

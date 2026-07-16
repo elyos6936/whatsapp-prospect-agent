@@ -4,7 +4,7 @@ import {
   canSendOutbound,
   enqueueSend,
   getAutomation,
-  getNextPendingTarget,
+  claimNextPendingTarget,
   listActiveAutomations,
   listAutomationTargets,
   saveContact,
@@ -32,7 +32,6 @@ import {
   requireEvolutionConnected,
 } from "./evolutionapi.js";
 import { generatePersonalizedOpener } from "./prospect-personalizer.js";
-import { startSequenceForContact } from "./sequences.js";
 import { listActiveUserIds, getUserById } from "./users.js";
 import { getActiveCampaignTargetIds } from "./campaign-gating.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
@@ -87,7 +86,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     }
   }
 
-  const target = await getNextPendingTarget(userId, auto.id);
+  const target = await claimNextPendingTarget(userId, auto.id);
   if (!target) {
     const targets = await listAutomationTargets(userId, auto.id, { limit: 1 });
     if (targets.length === 0) {
@@ -183,7 +182,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       abVariant: ab.variantId,
     });
 
-    // Campagne active = auto-reply OBLIGATOIRE
+    // Campagne active = auto-reply OBLIGATOIRE (réponses UNIQUEMENT si le prospect écrit)
     await setContactAutoReply(userId, target.target_id, true);
     await saveContact(userId, {
       phone: target.target_id,
@@ -192,43 +191,9 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       autoReply: true,
     });
 
-    if (auto.config.sequenceSteps?.length || auto.config.relance?.enabled) {
-      const relance = auto.config.relance;
-      const steps =
-        relance?.enabled && relance.delaysDays?.length
-          ? relance.delaysDays.map((delayDays, i) => ({
-              delayDays,
-              message:
-                relance.messages?.[i] ??
-                auto.config.followUpInstructions ??
-                "Bonjour, je me permets de revenir vers vous 🙂",
-              condition: "no_reply" as const,
-            }))
-          : (auto.config.sequenceSteps as import("./db.js").SequenceStep[]);
-      if (steps?.length) {
-        await startSequenceForContact(userId, {
-          contactPhone: target.target_id,
-          name: `Séquence — ${auto.name}`,
-          steps,
-          automationId: auto.id,
-        });
-      }
-    } else if (auto.type === "group_prospect" || auto.type === "contact_prospect") {
-      // Filet de sécurité : relances défaut si oubliées à la config
-      const { defaultRelanceConfig } = await import("./anti-ban.js");
-      const relance = defaultRelanceConfig();
-      const steps = relance.delaysDays.map((delayDays, i) => ({
-        delayDays,
-        message: relance.messages[i] ?? relance.messages[0],
-        condition: "no_reply" as const,
-      }));
-      await startSequenceForContact(userId, {
-        contactPhone: target.target_id,
-        name: `Séquence — ${auto.name}`,
-        steps,
-        automationId: auto.id,
-      });
-    }
+    // PAS de séquence / relance auto au moment de l'opener.
+    // Règle produit : 1 seul premier message → attendre la réponse → auto-reply.
+    // Les relances froid (sans réponse) causaient des rafales de messages.
 
     await updateAutomationTarget(userId, auto.id, target.target_id, { status: "contacted" });
     await updateAutomationTargetAb(userId, auto.id, target.target_id, ab.variantId);

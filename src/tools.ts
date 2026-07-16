@@ -1810,13 +1810,13 @@ function buildAutomationConfigFromArgs(
         }))
       : undefined,
     sequenceSteps: Array.isArray(args.sequence_steps)
-      ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>).map(
-          (s) => ({
-            delayDays: Number(s.delayDays ?? 1),
+      ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>)
+          .map((s) => ({
+            delayDays: Math.max(1, Number(s.delayDays ?? 1) || 1),
             message: String(s.message ?? ""),
             condition: (s.condition as "no_reply" | "always") || "no_reply",
-          })
-        )
+          }))
+          .filter((s) => s.message.trim().length > 0)
       : undefined,
     mediaUrl: args.media_url ? String(args.media_url) : undefined,
     mediaType: args.media_type ? (String(args.media_type) as "image" | "document" | "audio") : undefined,
@@ -2512,6 +2512,14 @@ export async function executeTool(
           if (existing?.status === "stop") {
             return JSON.stringify({
               error: `Ce contact est en STOP. Aucun message ne sera envoyé. Demandez à l'utilisateur de le débloquer si vraiment nécessaire.`,
+            });
+          }
+          const { isAwaitingProspectReply } = await import("./outbound-safety.js");
+          if (await isAwaitingProspectReply(userId, chatId)) {
+            return JSON.stringify({
+              error:
+                "Un message a déjà été envoyé à ce prospect et il n'a pas encore répondu. " +
+                "Interdit d'envoyer un second message tant qu'il n'a pas écrit. Attendez sa réponse (auto-reply).",
             });
           }
         }

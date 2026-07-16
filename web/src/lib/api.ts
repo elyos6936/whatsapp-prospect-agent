@@ -459,4 +459,22 @@ export async function saveOnboarding(input: {
   });
 }
 
+export async function postSimulationPreview(input: {
+  opener: string;
+  history: Array<{ role: 'you' | 'prospect'; text: string }>;
+  prospectMessage: string;
+  guide?: string;
+  offer?: string;
+}): Promise<{
+  reply: string;
+  history: Array<{ role: 'you' | 'prospect'; text: string }>;
+  done: boolean;
+  feedbackPrompt: string | null;
+}> {
+  return request('/api/simulation/preview', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
 export { ApiError };

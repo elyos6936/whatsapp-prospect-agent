@@ -3,7 +3,7 @@
 Architecture :
 
 ```
-https://klanvio.netlify.app          →  frontend (Netlify)
+https://www.klanvio.com             →  frontend (Netlify, domaine custom)
 https://klanvio-api.srv1820011.hstgr.cloud  →  API Node (Hostinger VPS)
 Supabase omquaouhfifynvrpqilv        →  PostgreSQL
 Evolution API (même VPS)             →  WhatsApp
@@ -17,7 +17,7 @@ Evolution API (même VPS)             →  WhatsApp
 |-------|--------|
 | Schéma Supabase (`npx supabase db push`) | ✅ Fait |
 | Code migré vers PostgreSQL (`src/pg.ts`) | ✅ Fait |
-| Frontend Netlify `klanvio.netlify.app` | ✅ Déployé |
+| Frontend Netlify `www.klanvio.com` | ✅ Déployé |
 | Données SQLite → Supabase | ⏳ À faire (besoin `DATABASE_URL`) |
 | Backend API sur Hostinger | ⏳ À faire (SSH requis) |
 | HTTPS API + Nginx | ⏳ À faire sur le VPS |
@@ -105,7 +105,7 @@ SUPABASE_URL=https://omquaouhfifynvrpqilv.supabase.co
 EVOLUTION_API_BASE_URL=https://evolution-api-kxse.srv1820011.hstgr.cloud
 EVOLUTION_API_KEY=RvYzeDK63Gl3fBKJ7bVovn5kJbp8AMpO
 EVOLUTION_INSTANCE_NAME=automax-prospection
-CORS_ORIGINS=https://klanvio.netlify.app
+CORS_ORIGINS=https://www.klanvio.com,https://klanvio.com
 PUBLIC_API_URL=https://klanvio-api.srv1820011.hstgr.cloud
 EOF
 ```
@@ -150,22 +150,45 @@ https://klanvio-api.srv1820011.hstgr.cloud/api/evolution/webhook
 
 ---
 
-## ÉTAPE 3 — Netlify (frontend)
+## ÉTAPE 3 — Netlify (frontend) — déploiement AUTOMATIQUE
 
-Déjà en place : **https://klanvio.netlify.app**
+Site prod : **https://www.klanvio.com** (projet Netlify `klanvio1`).
 
-### Variable d’environnement Netlify (pour les prochains builds)
+### Comportement voulu
+
+| Service | Déploiement |
+|---------|-------------|
+| **Netlify** (interface) | **Automatique** à chaque `git push` sur `master` |
+| **Hostinger** (API) | **Manuel** via terminal VPS (`git pull` + Docker) |
+
+### Activer / réparer l’auto-deploy (une fois)
+
+1. [app.netlify.com](https://app.netlify.com) → site **klanvio1**
+2. **Project configuration** → **Build & deploy** → **Continuous Deployment**
+3. Repo lié : `elyos6936/whatsapp-prospect-agent`
+4. **Production branch** = `master`
+5. Si le lien Git est cassé : **Link repository** (ou unlink puis relink)
+6. Sur la page **Deploys** : s’il y a un cadenas / « Stopped auto publishing » → **Start auto publishing**
+7. Builds : **Active** (pas « Stop builds »)
+
+Après ça, chaque push sur `master` lance un build → Published sur www.klanvio.com.
+
+Le fichier `netlify.toml` à la racine du repo pilote déjà le build (`base = web`, publish `dist`).
+
+### Ne plus utiliser (manuel obsolète)
 
 ```powershell
-cd C:\Projets\whatsapp-prospect-agent
-npx netlify env:set KLANVIO_API_URL "https://klanvio-api.srv1820011.hstgr.cloud" --context production
+# Ancien script (dossier public/) — NE PAS utiliser pour l’UI React
+npm run deploy:netlify
 ```
 
-### Redéployer le frontend
+### Redéploiement API Hostinger (manuel)
 
-```powershell
-$env:KLANVIO_API_URL="https://klanvio-api.srv1820011.hstgr.cloud"
-npm run deploy:netlify
+```bash
+cd /docker/klanvio
+git pull origin master
+docker compose build --no-cache klanvio-api
+docker compose up -d klanvio-api
 ```
 
 ---
@@ -174,14 +197,25 @@ npm run deploy:netlify
 
 | Test | URL / commande |
 |------|----------------|
-| Frontend | https://klanvio.netlify.app |
-| Config API | https://klanvio.netlify.app/config.js → doit contenir `klanvio-api.srv1820011.hstgr.cloud` |
+| Frontend | https://www.klanvio.com |
 | API health | https://klanvio-api.srv1820011.hstgr.cloud/api/health |
-| Connexions | Ouvrir Klanvio → Connexions → OpenAI + Evolution → QR WhatsApp |
+| Connexions | Klanvio → Paramètres → WhatsApp QR |
 
 ---
 
 ## Dépannage
+
+### Netlify : deploy failed (secrets scan AIza)
+
+Faux positif Excalidraw. Déjà géré dans `netlify.toml` :
+`SECRETS_SCAN_SMART_DETECTION_OMIT_VALUES` + `SECRETS_SCAN_OMIT_PATHS`.
+
+### Netlify : push GitHub sans nouveau deploy
+
+- Production branch ≠ `master`
+- Auto publishing arrêté
+- Webhook GitHub manquant → relier le repo dans Netlify
+- Message de commit contenant `[skip ci]` / `[skip netlify]`
 
 ### `npx supabase db query` → erreur 403
 
@@ -193,7 +227,7 @@ Le backend ou certbot n’est pas encore configuré. Finissez l’étape 2.3.
 
 ### CORS depuis Netlify
 
-Vérifiez `CORS_ORIGINS=https://klanvio.netlify.app` dans le `.env` du VPS.
+Vérifiez `CORS_ORIGINS` dans le `.env` du VPS (doit inclure `https://www.klanvio.com`).
 
 ### Pas de SSH sur Windows
 

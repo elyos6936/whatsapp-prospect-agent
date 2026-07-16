@@ -61,16 +61,18 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // bodyLimit relevé pour accepter les uploads base64 (fichiers du chat, audio de dictée vocale).
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
-const corsOrigins = (process.env.CORS_ORIGINS || "https://klanvio.netlify.app,https://klanvio1.netlify.app,http://localhost:3000,http://localhost:5174,http://localhost:8888")
+const corsOrigins = (process.env.CORS_ORIGINS || "https://www.klanvio.com,https://klanvio.com,http://localhost:3000,http://localhost:5174,http://localhost:8888")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
 
 function isAllowedCorsOrigin(origin: string): boolean {
   if (corsOrigins.includes("*") || corsOrigins.includes(origin)) return true;
-  // Tout site Netlify (prod, alias, previews) — l'API est multi-tenant côté auth.
   try {
     const host = new URL(origin).hostname;
+    // Domaine principal Klanvio
+    if (host === "klanvio.com" || host.endsWith(".klanvio.com")) return true;
+    // Anciens sous-domaines Netlify (redirection / transition)
     return host === "netlify.app" || host.endsWith(".netlify.app");
   } catch {
     return false;
@@ -507,6 +509,39 @@ app.delete("/api/history", async (request, reply) => {
   }
   await clearAgentConversation(userId, threadId);
   return { ok: true };
+});
+
+app.post<{
+  Body: {
+    opener?: string;
+    history?: Array<{ role?: string; text?: string }>;
+    prospectMessage?: string;
+    guide?: string;
+    offer?: string;
+  };
+}>("/api/simulation/preview", async (request, reply) => {
+  const userId = requireUserId(request);
+  const body = request.body ?? {};
+  try {
+    const { replyInSimulationPreview } = await import("./simulation-preview.js");
+    const history = Array.isArray(body.history)
+      ? body.history
+          .filter((t) => t && (t.role === "you" || t.role === "prospect") && t.text)
+          .map((t) => ({ role: t.role as "you" | "prospect", text: String(t.text) }))
+      : [];
+    const result = await replyInSimulationPreview(userId, {
+      opener: String(body.opener ?? ""),
+      history,
+      prospectMessage: String(body.prospectMessage ?? ""),
+      guide: body.guide ? String(body.guide) : undefined,
+      offer: body.offer ? String(body.offer) : undefined,
+    });
+    return result;
+  } catch (err) {
+    return reply.status(400).send({
+      error: err instanceof Error ? err.message : "Simulation impossible.",
+    });
+  }
 });
 
 app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async (request, reply) => {

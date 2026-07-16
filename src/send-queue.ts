@@ -12,6 +12,7 @@ import {
   type QueueItem,
 } from "./db.js";
 import { chatIdToDisplay, sendWhatsAppMedia, sendWhatsAppMessage } from "./evolutionapi.js";
+import { shouldBlockOutboundWhileAwaitingReply } from "./outbound-safety.js";
 import { listActiveUserIds } from "./users.js";
 
 const DEFAULT_QUIET_START = 22;
@@ -96,6 +97,24 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       continue;
     }
     if ((await countOutboundToday(userId)) >= (await getEffectiveOutboundLimit(userId))) break;
+
+    // Sécurité critique : jamais 2 sortants d'affilée sans réponse prospect
+    const gate = await shouldBlockOutboundWhileAwaitingReply(userId, item);
+    if (gate.block) {
+      await markQueueFailed(userId, item.id, gate.reason || "En attente de réponse");
+      console.warn(
+        `🛑 Queue #${item.id} bloquée (${chatIdToDisplay(item.recipient)}): ${gate.reason}`
+      );
+      if (item.automation_id) {
+        await addAutomationLog(
+          userId,
+          item.automation_id,
+          "warning",
+          `Envoi bloqué pour ${item.recipient_label || chatIdToDisplay(item.recipient)} — un message est déjà parti, on attend la réponse.`
+        );
+      }
+      continue;
+    }
 
     try {
       if (item.media_url && item.media_type) {

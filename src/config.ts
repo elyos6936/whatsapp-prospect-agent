@@ -35,6 +35,26 @@ function resolveLlmApiKey(): string {
   return openai || deepseek;
 }
 
+function resolveLlmModel(): string {
+  const provider = (process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek") as
+    | "deepseek"
+    | "openai";
+  const raw = process.env.LLM_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "";
+  if (provider === "openai") {
+    return raw || "gpt-4o";
+  }
+  // DeepSeek : Pro + thinking uniquement — jamais Flash
+  if (!raw || /flash/i.test(raw)) {
+    if (/flash/i.test(raw)) {
+      console.warn(
+        `⚠️ LLM_MODEL="${raw}" (Flash) ignoré → deepseek-v4-pro (Thinking ON).`
+      );
+    }
+    return "deepseek-v4-pro";
+  }
+  return raw;
+}
+
 export const config = {
   port,
   timezone: appTimezone,
@@ -52,11 +72,8 @@ export const config = {
       ? "https://api.openai.com/v1"
       : "https://api.deepseek.com")
   ).replace(/\/$/, ""),
-  /** Modèle chat + tool calling. Défaut DeepSeek V4 Pro (qualité / tools / thinking). */
-  openaiModel:
-    process.env.LLM_MODEL?.trim() ||
-    process.env.OPENAI_MODEL?.trim() ||
-    (process.env.LLM_PROVIDER?.trim().toLowerCase() === "openai" ? "gpt-4o" : "deepseek-v4-pro"),
+  /** Modèle chat + tool calling. Toujours DeepSeek V4 Pro (jamais Flash). */
+  openaiModel: resolveLlmModel(),
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
   defaultEvolutionBaseUrl: "http://localhost:8080",
   envOpenAiKey: resolveLlmApiKey(),
