@@ -4,8 +4,8 @@ import { SYSTEM_PROMPT } from "./persona.js";
 import { getAppSettings, getAgentThread, getAutomation, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
 import { testEvolutionConnection } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
-import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens } from "./llm.js";
+import { callOpenAiWithRetry } from "./openai-retry.js";
+import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -13,12 +13,11 @@ import {
   wantsCampaignSimulation,
 } from "./campaign-briefing.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
+import { userFacingError } from "./user-facing.js";
 
 const MAX_TOOL_ROUNDS = 8;
-// Historique injecté à chaque tour : assez pour le contexte, pas trop pour
-// limiter la consommation de tokens (et donc les 429 de limite de vitesse).
 const CHAT_HISTORY_LIMIT = 30;
-const CHAT_MAX_TOKENS = 1024;
+const CHAT_MAX_TOKENS = 1400;
 
 /**
  * Détecte une réponse « amorce vide » : le modèle annonce un contenu
@@ -298,12 +297,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
-      throw new Error(describeOpenAiError(err));
+      throw new Error(userFacingError(err));
     }
 
     const choice = response.choices[0];
     if (!choice?.message) {
-      throw new Error(`Réponse ${llmProviderLabel()} vide.`);
+      throw new Error("Je n'ai pas reçu de réponse. Réessayez dans un instant.");
     }
 
     const assistantMsg = choice.message;
@@ -389,8 +388,29 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           result = await executeTool(userId, threadId, toolCall.function.name, args);
         } catch (err) {
           result = JSON.stringify({
-            error: err instanceof Error ? err.message : String(err),
+            error: userFacingError(err),
           });
+        }
+
+        // Listes contacts / groupes : affichage vertical structuré immédiat
+        if (
+          toolCall.function.name === "get_group_members" ||
+          toolCall.function.name === "list_whatsapp_groups" ||
+          toolCall.function.name === "list_personal_contacts" ||
+          toolCall.function.name === "list_contacts" ||
+          toolCall.function.name === "list_prospected_contacts"
+        ) {
+          try {
+            const parsed = JSON.parse(result) as { success?: boolean; display?: string; error?: string };
+            if (parsed.display?.trim()) {
+              return parsed.display.trim();
+            }
+            if (parsed.error) {
+              return userFacingError(parsed.error);
+            }
+          } catch {
+            /* fall through */
+          }
         }
 
         // Si l'outil a déjà formaté le fil de simulation / le plan, on l'affiche tel quel
@@ -449,7 +469,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       continue;
     }
 
-    const text = assistantMsg.content?.trim();
+    const text = extractAssistantContent(assistantMsg);
     if (!text) {
       if (forceSim && !forcedSimUsed && rounds < MAX_TOOL_ROUNDS) {
         messages.push({

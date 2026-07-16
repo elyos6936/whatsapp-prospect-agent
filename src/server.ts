@@ -584,8 +584,8 @@ app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async 
       const assistantReply = await chatWithAgent(userId, message, threadId);
       await saveAgentMessage(userId, threadId, "assistant", assistantReply);
     } catch (err) {
-      const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
-      await saveAgentMessage(userId, threadId, "assistant", `❌ ${errorText}`);
+      const { userFacingError } = await import("./user-facing.js");
+      await saveAgentMessage(userId, threadId, "assistant", userFacingError(err));
     } finally {
       jobs.delete(jobKey);
     }

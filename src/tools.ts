@@ -119,6 +119,12 @@ import {
   type AutomationVisualPlan,
 } from "./automation-plan.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
+import {
+  formatVerticalContactList,
+  formatVerticalGroupList,
+  formatVerticalMemberList,
+  userFacingError,
+} from "./user-facing.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -1909,15 +1915,17 @@ export async function executeTool(
 
     case "list_whatsapp_groups": {
       const groups = await listWhatsAppGroups(userId);
+      const mapped = groups.map((g) => ({
+        id: g.id,
+        name: g.name,
+        type: "groupe",
+      }));
       return JSON.stringify({
-        count: groups.length,
-        groups: groups.map((g) => ({
-          id: g.id,
-          name: g.name,
-          type: "groupe",
-        })),
-        hint: groups.length
-          ? "Utilisez name pour identifier le groupe et id (@g.us) pour envoyer un message."
+        count: mapped.length,
+        groups: mapped,
+        display: formatVerticalGroupList(mapped),
+        hint: mapped.length
+          ? "Présente display tel quel (liste verticale). Utilisez name pour identifier le groupe."
           : "Aucun groupe trouvé — vérifiez que WhatsApp est connecté.",
       });
     }
@@ -2009,19 +2017,27 @@ export async function executeTool(
     }
 
     case "get_group_members": {
-      const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
-      const data = await getGroupMembers(userId, groupId);
-      return JSON.stringify({
-        groupId: data.groupId,
-        name: data.subject,
-        size: data.size,
-        members: data.participants.map((p) => ({
+      try {
+        const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
+        const data = await getGroupMembers(userId, groupId);
+        const members = data.participants.map((p) => ({
           id: p.id,
           display: chatIdToDisplay(p.id),
           name: p.name ?? null,
           isAdmin: p.isAdmin ?? false,
-        })),
-      });
+        }));
+        const groupName = data.subject || String(args.group_id ?? "groupe");
+        return JSON.stringify({
+          groupId: data.groupId,
+          name: groupName,
+          size: data.size,
+          members,
+          display: formatVerticalMemberList(groupName, members),
+          hint: "Présente le champ display tel quel à l'utilisateur (liste verticale numérotée).",
+        });
+      } catch (err) {
+        return JSON.stringify({ error: userFacingError(err) });
+      }
     }
 
     case "get_group_info": {
@@ -2157,7 +2173,16 @@ export async function executeTool(
     case "list_personal_contacts": {
       const limit = Math.min(Number(args.limit) || 50, 100);
       const contacts = await listPersonalContacts(userId, limit);
-      return JSON.stringify({ count: contacts.length, contacts });
+      const mapped = contacts.map((c) => ({
+        name: c.name ?? null,
+        phone: c.id,
+        display: chatIdToDisplay(c.id),
+      }));
+      return JSON.stringify({
+        count: mapped.length,
+        contacts: mapped,
+        display: formatVerticalContactList(mapped, "contacts WhatsApp"),
+      });
     }
 
     case "get_chat_history": {
@@ -2234,9 +2259,14 @@ export async function executeTool(
         status,
         limit: Math.min(Number(args.limit) || 50, 100),
       });
+      const mapped = contacts.map(formatContact);
       return JSON.stringify({
-        count: contacts.length,
-        contacts: contacts.map(formatContact),
+        count: mapped.length,
+        contacts: mapped,
+        display: formatVerticalContactList(
+          mapped.map((c) => ({ name: c.name, phone: c.phone, display: c.display })),
+          "contacts"
+        ),
       });
     }
 
@@ -3827,17 +3857,22 @@ export async function executeTool(
         automationId: bound.automationId,
         limit,
       });
+      const mapped = contacts.map((c) => ({
+        campaignId: c.automationId,
+        campaignName: c.automationName,
+        phone: c.targetId,
+        display: chatIdToDisplay(c.targetId),
+        name: c.targetLabel,
+        status: c.status,
+        lastActionAt: c.lastActionAt,
+      }));
       return JSON.stringify({
-        count: contacts.length,
-        contacts: contacts.map((c) => ({
-          campaignId: c.automationId,
-          campaignName: c.automationName,
-          phone: c.targetId,
-          display: chatIdToDisplay(c.targetId),
-          name: c.targetLabel,
-          status: c.status,
-          lastActionAt: c.lastActionAt,
-        })),
+        count: mapped.length,
+        contacts: mapped,
+        display: formatVerticalContactList(
+          mapped.map((c) => ({ name: c.name, phone: c.phone, display: c.display })),
+          "prospects contactés"
+        ),
       });
     }
 

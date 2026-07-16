@@ -183,7 +183,6 @@ export async function sendChatMessage(message: string, threadId: number): Promis
     body: JSON.stringify({ message, thread_id: threadId }),
   });
 
-  // Ancien mode sync (si un serveur n'a pas encore le 202)
   if (!start.pending && start.reply != null && start.id != null) {
     return {
       id: start.id,
@@ -194,30 +193,43 @@ export async function sendChatMessage(message: string, threadId: number): Promis
   }
 
   const since = Number(start.since_id) || 0;
-  const deadline = Date.now() + 180_000;
+  // Jusqu'à 6 minutes — extraction de grands groupes + thinking
+  const deadline = Date.now() + 360_000;
 
   while (Date.now() < deadline) {
-    await new Promise((r) => setTimeout(r, 2000));
+    await new Promise((r) => setTimeout(r, 2500));
     try {
       const msgs = await fetchAgentMessagesSince(threadId, since);
       const assistant = msgs.find((m) => m.kind === 'assistant' || m.kind === 'error');
       if (assistant) {
         const idNum = Number(String(assistant.id).replace(/\D/g, '')) || Date.now();
+        const isTechError =
+          assistant.kind === 'error' ||
+          assistant.content.startsWith('❌') ||
+          /failed to fetch|timeout|ECONN|stack|HTTP\s*\d/i.test(assistant.content);
         return {
           id: idNum,
-          reply: assistant.content,
+          reply: isTechError
+            ? 'Je n’ai pas pu terminer à temps. Réessayez — je suis prêt.'
+            : assistant.content,
           created_at: assistant.created_at,
-          error: assistant.kind === 'error' || assistant.content.startsWith('❌'),
+          // Jamais d'étiquette « Erreur » technique pour l'utilisateur
+          error: false,
         };
       }
     } catch {
-      // Erreurs réseau transitoires pendant le poll : on continue
+      /* poll continue */
     }
   }
 
-  throw new ApiError(
-    'La réponse prend plus de temps que prévu. Actualisez dans quelques secondes — le traitement continue sur le serveur.',
-  );
+  // Pas d'exception technique : message agent amical (le serveur peut encore finir)
+  return {
+    id: Date.now(),
+    reply:
+      'Je suis encore en train de récupérer les informations (groupe / contacts). Réessayez dans un instant — la liste apparaîtra dès qu’elle est prête.',
+    created_at: new Date().toISOString(),
+    error: false,
+  };
 }
 
 export async function clearHistory(threadId: number): Promise<void> {

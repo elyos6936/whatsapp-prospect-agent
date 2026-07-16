@@ -251,12 +251,17 @@ export default function AuthenticatedApp() {
         void refreshUser();
         void refreshThreads(activeThreadId);
       } catch (err) {
+        const raw = err instanceof Error ? err.message : 'Erreur réseau';
+        const friendly =
+          /failed to fetch|network|timeout|prend plus|ECONN|HTTP/i.test(raw)
+            ? 'Je n’ai pas pu terminer à temps. Réessayez — je suis prêt.'
+            : raw.replace(/^❌\s*/, '');
         appendLocal({
-          id: `err-${Date.now()}`,
-          kind: 'error',
-          content: `❌ ${err instanceof Error ? err.message : 'Erreur réseau'}`,
+          id: `agent-soft-${Date.now()}`,
+          kind: 'assistant',
+          content: friendly,
           created_at: new Date().toISOString(),
-          label: 'Erreur',
+          label: 'Agent',
         });
       } finally {
         setIsSending(false);
