@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
+import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { AgentThreadSummary } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
@@ -136,6 +137,7 @@ function ThreadList({
   const [renamingId, setRenamingId] = useState<number | null>(null);
   const [renameValue, setRenameValue] = useState('');
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<AgentThreadSummary | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -161,15 +163,10 @@ function ThreadList({
     }
   };
 
-  const handleDelete = async (thread: AgentThreadSummary) => {
-    const label = thread.title || 'cette automatisation';
-    const hasCampaign = Boolean(thread.automation_id);
-    const ok = confirm(
-      hasCampaign
-        ? `Supprimer « ${label} » et sa campagne associée ? Cette action est définitive.`
-        : `Supprimer « ${label} » ? Cette action est définitive.`,
-    );
-    if (!ok) return;
+  const confirmDelete = async () => {
+    const thread = pendingDelete;
+    if (!thread) return;
+    setPendingDelete(null);
     setBusyId(thread.id);
     try {
       await onDeleteThread(thread.id);
@@ -179,8 +176,24 @@ function ThreadList({
     }
   };
 
+  const deleteMessage = pendingDelete
+    ? pendingDelete.automation_id
+      ? `Supprimer « ${pendingDelete.title || 'cette automatisation'} » et sa campagne associée ? Cette action est définitive.`
+      : `Supprimer « ${pendingDelete.title || 'cette automatisation'} » ? Cette action est définitive.`
+    : '';
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      <ConfirmDialog
+        open={pendingDelete != null}
+        title="Supprimer ?"
+        message={deleteMessage}
+        confirmLabel="Oui"
+        cancelLabel="Non"
+        danger
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => setPendingDelete(null)}
+      />
       <div className="shrink-0 px-2 py-3">
         <button
           type="button"
@@ -298,7 +311,7 @@ function ThreadList({
                   <ThreadActionsMenu
                     thread={thread}
                     onRename={() => startRename(thread)}
-                    onDelete={() => void handleDelete(thread)}
+                    onDelete={() => setPendingDelete(thread)}
                   />
                 </div>
               )}

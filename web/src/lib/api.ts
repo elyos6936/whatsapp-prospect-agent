@@ -60,20 +60,32 @@ class ApiError extends Error {
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getStoredToken();
   const hasBody = init?.body != null;
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
+    });
+  } catch (err) {
+    const raw = err instanceof Error ? err.message : String(err);
+    if (/failed to fetch|networkerror|load failed|network request failed/i.test(raw)) {
+      throw new ApiError(
+        'Connexion au serveur interrompue. Réessayez — si le problème continue, vérifiez votre réseau.',
+      );
+    }
+    throw new ApiError(raw || 'Erreur réseau.');
+  }
 
   if (res.status === 401 && !path.startsWith('/api/auth/')) {
     emitAuthLogout();
   }
 
-  if (!res.ok) {
+  // 202 Accepted = traitement asynchrone (chat agent)
+  if (!res.ok && res.status !== 202) {
     let message = res.statusText;
     try {
       const body = (await res.json()) as { error?: string };
@@ -159,10 +171,53 @@ export async function sendChatMessage(message: string, threadId: number): Promis
   created_at: string;
   error?: boolean;
 }> {
-  return request('/api/chat', {
+  const start = await request<{
+    pending?: boolean;
+    since_id?: number;
+    id?: number;
+    reply?: string;
+    created_at?: string;
+    error?: boolean;
+  }>('/api/chat', {
     method: 'POST',
     body: JSON.stringify({ message, thread_id: threadId }),
   });
+
+  // Ancien mode sync (si un serveur n'a pas encore le 202)
+  if (!start.pending && start.reply != null && start.id != null) {
+    return {
+      id: start.id,
+      reply: start.reply,
+      created_at: start.created_at || new Date().toISOString(),
+      error: start.error,
+    };
+  }
+
+  const since = Number(start.since_id) || 0;
+  const deadline = Date.now() + 180_000;
+
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 2000));
+    try {
+      const msgs = await fetchAgentMessagesSince(threadId, since);
+      const assistant = msgs.find((m) => m.kind === 'assistant' || m.kind === 'error');
+      if (assistant) {
+        const idNum = Number(String(assistant.id).replace(/\D/g, '')) || Date.now();
+        return {
+          id: idNum,
+          reply: assistant.content,
+          created_at: assistant.created_at,
+          error: assistant.kind === 'error' || assistant.content.startsWith('❌'),
+        };
+      }
+    } catch {
+      // Erreurs réseau transitoires pendant le poll : on continue
+    }
+  }
+
+  throw new ApiError(
+    'La réponse prend plus de temps que prévu. Actualisez dans quelques secondes — le traitement continue sur le serveur.',
+  );
 }
 
 export async function clearHistory(threadId: number): Promise<void> {

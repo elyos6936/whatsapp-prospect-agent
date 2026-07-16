@@ -559,22 +559,43 @@ app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async 
     return reply.status(404).send({ error: "Fil introuvable." });
   }
 
-  await saveAgentMessage(userId, threadId, "user", message);
-
-  try {
-    const assistantReply = await chatWithAgent(userId, message, threadId);
-    const saved = await saveAgentMessage(userId, threadId, "assistant", assistantReply);
-    return { id: saved.id, reply: saved.content, created_at: saved.created_at };
-  } catch (err) {
-    const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
-    const saved = await saveAgentMessage(userId, threadId, "assistant", `❌ ${errorText}`);
-    return {
-      id: saved.id,
-      reply: saved.content,
-      created_at: saved.created_at,
-      error: true,
-    };
+  const jobKey = `${userId}:${threadId}`;
+  const g = globalThis as { __klanvioChatJobs?: Set<string> };
+  if (!g.__klanvioChatJobs) g.__klanvioChatJobs = new Set();
+  const jobs = g.__klanvioChatJobs;
+  if (jobs.has(jobKey)) {
+    return reply.status(429).send({
+      error: "Une réponse est déjà en cours sur ce fil. Attendez quelques secondes puis réessayez.",
+    });
   }
+  jobs.add(jobKey);
+
+  let userSaved: { id: number; created_at: string };
+  try {
+    userSaved = await saveAgentMessage(userId, threadId, "user", message);
+  } catch (err) {
+    jobs.delete(jobKey);
+    throw err;
+  }
+
+  // Réponse HTTP immédiate : évite « Failed to fetch » (timeout proxy) pendant les appels longs.
+  void (async () => {
+    try {
+      const assistantReply = await chatWithAgent(userId, message, threadId);
+      await saveAgentMessage(userId, threadId, "assistant", assistantReply);
+    } catch (err) {
+      const errorText = err instanceof Error ? err.message : "Erreur inconnue.";
+      await saveAgentMessage(userId, threadId, "assistant", `❌ ${errorText}`);
+    } finally {
+      jobs.delete(jobKey);
+    }
+  })();
+
+  return reply.status(202).send({
+    pending: true,
+    since_id: userSaved.id,
+    created_at: userSaved.created_at,
+  });
 });
 
 app.post<{ Body: { data?: string; mimetype?: string } }>("/api/chat/transcribe", async (request, reply) => {

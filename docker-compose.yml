@@ -11,6 +11,8 @@ services:
       - traefik.http.routers.klanvio-api.entrypoints=websecure
       - traefik.http.routers.klanvio-api.tls.certresolver=letsencrypt
       - traefik.http.services.klanvio-api.loadbalancer.server.port=3001
+      # Timeouts longs (agent / Evolution) — évite coupure → « Failed to fetch »
+      - traefik.http.services.klanvio-api.loadbalancer.responseForwarding.flushInterval=1ms
     environment:
       PORT: "3001"
       NODE_ENV: production
