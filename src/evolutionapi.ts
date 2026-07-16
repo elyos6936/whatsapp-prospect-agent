@@ -1140,15 +1140,21 @@ export async function sendWhatsAppMessage(
     textOptions?: TextSendOptions;
     /** auto_reply = délai indépendant ~60 s déjà appliqué ; micro-gap 2–5 s à l'envoi */
     outboundProfile?: "campaign" | "auto_reply";
+    /** Espacement campagne (min/max secondes ou prospectCount) */
+    outboundGap?: import("./anti-ban.js").OutboundGapOpts;
   } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
   const creds = await getEvolutionCredentials(userId);
-  if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
+  if (!creds) throw new EvolutionApiError("WhatsApp non configuré.");
 
   await assertCanSendTo(userId, chatId);
 
   const gapOpts =
-    opts.outboundProfile === "auto_reply" ? { profile: "auto_reply" as const } : undefined;
+    opts.outboundProfile === "auto_reply"
+      ? { profile: "auto_reply" as const }
+      : opts.outboundGap
+        ? { profile: "campaign" as const, ...opts.outboundGap }
+        : undefined;
 
   return withOutboundSpacing(
     userId,

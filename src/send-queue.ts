@@ -147,8 +147,26 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           await beginFreshCampaignConversation(userId, item.recipient, item.automation_id);
         }
         // Conserver / renforcer auto_reply pour les envois de campagne
+        let outboundGap: import("./anti-ban.js").OutboundGapOpts | undefined;
+        if (item.automation_id != null) {
+          try {
+            const auto = await getAutomation(userId, item.automation_id);
+            const total =
+              (auto?.stats.pending ?? 0) + (auto?.stats.contacted ?? 0);
+            outboundGap = {
+              profile: "campaign",
+              minDelaySeconds: auto?.config.minDelaySeconds,
+              maxDelaySeconds: auto?.config.maxDelaySeconds,
+              prospectCount: total > 0 ? total : undefined,
+            };
+          } catch {
+            outboundGap = { profile: "campaign" };
+          }
+        }
         await sendWhatsAppMessage(userId, item.recipient, item.message, {
           enableAutoReply: item.automation_id != null,
+          outboundProfile: item.automation_id != null ? "campaign" : undefined,
+          outboundGap,
         });
       } else {
         await markQueueFailed(userId, item.id, "Message ou média manquant");

@@ -1,15 +1,16 @@
 /**
  * Anti-ban WhatsApp — rythme humain, warmup, plafonds.
  *
- * - Campagnes / openers : espacement 40–80 s (moy. ~60 s) entre envois froids.
- * - Auto-reply : chaque prospect répond ~60 s après SON message (timer indépendant) ;
- *   à l'envoi, seul un micro-écart 2–5 s évite deux API calls strictement simultanés.
+ * Espacement campagne : proportionnel au nb de prospects (voir recommendOutboundGaps).
+ * Auto-reply : micro-écart 2–5 s à l'envoi (délai ~60 s déjà appliqué en amont).
  */
 
+import { recommendOutboundGaps } from "./campaign-spacing.js";
+
 export const ANTI_BAN = {
-  /** Espacement openers / campagnes (par utilisateur) — moyenne ~60 s */
-  minGapMs: 40_000,
-  maxGapMs: 80_000,
+  /** Défaut si campagne sans config (volume moyen) */
+  minGapMs: 45_000,
+  maxGapMs: 90_000,
   /** Micro-écart anti-collision pour auto-replies indépendants */
   autoReplyMinGapMs: 2_000,
   autoReplyMaxGapMs: 5_000,
@@ -26,16 +27,18 @@ export const ANTI_BAN = {
   defaultRelanceDelaysDays: [1, 3] as number[],
   defaultRelanceHour: 10,
   defaultRelanceMessages: [
-    "Je me permets de revenir vers vous 🙂 Est-ce que ça vous parle toujours ?",
-    "Dernier message de ma part — dites-moi juste oui ou non, j'adapte 🙂",
+    "Je me permets de revenir vers vous. Est-ce que ça vous parle toujours ?",
+    "Dernier message de ma part — dites-moi juste oui ou non, j'adapte.",
   ],
 } as const;
 
 export type OutboundGapOpts = {
   minDelaySeconds?: number;
   maxDelaySeconds?: number;
-  /** auto_reply = 2–5 s ; campaign / défaut = 40–80 s */
+  /** auto_reply = 2–5 s ; campaign / défaut = config campagne ou 45–90 s */
   profile?: "campaign" | "auto_reply";
+  /** Nb de prospects — utilisé si min/max absents */
+  prospectCount?: number;
 };
 
 /** Prochain créneau d'envoi autorisé (epoch ms) — openers / campagnes. */
@@ -63,12 +66,18 @@ function resolveGapMs(opts?: OutboundGapOpts): { min: number; max: number } {
     (opts?.minDelaySeconds != null && Number(opts.minDelaySeconds) > 0) ||
     (opts?.maxDelaySeconds != null && Number(opts.maxDelaySeconds) > 0);
 
+  if (!hasCustom && opts?.prospectCount != null) {
+    const g = recommendOutboundGaps(opts.prospectCount);
+    return { min: g.minDelaySeconds * 1000, max: g.maxDelaySeconds * 1000 };
+  }
+
   if (!hasCustom) {
     return { min: ANTI_BAN.minGapMs, max: Math.max(ANTI_BAN.minGapMs + 5_000, ANTI_BAN.maxGapMs) };
   }
 
+  // Autoriser des délais courts (petites campagnes) — plancher absolu 15 s
   const min = Math.max(
-    ANTI_BAN.minGapMs,
+    15_000,
     Math.round(Number(opts!.minDelaySeconds ?? ANTI_BAN.minGapMs / 1000) * 1000)
   );
   const maxRaw = Math.round(Number(opts!.maxDelaySeconds ?? ANTI_BAN.maxGapMs / 1000) * 1000);

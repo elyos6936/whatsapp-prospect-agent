@@ -18,7 +18,7 @@ export function sanitizeOutboundWhatsAppText(text: string): string {
   console.warn(
     `⚠️ Placeholder détecté dans un message sortant — remplacé. Brut: ${trimmed.slice(0, 160)}`
   );
-  return "Je te confirme le détail exact juste après 🙂";
+  return "Je te confirme le détail exact juste après.";
 }
 
 /** Liste les champs d'une config de campagne qui contiennent encore des crochets. */

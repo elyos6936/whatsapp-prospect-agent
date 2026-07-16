@@ -43,11 +43,11 @@ function resolveLlmModel(): string {
   if (provider === "openai") {
     return raw || "gpt-4o";
   }
-  // DeepSeek : Pro + thinking uniquement — jamais Flash
+  // DeepSeek : Pro uniquement — jamais Flash (thinking désactivé côté agent pour vitesse/cohérence)
   if (!raw || /flash/i.test(raw)) {
     if (/flash/i.test(raw)) {
       console.warn(
-        `⚠️ LLM_MODEL="${raw}" (Flash) ignoré → deepseek-v4-pro (Thinking ON).`
+        `⚠️ LLM_MODEL="${raw}" (Flash) ignoré → deepseek-v4-pro.`
       );
     }
     return "deepseek-v4-pro";

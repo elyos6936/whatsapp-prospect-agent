@@ -776,6 +776,7 @@ async function runGroupAutoReply(
       senderName,
       incomingText: text,
       automationContext,
+      allowEmojis: false,
     });
     await sendWhatsAppMessage(userId, groupId, reply, { enableAutoReply: false });
     console.log(`✅ Réponse groupe → ${rule.group_label || groupId}`);
@@ -942,6 +943,7 @@ async function runAutoReply(
         senderName,
         incomingText: text,
         automationContext,
+        allowEmojis: activeCampaign?.config.stickersEnabled === true,
       });
     }
 

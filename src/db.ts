@@ -1501,6 +1501,8 @@ export interface AutomationConfig {
   stopOnDissatisfaction?: boolean;
   stopOnUnknownQuestion?: boolean;
   personalizeMessages?: boolean;
+  /** Stickers / emojis autorisés dans les réponses campagne. Défaut false. */
+  stickersEnabled?: boolean;
   abVariants?: Array<{ id: string; message: string }>;
   sequenceSteps?: Array<{ delayDays: number; message: string; condition?: string }>;
   mediaUrl?: string;

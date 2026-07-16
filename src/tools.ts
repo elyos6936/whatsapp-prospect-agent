@@ -120,6 +120,11 @@ import {
 } from "./automation-plan.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 import {
+  estimateProspectCountFromArgs,
+  recommendOutboundGaps,
+} from "./campaign-spacing.js";
+import { detectStickerConsent } from "./sticker-consent.js";
+import {
   formatVerticalContactList,
   formatVerticalGroupList,
   formatVerticalMemberList,
@@ -1298,11 +1303,18 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
           min_delay_seconds: {
             type: "number",
-            description: "Délai minimum entre deux envois, en secondes (anti-blocage, min 30)",
+            description:
+              "Délai min entre envois (s). Si omis : auto selon volume (peu de prospects = plus court, beaucoup = plus long).",
           },
           max_delay_seconds: {
             type: "number",
-            description: "Délai maximum entre deux envois, en secondes (anti-blocage)",
+            description:
+              "Délai max entre envois (s). Si omis : auto selon volume de prospects (anti-blocage).",
+          },
+          stickers_enabled: {
+            type: "boolean",
+            description:
+              "true UNIQUEMENT si l'utilisateur a explicitement accepté stickers/emojis. Défaut false = texte seul.",
           },
           quiet_hours_start: {
             type: "number",
@@ -1462,6 +1474,12 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           relance_hour: { type: "number" },
           relance_messages: { type: "array", items: { type: "string" } },
           max_members: { type: "number" },
+          min_delay_seconds: { type: "number" },
+          max_delay_seconds: { type: "number" },
+          stickers_enabled: {
+            type: "boolean",
+            description: "true seulement si l'utilisateur autorise stickers/emojis",
+          },
           quiet_hours_start: { type: "number" },
           quiet_hours_end: { type: "number" },
           scheduled_start_at: { type: "string" },
@@ -1555,16 +1573,16 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "show_campaign_simulation",
       description:
-        "OBLIGATOIRE dès que l'utilisateur accepte une simulation. Affiche un fil court (EXACTEMENT 3 ou 4 messages max — économie tokens) dans le chat agent — aucun envoi WhatsApp. Le 1er message « toi » = accroche A.I.D.A. Attention (sans prix/lien). Après affichage, demande TOUJOURS ce qu'il veut changer ou garder. Ne jamais annoncer « Voici comment… : » sans cet outil.",
+        "OBLIGATOIRE dès que l'utilisateur accepte une simulation. Affiche un fil de 6 ou 7 messages dans le chat agent — aucun envoi WhatsApp. Le 1er message « toi » = accroche A.I.D.A. Attention (sans prix/lien). Après affichage, demande TOUJOURS ce qu'il veut changer ou garder. Ne jamais annoncer « Voici comment… : » sans cet outil.",
       parameters: {
         type: "object",
         properties: {
           turns: {
             type: "array",
             description:
-              "Exactement 3 ou 4 répliques alternées Toi / Prospect (JAMAIS plus de 4). Tour 1 toi = Attention seulement.",
-            minItems: 3,
-            maxItems: 4,
+              "Exactement 6 ou 7 répliques alternées Toi / Prospect. Tour 1 toi = Attention seulement.",
+            minItems: 6,
+            maxItems: 7,
             items: {
               type: "object",
               properties: {
@@ -1775,8 +1793,11 @@ function buildAutomationConfigFromArgs(
   const clampSeconds = (v: unknown): number | undefined => {
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0) return undefined;
-    return Math.max(30, Math.round(n));
+    return Math.max(15, Math.round(n));
   };
+
+  const prospectCount = estimateProspectCountFromArgs(args);
+  const scaled = recommendOutboundGaps(prospectCount);
 
   const config: AutomationConfig = {
     mode: isOutbound ? "outbound_prospect" : type === "keyword_sales" ? "inbound_closing" : undefined,
@@ -1788,8 +1809,8 @@ function buildAutomationConfigFromArgs(
         : isOutbound
           ? ANTI_BAN.defaultCampaignMaxPerDay
           : undefined,
-    minDelaySeconds: clampSeconds(args.min_delay_seconds) ?? (isOutbound ? 60 : undefined),
-    maxDelaySeconds: clampSeconds(args.max_delay_seconds) ?? (isOutbound ? 180 : undefined),
+    minDelaySeconds: clampSeconds(args.min_delay_seconds) ?? (isOutbound ? scaled.minDelaySeconds : undefined),
+    maxDelaySeconds: clampSeconds(args.max_delay_seconds) ?? (isOutbound ? scaled.maxDelaySeconds : undefined),
     enableAutoReply: true, // Toujours ON — désactivation = pause / désactiver la campagne
     conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
     triggerPhrases,
@@ -1809,6 +1830,8 @@ function buildAutomationConfigFromArgs(
         : isOutbound
           ? true
           : args.personalize_messages === true,
+    // Stickers/emojis OFF par défaut — uniquement si l'utilisateur a dit oui
+    stickersEnabled: args.stickers_enabled === true,
     abVariants: Array.isArray(args.ab_variants)
       ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
           id: v.id || `v${i + 1}`,
@@ -2609,6 +2632,17 @@ export async function executeTool(
       const fromMe = args.from_me === true;
       if (!messageId) return JSON.stringify({ error: "message_id requis." });
       try {
+        const { getRecentAgentMessages } = await import("./db.js");
+        const history = await getRecentAgentMessages(userId, threadId, 40);
+        const consent = detectStickerConsent(
+          history.map((m) => ({ role: m.role, content: m.content }))
+        );
+        if (consent === "no") {
+          return JSON.stringify({
+            error:
+              "Emojis / réactions refusés par l'utilisateur. Réponds en texte uniquement.",
+          });
+        }
         const chatId = await resolveRecipient(userId, recipient);
         const result = await sendWhatsAppReaction(userId, chatId, messageId, emoji, { fromMe });
         const isGroup = chatId.endsWith("@g.us");
@@ -2726,6 +2760,26 @@ export async function executeTool(
       const sticker = String(args.sticker ?? "").trim();
       const delayMs = Number(args.delay_ms);
       if (!sticker) return JSON.stringify({ error: "La source du sticker (URL ou base64) est requise." });
+
+      // Enforcement runtime : jamais de sticker sans accord explicite
+      try {
+        const { getRecentAgentMessages } = await import("./db.js");
+        const history = await getRecentAgentMessages(userId, threadId, 40);
+        const consent = detectStickerConsent(
+          history.map((m) => ({ role: m.role, content: m.content }))
+        );
+        if (consent !== "yes") {
+          return JSON.stringify({
+            error:
+              "Stickers refusés ou non autorisés. Réponds en texte uniquement (l'utilisateur a dit non, ou n'a pas donné son accord).",
+          });
+        }
+      } catch {
+        return JSON.stringify({
+          error: "Impossible de vérifier l'autorisation stickers — envoi annulé. Utilise un message texte.",
+        });
+      }
+
       try {
         const chatId = await resolveRecipient(userId, recipient);
         if (chatId.endsWith("@c.us")) {
@@ -3763,6 +3817,18 @@ export async function executeTool(
         merged.closingGoal = String(args.closing_goal) as AutomationConfig["closingGoal"];
       }
       if (args.max_members != null) merged.maxMembers = Number(args.max_members);
+      if (args.min_delay_seconds != null && Number.isFinite(Number(args.min_delay_seconds))) {
+        merged.minDelaySeconds = Math.max(15, Math.round(Number(args.min_delay_seconds)));
+      }
+      if (args.max_delay_seconds != null && Number.isFinite(Number(args.max_delay_seconds))) {
+        merged.maxDelaySeconds = Math.max(
+          merged.minDelaySeconds ?? 20,
+          Math.round(Number(args.max_delay_seconds))
+        );
+      }
+      if (args.stickers_enabled != null) {
+        merged.stickersEnabled = args.stickers_enabled === true;
+      }
       if (args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))) {
         merged.quietHoursStart = Math.round(Number(args.quiet_hours_start));
       }
@@ -4004,9 +4070,9 @@ export async function executeTool(
 
     case "show_campaign_simulation": {
       const rawTurns = Array.isArray(args.turns) ? args.turns : [];
-      if (rawTurns.length < 3 || rawTurns.length > 4) {
+      if (rawTurns.length < 6 || rawTurns.length > 7) {
         return JSON.stringify({
-          error: "La simulation doit contenir exactement 3 ou 4 messages (turns).",
+          error: "La simulation doit contenir exactement 6 ou 7 messages (turns).",
         });
       }
       const turns: SimulationTurn[] = [];

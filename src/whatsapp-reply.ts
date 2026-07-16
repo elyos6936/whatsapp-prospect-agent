@@ -27,31 +27,23 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 6. **CONTEXTE CAMPAGNE** : suis objectif, ton et approche. Pas de réponse « à vide ».
 7. **PAS DE ROBOT** : interdit « comme mentionné plus tôt », « je suis X et je propose », « n'hésite pas à me le faire savoir », « je suis là pour ça », « comment puis-je vous aider ».
 8. **PAS DE RE-SALUT** si conversation déjà engagée : zéro « Bonjour », « Salut », « Bonsoir » en début.
-9. **ZÉRO CROCHETS** : jamais [prix], [lien], [prénom], etc. Info manquante → « Je te confirme ça juste après 🙂 » ou une question utile.
+9. **ZÉRO CROCHETS** : jamais [prix], [lien], [prénom], etc. Info manquante → « Je te confirme ça juste après » ou une question utile.
 10. **CONVERSION** : dès l'intérêt, oriente vers l'action (lien réel, prix, RDV) sans harceler — sauf exception « un seul message ».
 11. **1 message à la fois** : une seule idée / question.
 12. **Prix / lien** : une seule fois sauf s'il redemande.
 13. **Refus clair** : clôture polie, sans insister.
-14. **PAS DE STICKER** : tu réponds en TEXTE uniquement. Les stickers sont gérés ailleurs, seulement si le manager l'a autorisé.
+14. **PAS DE STICKER** : tu réponds en TEXTE uniquement.
+15. **EMOJIS** : aucun par défaut ; max 1 seulement si le prospect en utilise dans son message.
 
-## Adaptation par situation
-| Situation | Réponse type (1 phrase) |
-|-----------|--------------------------|
-| « Qui êtes-vous ? » / identité | Prénom + offre courte — PAS de pitch long — puis question pour engager |
-| « C'est toi qui m'écrit » / surpris | « Oui c'est moi, désolé si ça t'a surpris » + mini rappel — continue |
-| Question prix / détail | Chiffre EXACT du contexte ; sinon « Je te confirme ça juste après 🙂 » |
-| « ok » / « merci » / court | Relance légère vers la suite (pas juste « Super ») |
-| Intérêt / « en savoir plus » | UNE prochaine étape claire (créneau, lien RÉEL, info) |
-| Prêt à payer / commander | Lien/prix/marche à suivre du contexte tout de suite |
-| « Juste le lien / juste le prix / un seul message » | Envoie UNIQUEMENT ça — aucune question après |
-| Refus clair | « Compris, bonne continuation ! » — stop |
-
-## NE FUIS JAMAIS une question
-Si la réponse n'est PAS dans le contexte : reste engagé (précision, ou « je confirme et je reviens »). JAMAIS de crochets. Ne clôture que sur refus clair.
+## Adaptation rapide
+- Identité / « qui es-tu » → prénom + offre courte + question
+- Prix / détail → chiffre exact du contexte, sinon « Je te confirme ça juste après »
+- Intérêt → une prochaine étape claire (lien réel, créneau)
+- « Juste le lien / prix » → uniquement ça, aucune question
+- Refus clair → « Compris, bonne continuation ! »
 
 ## Style WhatsApp
 - Tutoiement ou vouvoiement : suis le prospect.
-- Emojis : max 1, seulement si le prospect en met.
 - Pas de bullet points, listes, ni formules corporate.
 
 ## Reste dans le sujet
@@ -217,6 +209,8 @@ export async function generateWhatsAppReply(userId: number, input: {
   senderName: string;
   incomingText: string;
   automationContext?: string;
+  /** false = aucun emoji (refus stickers/emojis). Défaut : max 1. */
+  allowEmojis?: boolean;
 }): Promise<string> {
   const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
@@ -256,11 +250,11 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle, en tenant c
         { role: "system", content: WHATSAPP_REPLY_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 220, { thinkingEnabled: true }),
-      temperature: 0.78,
+      max_tokens: recommendedMaxTokens(config.openaiModel, 220, { thinkingEnabled: false }),
+      temperature: 0.72,
       presence_penalty: 0.5,
       frequency_penalty: 0.45,
-      ...deepseekChatExtras({ enableThinking: true }),
+      ...deepseekChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 
@@ -269,10 +263,19 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle, en tenant c
     throw new Error(`${llmProviderLabel()} n'a pas généré de réponse.`);
   }
 
-  return enforceWhatsAppStyle(reply, {
+  let styled = enforceWhatsAppStyle(reply, {
     isOngoing: isOngoingConversation,
     incomingText: input.incomingText,
   });
+  // Stickers/emojis : refus par défaut sauf autorisation campagne explicite
+  if (input.allowEmojis === true) {
+    const { limitEmojis } = await import("./sticker-consent.js");
+    styled = limitEmojis(styled, 1);
+  } else {
+    const { stripEmojis } = await import("./sticker-consent.js");
+    styled = stripEmojis(styled);
+  }
+  return styled;
 }
 
 function analyzeProspectStyle(text: string): string {

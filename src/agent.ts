@@ -19,9 +19,9 @@ import {
   userFacingError,
 } from "./user-facing.js";
 
-const MAX_TOOL_ROUNDS = 8;
-const CHAT_HISTORY_LIMIT = 30;
-const CHAT_MAX_TOKENS = 1400;
+const MAX_TOOL_ROUNDS = 5;
+const CHAT_HISTORY_LIMIT = 24;
+const CHAT_MAX_TOKENS = 1100;
 
 /** Intentions simples : listes sans boucle LLM (fiable pour tous les comptes). */
 function detectQuickListIntent(
@@ -351,10 +351,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           messages,
           tools: TOOL_DEFINITIONS,
           tool_choice: "auto",
+          temperature: 0.65,
           max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
-            thinkingEnabled: true,
+            thinkingEnabled: false,
           }),
-          ...deepseekChatExtras({ enableThinking: true }),
+          ...deepseekChatExtras({ enableThinking: false }),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {

@@ -106,16 +106,16 @@ export async function replyInSimulationPreview(
             `Réponds maintenant comme « Toi » (1 message WhatsApp, 1-3 phrases max), adapté à ce que le prospect vient de dire.`,
         },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 280, { thinkingEnabled: true }),
-      temperature: 0.75,
-      ...deepseekChatExtras({ enableThinking: true }),
+      max_tokens: recommendedMaxTokens(config.openaiModel, 280, { thinkingEnabled: false }),
+      temperature: 0.7,
+      ...deepseekChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 
   let reply = extractAssistantContent(completion.choices[0]?.message).trim();
   reply = sanitizeOutboundWhatsAppText(reply);
   if (!reply || hasTemplatePlaceholders(reply)) {
-    reply = "Merci pour ton message 🙂 Tu peux m'en dire un peu plus ?";
+    reply = "Merci pour ton message. Tu peux m'en dire un peu plus ?";
   }
 
   history.push({ role: "you", text: reply });
