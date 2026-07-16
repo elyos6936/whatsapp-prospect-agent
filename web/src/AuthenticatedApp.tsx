@@ -27,7 +27,6 @@ import type { OverlayView } from '@/lib/navigation';
 import { AutomationPage } from '@/pages/AutomationPage';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
-import { cn } from '@/lib/utils';
 
 const STRATEGY_OPEN_KEY = 'klanvio.strategyDockOpen';
 
@@ -344,11 +343,11 @@ export default function AuthenticatedApp() {
       {/* Droite : stratégie permanente (masquable) */}
       {showStrategyDock && strategyPlan && (
         <>
-          {/* Desktop : colonne fixe */}
-          <div className="hidden h-full w-[min(42vw,420px)] shrink-0 lg:flex">
+          {/* Desktop : colonne fixe à droite */}
+          <div className="sticky top-0 hidden h-full max-h-full w-[min(38vw,380px)] shrink-0 self-stretch lg:flex">
             <StrategyDock plan={strategyPlan} onClose={toggleStrategy} />
           </div>
-          {/* Mobile / tablette : tiroir plein écran à droite */}
+          {/* Mobile / tablette : tiroir plein hauteur */}
           <div className="fixed inset-0 z-40 flex justify-end lg:hidden">
             <button
               type="button"
@@ -356,11 +355,7 @@ export default function AuthenticatedApp() {
               aria-label="Fermer la stratégie"
               onClick={toggleStrategy}
             />
-            <div
-              className={cn(
-                'relative z-10 flex h-full w-[min(92vw,400px)] shadow-2xl',
-              )}
-            >
+            <div className="relative z-10 flex h-full w-[min(92vw,380px)] shadow-2xl">
               <StrategyDock plan={strategyPlan} onClose={toggleStrategy} />
             </div>
           </div>
