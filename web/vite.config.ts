@@ -8,8 +8,10 @@ export default defineConfig({
   resolve: {
     alias: {
       '@': path.resolve(__dirname, './src'),
-      // Excalidraw embarque mermaid → katex ; on ne s’en sert pas pour les plans
+      // Excalidraw embarque mermaid/katex (énormes) — inutiles pour nos plans → stubs
       katex: path.resolve(__dirname, './src/stubs/empty.ts'),
+      mermaid: path.resolve(__dirname, './src/stubs/empty.ts'),
+      '@excalidraw/mermaid-to-excalidraw': path.resolve(__dirname, './src/stubs/empty.ts'),
     },
   },
   build: {
