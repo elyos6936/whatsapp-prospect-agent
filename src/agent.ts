@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT } from "./persona.js";
 import { getAppSettings, getAgentThread, getAutomation, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
-import { testEvolutionConnection } from "./evolutionapi.js";
+import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
@@ -13,11 +13,44 @@ import {
   wantsCampaignSimulation,
 } from "./campaign-briefing.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
-import { userFacingError } from "./user-facing.js";
+import {
+  formatVerticalContactList,
+  formatVerticalGroupList,
+  userFacingError,
+} from "./user-facing.js";
 
 const MAX_TOOL_ROUNDS = 8;
 const CHAT_HISTORY_LIMIT = 30;
 const CHAT_MAX_TOKENS = 1400;
+
+/** Intentions simples : listes sans boucle LLM (fiable pour tous les comptes). */
+function detectQuickListIntent(
+  msg: string
+): { kind: "groups" | "contacts"; limit?: number } | null {
+  const t = msg.trim().toLowerCase();
+  if (!t || t.length > 160) return null;
+
+  const num =
+    t.match(/\b(\d{1,3})\s*(?:groupes?|contacts?)\b/) ||
+    t.match(/\b(?:groupes?|contacts?)\s*(\d{1,3})\b/) ||
+    t.match(/\bliste[- ]?moi\s+(\d{1,3})\b/);
+  const limit = num ? Math.min(200, Math.max(1, Number(num[1]))) : undefined;
+
+  if (
+    /\b(groupes?|groups?)\b/i.test(t) &&
+    /\b(liste|lister|montre|afficher|voir|mes|tous|all)\b/i.test(t)
+  ) {
+    return { kind: "groups", limit };
+  }
+  if (
+    /\b(contacts?)\b/i.test(t) &&
+    /\b(liste|lister|montre|afficher|voir|mes|tous|all)\b/i.test(t) &&
+    !/\bgroupes?\b/i.test(t)
+  ) {
+    return { kind: "contacts", limit };
+  }
+  return null;
+}
 
 /**
  * Détecte une réponse « amorce vide » : le modèle annonce un contenu
@@ -216,6 +249,34 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       "(WhatsApp → Appareils connectés), puis revenez me parler.\n\n" +
       `État actuel : ${connection.message || connection.state}`
     );
+  }
+
+  // Chemin rapide : listes groupes / contacts (évite timeouts LLM+outils sur gros comptes)
+  const quick = detectQuickListIntent(userMessage);
+  if (quick?.kind === "groups") {
+    try {
+      const groups = await listWhatsAppGroups(userId);
+      const sliced = quick.limit != null ? groups.slice(0, quick.limit) : groups;
+      if (!sliced.length) {
+        return "Aucun groupe WhatsApp trouvé sur ce compte pour le moment.";
+      }
+      return formatVerticalGroupList(sliced.map((g) => ({ name: g.name, id: g.id })));
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+  if (quick?.kind === "contacts") {
+    try {
+      const contacts = await listPersonalContacts(userId, quick.limit ?? 50);
+      const mapped = contacts.map((c) => ({
+        name: c.name,
+        phone: c.id,
+        display: chatIdToDisplay(c.id),
+      }));
+      return formatVerticalContactList(mapped, "contacts WhatsApp");
+    } catch (err) {
+      return userFacingError(err);
+    }
   }
 
   const client = await getOpenAiClient(userId);

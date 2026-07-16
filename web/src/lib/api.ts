@@ -206,14 +206,13 @@ export async function sendChatMessage(message: string, threadId: number): Promis
         const isTechError =
           assistant.kind === 'error' ||
           assistant.content.startsWith('❌') ||
-          /failed to fetch|timeout|ECONN|stack|HTTP\s*\d/i.test(assistant.content);
+          /failed to fetch|ECONNRESET|ECONNREFUSED|HTTP\s*\d{3}/i.test(assistant.content);
         return {
           id: idNum,
           reply: isTechError
-            ? 'Je n’ai pas pu terminer à temps. Réessayez — je suis prêt.'
+            ? 'Je n’ai pas pu terminer. Réessayez — je suis prêt.'
             : assistant.content,
           created_at: assistant.created_at,
-          // Jamais d'étiquette « Erreur » technique pour l'utilisateur
           error: false,
         };
       }

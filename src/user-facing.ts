@@ -6,6 +6,9 @@ export function userFacingError(err: unknown): string {
   if (/failed to fetch|networkerror|load failed|econn|enotfound|network/i.test(m)) {
     return "La connexion a été interrompue un instant. Réessayez — je suis prêt.";
   }
+  if (/evolution|whatsapp/i.test(m) && /délai|timeout|abort|attente dépassé|timed out/i.test(m)) {
+    return "WhatsApp met un peu de temps à répondre sur votre compte (souvent avec beaucoup de groupes). Réessayez dans quelques secondes.";
+  }
   if (/timeout|abort|délai|timed out|prend plus de temps/i.test(m)) {
     return "C’est un peu long de mon côté. Réessayez dans un instant, je termine souvent juste après.";
   }

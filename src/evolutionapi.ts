@@ -493,7 +493,12 @@ const GROUPS_LIST_CACHE = new Map<
   number,
   { groups: Array<{ id: string; name: string; type: string }>; expiresAt: number }
 >();
-const GROUPS_LIST_TTL_MS = 60_000;
+/** Cache 5 min — les listes de groupes changent rarement. */
+const GROUPS_LIST_TTL_MS = 5 * 60_000;
+
+export function invalidateWhatsAppGroupsCache(userId: number): void {
+  GROUPS_LIST_CACHE.delete(userId);
+}
 
 export async function requireEvolutionConnected(userId: number, context = "cette opération"): Promise<void> {
   const state = await testEvolutionConnection(userId);
@@ -579,7 +584,7 @@ async function fetchGroupNameMap(creds: EvolutionCredentials): Promise<Map<strin
   try {
     const data = await evolutionFetch<unknown>(creds, `/group/fetchAllGroups/${creds.instanceName}`, {
       query: { getParticipants: "false" },
-      timeoutMs: 45_000,
+      timeoutMs: 60_000,
     });
     for (const g of normalizeEvolutionRows(data)) {
       const id = String(g.id || g.remoteJid || g.jid || "");
@@ -642,7 +647,13 @@ async function resolveChatDisplayName(
   return `Chat (…${id.slice(0, 14)})`;
 }
 
-export async function listWhatsAppGroups(userId: number): Promise<Array<{ id: string; name: string; type: string }>> {
+/**
+ * Liste les groupes WhatsApp rapidement.
+ * IMPORTANT : jamais de résolution de nom séquentielle (N × 20s) — ça cassait les gros comptes.
+ */
+export async function listWhatsAppGroups(
+  userId: number
+): Promise<Array<{ id: string; name: string; type: string }>> {
   const cached = GROUPS_LIST_CACHE.get(userId);
   if (cached && cached.expiresAt > Date.now()) {
     return cached.groups;
@@ -651,32 +662,47 @@ export async function listWhatsAppGroups(userId: number): Promise<Array<{ id: st
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
-  const groupNames = await fetchGroupNameMap(creds);
-  let out: Array<{ id: string; name: string; type: string }>;
-  if (groupNames.size > 0) {
-    out = [...groupNames.entries()].map(([id, name]) => ({ id, name, type: "group" }));
-  } else {
-    const data = await evolutionFetch<unknown>(
-      creds,
-      `/group/fetchAllGroups/${creds.instanceName}`,
-      { query: { getParticipants: "false" }, timeoutMs: 45_000 }
-    );
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const data = await evolutionFetch<unknown>(
+        creds,
+        `/group/fetchAllGroups/${creds.instanceName}`,
+        {
+          query: { getParticipants: "false" },
+          timeoutMs: attempt === 1 ? 55_000 : 90_000,
+        }
+      );
 
-    const rows = normalizeEvolutionRows(data);
-    out = [];
+      const out: Array<{ id: string; name: string; type: string }> = [];
+      for (const g of normalizeEvolutionRows(data)) {
+        const id = String(g.id || g.remoteJid || g.jid || "");
+        if (!id.endsWith("@g.us")) continue;
+        const name =
+          pickReadableName(g.subject, g.name, g.pushName) ||
+          `Groupe …${id.replace(/@g\.us$/i, "").slice(-6)}`;
+        out.push({ id, name, type: "group" });
+      }
+      out.sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base" }));
 
-    for (const g of rows) {
-      const id = String(g.id || g.remoteJid || g.jid || "");
-      if (!id.endsWith("@g.us")) continue;
-      const name =
-        pickReadableName(g.subject, g.name, g.pushName) ||
-        (await resolveGroupDisplayName(creds, id, groupNames));
-      out.push({ id, name, type: "group" });
+      GROUPS_LIST_CACHE.set(userId, {
+        groups: out,
+        expiresAt: Date.now() + GROUPS_LIST_TTL_MS,
+      });
+      return out;
+    } catch (err) {
+      lastErr = err;
+      console.warn(
+        `[listWhatsAppGroups] tentative ${attempt}/2 user=${userId}:`,
+        err instanceof Error ? err.message : err
+      );
     }
   }
 
-  GROUPS_LIST_CACHE.set(userId, { groups: out, expiresAt: Date.now() + GROUPS_LIST_TTL_MS });
-  return out;
+  if (lastErr instanceof EvolutionApiError) throw lastErr;
+  throw new EvolutionApiError(
+    "Impossible de récupérer vos groupes WhatsApp pour le moment. Réessayez dans quelques secondes."
+  );
 }
 
 export async function listWhatsAppChannels(userId: number): Promise<Array<{ id: string; name: string; type: string }>> {
