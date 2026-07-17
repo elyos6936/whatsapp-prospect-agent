@@ -1,14 +1,15 @@
 /**
  * Garde-fous anti-spam : 1 message sortant max tant que le prospect n'a pas répondu
- * (dans le périmètre de la même automatisation).
+ * (sur le fil WhatsApp global — pas seulement la campagne courante).
  */
 import {
   cancelPendingSendQueueForRecipient,
+  getAbsoluteLastMessageForContact,
   getContactChatHistory,
   type QueueItem,
 } from "./db.js";
 
-/** Dernier message de l'époque = sortant → on attend une réponse avant tout nouvel envoi. */
+/** Dernier message de l'époque / campagne = sortant → on attend une réponse. */
 export async function isAwaitingProspectReply(
   userId: number,
   recipient: string,
@@ -17,6 +18,16 @@ export async function isAwaitingProspectReply(
   const history = await getContactChatHistory(userId, recipient, 20, automationId);
   if (history.length === 0) return false;
   const last = history[history.length - 1];
+  return last.direction === "sortant";
+}
+
+/** Dernier message du contact toutes campagnes = sortant → bloquer tout nouvel opener. */
+export async function isAwaitingProspectReplyAnyCampaign(
+  userId: number,
+  recipient: string
+): Promise<boolean> {
+  const last = await getAbsoluteLastMessageForContact(userId, recipient);
+  if (!last) return false;
   return last.direction === "sortant";
 }
 
@@ -30,6 +41,15 @@ export async function shouldBlockOutboundWhileAwaitingReply(
 ): Promise<{ block: boolean; reason?: string }> {
   if ((item.priority ?? 0) >= 10) return { block: false };
   if (item.automation_id == null && item.sequence_id == null) return { block: false };
+
+  // Global d'abord : évite qu'une campagne B envoie pendant qu'A attend une réponse
+  const awaitingGlobal = await isAwaitingProspectReplyAnyCampaign(userId, item.recipient);
+  if (awaitingGlobal) {
+    return {
+      block: true,
+      reason: "En attente de réponse du prospect — 1 seul message sortant autorisé sur ce fil",
+    };
+  }
 
   const awaiting = await isAwaitingProspectReply(
     userId,

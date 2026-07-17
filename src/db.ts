@@ -744,6 +744,31 @@ export async function getContactChatHistory(
   return rows.map(mapWhatsAppMessage).reverse();
 }
 
+/**
+ * Dernier message WhatsApp du contact, toutes campagnes confondues
+ * (anti double-opener sur le même fil).
+ */
+export async function getAbsoluteLastMessageForContact(
+  userId: number,
+  chatId: string
+): Promise<WhatsAppMessage | null> {
+  const digits = chatId.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
+    FROM messages
+    WHERE user_id = ${userId}
+      AND (contact_phone = ${chatId}
+       OR (${digits} != '' AND (
+         contact_phone = ${digits} || '@c.us'
+         OR contact_phone = ${digits} || '@lid'
+         OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+       )))
+    ORDER BY id DESC
+    LIMIT 1
+  `;
+  return rows[0] ? mapWhatsAppMessage(rows[0]) : null;
+}
+
 export async function isAutoReplyEnabled(userId: number): Promise<boolean> {
   const v = await getSetting(userId, "whatsapp_auto_reply");
   return v !== "0";

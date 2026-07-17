@@ -25,6 +25,7 @@ import {
   type Automation,
 } from "./db.js";
 import { pickAbVariant, recordAbSent } from "./ab-testing.js";
+import { getActiveCampaignTargetIds } from "./campaign-gating.js";
 import {
   chatIdToDisplay,
   chatIdsMatch,
@@ -140,6 +141,25 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   if (!message) {
     await updateAutomationStatus(userId, auto.id, "failed");
     await addAutomationLog(userId, auto.id, "error", "Message initial manquant dans la configuration.");
+    return;
+  }
+
+  // Un même numéro WhatsApp = un seul fil : jamais deux campagnes actives sur le même contact.
+  const otherCampaignIds = await getActiveCampaignTargetIds(userId, auto.id);
+  const inOtherCampaign = [...otherCampaignIds].some(
+    (id) => chatIdsMatch(id, target.target_id),
+  );
+  if (inOtherCampaign) {
+    await updateAutomationTarget(userId, auto.id, target.target_id, {
+      status: "stopped",
+      notes: "Déjà engagé dans une autre campagne active — exclus pour éviter les messages mélangés.",
+    });
+    await addAutomationLog(
+      userId,
+      auto.id,
+      "info",
+      `Cible ignorée (${target.target_label || chatIdToDisplay(target.target_id)}) : déjà dans une autre campagne active.`,
+    );
     return;
   }
 
@@ -378,7 +398,11 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   // ne charge qu'1 seule cible.
   const ownerId = await getConnectedOwnerId(userId);
   const hardBlockedIds = await getBlockedContactIds(userId);
-  const alreadyEnrolled = await getAutomationTargetIds(userId, automationId);
+  // Exclure : déjà dans CETTE auto OU dans toute autre campagne active (1 fil WhatsApp = 1 campagne)
+  const alreadyEnrolled = new Set<string>([
+    ...(await getAutomationTargetIds(userId, automationId)),
+    ...(await getActiveCampaignTargetIds(userId, automationId)),
+  ]);
 
   const matchesAny = (candidate: string, ids: Iterable<string>): boolean => {
     for (const id of ids) {
@@ -440,7 +464,7 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
       `${group.participants.length} membre(s) dans le groupe`,
       selfCount ? `${selfCount} = vous (exclu)` : null,
       hardBlockedCount ? `${hardBlockedCount} bloqué(s) explicitement` : null,
-      enrolledCount ? `${enrolledCount} déjà cibles de cette automatisation` : null,
+      enrolledCount ? `${enrolledCount} déjà dans une campagne active` : null,
       softStoppedCount ? `${softStoppedCount} stoppé(s)` : null,
     ].filter(Boolean);
     await failAutomationNoTargets(
@@ -517,7 +541,10 @@ export async function bootstrapContactProspectTargets(
     );
   }
 
-  const alreadyEnrolled = await getAutomationTargetIds(userId, automationId);
+  const alreadyEnrolled = new Set<string>([
+    ...(await getAutomationTargetIds(userId, automationId)),
+    ...(await getActiveCampaignTargetIds(userId, automationId)),
+  ]);
 
   const eligible: Array<{ id: string; label?: string }> = [];
   for (const c of contacts) {
@@ -538,7 +565,7 @@ export async function bootstrapContactProspectTargets(
     await failAutomationNoTargets(
       userId,
       automationId,
-      "Aucun contact éligible (bloqués ou déjà cibles de cette automatisation)."
+      "Aucun contact éligible (bloqués ou déjà dans une campagne active)."
     );
   }
 

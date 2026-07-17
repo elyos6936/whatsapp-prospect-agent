@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   CheckCircle2,
   CreditCard,
+  Link2,
   LogOut,
   Smartphone,
   Store,
@@ -46,6 +47,7 @@ export function SettingsPage() {
   const [price, setPrice] = useState('');
   const [businessFb, setBusinessFb] = useState('');
   const [savingBusiness, setSavingBusiness] = useState(false);
+  const [integrationsFb, setIntegrationsFb] = useState('');
 
   const [autoReplyOn, setAutoReplyOn] = useState(true);
   const [autoReplyBusy, setAutoReplyBusy] = useState(false);
@@ -288,69 +290,112 @@ export function SettingsPage() {
 
             </div>
           ) : tab === 'business' ? (
-            <div className="panel p-6">
-              <div className="mb-5 flex items-center gap-2">
-                <Store className="h-4 w-4 text-brand" />
-                <h2 className="text-sm font-semibold text-text-100">Profil business</h2>
-              </div>
-              <p className="-mt-2 mb-5 text-xs text-text-400">
-                Ces informations aident l’agent à personnaliser tes messages.
-              </p>
+            <div className="space-y-4">
+              <div className="panel p-6">
+                <div className="mb-5 flex items-center gap-2">
+                  <Store className="h-4 w-4 text-brand" />
+                  <h2 className="text-sm font-semibold text-text-100">Profil business</h2>
+                </div>
+                <p className="-mt-2 mb-5 text-xs text-text-400">
+                  Ces informations aident l’agent à personnaliser tes messages.
+                </p>
 
-              <div className="space-y-4">
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-400">Ton nom</label>
-                  <input
-                    value={ownerName}
-                    onChange={(e) => setOwnerName(e.target.value)}
-                    placeholder="Ex. Awa"
-                    className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                <div className="space-y-4">
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-text-400">Ton nom</label>
+                    <input
+                      value={ownerName}
+                      onChange={(e) => setOwnerName(e.target.value)}
+                      placeholder="Ex. Awa"
+                      className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-text-400">Offre</label>
+                    <textarea
+                      value={offer}
+                      onChange={(e) => setOffer(e.target.value)}
+                      rows={3}
+                      placeholder="Ex. Formation en marketing digital, coaching 1-1…"
+                      className="w-full resize-none rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-xs font-medium text-text-400">
+                      Prix <span className="text-text-500">(optionnel)</span>
+                    </label>
+                    <input
+                      value={price}
+                      onChange={(e) => setPrice(e.target.value)}
+                      placeholder="Ex. 25 000 FCFA"
+                      className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    disabled={savingBusiness}
+                    onClick={async () => {
+                      setSavingBusiness(true);
+                      try {
+                        await saveBusinessProfile({ ownerName, offer, price });
+                        setBusinessFb('Profil enregistré.');
+                      } catch (err) {
+                        setBusinessFb(err instanceof Error ? err.message : 'Erreur');
+                      } finally {
+                        setSavingBusiness(false);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
+                  >
+                    <CheckCircle2 className="h-4 w-4" />
+                    {savingBusiness ? 'Enregistrement…' : 'Enregistrer'}
+                  </button>
+                  <Feedback
+                    text={businessFb}
+                    type={businessFb.includes('Erreur') ? 'err' : 'ok'}
                   />
                 </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-400">Offre</label>
-                  <textarea
-                    value={offer}
-                    onChange={(e) => setOffer(e.target.value)}
-                    rows={3}
-                    placeholder="Ex. Formation en marketing digital, coaching 1-1…"
-                    className="w-full resize-none rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
-                  />
+              </div>
+
+              <div className="panel p-6">
+                <div className="mb-1 flex items-center gap-2">
+                  <Link2 className="h-4 w-4 text-brand" />
+                  <h2 className="text-sm font-semibold text-text-100">Intégrations</h2>
                 </div>
-                <div>
-                  <label className="mb-1.5 block text-xs font-medium text-text-400">
-                    Prix <span className="text-text-500">(optionnel)</span>
-                  </label>
-                  <input
-                    value={price}
-                    onChange={(e) => setPrice(e.target.value)}
-                    placeholder="Ex. 25 000 FCFA"
-                    className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
-                  />
-                </div>
-                <button
-                  type="button"
-                  disabled={savingBusiness}
-                  onClick={async () => {
-                    setSavingBusiness(true);
-                    try {
-                      await saveBusinessProfile({ ownerName, offer, price });
-                      setBusinessFb('Profil enregistré.');
-                    } catch (err) {
-                      setBusinessFb(err instanceof Error ? err.message : 'Erreur');
-                    } finally {
-                      setSavingBusiness(false);
+                <p className="mb-5 text-xs text-text-400">
+                  Lie tes outils pour que l’agent s’en serve dans tes automatisations WhatsApp.
+                </p>
+
+                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/10 bg-bg-0 px-4 py-3.5">
+                  <div className="min-w-0 flex items-center gap-3">
+                    <span
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
+                      style={{ background: '#262627' }}
+                      aria-hidden
+                    >
+                      Tf
+                    </span>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-text-100">Typeform</p>
+                      <p className="text-xs text-text-400">
+                        Formulaires → leads WhatsApp &amp; campagnes
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setIntegrationsFb(
+                        'Connexion Typeform bientôt disponible — le bouton est prêt, l’OAuth sera branché ensuite.',
+                      )
                     }
-                  }}
-                  className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
-                >
-                  <CheckCircle2 className="h-4 w-4" />
-                  {savingBusiness ? 'Enregistrement…' : 'Enregistrer'}
-                </button>
-                <Feedback
-                  text={businessFb}
-                  type={businessFb.includes('Erreur') ? 'err' : 'ok'}
-                />
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-black/10 bg-bg-100 px-4 py-2 text-sm font-medium text-text-200 transition hover:border-brand-border hover:bg-brand/10 hover:text-brand"
+                  >
+                    <Link2 className="h-4 w-4" />
+                    Connecter
+                  </button>
+                </div>
+                <Feedback text={integrationsFb} />
               </div>
             </div>
           ) : (

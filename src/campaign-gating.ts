@@ -75,13 +75,35 @@ async function matchOutboundTarget(
 
 /**
  * Campagne de prospection liée à ce contact pour les réponses auto.
- * Uniquement les campagnes active (paused = stop total).
+ * Préfère la campagne pointée par conversation_campaign_id (dernier opener),
+ * sinon première campagne active où le contact est cible.
  */
 export async function findActiveOutboundCampaign(
   userId: number,
   chatId: string
 ): Promise<{ automation: Automation; targetId: string } | null> {
   const active = await listActiveAutomations(userId);
+  const contact = await getContact(userId, chatId);
+  const preferredId =
+    contact?.conversation_campaign_id != null
+      ? Number(contact.conversation_campaign_id)
+      : NaN;
+
+  if (Number.isFinite(preferredId)) {
+    const preferred = active.find((a) => a.id === preferredId);
+    if (preferred && isOutboundCampaign(preferred)) {
+      const target = await findMatchingAutomationTarget(
+        userId,
+        preferred.id,
+        chatId,
+        OUTBOUND_TARGET_STATUSES
+      );
+      if (target) {
+        return { automation: preferred, targetId: target.target_id };
+      }
+    }
+  }
+
   return matchOutboundTarget(active, userId, chatId);
 }
 
