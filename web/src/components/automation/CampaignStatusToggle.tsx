@@ -1,6 +1,6 @@
 import { useState, type MouseEvent } from 'react';
 import { Pause, Play } from 'lucide-react';
-import { updateAutomationStatus } from '@/lib/api';
+import { updateAutomationStatus, validateSimulationAndLaunch } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 type CampaignStatusToggleProps = {
@@ -14,6 +14,7 @@ type CampaignStatusToggleProps = {
 
 /**
  * Active / met en pause une campagne (évite deux campagnes actives en parallèle).
+ * Brouillon → lancement complet (bootstrap). Pause → reprise. Active → pause.
  */
 export function CampaignStatusToggle({
   automationId,
@@ -29,14 +30,24 @@ export function CampaignStatusToggle({
   }
 
   const isActive = status === 'active';
-  const label = isActive ? 'Désactiver' : status === 'draft' ? 'Activer' : 'Réactiver';
+  const label = isActive ? 'Désactiver' : status === 'draft' ? 'Lancer' : 'Réactiver';
 
   const handleClick = async (e?: MouseEvent) => {
     e?.stopPropagation();
     if (busy) return;
     setBusy(true);
     try {
-      await updateAutomationStatus(automationId, isActive ? 'paused' : 'active');
+      if (isActive) {
+        await updateAutomationStatus(automationId, 'paused');
+      } else if (status === 'draft') {
+        // Lancement complet : pause les autres actives + charge les cibles
+        const result = await validateSimulationAndLaunch(automationId);
+        if (result.message) {
+          /* statut rafraîchi via onUpdated */
+        }
+      } else {
+        await updateAutomationStatus(automationId, 'active');
+      }
       await onUpdated?.();
     } catch (err) {
       alert(err instanceof Error ? err.message : 'Impossible de changer le statut.');

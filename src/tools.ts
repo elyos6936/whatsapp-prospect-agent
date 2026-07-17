@@ -100,6 +100,7 @@ import {
   resumeAutomationMessaging,
   deleteAutomation,
   listProspectedContacts,
+  listActiveAutomations,
   type AutomationType,
   type ContactStatus,
   type AutomationConfig,
@@ -1259,10 +1260,11 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "create_automation",
       description:
-        "Crée OU met à jour une campagne WhatsApp en BROUILLON. " +
-        "Si l'utilisateur veut MODIFIER une campagne existante : passe automation_id (obligatoire) — NE CRÉE PAS une nouvelle. " +
-        "Sans automation_id, réutilise automatiquement un brouillon du même type/groupe s'il en existe un, pour éviter les doublons. " +
-        "L'activation se fait via activate_automation après simulation validée. Auto-reply sera TOUJOURS activé à l'activation.",
+        "Crée OU met à jour une campagne WhatsApp en BROUILLON uniquement (jamais d'activation ici). " +
+        "Si une autre campagne est déjà active : crée quand même le brouillon — NE PAS activer. " +
+        "L'utilisateur lancera plus tard via activate_automation ou le bouton Activer (l'ancienne passera alors en pause). " +
+        "Si l'utilisateur veut MODIFIER une campagne existante : passe automation_id — NE CRÉE PAS une nouvelle. " +
+        "Sans automation_id, réutilise un brouillon du même type/groupe s'il existe.",
       parameters: {
         type: "object",
         properties: {
@@ -1433,7 +1435,9 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "activate_automation",
       description:
-        "Active une campagne en brouillon (draft) après confirmation utilisateur. Pour group_prospect : charge les membres et démarre l'envoi. Pour keyword_sales : commence à écouter les déclencheurs.",
+        "Lance une campagne en brouillon/pause UNIQUEMENT quand l'utilisateur est prêt (après simulation / confirmation explicite). " +
+        "Si une autre campagne est active, elle passe automatiquement en pause. " +
+        "Ne pas appeler juste après create_automation si une campagne tourne déjà — laisser le brouillon et attendre le feu vert.",
       parameters: {
         type: "object",
         properties: {
@@ -3552,26 +3556,35 @@ export async function executeTool(
         });
         await linkAutomationToThread(userId, threadId, auto.id, name);
         const plan = await persistVisualPlan(userId, auto.id);
+        const otherActive = (await listActiveAutomations(userId)).filter((a) => a.id !== auto.id);
+        const activeNote = otherActive.length
+          ? ` Une campagne est déjà active (${otherActive.map((a) => `« ${a.name} »`).join(", ")}) — elle continue. Celle-ci reste en brouillon : lance-la quand tu es prêt (bouton Activer / Valider) ; l'ancienne passera alors en pause.`
+          : " Prochaine étape : simulation à droite, puis lancement après confirmation.";
         return JSON.stringify({
           success: true,
           updated: false,
           automationId: auto.id,
           name: auto.name,
           type: auto.type,
-          status: auto.status,
+          status: "draft",
           config: auto.config,
           resolvedContacts: extra?.resolvedCount,
           unresolved: extra?.unresolved,
+          otherActiveCampaigns: otherActive.map((a) => ({ id: a.id, name: a.name })),
+          keepAsDraft: true,
+          doNotActivateYet: otherActive.length > 0,
           plan,
           planDisplay: plan
             ? formatPlanDisplay(
                 plan,
-                `« ${auto.name} » est prêt en brouillon. Ouvre la **simulation** à droite pour valider le déroulé avant le lancement.`
+                otherActive.length
+                  ? `« ${auto.name} » est en brouillon. Une autre campagne tourne encore — simule ici, puis lance quand tu es prêt.`
+                  : `« ${auto.name} » est prêt en brouillon. Ouvre la **simulation** à droite pour valider le déroulé avant le lancement.`
               )
             : undefined,
           message: `« ${auto.name} » prêt en brouillon${
             extra?.resolvedCount != null ? ` avec ${extra.resolvedCount} contact(s)` : ""
-          }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""} Prochaine étape : simulation à droite, puis lancement après confirmation.`,
+          }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""}${activeNote}`,
           simulationHint:
             "Invite à ouvrir la simulation à droite : jouer le prospect, jusqu'à 7 messages, sans WhatsApp réel.",
           completedAt: nowFr(),
@@ -3677,6 +3690,7 @@ export async function executeTool(
         status: "active",
         targetsAdded: result.targetsAdded,
         autoReply: true,
+        pausedOthers: result.pausedOthers ?? [],
         stats: fresh?.automation.stats,
         message: result.message,
         completedAt: nowFr(),

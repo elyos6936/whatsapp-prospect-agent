@@ -5,6 +5,8 @@ import {
   setAutoReplyEnabled,
   resumeAutomationMessaging,
   saveAgentMessageForAutomation,
+  pauseOtherActiveAutomations,
+  listActiveAutomations,
   type Automation,
   type AutomationConfig,
 } from "./db.js";
@@ -26,12 +28,14 @@ export type ActivateAutomationResult =
       status: "active";
       targetsAdded: number;
       message: string;
+      pausedOthers?: Array<{ id: number; name: string }>;
     }
   | { ok: false; error: string; automationId?: number };
 
 /**
  * Active une automatisation (draft/paused → active) + bootstrap cibles.
- * Utilisé par l'outil agent et le bouton « Valider » de la simulation.
+ * Si d'autres campagnes sont actives, elles passent automatiquement en pause.
+ * Utilisé par l'outil agent et le bouton « Valider » / « Activer ».
  */
 export async function activateAutomationCore(
   userId: number,
@@ -142,6 +146,9 @@ export async function activateAutomationCore(
     safeConfig = { ...safeConfig, simulationValidatedAt: new Date().toISOString() };
   }
 
+  // Une seule campagne active à la fois
+  const pausedOthers = await pauseOtherActiveAutomations(userId, id);
+
   let targetsAdded = 0;
   await updateAutomationConfig(userId, id, safeConfig);
   await setAutoReplyEnabled(userId, true);
@@ -180,10 +187,14 @@ export async function activateAutomationCore(
 
   kickAutomationForUser(userId);
 
+  const pausedNote = pausedOthers.length
+    ? ` Campagne(s) mise(s) en pause : ${pausedOthers.map((p) => `« ${p.name} »`).join(", ")}.`
+    : "";
+
   const message =
     options.source === "simulation_ui"
-      ? `Simulation validée — « ${auto.name} » est lancée.${targetsAdded ? ` ${targetsAdded} contact(s) en file.` : ""}`
-      : `« ${auto.name} » activée.${targetsAdded ? ` ${targetsAdded} contact(s) chargé(s).` : ""}`;
+      ? `Simulation validée — « ${auto.name} » est lancée.${targetsAdded ? ` ${targetsAdded} contact(s) en file.` : ""}${pausedNote}`
+      : `« ${auto.name} » activée.${targetsAdded ? ` ${targetsAdded} contact(s) chargé(s).` : ""}${pausedNote}`;
 
   if (options.source === "simulation_ui") {
     await saveAgentMessageForAutomation(userId, id, "assistant", `✅ ${message}`).catch(() => {});
@@ -196,9 +207,21 @@ export async function activateAutomationCore(
     status: "active",
     targetsAdded,
     message,
+    pausedOthers,
   };
 }
 
 export function automationIsDraftOrPaused(auto: Automation): boolean {
   return auto.status === "draft" || auto.status === "paused";
+}
+
+/** Indique s'il existe déjà une campagne active (hors id optionnel). */
+export async function hasOtherActiveCampaign(
+  userId: number,
+  exceptId?: number
+): Promise<{ hasActive: boolean; active: Automation[] }> {
+  const active = (await listActiveAutomations(userId)).filter(
+    (a) => exceptId == null || a.id !== exceptId
+  );
+  return { hasActive: active.length > 0, active };
 }

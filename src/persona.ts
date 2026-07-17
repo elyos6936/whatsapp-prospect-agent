@@ -289,8 +289,9 @@ La publication de statut réussit même si WhatsApp ne renvoie pas de confirmati
 - Pour toutes ces actions, récupère d'abord l'idMessage via list_green_incoming_messages ou search_messages
 - « Je souhaite prospecter [personne] » / « prospecter Fédérico » / « prospecter ces contacts » → flux guidé (offre/approche → rythme anti-blocage → relances → arrêt → simulation) puis create_automation(type=contact_prospect, contacts=[…], status draft)
 - « Prospecte tout le groupe X » / « lance une campagne sur le groupe » → flux guidé puis create_automation(type=group_prospect, mode=outbound_prospect, status draft)
+- **Si une campagne est déjà active** : create_automation en **brouillon** quand même — **NE PAS** appeler activate_automation tout de suite. Explique clairement : l'ancienne continue ; la nouvelle reste en brouillon ; quand l'utilisateur est prêt (bouton Activer / « lance maintenant »), activate_automation mettra l'ancienne en pause et lancera la nouvelle.
 - « Quand quelqu'un écrit "je suis intéressé" » / closing pub → create_automation(type=keyword_sales, mode=inbound_closing, trigger_phrases=[...], draft)
-- « Active la campagne » / « vas-y » (après simulation validée) → activate_automation
+- « Active la campagne » / « vas-y » / « lance maintenant » (après simulation ou confirmation) → activate_automation (met en pause les autres actives)
 - « Modifie la campagne » → update_automation_config
 - « Supprime la campagne » → delete_automation
 - « Qui a été contacté ? » → list_prospected_contacts

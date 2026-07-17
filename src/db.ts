@@ -2103,10 +2103,30 @@ export async function pauseAutomation(userId: number, id: number): Promise<Autom
   return getAutomation(userId, id);
 }
 
+/**
+ * Met en pause toutes les campagnes actives sauf `exceptId`.
+ * Une seule campagne active à la fois (évite les messages mélangés sur WhatsApp).
+ */
+export async function pauseOtherActiveAutomations(
+  userId: number,
+  exceptId: number
+): Promise<Array<{ id: number; name: string }>> {
+  const active = await listActiveAutomations(userId);
+  const paused: Array<{ id: number; name: string }> = [];
+  for (const auto of active) {
+    if (auto.id === exceptId) continue;
+    const updated = await pauseAutomation(userId, auto.id);
+    if (updated) paused.push({ id: updated.id, name: updated.name });
+  }
+  return paused;
+}
+
 /** Reprise : active + auto-reply OBLIGATOIRE pour les prospects de la campagne. */
 export async function resumeAutomation(userId: number, id: number): Promise<Automation | null> {
   const current = await getAutomation(userId, id);
   if (!current) return null;
+  // Une seule campagne active : l'ancienne passe en pause
+  await pauseOtherActiveAutomations(userId, id);
   await updateAutomationConfig(userId, id, {
     ...current.config,
     enableAutoReply: true,
