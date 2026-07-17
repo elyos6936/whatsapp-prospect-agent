@@ -1,4 +1,5 @@
 import { ArrowLeft, BarChart3, Eye, Settings } from 'lucide-react';
+import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
 
@@ -6,6 +7,8 @@ type AppHeaderProps = {
   overlayView: OverlayView;
   threadTitle: string;
   hasCampaign: boolean;
+  campaignStatus?: string | null;
+  automationId?: number | null;
   hasStrategy: boolean;
   strategyOpen: boolean;
   onGoToChat: () => void;
@@ -13,12 +16,15 @@ type AppHeaderProps = {
   onOpenStats?: () => void;
   onToggleStrategy?: () => void;
   onOpenMobileNav?: () => void;
+  onCampaignStatusChange?: () => void | Promise<void>;
 };
 
 export function AppHeader({
   overlayView,
   threadTitle,
   hasCampaign,
+  campaignStatus,
+  automationId,
   hasStrategy,
   strategyOpen,
   onGoToChat,
@@ -26,6 +32,7 @@ export function AppHeader({
   onOpenStats,
   onToggleStrategy,
   onOpenMobileNav,
+  onCampaignStatusChange,
 }: AppHeaderProps) {
   const onChat = overlayView == null;
   const title = onChat ? threadTitle || 'Automatisation' : getOverlayTitle(overlayView);
@@ -52,6 +59,16 @@ export function AppHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+        {hasCampaign && automationId != null && campaignStatus && (
+          <CampaignStatusToggle
+            automationId={automationId}
+            status={campaignStatus}
+            size="md"
+            className="!px-2.5 !py-1.5 !text-xs sm:!px-3"
+            onUpdated={onCampaignStatusChange}
+          />
+        )}
+
         {onChat && hasStrategy && onToggleStrategy && (
           <button
             type="button"

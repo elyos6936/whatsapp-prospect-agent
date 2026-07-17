@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Bot, MessageSquare, Pause, Play, RefreshCw, Users } from 'lucide-react';
+import { Bot, MessageSquare, RefreshCw, Users } from 'lucide-react';
 import {
   fetchThreadCampaign,
   reloadAutomationMembers,
-  updateAutomationStatus,
   type AutomationDetail,
   type AutomationSummary,
 } from '@/lib/api';
+import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
 import { cn } from '@/lib/utils';
 import { outreachMetrics } from '@/lib/campaign-metrics';
 
@@ -66,43 +66,9 @@ function StatusControls({
   auto: AutomationSummary;
   onChange: () => void | Promise<void>;
 }) {
-  const cls =
-    'inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold transition shadow-sm';
-  if (auto.status === 'active') {
-    return (
-      <button
-        type="button"
-        onClick={async () => {
-          await updateAutomationStatus(auto.id, 'paused');
-          await onChange();
-        }}
-        className={cn(
-          cls,
-          'border border-amber-500/40 bg-amber-500/15 text-amber-800 hover:bg-amber-500/25',
-        )}
-        title="Stoppe les envois et les réponses automatiques"
-      >
-        <Pause className="h-4 w-4" />
-        Désactiver
-      </button>
-    );
-  }
-  if (auto.status === 'paused' || auto.status === 'draft') {
-    return (
-      <button
-        type="button"
-        onClick={async () => {
-          await updateAutomationStatus(auto.id, 'active');
-          await onChange();
-        }}
-        className={cn(cls, 'bg-brand text-white hover:bg-brand-dark')}
-      >
-        <Play className="h-4 w-4" />
-        {auto.status === 'draft' ? 'Activer' : 'Réactiver'}
-      </button>
-    );
-  }
-  return null;
+  return (
+    <CampaignStatusToggle automationId={auto.id} status={auto.status} onUpdated={onChange} />
+  );
 }
 
 type AutomationPageProps = {

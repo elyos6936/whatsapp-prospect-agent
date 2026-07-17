@@ -324,6 +324,7 @@ export default function AuthenticatedApp() {
         onNewThread={handleNewThread}
         onRenameThread={handleRenameThread}
         onDeleteThread={handleDeleteThread}
+        onCampaignStatusChange={() => void refreshThreads(activeThreadId)}
         creatingThread={creatingThread}
         waConnected={waConnected}
         mobileOpen={mobileNavOpen}
@@ -336,10 +337,13 @@ export default function AuthenticatedApp() {
           overlayView={overlayView}
           threadTitle={activeThread?.title ?? 'Automatisation'}
           hasCampaign={Boolean(activeThread?.automation_id)}
+          automationId={activeThread?.automation_id ?? null}
+          campaignStatus={activeThread?.automation_status ?? null}
           hasStrategy={Boolean(strategyPlan?.nodes?.length)}
           strategyOpen={showStrategyDock}
           onGoToChat={() => setOverlayView(null)}
           onOpenSettings={() => setOverlayView('settings')}
+          onCampaignStatusChange={() => void refreshThreads(activeThreadId)}
           onOpenStats={
             activeThread?.automation_id ? () => setOverlayView('stats') : undefined
           }

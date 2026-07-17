@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { CampaignCharts } from '@/components/automation/CampaignCharts';
+import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
 import { fetchThreadCampaign, type AutomationDetail } from '@/lib/api';
 import { goalAwareStatCards, outreachMetrics, TARGET_META, TARGET_ORDER } from '@/lib/campaign-metrics';
 import { cn } from '@/lib/utils';
@@ -102,7 +103,7 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
 
           {a && goalPack && (
             <div className="mt-6 space-y-5">
-              <header className="panel flex flex-col gap-2 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
+              <header className="panel flex flex-col gap-3 p-4 sm:flex-row sm:items-start sm:justify-between sm:p-5">
                 <div className="min-w-0">
                   <h2 className="text-lg font-medium text-text-100">{a.name}</h2>
                   <p className="mt-1 text-sm text-text-500">
@@ -113,6 +114,11 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
                     <span className="text-text-500"> — {goalPack.subtitle}</span>
                   </p>
                 </div>
+                <CampaignStatusToggle
+                  automationId={a.id}
+                  status={a.status}
+                  onUpdated={load}
+                />
               </header>
 
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">

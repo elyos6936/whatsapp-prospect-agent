@@ -9,6 +9,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import type { AgentThreadSummary } from '@/lib/api';
@@ -31,6 +32,8 @@ type AppSidebarProps = {
   onNewThread: () => void;
   onRenameThread: (id: number, title: string) => Promise<void> | void;
   onDeleteThread: (id: number) => Promise<void> | void;
+  /** Après pause / activation d’une campagne (rafraîchir la liste). */
+  onCampaignStatusChange?: () => void | Promise<void>;
   creatingThread?: boolean;
   waConnected?: boolean;
   mobileOpen: boolean;
@@ -119,6 +122,7 @@ function ThreadList({
   onNewThread,
   onRenameThread,
   onDeleteThread,
+  onCampaignStatusChange,
   creatingThread,
   waConnected,
   onAfterNavigate,
@@ -130,6 +134,7 @@ function ThreadList({
   onNewThread: () => void;
   onRenameThread: (id: number, title: string) => Promise<void> | void;
   onDeleteThread: (id: number) => Promise<void> | void;
+  onCampaignStatusChange?: () => void | Promise<void>;
   creatingThread?: boolean;
   waConnected: boolean;
   onAfterNavigate?: () => void;
@@ -224,10 +229,9 @@ function ThreadList({
           const active = activeThreadId === thread.id;
           const status = thread.automation_status;
           const badge = status ? STATUS_LABELS[status] || status : 'Vide';
-          const subtitle = thread.description?.trim()
-            ? thread.description.trim().length > 56
-              ? `${thread.description.trim().slice(0, 55)}…`
-              : thread.description.trim()
+          const desc = thread.description?.trim();
+          const subtitle = desc
+            ? `${badge} · ${desc.length > 40 ? `${desc.slice(0, 39)}…` : desc}`
             : badge;
           const isRenaming = renamingId === thread.id;
           const isBusy = busyId === thread.id;
@@ -312,7 +316,15 @@ function ThreadList({
               )}
 
               {waConnected && !isRenaming && (
-                <div className="pr-1 pt-2">
+                <div className="flex shrink-0 items-center gap-0.5 pr-1 pt-2">
+                  {thread.automation_id != null && status && (
+                    <CampaignStatusToggle
+                      automationId={thread.automation_id}
+                      status={status}
+                      size="sm"
+                      onUpdated={onCampaignStatusChange}
+                    />
+                  )}
                   <ThreadActionsMenu
                     thread={thread}
                     onRename={() => startRename(thread)}
@@ -340,6 +352,7 @@ export function AppSidebar({
   onNewThread,
   onRenameThread,
   onDeleteThread,
+  onCampaignStatusChange,
   creatingThread,
   waConnected = true,
   mobileOpen,
@@ -394,6 +407,7 @@ export function AppSidebar({
           onNewThread={onNewThread}
           onRenameThread={onRenameThread}
           onDeleteThread={onDeleteThread}
+          onCampaignStatusChange={onCampaignStatusChange}
           creatingThread={creatingThread}
           waConnected={waConnected}
         />
@@ -433,6 +447,7 @@ export function AppSidebar({
           onNewThread={onNewThread}
           onRenameThread={onRenameThread}
           onDeleteThread={onDeleteThread}
+          onCampaignStatusChange={onCampaignStatusChange}
           creatingThread={creatingThread}
           waConnected={waConnected}
           onAfterNavigate={onMobileClose}
