@@ -469,6 +469,15 @@ export async function reloadAutomationMembers(
   return request(`/api/automations/${id}/reload-members`, { method: 'POST' });
 }
 
+export async function validateSimulationAndLaunch(id: number): Promise<{
+  ok: boolean;
+  message: string;
+  targetsAdded?: number;
+  status?: string;
+}> {
+  return request(`/api/automations/${id}/validate-simulation`, { method: 'POST' });
+}
+
 export async function fetchRoiDashboard(): Promise<RoiDashboard> {
   return request<RoiDashboard>('/api/roi/dashboard');
 }

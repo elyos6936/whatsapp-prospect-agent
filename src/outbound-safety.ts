@@ -1,5 +1,6 @@
 /**
- * Garde-fous anti-spam : 1 message sortant max tant que le prospect n'a pas répondu.
+ * Garde-fous anti-spam : 1 message sortant max tant que le prospect n'a pas répondu
+ * (dans le périmètre de la même automatisation).
  */
 import {
   cancelPendingSendQueueForRecipient,
@@ -10,9 +11,10 @@ import {
 /** Dernier message de l'époque = sortant → on attend une réponse avant tout nouvel envoi. */
 export async function isAwaitingProspectReply(
   userId: number,
-  recipient: string
+  recipient: string,
+  automationId?: number | null
 ): Promise<boolean> {
-  const history = await getContactChatHistory(userId, recipient, 20);
+  const history = await getContactChatHistory(userId, recipient, 20, automationId);
   if (history.length === 0) return false;
   const last = history[history.length - 1];
   return last.direction === "sortant";
@@ -29,7 +31,11 @@ export async function shouldBlockOutboundWhileAwaitingReply(
   if ((item.priority ?? 0) >= 10) return { block: false };
   if (item.automation_id == null && item.sequence_id == null) return { block: false };
 
-  const awaiting = await isAwaitingProspectReply(userId, item.recipient);
+  const awaiting = await isAwaitingProspectReply(
+    userId,
+    item.recipient,
+    item.automation_id
+  );
   if (!awaiting) return { block: false };
   return {
     block: true,

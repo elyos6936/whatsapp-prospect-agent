@@ -22,6 +22,7 @@ import {
   type AutomationType,
 } from "./db.js";
 import { bootstrapGroupProspectTargets, reloadGroupProspectTargets, kickAutomationForUser } from "./automation-engine.js";
+import { activateAutomationCore } from "./activate-automation.js";
 import { chatWithAgent } from "./agent.js";
 import { findGroupByNameOrId, requireEvolutionConnected } from "./evolutionapi.js";
 
@@ -80,6 +81,30 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         kickAutomationForUser(userId);
       }
       return { automation: updated };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/api/automations/:id/validate-simulation",
+    async (req, reply) => {
+      const userId = requireUserId(req);
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return reply.status(400).send({ error: "ID invalide." });
+      }
+      const result = await activateAutomationCore(userId, id, { source: "simulation_ui" });
+      if (!result.ok) {
+        return reply.status(400).send({ error: result.error, automationId: result.automationId });
+      }
+      return {
+        ok: true,
+        automationId: result.automationId,
+        name: result.name,
+        status: result.status,
+        targetsAdded: result.targetsAdded,
+        message: result.message,
+        automation: await getAutomationDetail(userId, id),
+      };
     }
   );
 

@@ -475,7 +475,22 @@ export interface WhatsAppMessage {
   direction: "entrant" | "sortant";
   body: string;
   green_api_id: string | null;
+  automation_id: number | null;
   created_at: string;
+}
+
+export interface ContactAutomationState {
+  id: number;
+  user_id: number;
+  phone: string;
+  automation_id: number;
+  memory_summary: string | null;
+  memory_updated_at: string | null;
+  lead_score: number;
+  handoff_status: string | null;
+  conversation_epoch_at: string;
+  created_at: string;
+  updated_at: string;
 }
 
 function mapWhatsAppMessage(row: Record<string, unknown>): WhatsAppMessage {
@@ -486,6 +501,7 @@ function mapWhatsAppMessage(row: Record<string, unknown>): WhatsAppMessage {
     direction: row.direction as WhatsAppMessage["direction"],
     body: String(row.body),
     green_api_id: row.green_api_id != null ? String(row.green_api_id) : null,
+    automation_id: row.automation_id != null ? Number(row.automation_id) : null,
     created_at: formatTs(row.created_at),
   };
 }
@@ -497,11 +513,18 @@ export async function saveWhatsAppMessage(userId: number, input: {
   greenApiId?: string;
   senderName?: string;
   countsTowardQuota?: boolean;
+  automationId?: number | null;
 }): Promise<WhatsAppMessage> {
+  await ensureContactAutomationStateSchema().catch(() => {});
   const countsTowardQuota =
     input.direction === "sortant" ? (input.countsTowardQuota !== false ? 1 : 0) : 1;
+  const automationIdRaw =
+    input.automationId != null ? Number(input.automationId) : NaN;
+  const automationId = Number.isFinite(automationIdRaw)
+    ? Math.floor(automationIdRaw)
+    : null;
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO messages (user_id, contact_phone, sender_name, direction, body, green_api_id, counts_toward_quota)
+    INSERT INTO messages (user_id, contact_phone, sender_name, direction, body, green_api_id, counts_toward_quota, automation_id)
     VALUES (
       ${userId},
       ${input.contactPhone},
@@ -509,9 +532,10 @@ export async function saveWhatsAppMessage(userId: number, input: {
       ${input.direction},
       ${input.body},
       ${input.greenApiId ?? null},
-      ${countsTowardQuota}
+      ${countsTowardQuota},
+      ${automationId}
     )
-    RETURNING id, contact_phone, sender_name, direction, body, green_api_id, created_at
+    RETURNING id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
   `;
   return mapWhatsAppMessage(rows[0]);
 }
@@ -642,39 +666,81 @@ export async function listAllIncomingMessages(userId: number, limit = 100): Prom
   return rows.map(mapWhatsAppMessage);
 }
 
-export async function getContactChatHistory(userId: number, chatId: string, limit = 12): Promise<WhatsAppMessage[]> {
+export async function getContactChatHistory(
+  userId: number,
+  chatId: string,
+  limit = 12,
+  automationId?: number | null
+): Promise<WhatsAppMessage[]> {
   await ensureConversationEpochColumns().catch(() => {});
+  await ensureContactAutomationStateSchema().catch(() => {});
   const digits = chatId.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
   const contact = await findContactForChat(userId, chatId).catch(() => null);
-  const epoch = contact?.conversation_epoch_at ?? null;
 
-  const rows = epoch
-    ? await sql<Record<string, unknown>[]>`
-        SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-        FROM messages
-        WHERE user_id = ${userId}
-          AND created_at >= ${toTsParam(epoch)}
-          AND (contact_phone = ${chatId}
-           OR (${digits} != '' AND (
-             contact_phone = ${digits} || '@c.us'
-             OR contact_phone = ${digits} || '@lid'
-             OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
-           )))
-        ORDER BY id DESC
-        LIMIT ${limit}
-      `
-    : await sql<Record<string, unknown>[]>`
-        SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
-        FROM messages
-        WHERE user_id = ${userId} AND (contact_phone = ${chatId}
-           OR (${digits} != '' AND (
-             contact_phone = ${digits} || '@c.us'
-             OR contact_phone = ${digits} || '@lid'
-             OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
-           )))
-        ORDER BY id DESC
-        LIMIT ${limit}
-      `;
+  const scopedAutoIdRaw =
+    automationId != null ? Number(automationId) : NaN;
+  const scopedAutoId = Number.isFinite(scopedAutoIdRaw)
+    ? Math.floor(scopedAutoIdRaw)
+    : null;
+
+  let epoch: string | null = null;
+  if (scopedAutoId != null) {
+    try {
+      const state = await getContactAutomationState(userId, chatId, scopedAutoId);
+      epoch = state?.conversation_epoch_at ?? null;
+    } catch {
+      epoch = null;
+    }
+  } else {
+    epoch = contact?.conversation_epoch_at ?? null;
+  }
+
+  // Isolation stricte : uniquement les messages tagués de cette automatisation
+  let rows: Record<string, unknown>[];
+  if (scopedAutoId != null) {
+    rows = await sql<Record<string, unknown>[]>`
+      SELECT id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
+      FROM messages
+      WHERE user_id = ${userId}
+        AND automation_id = ${scopedAutoId}
+        AND (contact_phone = ${chatId}
+         OR (${digits} != '' AND (
+           contact_phone = ${digits} || '@c.us'
+           OR contact_phone = ${digits} || '@lid'
+           OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+         )))
+      ORDER BY id DESC
+      LIMIT ${limit}
+    `;
+  } else if (epoch) {
+    rows = await sql<Record<string, unknown>[]>`
+      SELECT id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
+      FROM messages
+      WHERE user_id = ${userId}
+        AND created_at >= ${toTsParam(epoch)}
+        AND (contact_phone = ${chatId}
+         OR (${digits} != '' AND (
+           contact_phone = ${digits} || '@c.us'
+           OR contact_phone = ${digits} || '@lid'
+           OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+         )))
+      ORDER BY id DESC
+      LIMIT ${limit}
+    `;
+  } else {
+    rows = await sql<Record<string, unknown>[]>`
+      SELECT id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
+      FROM messages
+      WHERE user_id = ${userId} AND (contact_phone = ${chatId}
+         OR (${digits} != '' AND (
+           contact_phone = ${digits} || '@c.us'
+           OR contact_phone = ${digits} || '@lid'
+           OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+         )))
+      ORDER BY id DESC
+      LIMIT ${limit}
+    `;
+  }
   return rows.map(mapWhatsAppMessage).reverse();
 }
 
@@ -768,6 +834,124 @@ export async function ensureConversationEpochColumns(): Promise<void> {
     });
   }
   await conversationEpochColumnsReady;
+}
+
+let contactAutomationStateReady: Promise<void> | null = null;
+
+/** Table mémoire par automatisation + colonne messages.automation_id. */
+export async function ensureContactAutomationStateSchema(): Promise<void> {
+  if (!contactAutomationStateReady) {
+    contactAutomationStateReady = (async () => {
+      await sql`
+        CREATE TABLE IF NOT EXISTS contact_automation_state (
+          id BIGSERIAL PRIMARY KEY,
+          user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          phone TEXT NOT NULL,
+          automation_id BIGINT NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+          memory_summary TEXT,
+          memory_updated_at TIMESTAMPTZ,
+          lead_score INTEGER NOT NULL DEFAULT 0,
+          handoff_status TEXT,
+          conversation_epoch_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          UNIQUE (user_id, phone, automation_id)
+        )
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_contact_automation_state_auto
+        ON contact_automation_state (user_id, automation_id)
+      `;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_contact_automation_state_phone
+        ON contact_automation_state (user_id, phone)
+      `;
+      await sql`ALTER TABLE messages ADD COLUMN IF NOT EXISTS automation_id BIGINT`;
+      await sql`
+        CREATE INDEX IF NOT EXISTS idx_messages_automation
+        ON messages (user_id, automation_id, contact_phone)
+      `;
+    })().catch((err) => {
+      contactAutomationStateReady = null;
+      throw err;
+    });
+  }
+  await contactAutomationStateReady;
+}
+
+function mapContactAutomationState(row: Record<string, unknown>): ContactAutomationState {
+  return {
+    id: Number(row.id),
+    user_id: Number(row.user_id),
+    phone: String(row.phone),
+    automation_id: Number(row.automation_id),
+    memory_summary: row.memory_summary != null ? String(row.memory_summary) : null,
+    memory_updated_at: formatTsNullable(row.memory_updated_at),
+    lead_score: Number(row.lead_score ?? 0),
+    handoff_status: row.handoff_status != null ? String(row.handoff_status) : null,
+    conversation_epoch_at: formatTs(row.conversation_epoch_at),
+    created_at: formatTs(row.created_at),
+    updated_at: formatTs(row.updated_at),
+  };
+}
+
+export async function getContactAutomationState(
+  userId: number,
+  phone: string,
+  automationId: number
+): Promise<ContactAutomationState | null> {
+  await ensureContactAutomationStateSchema();
+  const chatId = normalizeContactPhone(phone);
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT id, user_id, phone, automation_id, memory_summary, memory_updated_at,
+           lead_score, handoff_status, conversation_epoch_at, created_at, updated_at
+    FROM contact_automation_state
+    WHERE user_id = ${userId} AND phone = ${chatId} AND automation_id = ${automationId}
+    LIMIT 1
+  `;
+  return rows[0] ? mapContactAutomationState(rows[0]) : null;
+}
+
+export async function updateContactAutomationMemory(
+  userId: number,
+  phone: string,
+  automationId: number,
+  summary: string
+): Promise<void> {
+  await ensureContactAutomationStateSchema();
+  const chatId = normalizeContactPhone(phone);
+  await sql`
+    UPDATE contact_automation_state
+    SET memory_summary = ${summary.trim()},
+        memory_updated_at = NOW(),
+        updated_at = NOW()
+    WHERE user_id = ${userId} AND phone = ${chatId} AND automation_id = ${automationId}
+  `;
+}
+
+export async function updateContactAutomationLeadScore(
+  userId: number,
+  phone: string,
+  automationId: number,
+  score: number
+): Promise<void> {
+  await ensureContactAutomationStateSchema();
+  const chatId = normalizeContactPhone(phone);
+  const clamped = Math.max(0, Math.min(100, Math.round(score)));
+  await sql`
+    UPDATE contact_automation_state
+    SET lead_score = ${clamped}, updated_at = NOW()
+    WHERE user_id = ${userId} AND phone = ${chatId} AND automation_id = ${automationId}
+  `;
+}
+
+/** IDs déjà cibles de CETTE automatisation uniquement (pas inter-campagnes). */
+export async function getAutomationTargetIds(
+  userId: number,
+  automationId: number
+): Promise<Set<string>> {
+  const targets = await listAutomationTargets(userId, automationId, { limit: 5000 });
+  return new Set(targets.map((t) => t.target_id));
 }
 
 async function lookupContactRow(userId: number, chatId: string): Promise<Contact | null> {
@@ -866,9 +1050,10 @@ export async function clearContactMemory(userId: number, phone: string): Promise
 }
 
 /**
- * Démarre une conversation « neuve » pour une campagne :
- * - si c'est la même campagne (relance / reprise) → ne touche à rien
- * - si nouvelle campagne → wipe mémoire + score + epoch = maintenant
+ * Démarre / reprend une conversation pour une campagne :
+ * - même automatisation → réutilise la mémoire isolée (relance)
+ * - nouvelle automatisation → crée un état vide SANS effacer les autres autos
+ * - contacts.conversation_campaign_id = pointeur « campagne active » pour le routage des réponses
  */
 export async function beginFreshCampaignConversation(
   userId: number,
@@ -876,15 +1061,43 @@ export async function beginFreshCampaignConversation(
   automationId: number
 ): Promise<{ fresh: boolean }> {
   await ensureConversationEpochColumns();
+  await ensureContactAutomationStateSchema();
   const chatId = normalizeContactPhone(phone);
 
-  // Garantir que le contact existe
   await saveContact(userId, { phone: chatId, status: "en_conversation", autoReply: true });
 
-  const contact = await getContact(userId, chatId);
-  if (contact?.conversation_campaign_id === automationId) {
+  const existing = await getContactAutomationState(userId, chatId, automationId);
+  if (existing) {
+    await sql`
+      UPDATE contacts
+      SET conversation_campaign_id = ${automationId},
+          conversation_epoch_at = ${toTsParam(existing.conversation_epoch_at)},
+          memory_summary = ${existing.memory_summary},
+          lead_score = ${existing.lead_score},
+          status = CASE WHEN status = 'stop' THEN status ELSE 'en_conversation' END,
+          updated_at = NOW()
+      WHERE user_id = ${userId} AND phone = ${chatId}
+    `;
     return { fresh: false };
   }
+
+  await sql`
+    INSERT INTO contact_automation_state (
+      user_id, phone, automation_id, memory_summary, lead_score,
+      conversation_epoch_at, created_at, updated_at
+    )
+    VALUES (
+      ${userId},
+      ${chatId},
+      ${automationId},
+      NULL,
+      0,
+      NOW() - INTERVAL '5 minutes',
+      NOW(),
+      NOW()
+    )
+    ON CONFLICT (user_id, phone, automation_id) DO NOTHING
+  `;
 
   await sql`
     UPDATE contacts
@@ -892,16 +1105,13 @@ export async function beginFreshCampaignConversation(
         memory_updated_at = NULL,
         lead_score = 0,
         handoff_status = NULL,
-        -- Marge de 5 min pour inclure l'opener / le message entrant qui déclenche la campagne
         conversation_epoch_at = NOW() - INTERVAL '5 minutes',
         conversation_campaign_id = ${automationId},
         status = CASE WHEN status = 'stop' THEN status ELSE 'en_conversation' END,
         updated_at = NOW()
     WHERE user_id = ${userId} AND phone = ${chatId}
   `;
-  console.log(
-    `🆕 Conversation neuve → ${chatId} (campagne #${automationId})${contact?.conversation_campaign_id ? ` — oubli ancienne #${contact.conversation_campaign_id}` : ""}`
-  );
+  console.log(`🆕 Conversation neuve → ${chatId} (campagne #${automationId}) — mémoire isolée`);
   return { fresh: true };
 }
 
@@ -1370,10 +1580,15 @@ export async function markScheduledFailed(userId: number, id: number, error: str
   `;
 }
 
-export async function getContactThread(userId: number, phone: string, limit = 100): Promise<WhatsAppMessage[]> {
+export async function getContactThread(
+  userId: number,
+  phone: string,
+  limit = 100,
+  automationId?: number | null
+): Promise<WhatsAppMessage[]> {
   const trimmed = phone.trim();
   const chatId = trimmed.includes("@") ? trimmed : `${trimmed.replace(/\D/g, "")}@c.us`;
-  return getContactChatHistory(userId, chatId, limit);
+  return getContactChatHistory(userId, chatId, limit, automationId);
 }
 
 export interface DailyBilan {
@@ -1530,6 +1745,8 @@ export interface AutomationConfig {
   /** ISO ou datetime locale : ne pas démarrer les openers avant cette date. */
   scheduledStartAt?: string;
   /** Plan graphique (nodes/edges) pour la carte visuelle — généré côté serveur. */
+  /** ISO — simulation validée via le bouton UI (lancement). */
+  simulationValidatedAt?: string;
   visualPlan?: {
     version: 1;
     title: string;
@@ -1622,14 +1839,14 @@ function parseAutomationRow(row: {
     /* ignore */
   }
   return {
-    id: row.id,
+    id: Number(row.id),
     name: row.name,
     type: row.type as AutomationType,
     status: row.status as AutomationStatus,
     config,
     stats,
     summary: row.summary,
-    budget_fcfa: row.budget_fcfa,
+    budget_fcfa: Number(row.budget_fcfa),
     created_at: formatTs(row.created_at),
     updated_at: formatTs(row.updated_at),
   };
@@ -2082,6 +2299,21 @@ export async function addAutomationLog(
   level: AutomationLog["level"],
   message: string
 ): Promise<AutomationLog> {
+  // Anti-spam journal : ne pas répéter la même erreur toutes les 15 s
+  if (level === "error" || level === "warning") {
+    const recent = await sql<Record<string, unknown>[]>`
+      SELECT id, automation_id, level, message, created_at
+      FROM automation_logs
+      WHERE user_id = ${userId}
+        AND automation_id = ${automationId}
+        AND level = ${level}
+        AND message = ${message}
+        AND created_at > NOW() - INTERVAL '10 minutes'
+      ORDER BY id DESC
+      LIMIT 1
+    `;
+    if (recent[0]) return mapAutomationLog(recent[0]);
+  }
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO automation_logs (user_id, automation_id, level, message)
     VALUES (${userId}, ${automationId}, ${level}, ${message})
@@ -2298,7 +2530,8 @@ export async function listProspectedContacts(
   }> = [];
 
   for (const auto of autos) {
-    if (!auto || auto.type !== "group_prospect") continue;
+    if (!auto) continue;
+    if (auto.type !== "group_prospect" && auto.type !== "contact_prospect") continue;
     const targets = await listAutomationTargets(userId, auto.id, { limit });
     for (const t of targets) {
       if (t.status === "pending") continue;

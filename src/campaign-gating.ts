@@ -115,7 +115,12 @@ export async function findOngoingClosingConversation(
   const contact = await getContact(userId, chatId);
   if (!contact || contact.auto_reply !== 1 || contact.status === "stop") return null;
 
-  const history = await getContactChatHistory(userId, chatId, 6);
+  const history = await getContactChatHistory(
+    userId,
+    chatId,
+    6,
+    contact.conversation_campaign_id
+  );
   const hasOutbound = history.some((m) => m.direction === "sortant");
   const hasInbound = history.some((m) => m.direction === "entrant");
   if (!hasOutbound || !hasInbound) return null;

@@ -2,27 +2,51 @@ import { config } from "./config.js";
 import {
   getAppSettings,
   getContact,
+  getContactAutomationState,
   getContactChatHistory,
+  updateContactAutomationMemory,
   updateContactMemory,
 } from "./db.js";
 import { createLlmClient, deepseekChatExtras } from "./llm.js";
 import type OpenAI from "openai";
 
-export async function getMemoryContextBlock(userId: number, chatId: string): Promise<string> {
+export async function getMemoryContextBlock(
+  userId: number,
+  chatId: string,
+  automationId?: number | null
+): Promise<string> {
+  if (automationId != null && Number.isFinite(automationId)) {
+    const state = await getContactAutomationState(userId, chatId, automationId);
+    if (!state?.memory_summary?.trim()) return "";
+    return `Résumé des échanges de cette automatisation avec ce contact :\n${state.memory_summary}`;
+  }
   const contact = await getContact(userId, chatId);
   if (!contact?.memory_summary?.trim()) return "";
   return `Résumé des échanges de la campagne en cours avec ce contact :\n${contact.memory_summary}`;
 }
 
-export async function refreshContactMemory(userId: number, chatId: string): Promise<void> {
-  const history = await getContactChatHistory(userId, chatId, 40);
+export async function refreshContactMemory(
+  userId: number,
+  chatId: string,
+  automationId?: number | null
+): Promise<void> {
+  const history = await getContactChatHistory(userId, chatId, 40, automationId);
   if (history.length < 6) return;
 
-  const contact = await getContact(userId, chatId);
-  if (contact?.memory_updated_at) {
-    const last = new Date(contact.memory_updated_at.replace(" ", "T"));
-    const hoursSince = (Date.now() - last.getTime()) / 3_600_000;
-    if (hoursSince < 6) return;
+  if (automationId != null && Number.isFinite(automationId)) {
+    const state = await getContactAutomationState(userId, chatId, automationId);
+    if (state?.memory_updated_at) {
+      const last = new Date(state.memory_updated_at.replace(" ", "T"));
+      const hoursSince = (Date.now() - last.getTime()) / 3_600_000;
+      if (hoursSince < 6) return;
+    }
+  } else {
+    const contact = await getContact(userId, chatId);
+    if (contact?.memory_updated_at) {
+      const last = new Date(contact.memory_updated_at.replace(" ", "T"));
+      const hoursSince = (Date.now() - last.getTime()) / 3_600_000;
+      if (hoursSince < 6) return;
+    }
   }
 
   const key = (await getAppSettings(userId)).openai_api_key;
@@ -48,5 +72,15 @@ export async function refreshContactMemory(userId: number, chatId: string): Prom
     ...deepseekChatExtras({ enableThinking: false }),
   } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
   const summary = response.choices[0]?.message?.content?.trim();
-  if (summary) await updateContactMemory(userId, chatId, summary);
+  if (!summary) return;
+
+  if (automationId != null && Number.isFinite(automationId)) {
+    await updateContactAutomationMemory(userId, chatId, automationId, summary);
+    const contact = await getContact(userId, chatId);
+    if (contact?.conversation_campaign_id === automationId) {
+      await updateContactMemory(userId, chatId, summary);
+    }
+  } else {
+    await updateContactMemory(userId, chatId, summary);
+  }
 }

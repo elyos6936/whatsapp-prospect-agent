@@ -98,7 +98,6 @@ import {
   getAgentThread,
   haltAutomationMessaging,
   resumeAutomationMessaging,
-  setAutoReplyEnabled,
   deleteAutomation,
   listProspectedContacts,
   type AutomationType,
@@ -106,11 +105,6 @@ import {
   type AutomationConfig,
   unblockContact,
 } from "./db.js";
-import {
-  bootstrapGroupProspectTargets,
-  bootstrapContactProspectTargets,
-  kickAutomationForUser,
-} from "./automation-engine.js";
 import { getContactPresence } from "./notifications.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
@@ -930,7 +924,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "get_contact_conversation",
       description:
-        "Relit la conversation complète d'un prospect depuis la base SQLite locale (table messages). Préférer cet outil à l'affichage dans le chat agent.",
+        "Relit la conversation d'un prospect pour CETTE automatisation uniquement (mémoire isolée). Ne mélange pas les échanges d'autres automatisations.",
       parameters: {
         type: "object",
         properties: {
@@ -1509,11 +1503,15 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "list_prospected_contacts",
-      description: "Liste les personnes déjà contactées par une ou toutes les campagnes de prospection.",
+      description:
+        "Liste les personnes déjà contactées par CETTE automatisation (fil courant). Ne montre pas les contacts d'autres automatisations.",
       parameters: {
         type: "object",
         properties: {
-          automation_id: { type: "number", description: "Filtrer par campagne (optionnel)" },
+          automation_id: {
+            type: "number",
+            description: "Doit être l'automatisation liée à ce fil (défaut = fil courant)",
+          },
           limit: { type: "number", description: "Max résultats (défaut 200)" },
         },
         additionalProperties: false,
@@ -3313,7 +3311,9 @@ export async function executeTool(
         return JSON.stringify({ error: "Le numéro / chatId est requis." });
       }
       const limit = Math.min(Math.max(Number(args.limit) || 50, 1), 200);
-      const thread = await getContactThread(userId, phone, limit);
+      const agentThread = await getAgentThread(userId, threadId);
+      const automationId = agentThread?.automation_id ?? null;
+      const thread = await getContactThread(userId, phone, limit, automationId);
       const contact = await getContact(
         userId,
         phone.includes("@") ? phone.trim() : `${phone.replace(/\D/g, "")}@c.us`
@@ -3323,14 +3323,19 @@ export async function executeTool(
         display: chatIdToDisplay(contact?.phone ?? phone),
         name: contact?.name ?? null,
         status: contact?.status ?? null,
+        automationId,
         count: thread.length,
-        source: "sqlite:messages",
+        source: "messages (isolé par automatisation)",
+        hint: automationId
+          ? "Historique limité à cette automatisation — les échanges d'autres autos sont invisibles ici."
+          : "Aucune automatisation liée à ce fil : historique global (epoch contact).",
         messages: thread.map((m) => ({
           id: m.id,
           direction: m.direction,
           sender: m.sender_name || (m.direction === "entrant" ? chatIdToDisplay(m.contact_phone) : "Moi"),
           body: m.body,
           at: m.created_at,
+          automationId: m.automation_id,
         })),
       });
     }
@@ -3657,135 +3662,23 @@ export async function executeTool(
       }
       if (!(await automationBelongsToThread(userId, threadId, id))) {
         return JSON.stringify({
-          error: `La campagne #${id} n'appartient pas à ce fil. Utilisez « Nouvelle automatisation » pour une autre campagne.`,
+          error: `La campagne #${id} n'appartient pas à ce fil. Utilisez « Nouvelle automatisation » pour en créer une autre.`,
         });
       }
-      const detail = await getAutomationDetail(userId, id);
-      if (!detail) {
-        return JSON.stringify({ error: `Campagne #${id} introuvable.` });
+      const { activateAutomationCore } = await import("./activate-automation.js");
+      const result = await activateAutomationCore(userId, id, { source: "agent" });
+      if (!result.ok) {
+        return JSON.stringify({ error: result.error, automationId: result.automationId ?? id });
       }
-      if (detail.automation.status === "active") {
-        return JSON.stringify({ error: "Campagne déjà active.", automationId: id });
-      }
-      if (!["draft", "paused"].includes(detail.automation.status)) {
-        return JSON.stringify({
-          error: `Impossible d'activer depuis le statut « ${detail.automation.status} ».`,
-        });
-      }
-
-      const auto = detail.automation;
-      if (
-        (auto.type === "keyword_sales" || auto.config.mode === "inbound_closing") &&
-        !auto.config.price?.trim()
-      ) {
-        return JSON.stringify({
-          error:
-            "Impossible d'activer : prix manquant dans la campagne. Demande le prix exact à l'utilisateur, mets-le à jour via update_automation_config (price), puis réessaie.",
-        });
-      }
-      if (
-        (auto.config.closingGoal === "appointment" ||
-          auto.config.closingGoal === "payment" ||
-          auto.config.closingGoal === "link") &&
-        !auto.config.closingLink?.trim()
-      ) {
-        return JSON.stringify({
-          error:
-            "Impossible d'activer : lien (closing_link) manquant. Demande l'URL réelle, mets à jour la config, puis réessaie.",
-        });
-      }
-      if (
-        needsAppointmentLink({
-          closingGoal: auto.config.closingGoal,
-          conversationGuide: auto.config.conversationGuide,
-          initialMessage: auto.config.initialMessage,
-          closingLink: auto.config.closingLink,
-          productName: auto.config.productName,
-        })
-      ) {
-        return JSON.stringify({
-          error:
-            "Impossible d'activer : objectif RDV sans lien de réservation. Demande l'URL, update_automation_config(closing_goal=appointment, closing_link=…), puis réessaie.",
-        });
-      }
-      if (auto.config.initialMessage && hasTemplatePlaceholders(auto.config.initialMessage)) {
-        return JSON.stringify({
-          error:
-            "Impossible d'activer : le premier message contient encore des crochets […]. Corrige-le avec de vraies valeurs.",
-        });
-      }
-
-      const isOutbound =
-        auto.type === "group_prospect" ||
-        auto.type === "contact_prospect" ||
-        auto.config.mode === "outbound_prospect";
-      if (isOutbound) {
-        try {
-          await requireEvolutionConnected(userId, "l'activation de la campagne");
-        } catch (err) {
-          return JSON.stringify({
-            error: err instanceof Error ? err.message : "WhatsApp non connecté — impossible d'activer.",
-          });
-        }
-      }
-
-      // Sécurité anti-ban : relances + plafonds si absents
-      let safeConfig = { ...auto.config, enableAutoReply: true as boolean };
-      if (isOutbound) {
-        if (!safeConfig.maxPerDay || safeConfig.maxPerDay <= 0) {
-          safeConfig.maxPerDay = ANTI_BAN.defaultCampaignMaxPerDay;
-        }
-        if (safeConfig.quietHoursStart == null) safeConfig.quietHoursStart = 9;
-        if (safeConfig.quietHoursEnd == null) safeConfig.quietHoursEnd = 20;
-        if (!safeConfig.relance?.enabled && !safeConfig.sequenceSteps?.length) {
-          safeConfig.relance = defaultRelanceConfig();
-        }
-      }
-
-      let targetsAdded = 0;
-      await updateAutomationConfig(userId, id, safeConfig);
-      await setAutoReplyEnabled(userId, true);
-
-      if (auto.type === "group_prospect") {
-        if (!auto.config.groupId || !auto.config.initialMessage) {
-          return JSON.stringify({ error: "groupId ou initialMessage manquant dans la config." });
-        }
-        try {
-          await updateAutomationStatus(userId, id, "active");
-          targetsAdded = await bootstrapGroupProspectTargets(userId, id);
-          await resumeAutomationMessaging(userId, id);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return JSON.stringify({ error: `Activation échouée : ${msg}`, automationId: id });
-        }
-      } else if (auto.type === "contact_prospect") {
-        if (!auto.config.initialMessage || !auto.config.contactTargets?.length) {
-          return JSON.stringify({ error: "initialMessage ou contacts manquants dans la config." });
-        }
-        try {
-          await requireEvolutionConnected(userId, "l'activation de la campagne");
-          await updateAutomationStatus(userId, id, "active");
-          targetsAdded = await bootstrapContactProspectTargets(userId, id);
-          await resumeAutomationMessaging(userId, id);
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : String(err);
-          return JSON.stringify({ error: `Activation échouée : ${msg}`, automationId: id });
-        }
-      } else {
-        await updateAutomationStatus(userId, id, "active");
-        await resumeAutomationMessaging(userId, id);
-      }
-
       const fresh = await getAutomationDetail(userId, id);
-      kickAutomationForUser(userId);
       return JSON.stringify({
         success: true,
         automationId: id,
         status: "active",
-        targetsAdded,
+        targetsAdded: result.targetsAdded,
         autoReply: true,
         stats: fresh?.automation.stats,
-        message: `Campagne « ${auto.name} » activée — auto-reply ON.${targetsAdded ? ` ${targetsAdded} membre(s) chargé(s).` : ""}`,
+        message: result.message,
         completedAt: nowFr(),
       });
     }

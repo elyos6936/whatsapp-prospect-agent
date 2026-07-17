@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT } from "./persona.js";
 import { getAppSettings, getAgentThread, getAutomation, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
-import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay } from "./evolutionapi.js";
+import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
@@ -16,6 +16,7 @@ import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
 import {
   formatVerticalContactList,
   formatVerticalGroupList,
+  formatVerticalMemberList,
   userFacingError,
 } from "./user-facing.js";
 
@@ -29,6 +30,9 @@ function detectQuickListIntent(
 ): { kind: "groups" | "contacts"; limit?: number } | null {
   const t = msg.trim().toLowerCase();
   if (!t || t.length > 160) return null;
+
+  // Membres / contacts D'UN groupe — pas une liste de tous les groupes
+  if (detectQuickGroupMembersIntent(msg)) return null;
 
   const num =
     t.match(/\b(\d{1,3})\s*(?:groupes?|contacts?)\b/) ||
@@ -45,9 +49,48 @@ function detectQuickListIntent(
   if (
     /\b(contacts?)\b/i.test(t) &&
     /\b(liste|lister|montre|afficher|voir|mes|tous|all)\b/i.test(t) &&
-    !/\bgroupes?\b/i.test(t)
+    !/\bgroupes?\b/i.test(t) &&
+    // Ne jamais déclencher si l'utilisateur donne des numéros précis à prospecter
+    !/\+?\d[\d\s.\-]{7,}\d/.test(t) &&
+    !/\bprospect/i.test(t)
   ) {
     return { kind: "contacts", limit };
+  }
+  return null;
+}
+
+/** Extraction membres d'un groupe nommé — évite list_whatsapp_groups à la place. */
+function detectQuickGroupMembersIntent(msg: string): { groupQuery: string } | null {
+  const t = msg.trim();
+  if (!t || t.length > 240) return null;
+
+  const wantsMembers =
+    (/\b(membres?|participants?|contacts?)\b/i.test(t) && /\b(groupe|group)\b/i.test(t)) ||
+    (/\bextraire?\b/i.test(t) && /\b(membres?|participants?|contacts?)\b/i.test(t));
+
+  if (!wantsMembers) return null;
+
+  // « liste mes groupes » sans cible précise
+  if (
+    /\b(liste|lister|montre|afficher|voir)\b/i.test(t) &&
+    /\b(mes|tous|all)\b/i.test(t) &&
+    /\bgroupes\b/i.test(t) &&
+    !/\b(?:du|de|dans)\s+(?:le\s+)?groupe\b/i.test(t)
+  ) {
+    return null;
+  }
+
+  const patterns = [
+    /\b(?:du|de|dans le|dans)\s+groupe\s+(.+?)\s*$/i,
+    /\bgroupe\s+(.+?)\s*$/i,
+    /\bgroup\s+(.+?)\s*$/i,
+  ];
+  for (const re of patterns) {
+    const m = re.exec(t);
+    if (m?.[1]) {
+      const q = m[1].replace(/[?.!]+$/, "").trim();
+      if (q.length >= 2) return { groupQuery: q };
+    }
   }
   return null;
 }
@@ -82,7 +125,21 @@ function recentHistoryHasSimulation(history: AgentMessage[]): boolean {
   return false;
 }
 
-/** L'utilisateur valide la simulation (pas une demande de modification). */
+/** L'utilisateur a explicitement demandé la liste du carnet WhatsApp. */
+function userExplicitlyAskedContactBook(msg: string): boolean {
+  const t = msg.trim().toLowerCase();
+  if (!t) return false;
+  // Numéros précis à prospecter → jamais le carnet
+  if (/\+?\d[\d\s.\-]{7,}\d/.test(t) && /\bprospect/i.test(t)) return false;
+  if (/\bprospect(er|e|e[sz])?\b/i.test(t) && !/\b(liste|carnet|tous mes contacts)\b/i.test(t)) {
+    return false;
+  }
+  return (
+    /\b(contacts?|carnet)\b/i.test(t) &&
+    /\b(liste|lister|montre|afficher|voir|extraire|tous|mes|carnet)\b/i.test(t) &&
+    !/\b(du|de|dans)\s+(?:le\s+)?groupe\b/i.test(t)
+  );
+}
 function isSimulationApproval(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t) return false;
@@ -106,17 +163,17 @@ function userWantsSimulationChange(text: string): boolean {
 }
 
 const ACTIVATION_AFTER_SIMULATION_NUDGE =
-  "L'utilisateur a VALIDÉ la simulation déjà affichée (après feedback). INTERDIT de rappeler show_campaign_simulation ou de réécrire le fil Toi/Prospect. Étape suivante UNIQUEMENT :\n" +
-  "1. Résume en 2-3 lignes l'automatisation (cible, message d'ouverture, rythme d'envoi).\n" +
-  "2. Demande explicitement : « Je lance maintenant ? »\n" +
-  "3. Si l'utilisateur confirme (oui / vas-y / active / lance) → appelle activate_automation avec l'automationId du brouillon.\n" +
-  "Ne répète jamais la simulation.";
+  "L'utilisateur a VALIDÉ la simulation. INTERDIT de rappeler show_campaign_simulation. Étape suivante :\n" +
+  "1. Si pas encore activée → appelle activate_automation.\n" +
+  "2. Sinon confirme brièvement que c'est lancé.\n" +
+  "L'utilisateur peut aussi cliquer **Valider** dans la simulation à droite pour lancer sans écrire dans le chat.";
 
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
   "Le 1er tour « toi » = accroche A.I.D.A. Attention (PAS de prix/lien). " +
   "Parle de **simulation** (à droite) — jamais « panneau » ni « campagne créée ». " +
+  "Dis clairement : « Si c'est bon, clique sur **Valider** dans la simulation à droite pour lancer. » " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +
   "Après l'outil, le message contient déjà la demande de feedback — ne l'oublie pas. " +
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
@@ -258,6 +315,29 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     );
   }
 
+  // Chemin rapide : extraction membres d'un groupe nommé
+  const membersQuick = detectQuickGroupMembersIntent(userMessage);
+  if (membersQuick) {
+    try {
+      const found = await findGroupByNameOrId(userId, membersQuick.groupQuery);
+      if (!found) {
+        return (
+          `Groupe introuvable : « ${membersQuick.groupQuery} ».\n\n` +
+          `Vérifiez le nom exact (copier-coller depuis WhatsApp) ou demandez « liste mes groupes ».`
+        );
+      }
+      const data = await getGroupMembers(userId, found.id);
+      const members = data.participants.map((p) => ({
+        display: chatIdToDisplay(p.id),
+        name: p.name ?? null,
+        isAdmin: p.isAdmin ?? false,
+      }));
+      return formatVerticalMemberList(data.subject || found.name, members);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
   // Chemin rapide : listes groupes / contacts (évite timeouts LLM+outils sur gros comptes)
   const quick = detectQuickListIntent(userMessage);
   if (quick?.kind === "groups") {
@@ -385,6 +465,25 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
         if (toolCall.function.name === "show_campaign_simulation") {
           forcedSimUsed = true;
+        }
+
+        // INTERDIT d'extraire le carnet WhatsApp sauf demande explicite
+        if (
+          (toolCall.function.name === "list_personal_contacts" ||
+            toolCall.function.name === "list_contacts") &&
+          !userExplicitlyAskedContactBook(userMessage)
+        ) {
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({
+              error:
+                "INTERDIT d'extraire les contacts du téléphone / carnet WhatsApp. " +
+                "L'utilisateur n'a pas demandé la liste du carnet. " +
+                "Utilise UNIQUEMENT les numéros / noms qu'il a donnés (create_automation contact_prospect avec contacts=[…]).",
+            }),
+          });
+          continue;
         }
 
         // Simulation demandée : bloquer tout envoi WhatsApp réel (même tour ou suivant)

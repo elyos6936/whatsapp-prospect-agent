@@ -151,7 +151,10 @@ export default function AuthenticatedApp() {
         const plan = (data.detail.automation.config as { visualPlan?: AutomationVisualPlan } | undefined)
           ?.visualPlan;
         if (!cancelled && plan?.nodes?.length) {
-          setStrategyPlan(plan);
+          setStrategyPlan({
+            ...plan,
+            automationId: plan.automationId ?? data.detail.automation.id,
+          });
         }
       } catch {
         /* pas encore de campagne */
@@ -358,7 +361,20 @@ export default function AuthenticatedApp() {
         <>
           {/* Desktop : colonne fixe à droite */}
           <div className="sticky top-0 hidden h-full max-h-full w-[min(38vw,380px)] shrink-0 self-stretch lg:flex">
-            <StrategyDock plan={strategyPlan} onClose={toggleStrategy} />
+            <StrategyDock
+              plan={strategyPlan}
+              onClose={toggleStrategy}
+              onLaunched={(message) => {
+                appendLocal({
+                  id: `sim-launch-${Date.now()}`,
+                  kind: 'assistant',
+                  content: `✅ ${message}`,
+                  created_at: new Date().toISOString(),
+                  label: 'Agent',
+                });
+                void refreshThreads(activeThreadId);
+              }}
+            />
           </div>
           {/* Mobile / tablette : tiroir plein hauteur */}
           <div className="fixed inset-0 z-40 flex justify-end lg:hidden">
@@ -369,7 +385,20 @@ export default function AuthenticatedApp() {
               onClick={toggleStrategy}
             />
             <div className="relative z-10 flex h-full w-[min(92vw,380px)] shadow-2xl">
-              <StrategyDock plan={strategyPlan} onClose={toggleStrategy} />
+              <StrategyDock
+                plan={strategyPlan}
+                onClose={toggleStrategy}
+                onLaunched={(message) => {
+                  appendLocal({
+                    id: `sim-launch-${Date.now()}`,
+                    kind: 'assistant',
+                    content: `✅ ${message}`,
+                    created_at: new Date().toISOString(),
+                    label: 'Agent',
+                  });
+                  void refreshThreads(activeThreadId);
+                }}
+              />
             </div>
           </div>
         </>

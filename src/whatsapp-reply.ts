@@ -103,9 +103,10 @@ async function formatHistory(
   userId: number,
   chatId: string,
   senderName: string,
-  excludeIncoming?: string
+  excludeIncoming?: string,
+  automationId?: number | null
 ): Promise<{ text: string; messageCount: number; isOngoingConversation: boolean }> {
-  const history = await getContactChatHistory(userId, chatId, 30);
+  const history = await getContactChatHistory(userId, chatId, 30, automationId);
 
   let filtered = history;
   if (excludeIncoming && history.length > 0) {
@@ -211,6 +212,8 @@ export async function generateWhatsAppReply(userId: number, input: {
   automationContext?: string;
   /** false = aucun emoji (refus stickers/emojis). Défaut : max 1. */
   allowEmojis?: boolean;
+  /** Isole l'historique à cette automatisation. */
+  automationId?: number | null;
 }): Promise<string> {
   const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
@@ -218,7 +221,8 @@ export async function generateWhatsAppReply(userId: number, input: {
     userId,
     input.chatId,
     input.senderName,
-    input.incomingText
+    input.incomingText,
+    input.automationId
   );
 
   const prospectStyle = analyzeProspectStyle(input.incomingText);

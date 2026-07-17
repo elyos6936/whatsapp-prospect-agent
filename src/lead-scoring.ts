@@ -1,4 +1,11 @@
-import { getContact, updateContactLeadScore, updateAutomationStats, getAutomation } from "./db.js";
+import {
+  getContact,
+  updateContactLeadScore,
+  updateContactAutomationLeadScore,
+  updateAutomationStats,
+  getAutomation,
+  getContactAutomationState,
+} from "./db.js";
 
 const HOT_KEYWORDS =
   /int[eé]ress|curieux|commander|commande|acheter|inscription|je veux|oui|d'accord|appel|rdv|rendez-vous/i;
@@ -19,7 +26,12 @@ export interface ScoringResult {
 
 export async function scoreIncomingMessage(userId: number, text: string, chatId: string): Promise<ScoringResult> {
   const contact = await getContact(userId, chatId);
-  const current = contact?.lead_score ?? 0;
+  const automationId = contact?.conversation_campaign_id ?? null;
+  let current = contact?.lead_score ?? 0;
+  if (automationId != null) {
+    const state = await getContactAutomationState(userId, chatId, automationId);
+    if (state) current = state.lead_score;
+  }
   let delta = 2;
 
   if (HOT_KEYWORDS.test(text)) delta += 25;
@@ -31,6 +43,9 @@ export async function scoreIncomingMessage(userId: number, text: string, chatId:
 
   const newScore = Math.max(0, Math.min(100, current + delta));
   await updateContactLeadScore(userId, chatId, newScore);
+  if (automationId != null) {
+    await updateContactAutomationLeadScore(userId, chatId, automationId, newScore).catch(() => {});
+  }
 
   const label = newScore >= 70 ? "chaud" : newScore >= 40 ? "tiède" : "froid";
   const interested = newScore >= 70 || HOT_KEYWORDS.test(text) || detectConversionIntent(text);

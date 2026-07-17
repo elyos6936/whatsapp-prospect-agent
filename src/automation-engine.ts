@@ -8,6 +8,7 @@ import {
   listRecentCampaignOpeners,
   listActiveAutomations,
   listAutomationTargets,
+  getAutomationTargetIds,
   saveContact,
   setContactAutoReply,
   beginFreshCampaignConversation,
@@ -34,7 +35,6 @@ import {
 } from "./evolutionapi.js";
 import { generatePersonalizedOpener } from "./prospect-personalizer.js";
 import { listActiveUserIds, getUserById } from "./users.js";
-import { getActiveCampaignTargetIds } from "./campaign-gating.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 import { isResendConfigured, sendDailyReportEmail } from "./mail/resend.js";
 
@@ -378,7 +378,7 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   // ne charge qu'1 seule cible.
   const ownerId = await getConnectedOwnerId(userId);
   const hardBlockedIds = await getBlockedContactIds(userId);
-  const alreadyEnrolled = await getActiveCampaignTargetIds(userId, automationId);
+  const alreadyEnrolled = await getAutomationTargetIds(userId, automationId);
 
   const matchesAny = (candidate: string, ids: Iterable<string>): boolean => {
     for (const id of ids) {
@@ -440,14 +440,14 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
       `${group.participants.length} membre(s) dans le groupe`,
       selfCount ? `${selfCount} = vous (exclu)` : null,
       hardBlockedCount ? `${hardBlockedCount} bloqué(s) explicitement` : null,
-      enrolledCount ? `${enrolledCount} déjà dans une autre campagne active` : null,
+      enrolledCount ? `${enrolledCount} déjà cibles de cette automatisation` : null,
       softStoppedCount ? `${softStoppedCount} stoppé(s)` : null,
     ].filter(Boolean);
     await failAutomationNoTargets(
       userId,
       automationId,
       `Aucun membre éligible dans « ${groupLabel} » (${parts.join(" · ")}). ` +
-        "Ajoutez d'autres membres au groupe, ou retirez le numéro de la liste de blocage / des campagnes actives."
+        "Ajoutez d'autres membres au groupe, ou retirez le numéro de la liste de blocage."
     );
   }
 
@@ -517,7 +517,7 @@ export async function bootstrapContactProspectTargets(
     );
   }
 
-  const alreadyEnrolled = await getActiveCampaignTargetIds(userId, automationId);
+  const alreadyEnrolled = await getAutomationTargetIds(userId, automationId);
 
   const eligible: Array<{ id: string; label?: string }> = [];
   for (const c of contacts) {
@@ -538,7 +538,7 @@ export async function bootstrapContactProspectTargets(
     await failAutomationNoTargets(
       userId,
       automationId,
-      "Aucun contact éligible (bloqués ou déjà enrôlés dans une autre campagne active)."
+      "Aucun contact éligible (bloqués ou déjà cibles de cette automatisation)."
     );
   }
 

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Loader2, RotateCcw, Send } from 'lucide-react';
+import { Check, Loader2, RotateCcw, Send } from 'lucide-react';
 import type { AutomationVisualPlan } from '@/lib/automation-plan';
-import { postSimulationPreview } from '@/lib/api';
+import { postSimulationPreview, validateSimulationAndLaunch } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 type Turn = { role: 'you' | 'prospect'; text: string };
@@ -23,27 +23,33 @@ function guideFromPlan(plan: AutomationVisualPlan): string | undefined {
 type SimulationChatPanelProps = {
   plan: AutomationVisualPlan;
   className?: string;
+  onLaunched?: (message: string) => void;
 };
 
 /** Chat de simulation à droite — aucun numéro WhatsApp, 0 envoi réel. */
-export function SimulationChatPanel({ plan, className }: SimulationChatPanelProps) {
+export function SimulationChatPanel({ plan, className, onLaunched }: SimulationChatPanelProps) {
   const opener = useMemo(() => openerFromPlan(plan), [plan]);
   const guide = useMemo(() => guideFromPlan(plan), [plan]);
+  const automationId = plan.automationId;
 
   const [history, setHistory] = useState<Turn[]>([{ role: 'you', text: opener }]);
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+  const [launched, setLaunched] = useState(false);
+  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
 
-  // Relance auto quand le plan / message change (feedback dans le chat du milieu)
   useEffect(() => {
     setHistory([{ role: 'you', text: opener }]);
     setDraft('');
     setError(null);
     setFeedback(null);
     setDone(false);
+    setLaunched(false);
+    setLaunchMessage(null);
   }, [opener, plan.updatedAt, plan.automationId, plan.title]);
 
   async function sendAsProspect() {
@@ -78,12 +84,28 @@ export function SimulationChatPanel({ plan, className }: SimulationChatPanelProp
     setDone(false);
   }
 
+  async function handleValidate() {
+    if (!automationId || validating || launched) return;
+    setValidating(true);
+    setError(null);
+    try {
+      const result = await validateSimulationAndLaunch(automationId);
+      setLaunched(true);
+      setLaunchMessage(result.message || 'Automatisation lancée.');
+      onLaunched?.(result.message || 'Automatisation lancée.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Impossible de lancer');
+    } finally {
+      setValidating(false);
+    }
+  }
+
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
       <p className="mb-3 shrink-0 text-[12px] leading-relaxed text-text-500">
-        Jouez le prospect ici. L’IA répond comme votre agent — sans WhatsApp réel. Jusqu’à 7
-        messages, puis feedback. Si vous changez l’approche dans le chat du milieu, la
-        simulation se relance automatiquement.
+        Jouez le prospect ici (sans WhatsApp réel). Si la simulation vous convient, cliquez sur{' '}
+        <span className="font-semibold text-text-200">Valider</span> pour lancer l’automatisation —
+        pas besoin de le dire dans le chat du milieu.
       </p>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-xl bg-bg-100/80 p-3">
@@ -111,9 +133,15 @@ export function SimulationChatPanel({ plan, className }: SimulationChatPanelProp
         )}
       </div>
 
-      {feedback && (
+      {feedback && !launched && (
         <div className="mt-3 shrink-0 rounded-xl border border-amber-200/80 bg-amber-50/90 px-3 py-2.5 text-[12px] leading-relaxed text-amber-950 whitespace-pre-wrap">
           {feedback}
+        </div>
+      )}
+
+      {launchMessage && (
+        <div className="mt-3 shrink-0 rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-3 py-2.5 text-[12px] leading-relaxed text-emerald-950">
+          {launchMessage}
         </div>
       )}
 
@@ -121,6 +149,27 @@ export function SimulationChatPanel({ plan, className }: SimulationChatPanelProp
         <p className="mt-2 shrink-0 text-[12px] text-red-600" role="alert">
           {error}
         </p>
+      )}
+
+      {automationId != null && !launched && (
+        <button
+          type="button"
+          onClick={() => void handleValidate()}
+          disabled={validating}
+          className="mt-3 flex w-full shrink-0 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-3 text-[14px] font-semibold text-white shadow-sm hover:bg-brand/90 disabled:opacity-50"
+        >
+          {validating ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Lancement…
+            </>
+          ) : (
+            <>
+              <Check className="h-4 w-4" />
+              Valider
+            </>
+          )}
+        </button>
       )}
 
       <div className="mt-3 flex shrink-0 items-end gap-2">
@@ -142,19 +191,21 @@ export function SimulationChatPanel({ plan, className }: SimulationChatPanelProp
               void sendAsProspect();
             }
           }}
-          disabled={loading || done}
+          disabled={loading || done || launched}
           rows={2}
           placeholder={
-            done
-              ? 'Simulation terminée — recommencez ou validez au milieu'
-              : 'Répondez comme un prospect…'
+            launched
+              ? 'Automatisation lancée'
+              : done
+                ? 'Simulation terminée — cliquez Valider pour lancer'
+                : 'Répondez comme un prospect…'
           }
           className="min-h-[44px] flex-1 resize-none rounded-xl border border-black/[0.08] bg-white px-3 py-2 text-[13px] text-text-100 placeholder:text-text-400 focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/15 disabled:opacity-60"
         />
         <button
           type="button"
           onClick={() => void sendAsProspect()}
-          disabled={loading || done || !draft.trim()}
+          disabled={loading || done || launched || !draft.trim()}
           className="rounded-xl bg-brand p-2.5 text-white hover:bg-brand/90 disabled:opacity-40"
           aria-label="Envoyer"
         >

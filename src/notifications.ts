@@ -28,6 +28,7 @@ import {
   updateAutomationTarget,
   getContact,
   getContactChatHistory,
+  getContactAutomationState,
   findProspectPhoneForLidReply,
   findUnansweredInboundMessages,
   hasOutboundReplyAfter,
@@ -711,12 +712,17 @@ async function buildAutomationContext(
     parts.push(buildActiveCampaignContext(activeCampaign));
   }
 
-  const memory = await getMemoryContextBlock(userId, chatId);
+  const memory = await getMemoryContextBlock(userId, chatId, activeCampaign?.id);
   if (memory) parts.push(memory);
 
   const contact = await getContact(userId, chatId);
-  if (contact && contact.lead_score > 0) {
-    parts.push(`Score prospect : ${contact.lead_score}/100`);
+  let leadScore = contact?.lead_score ?? 0;
+  if (activeCampaign) {
+    const state = await getContactAutomationState(userId, chatId, activeCampaign.id);
+    if (state) leadScore = state.lead_score;
+  }
+  if (leadScore > 0) {
+    parts.push(`Score prospect : ${leadScore}/100`);
   }
 
   const keywordAutos = await findMatchingKeywordAutomations(userId, text);
@@ -836,7 +842,12 @@ async function runAutoReply(
         : "Merci ! Tu peux m'en dire un mot en texte pour que je te réponde au mieux ? 🙂";
     } else {
       const settings = await getAppSettings(userId);
-      const history = await getContactChatHistory(userId, chatId, 20);
+      const history = await getContactChatHistory(
+        userId,
+        chatId,
+        20,
+        activeCampaign?.id
+      );
       const stopReason = shouldStopConversation(
         text,
         {
@@ -884,6 +895,7 @@ async function runAutoReply(
           enableAutoReply: false,
           countsTowardQuota: false,
           outboundProfile: "auto_reply",
+          automationId: activeCampaign.id,
         });
         console.log(`✅ Clôture envoyée → ${senderName} à ${nowFr()} (${sent.idMessage})`);
         return;
@@ -891,7 +903,7 @@ async function runAutoReply(
 
       const scoring = await scoreIncomingMessage(userId, text, chatId);
       await recordAutomationEngagement(userId, chatId, text, scoring.interested);
-      void refreshContactMemory(userId, chatId).catch(() => {});
+      void refreshContactMemory(userId, chatId, activeCampaign?.id).catch(() => {});
 
       if (scoring.interested) {
         try {
@@ -944,6 +956,7 @@ async function runAutoReply(
         incomingText: text,
         automationContext,
         allowEmojis: activeCampaign?.config.stickersEnabled === true,
+        automationId: activeCampaign?.id,
       });
     }
 
@@ -962,6 +975,7 @@ async function runAutoReply(
       enableAutoReply: false,
       countsTowardQuota: false,
       outboundProfile: "auto_reply",
+      automationId: activeCampaign?.id ?? null,
     });
     if (activeCampaign) {
       await incrementMessagesHandled(userId, activeCampaign.id);
@@ -1011,12 +1025,15 @@ async function ingestInboundMessage(
   if (chatId === "inconnu") return false;
 
   try {
+    const contact = await getContact(userId, chatId).catch(() => null);
+    const automationId = contact?.conversation_campaign_id ?? null;
     await saveWhatsAppMessage(userId, {
       contactPhone: chatId,
       direction: "entrant",
       body: text,
       greenApiId,
       senderName,
+      automationId,
     });
 
     try {

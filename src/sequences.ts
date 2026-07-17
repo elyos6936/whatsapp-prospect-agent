@@ -75,13 +75,18 @@ async function processDueSequencesForUser(userId: number): Promise<number> {
     }
 
     // Jamais de relance si le dernier message est déjà un sortant (attente réponse)
-    if (await isAwaitingProspectReply(userId, seq.contact_phone)) {
+    if (await isAwaitingProspectReply(userId, seq.contact_phone, seq.automation_id)) {
       await postponeSequence(userId, seq.id, 1);
       continue;
     }
 
     if (step.condition === "no_reply") {
-      const history = await getContactChatHistory(userId, seq.contact_phone, 8);
+      const history = await getContactChatHistory(
+        userId,
+        seq.contact_phone,
+        8,
+        seq.automation_id
+      );
       const hasReply = history.some((m) => m.direction === "entrant");
       if (hasReply) {
         await cancelSequencesForContact(userId, seq.contact_phone);
@@ -95,7 +100,12 @@ async function processDueSequencesForUser(userId: number): Promise<number> {
     }
 
     if (step.condition === "stale_after_reply") {
-      const history = await getContactChatHistory(userId, seq.contact_phone, 10);
+      const history = await getContactChatHistory(
+        userId,
+        seq.contact_phone,
+        10,
+        seq.automation_id
+      );
       const last = history[history.length - 1];
       if (last?.direction === "entrant") {
         await postponeSequence(userId, seq.id, 2);

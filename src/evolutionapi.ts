@@ -1142,6 +1142,8 @@ export async function sendWhatsAppMessage(
     outboundProfile?: "campaign" | "auto_reply";
     /** Espacement campagne (min/max secondes ou prospectCount) */
     outboundGap?: import("./anti-ban.js").OutboundGapOpts;
+    /** Tag mémoire / historique isolé par automatisation */
+    automationId?: number | null;
   } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
   const creds = await getEvolutionCredentials(userId);
@@ -1173,6 +1175,7 @@ export async function sendWhatsAppMessage(
         body: safeMessage,
         greenApiId: idMessage,
         countsTowardQuota: opts.countsTowardQuota !== false,
+        automationId: opts.automationId ?? null,
       });
 
       const normalized = normalizeGroupParticipantId(chatId);
@@ -1266,7 +1269,7 @@ export async function sendWhatsAppMedia(
     /** MIME explicite (ex. video/mp4, application/pdf). Requis pour certains base64. */
     mimetype?: string;
   },
-  opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean } = {}
+  opts: { enableAutoReply?: boolean; countsTowardQuota?: boolean; automationId?: number | null } = {}
 ): Promise<{ idMessage: string; chatId: string; confirmed: boolean }> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
@@ -1316,6 +1319,7 @@ export async function sendWhatsAppMedia(
       body: label,
       greenApiId: idMessage,
       countsTowardQuota: opts.countsTowardQuota !== false,
+      automationId: opts.automationId ?? null,
     });
 
     const normalized = normalizeGroupParticipantId(chatId);

@@ -7,10 +7,11 @@ type StrategyDockProps = {
   plan: AutomationVisualPlan;
   onClose: () => void;
   className?: string;
+  onLaunched?: (message: string) => void;
 };
 
 /** Panneau droit : simulation de conversation (pas d’envoi WhatsApp). */
-export function StrategyDock({ plan, onClose, className }: StrategyDockProps) {
+export function StrategyDock({ plan, onClose, className, onLaunched }: StrategyDockProps) {
   return (
     <aside
       className={cn(
@@ -24,7 +25,7 @@ export function StrategyDock({ plan, onClose, className }: StrategyDockProps) {
           <p className="text-sm font-semibold leading-snug text-text-100 break-words">
             {plan.title.replace(/\s*#\d+\s*$/, '').replace(/^Campagne\s+\d+$/i, 'Automatisation')}
           </p>
-          <p className="text-[11px] text-text-500">Simulation · testez les réponses IA</p>
+          <p className="text-[11px] text-text-500">Simulation · validez pour lancer</p>
         </div>
         <button
           type="button"
@@ -41,6 +42,7 @@ export function StrategyDock({ plan, onClose, className }: StrategyDockProps) {
         <SimulationChatPanel
           key={`${plan.automationId ?? 'p'}-${plan.updatedAt}-${plan.nodes?.length ?? 0}`}
           plan={plan}
+          onLaunched={onLaunched}
         />
       </div>
     </aside>

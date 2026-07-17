@@ -127,6 +127,9 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           url: item.media_url,
           type: item.media_type as "image" | "document" | "audio",
           caption: item.message ?? undefined,
+        }, {
+          enableAutoReply: item.automation_id != null,
+          automationId: item.automation_id,
         });
         if (item.automation_id != null) {
           try {
@@ -167,6 +170,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           enableAutoReply: item.automation_id != null,
           outboundProfile: item.automation_id != null ? "campaign" : undefined,
           outboundGap,
+          automationId: item.automation_id,
         });
       } else {
         await markQueueFailed(userId, item.id, "Message ou média manquant");
