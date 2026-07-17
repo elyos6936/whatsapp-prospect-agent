@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
@@ -47,6 +47,8 @@ export default function AuthenticatedApp() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [threads, setThreads] = useState<AgentThreadSummary[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
+  const activeThreadIdRef = useRef<number | null>(null);
+  activeThreadIdRef.current = activeThreadId;
   const [creatingThread, setCreatingThread] = useState(false);
   const [newAutoModalOpen, setNewAutoModalOpen] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(true);
@@ -201,11 +203,21 @@ export default function AuthenticatedApp() {
     [clear, refreshThreads],
   );
 
-  const handleSelectThread = useCallback((id: number) => {
-    setActiveThreadId(id);
-    setOverlayView(null);
-    setStrategyPlan(null);
-  }, []);
+  const handleSelectThread = useCallback(
+    (id: number) => {
+      if (id === activeThreadId) {
+        setOverlayView(null);
+        return;
+      }
+      // Vide immédiatement l'UI du fil précédent (évite de coller le chat A sur B)
+      clear();
+      setIsSending(false);
+      setActiveThreadId(id);
+      setOverlayView(null);
+      setStrategyPlan(null);
+    },
+    [activeThreadId, clear],
+  );
 
   const handleRenameThread = useCallback(
     async (id: number, title: string) => {
@@ -241,6 +253,7 @@ export default function AuthenticatedApp() {
   const handleSend = useCallback(
     async (text: string, attachments: ChatAttachment[] = []) => {
       if (activeThreadId == null) return;
+      const threadIdAtSend = activeThreadId;
       const displayText = buildUserMessageDisplayText(text, attachments);
       const apiText = buildUserMessageApiText(text, attachments);
       if (!apiText.trim()) return;
@@ -249,7 +262,9 @@ export default function AuthenticatedApp() {
 
       setIsSending(true);
       try {
-        const result = await sendChatMessage(apiText, activeThreadId);
+        const result = await sendChatMessage(apiText, threadIdAtSend);
+        // Ne pas coller la réponse sur un autre fil si l'utilisateur a changé d'automatisation
+        if (activeThreadIdRef.current !== threadIdAtSend) return;
         appendLocal({
           id: `agent-${result.id}`,
           kind: result.error ? 'error' : 'assistant',
@@ -262,8 +277,9 @@ export default function AuthenticatedApp() {
           openStrategy(plan);
         }
         void refreshUser();
-        void refreshThreads(activeThreadId);
+        void refreshThreads(threadIdAtSend);
       } catch (err) {
+        if (activeThreadIdRef.current !== threadIdAtSend) return;
         const raw = err instanceof Error ? err.message : 'Erreur réseau';
         const friendly =
           /failed to fetch|network|timeout|prend plus|ECONN|HTTP/i.test(raw)
@@ -277,7 +293,9 @@ export default function AuthenticatedApp() {
           label: 'Agent',
         });
       } finally {
-        setIsSending(false);
+        if (activeThreadIdRef.current === threadIdAtSend) {
+          setIsSending(false);
+        }
       }
     },
     [activeThreadId, appendLocal, appendOptimisticUser, openStrategy, refreshUser, refreshThreads],
@@ -346,6 +364,8 @@ export default function AuthenticatedApp() {
 
         {overlayView == null && (
           <ChatWorkspace
+            key={activeThreadId ?? 'no-thread'}
+            threadId={activeThreadId}
             messages={messages}
             messagesLoading={loading || threadsLoading}
             isSending={isSending}

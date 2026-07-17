@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { ArrowUp, Loader2, Mic, Plus, Square, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
@@ -28,17 +28,28 @@ export interface KlanvioChatInputProps {
   autoGrow?: boolean;
   hideHint?: boolean;
   className?: string;
+  /** Focus le champ dès le montage (changement de fil). */
+  autoFocus?: boolean;
 }
 
-export function KlanvioChatInput({
-  onSend,
-  disabled = false,
-  placeholder = 'Donnez une instruction à l\'agent WhatsApp…',
-  variant = 'dock',
-  autoGrow = true,
-  hideHint = false,
-  className,
-}: KlanvioChatInputProps) {
+export type KlanvioChatInputHandle = {
+  focus: () => void;
+};
+
+export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatInputProps>(
+  function KlanvioChatInput(
+    {
+      onSend,
+      disabled = false,
+      placeholder = 'Donnez une instruction à l\'agent WhatsApp…',
+      variant = 'dock',
+      autoGrow = true,
+      hideHint = false,
+      className,
+      autoFocus = false,
+    },
+    ref,
+  ) {
   const [message, setMessage] = useState('');
   const [pendingFiles, setPendingFiles] = useState<PendingFile[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -54,6 +65,22 @@ export function KlanvioChatInput({
   const sendingLockRef = useRef(false);
   const isHero = variant === 'hero';
   const locked = disabled || localSending;
+
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      const el = textareaRef.current;
+      if (!el || locked) return;
+      el.focus({ preventScroll: true });
+    },
+  }));
+
+  useEffect(() => {
+    if (!autoFocus || locked) return;
+    const t = window.setTimeout(() => {
+      textareaRef.current?.focus({ preventScroll: true });
+    }, 40);
+    return () => window.clearTimeout(t);
+  }, [autoFocus, locked]);
 
   useEffect(() => {
     if (!autoGrow) return;
@@ -408,4 +435,5 @@ export function KlanvioChatInput({
       )}
     </div>
   );
-}
+  },
+);
