@@ -412,9 +412,13 @@ app.get("/api/threads", async (request) => {
   return { threads };
 });
 
-app.post<{ Body: { title?: string } }>("/api/threads", async (request) => {
+app.post<{ Body: { title?: string; description?: string } }>("/api/threads", async (request) => {
   const userId = requireUserId(request);
-  const thread = await createAgentThread(userId, request.body?.title?.trim() || "Automatisation");
+  const thread = await createAgentThread(
+    userId,
+    request.body?.title?.trim() || "Automatisation",
+    request.body?.description?.trim() || null
+  );
   return { thread };
 });
 

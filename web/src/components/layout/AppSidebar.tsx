@@ -224,6 +224,11 @@ function ThreadList({
           const active = activeThreadId === thread.id;
           const status = thread.automation_status;
           const badge = status ? STATUS_LABELS[status] || status : 'Vide';
+          const subtitle = thread.description?.trim()
+            ? thread.description.trim().length > 56
+              ? `${thread.description.trim().slice(0, 55)}…`
+              : thread.description.trim()
+            : badge;
           const isRenaming = renamingId === thread.id;
           const isBusy = busyId === thread.id;
 
@@ -301,7 +306,7 @@ function ThreadList({
                 >
                   <span className="block truncate font-medium">{thread.title}</span>
                   <span className={cn('text-[11px]', active ? 'text-brand/80' : 'text-text-500')}>
-                    {badge}
+                    {subtitle}
                   </span>
                 </button>
               )}

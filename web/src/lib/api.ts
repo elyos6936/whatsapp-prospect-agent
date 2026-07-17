@@ -238,6 +238,7 @@ export async function clearHistory(threadId: number): Promise<void> {
 export interface AgentThreadSummary {
   id: number;
   title: string;
+  description?: string | null;
   automation_id: number | null;
   automation_status?: string | null;
   automation_name?: string | null;
@@ -250,10 +251,16 @@ export async function fetchThreads(): Promise<AgentThreadSummary[]> {
   return data.threads ?? [];
 }
 
-export async function createThread(title?: string): Promise<AgentThreadSummary> {
+export async function createThread(
+  title?: string,
+  description?: string,
+): Promise<AgentThreadSummary> {
   const data = await request<{ thread: AgentThreadSummary }>('/api/threads', {
     method: 'POST',
-    body: JSON.stringify({ title: title ?? 'Automatisation' }),
+    body: JSON.stringify({
+      title: title ?? 'Automatisation',
+      description: description?.trim() || undefined,
+    }),
   });
   return data.thread;
 }

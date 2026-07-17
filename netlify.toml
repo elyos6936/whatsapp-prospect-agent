@@ -14,7 +14,13 @@
   VITE_API_URL = "https://klanvio-api.srv1820011.hstgr.cloud"
   VITE_GOOGLE_CLIENT_ID = "505015578658-o30f55iuphed69go2klr2lnn1n3esj31.apps.googleusercontent.com"
 
-# Canonical : sous-domaine Netlify → domaine custom
+# Canonical : apex + sous-domaines Netlify → www
+[[redirects]]
+  from = "https://klanvio.com/*"
+  to = "https://www.klanvio.com/:splat"
+  status = 301
+  force = true
+
 [[redirects]]
   from = "https://klanvio1.netlify.app/*"
   to = "https://www.klanvio.com/:splat"
@@ -43,3 +49,14 @@
   [headers.values]
     X-Frame-Options = "DENY"
     X-Content-Type-Options = "nosniff"
+    X-Robots-Tag = "index, follow"
+
+[[headers]]
+  for = "/robots.txt"
+  [headers.values]
+    Content-Type = "text/plain; charset=utf-8"
+
+[[headers]]
+  for = "/sitemap.xml"
+  [headers.values]
+    Content-Type = "application/xml; charset=utf-8"

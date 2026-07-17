@@ -26,6 +26,7 @@ import { extractPlanFromText, type AutomationVisualPlan } from '@/lib/automation
 import type { OverlayView } from '@/lib/navigation';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { NewAutomationModal } from '@/components/ui/NewAutomationModal';
 
 const STRATEGY_OPEN_KEY = 'klanvio.strategyDockOpen';
 
@@ -47,6 +48,7 @@ export default function AuthenticatedApp() {
   const [threads, setThreads] = useState<AgentThreadSummary[]>([]);
   const [activeThreadId, setActiveThreadId] = useState<number | null>(null);
   const [creatingThread, setCreatingThread] = useState(false);
+  const [newAutoModalOpen, setNewAutoModalOpen] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(true);
   const [strategyPlan, setStrategyPlan] = useState<AutomationVisualPlan | null>(null);
   const [strategyOpen, setStrategyOpen] = useState(readStrategyOpenPref);
@@ -173,20 +175,28 @@ export default function AuthenticatedApp() {
     }
   }, [messages]);
 
-  const handleNewThread = useCallback(async () => {
-    setCreatingThread(true);
-    try {
-      const thread = await createThread();
-      await refreshThreads(thread.id);
-      setOverlayView(null);
-      setStrategyPlan(null);
-      clear();
-    } catch (err) {
-      alert(err instanceof Error ? err.message : 'Erreur');
-    } finally {
-      setCreatingThread(false);
-    }
-  }, [clear, refreshThreads]);
+  const handleNewThread = useCallback(() => {
+    setNewAutoModalOpen(true);
+  }, []);
+
+  const handleCreateThread = useCallback(
+    async (title: string, description: string) => {
+      setCreatingThread(true);
+      try {
+        const thread = await createThread(title, description);
+        setNewAutoModalOpen(false);
+        await refreshThreads(thread.id);
+        setOverlayView(null);
+        setStrategyPlan(null);
+        clear();
+      } catch (err) {
+        alert(err instanceof Error ? err.message : 'Erreur');
+      } finally {
+        setCreatingThread(false);
+      }
+    },
+    [clear, refreshThreads],
+  );
 
   const handleSelectThread = useCallback((id: number) => {
     setActiveThreadId(id);
@@ -281,6 +291,7 @@ export default function AuthenticatedApp() {
   }
 
   return (
+    <>
     <div className="flex h-full max-w-[100vw] overflow-hidden bg-bg-0">
       {/* Gauche : historique des automatisations */}
       <AppSidebar
@@ -289,7 +300,7 @@ export default function AuthenticatedApp() {
         threads={threads}
         activeThreadId={activeThreadId}
         onSelectThread={handleSelectThread}
-        onNewThread={() => void handleNewThread()}
+        onNewThread={handleNewThread}
         onRenameThread={handleRenameThread}
         onDeleteThread={handleDeleteThread}
         creatingThread={creatingThread}
@@ -364,5 +375,13 @@ export default function AuthenticatedApp() {
         </>
       )}
     </div>
+
+    <NewAutomationModal
+      open={newAutoModalOpen}
+      busy={creatingThread}
+      onCancel={() => !creatingThread && setNewAutoModalOpen(false)}
+      onConfirm={(title, description) => void handleCreateThread(title, description)}
+    />
+    </>
   );
 }

@@ -211,6 +211,12 @@ async function buildBusinessContext(
 
   try {
     const thread = await getAgentThread(userId, threadId);
+    if (thread?.description?.trim()) {
+      lines.push(
+        `## Objectif de cette automatisation\n${thread.description.trim()}\n\n` +
+          `Utilise cette description comme fil conducteur pour le briefing et la simulation.`
+      );
+    }
     if (thread?.automation_id) {
       const auto = await getAutomation(userId, thread.automation_id);
       if (auto) {
