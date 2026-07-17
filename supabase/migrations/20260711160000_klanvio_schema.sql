@@ -74,7 +74,7 @@ CREATE TABLE IF NOT EXISTS automation_targets (
   target_id TEXT NOT NULL,
   target_label TEXT,
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'contacted', 'replied', 'interested', 'stopped', 'error')),
+    CHECK (status IN ('pending', 'queued', 'contacted', 'replied', 'interested', 'stopped', 'error')),
   last_action_at TIMESTAMPTZ,
   notes TEXT,
   ab_variant TEXT,

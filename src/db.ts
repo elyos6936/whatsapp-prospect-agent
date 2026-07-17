@@ -1482,7 +1482,15 @@ export const AUTOMATION_TYPES = [
 export type AutomationType = (typeof AUTOMATION_TYPES)[number];
 export const AUTOMATION_STATUSES = ["draft", "active", "paused", "completed", "failed"] as const;
 export type AutomationStatus = (typeof AUTOMATION_STATUSES)[number];
-export const TARGET_STATUSES = ["pending", "contacted", "replied", "interested", "stopped", "error"] as const;
+export const TARGET_STATUSES = [
+  "pending",
+  "queued",
+  "contacted",
+  "replied",
+  "interested",
+  "stopped",
+  "error",
+] as const;
 export type TargetStatus = (typeof TARGET_STATUSES)[number];
 
 export interface AutomationConfig {
@@ -1668,7 +1676,7 @@ async function recomputeAutomationStats(userId: number, automationId: number): P
 
   for (const row of rows) {
     const n = Number(row.n);
-    if (row.status === "pending") stats.pending = n;
+    if (row.status === "pending" || row.status === "queued") stats.pending = (stats.pending ?? 0) + n;
     else if (row.status === "contacted") stats.contacted = n;
     else if (row.status === "replied") stats.replied = n;
     else if (row.status === "interested") stats.interested = n;

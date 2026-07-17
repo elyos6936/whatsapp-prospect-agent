@@ -1,5 +1,6 @@
 export const TARGET_META: Record<string, { label: string; color: string }> = {
   pending: { label: 'En attente', color: '#94a3b8' },
+  queued: { label: 'En cours d\'envoi', color: '#64748b' },
   contacted: { label: 'Sans réponse', color: '#2057ce' },
   replied: { label: 'Réponses', color: '#0ea5e9' },
   interested: { label: 'Intéressés', color: '#10b981' },

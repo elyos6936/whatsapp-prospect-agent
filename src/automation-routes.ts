@@ -21,7 +21,7 @@ import {
   type AutomationStatus,
   type AutomationType,
 } from "./db.js";
-import { bootstrapGroupProspectTargets, reloadGroupProspectTargets } from "./automation-engine.js";
+import { bootstrapGroupProspectTargets, reloadGroupProspectTargets, kickAutomationForUser } from "./automation-engine.js";
 import { chatWithAgent } from "./agent.js";
 import { findGroupByNameOrId, requireEvolutionConnected } from "./evolutionapi.js";
 
@@ -76,6 +76,9 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (!updated) {
         return reply.status(404).send({ error: "Automatisation introuvable." });
       }
+      if (status === "active") {
+        kickAutomationForUser(userId);
+      }
       return { automation: updated };
     }
   );
@@ -125,6 +128,7 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       try {
         await requireEvolutionConnected(userId, "la création d'une campagne de prospection groupe");
         const count = await bootstrapGroupProspectTargets(userId, auto.id);
+        kickAutomationForUser(userId);
         return { automation: await getAutomationDetail(userId, auto.id), targetsAdded: count };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

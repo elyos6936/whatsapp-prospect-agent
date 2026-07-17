@@ -109,6 +109,7 @@ import {
 import {
   bootstrapGroupProspectTargets,
   bootstrapContactProspectTargets,
+  kickAutomationForUser,
 } from "./automation-engine.js";
 import { getContactPresence } from "./notifications.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
@@ -3776,6 +3777,7 @@ export async function executeTool(
       }
 
       const fresh = await getAutomationDetail(userId, id);
+      kickAutomationForUser(userId);
       return JSON.stringify({
         success: true,
         automationId: id,

@@ -60,7 +60,11 @@ async function countSentTodayForAutomation(userId: number, automationId: number)
   const today = formatLocalDateTime(new Date()).slice(0, 10);
   const targets = await listAutomationTargets(userId, automationId, { limit: 1000 });
   return targets.filter(
-    (t) => t.status !== "pending" && !!t.last_action_at && t.last_action_at.slice(0, 10) === today
+    (t) =>
+      t.status !== "pending" &&
+      t.status !== "queued" &&
+      !!t.last_action_at &&
+      t.last_action_at.slice(0, 10) === today
   ).length;
 }
 
@@ -244,11 +248,11 @@ export async function buildDailyReportText(userId: number, auto: Automation): Pr
   const targets = await listAutomationTargets(userId, auto.id, { limit: 1000 });
 
   const isToday = (ts: string | null) => !!ts && ts.slice(0, 10) === today;
-  const nonPending = targets.filter((t) => t.status !== "pending");
+  const nonPending = targets.filter((t) => t.status !== "pending" && t.status !== "queued");
   const sentToday = nonPending.filter((t) => isToday(t.last_action_at)).length;
   const replied = targets.filter((t) => t.status === "replied" || t.status === "interested").length;
   const interested = targets.filter((t) => t.status === "interested").length;
-  const pendingCount = targets.filter((t) => t.status === "pending").length;
+  const pendingCount = targets.filter((t) => t.status === "pending" || t.status === "queued").length;
 
   const lines: string[] = [
     `📊 Rapport du jour — « ${auto.name} » · statut : ${auto.status}`,
@@ -581,6 +585,11 @@ export async function reloadGroupProspectTargets(userId: number, automationId: n
   await updateAutomationStatus(userId, automationId, "active");
   await addAutomationLog(userId, automationId, "info", "Rechargement des membres du groupe…");
   return bootstrapGroupProspectTargets(userId, automationId);
+}
+
+/** Déclenche un cycle moteur immédiat pour un utilisateur (ex. après activation campagne). */
+export function kickAutomationForUser(userId: number): void {
+  void processTickForUser(userId);
 }
 
 export function startAutomationEngine(intervalMs = 15000): void {
