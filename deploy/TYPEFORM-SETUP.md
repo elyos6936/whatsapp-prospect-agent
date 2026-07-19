@@ -58,6 +58,8 @@ Appliquer la migration `supabase/migrations/20260719120000_user_integrations.sql
 
 ## Scopes demandés
 
-`offline` · `forms:read` · `accounts:read`
+`offline` · `forms:read` · `responses:read` · `accounts:read`
 
-(Pas de webhooks ni `responses:read` pour cette itération.)
+Si Typeform était déjà connecté **avant** `responses:read` : **Déconnecter** puis **Connecter** à nouveau pour re-consentir.
+
+(Pas de webhooks pour cette itération — lecture à la demande via l’agent.)

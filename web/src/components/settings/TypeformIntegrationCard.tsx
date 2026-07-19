@@ -110,7 +110,7 @@ export function TypeformIntegrationCard({ flash }: Props) {
   };
 
   const handleDisconnect = async () => {
-    if (!confirm('Déconnecter Typeform ? L’agent ne pourra plus accéder à tes formulaires.')) {
+    if (!confirm('Déconnecter Typeform ? L’agent ne pourra plus accéder à tes formulaires ni aux réponses.')) {
       return;
     }
     setDisconnecting(true);
@@ -163,7 +163,7 @@ export function TypeformIntegrationCard({ flash }: Props) {
               </p>
             ) : (
               <p className="text-xs text-text-400">
-                Formulaires → leads WhatsApp &amp; campagnes
+                Formulaires &amp; réponses → leads WhatsApp
               </p>
             )}
           </div>
@@ -235,6 +235,10 @@ export function TypeformIntegrationCard({ flash }: Props) {
               ))}
             </ul>
           )}
+          <p className="mt-2 text-[11px] leading-relaxed text-text-500">
+            L’agent peut lire les réponses (téléphones → leads). Si ça échoue : Déconnecter puis
+            Connecter pour autoriser le scope responses:read.
+          </p>
         </div>
       )}
 

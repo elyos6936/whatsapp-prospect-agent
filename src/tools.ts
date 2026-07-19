@@ -129,6 +129,7 @@ import {
 import {
   TypeformAuthError,
   fetchTypeformForms,
+  fetchTypeformResponses,
 } from "./integrations/typeform.js";
 import {
   getUserIntegration,
@@ -1280,7 +1281,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       name: "list_typeform_forms",
       description:
         "Liste les formulaires Typeform du compte connecté (Réglages → Intégrations). " +
-        "Lecture seule — pas les réponses individuelles (scope forms:read). " +
+        "Ensuite utilise list_typeform_responses avec un form_id pour lire les soumissions. " +
         "Si non connecté, invite à reconnecter Typeform.",
       parameters: {
         type: "object",
@@ -1290,6 +1291,32 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description: "Nombre max de formulaires à retourner (défaut 50)",
           },
         },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_typeform_responses",
+      description:
+        "Lit les réponses complétées d'un formulaire Typeform (form_id depuis list_typeform_forms) " +
+        "et propose des leads téléphone (suggested_leads). " +
+        "Si accès refusé : l'utilisateur doit Déconnecter puis reconnecter Typeform pour autoriser responses:read. " +
+        "Pour prospecter : confirmer les numéros puis create_automation(contact_prospect) en brouillon.",
+      parameters: {
+        type: "object",
+        properties: {
+          form_id: {
+            type: "string",
+            description: "ID du formulaire Typeform",
+          },
+          page_size: {
+            type: "number",
+            description: "Nombre max de réponses (défaut 25, max 100)",
+          },
+        },
+        required: ["form_id"],
         additionalProperties: false,
       },
     },
@@ -1761,6 +1788,7 @@ const LOCAL_TOOLS = new Set([
   "save_business_profile",
   "get_business_profile",
   "list_typeform_forms",
+  "list_typeform_responses",
   "list_connected_sheets",
   "read_google_sheet",
   "create_automation",
@@ -3476,7 +3504,7 @@ export async function executeTool(
           message:
             sliced.length === 0
               ? "Aucun formulaire Typeform sur ce compte."
-              : `${sliced.length} formulaire(s) Typeform. Les réponses individuelles ne sont pas lisibles (scope forms:read seulement).`,
+              : `${sliced.length} formulaire(s). Utilise list_typeform_responses avec un form_id pour lire les soumissions.`,
         });
       } catch (err) {
         if (err instanceof TypeformAuthError && err.code === "revoked") {
@@ -3487,6 +3515,51 @@ export async function executeTool(
         }
         return JSON.stringify({
           error: err instanceof Error ? err.message : "Erreur Typeform.",
+          code: err instanceof TypeformAuthError ? err.code : "http",
+        });
+      }
+    }
+
+    case "list_typeform_responses": {
+      const formId = String(args.form_id ?? "").trim();
+      if (!formId) {
+        return JSON.stringify({ error: "form_id requis (depuis list_typeform_forms)." });
+      }
+      const pageSize =
+        args.page_size != null && Number.isFinite(Number(args.page_size))
+          ? Number(args.page_size)
+          : 25;
+      try {
+        const accessToken = await getValidTypeformAccessToken(userId);
+        const data = await fetchTypeformResponses(accessToken, formId, pageSize);
+        return JSON.stringify({
+          formId: data.formId,
+          totalItems: data.totalItems,
+          returned: data.responses.length,
+          responses: data.responses.map((r) => ({
+            responseId: r.responseId,
+            submittedAt: r.submittedAt,
+            name: r.name,
+            phone: r.phone,
+            email: r.email,
+            answers: r.answers.slice(0, 20),
+          })),
+          suggested_leads: data.suggestedLeads,
+          hint:
+            "Pour prospecter : confirme les numéros avec l'utilisateur, puis create_automation(type=contact_prospect, contacts=[…]) en brouillon — n'active pas sans brief.",
+        });
+      } catch (err) {
+        if (err instanceof TypeformAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error:
+              err.message.includes("responses:read")
+                ? err.message
+                : TYPEFORM_REAUTH_MESSAGE,
+            code: "typeform_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur lecture réponses Typeform.",
           code: err instanceof TypeformAuthError ? err.code : "http",
         });
       }
