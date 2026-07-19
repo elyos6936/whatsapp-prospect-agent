@@ -20,7 +20,8 @@ import {
   userFacingError,
 } from "./user-facing.js";
 
-const MAX_TOOL_ROUNDS = 5;
+/** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
+const MAX_TOOL_ROUNDS = 12;
 const CHAT_HISTORY_LIMIT = 24;
 const CHAT_MAX_TOKENS = 1100;
 
@@ -730,5 +731,31 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     return text;
   }
 
-  return "Trop d'étapes d'exécution. Reformulez votre demande de façon plus simple.";
+  // Plafond atteint : une dernière réponse texte (sans outils) à partir du travail déjà fait.
+  messages.push({
+    role: "system",
+    content:
+      "Tu as atteint la limite d'outils pour ce message. À partir des résultats d'outils déjà obtenus, " +
+      "réponds à l'utilisateur en français : confirme clairement ce qui a été fait, et s'il reste quelque chose " +
+      "propose UNE seule prochaine action simple. N'appelle aucun outil. Ne dis jamais « trop d'étapes » ni « reformule ».",
+  });
+  try {
+    const wrapUp = await callOpenAiWithRetry(() =>
+      client.chat.completions.create({
+        model: config.openaiModel,
+        messages,
+        temperature: 0.5,
+        max_tokens: recommendedMaxTokens(config.openaiModel, 500, {
+          thinkingEnabled: false,
+        }),
+        ...deepseekChatExtras({ enableThinking: false }),
+      } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
+    );
+    const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();
+    if (wrapText) return wrapText;
+  } catch {
+    /* fall through */
+  }
+
+  return "J'ai avancé sur ta demande, mais je n'ai pas pu tout finir d'un coup. Dis-moi juste la prochaine action (ex. « envoie aux autres ») et je continue.";
 }
