@@ -46,6 +46,7 @@ import {
   isTypeformConfigured,
   typeformRedirectUri,
 } from "./integrations/typeform.js";
+import { rawQueryParam } from "./oauth-query.js";
 import { isTokensEncryptionConfigured } from "./secret-crypto.js";
 
 export { getValidGoogleAccessToken, getValidTypeformAccessToken } from "./integrations/access.js";
@@ -92,7 +93,12 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
   app.get<{
     Querystring: { code?: string; state?: string; error?: string; error_description?: string };
   }>("/api/integrations/typeform/callback", async (request, reply) => {
-    const { code, state, error, error_description } = request.query;
+    // Raw URL: ne pas laisser querystring convertir "+" → espace dans le code OAuth
+    const code = rawQueryParam(request.url, "code") ?? request.query.code;
+    const state = rawQueryParam(request.url, "state") ?? request.query.state;
+    const error = rawQueryParam(request.url, "error") ?? request.query.error;
+    const error_description =
+      rawQueryParam(request.url, "error_description") ?? request.query.error_description;
 
     if (error) {
       const msg = error_description || error;
@@ -146,7 +152,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       return reply.redirect(appSettingsRedirect({ typeform: "connected" }));
     } catch (err) {
       const msg =
-        err instanceof Error ? err.message.slice(0, 180) : "Échec connexion Typeform.";
+        err instanceof Error ? err.message.slice(0, 280) : "Échec connexion Typeform.";
       return reply.redirect(appSettingsRedirect({ typeform: "error", message: msg }));
     }
   });
@@ -201,7 +207,9 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
   app.get<{
     Querystring: { code?: string; state?: string; error?: string };
   }>("/api/integrations/google/callback", async (request, reply) => {
-    const { code, state, error } = request.query;
+    const code = rawQueryParam(request.url, "code") ?? request.query.code;
+    const state = rawQueryParam(request.url, "state") ?? request.query.state;
+    const error = rawQueryParam(request.url, "error") ?? request.query.error;
 
     if (error) {
       return reply.redirect(

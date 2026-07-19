@@ -57,19 +57,48 @@ export type TypeformTokenResponse = {
   token_type?: string;
 };
 
+function formatTypeformTokenError(status: number, text: string, raw: Record<string, unknown>): string {
+  const detail = String(
+    raw.error_description ||
+      raw.description ||
+      raw.message ||
+      raw.error ||
+      (text.trim() ? text.trim().slice(0, 160) : "") ||
+      `HTTP ${status}`,
+  ).slice(0, 160);
+  const redirect = typeformRedirectUri();
+  if (status === 400) {
+    return (
+      `${detail}. Vérifie Redirect URI Typeform = ${redirect} ` +
+      `(et CLIENT_ID / SECRET dans le .env Hostinger).`
+    );
+  }
+  return detail;
+}
+
 async function postToken(body: URLSearchParams): Promise<TypeformTokenResponse> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
     body: body.toString(),
   });
-  const raw = (await res.json().catch(() => ({}))) as Record<string, unknown>;
+  const text = await res.text();
+  let raw: Record<string, unknown> = {};
+  try {
+    raw = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    /* corps non-JSON */
+  }
   if (!res.ok) {
-    const msg = String(raw.error_description || raw.error || `HTTP ${res.status}`);
+    const msg = formatTypeformTokenError(res.status, text, raw);
+    console.error(
+      `[typeform-oauth] token HTTP ${res.status} redirect=${typeformRedirectUri()} body=${text.slice(0, 300)}`,
+    );
     const revoked =
-      res.status === 400 ||
-      res.status === 401 ||
-      /invalid|revok|expired/i.test(msg);
+      res.status === 401 || /invalid_grant|revok|expired/i.test(msg);
     throw new TypeformAuthError(msg, revoked ? "revoked" : "http");
   }
   const access = String(raw.access_token || "");

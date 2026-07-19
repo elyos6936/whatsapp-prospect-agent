@@ -56,6 +56,13 @@ Appliquer la migration `supabase/migrations/20260719120000_user_integrations.sql
 3. **Actualiser** recharge la liste
 4. **Déconnecter** puis reconnecter
 
+### Si erreur « HTTP 400 » après acceptation
+
+1. Dans Typeform → Developer Apps → ton app Klanvio, le Redirect URI doit être **exactement** :
+   `https://klanvio-api.srv1820011.hstgr.cloud/api/integrations/typeform/callback`
+2. Vérifie `TYPEFORM_CLIENT_ID` / `TYPEFORM_CLIENT_SECRET` dans le `.env` Hostinger (secret sans espace / guillemets).
+3. Rebuild Docker après toute modif `.env`, puis réessaie **Connecter**.
+
 ## Scopes demandés
 
 `offline` · `forms:read` · `responses:read` · `accounts:read`
