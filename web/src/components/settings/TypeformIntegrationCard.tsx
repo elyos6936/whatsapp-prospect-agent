@@ -142,11 +142,11 @@ export function TypeformIntegrationCard({ flash }: Props) {
   const connected = Boolean(status?.connected);
 
   return (
-    <div className="rounded-xl border border-black/10 bg-bg-0 px-4 py-3.5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="rounded-xl border border-black/10 bg-bg-0 px-4 py-4 sm:px-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <span
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
+            className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
             style={{ background: '#262627' }}
             aria-hidden
           >
@@ -157,7 +157,7 @@ export function TypeformIntegrationCard({ flash }: Props) {
             {loading ? (
               <p className="text-xs text-text-400">Chargement…</p>
             ) : connected ? (
-              <p className="text-xs text-emerald-600">
+              <p className="truncate text-xs text-emerald-600">
                 Connecté
                 {status?.email ? ` · ${status.email}` : ''}
               </p>
@@ -174,7 +174,7 @@ export function TypeformIntegrationCard({ flash }: Props) {
             type="button"
             disabled={disconnecting}
             onClick={() => void handleDisconnect()}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-500/20 disabled:opacity-50"
+            className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-xl border border-red-500/30 bg-red-500/10 px-3.5 py-2 text-sm font-medium text-red-700 transition hover:bg-red-500/20 disabled:opacity-50 sm:self-auto"
           >
             <Unplug className="h-4 w-4" />
             {disconnecting ? '…' : 'Déconnecter'}
@@ -184,7 +184,7 @@ export function TypeformIntegrationCard({ flash }: Props) {
             type="button"
             disabled={connecting || loading || !serverReady}
             onClick={() => void handleConnect()}
-            className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-black/10 bg-bg-100 px-4 py-2 text-sm font-medium text-text-200 transition hover:border-brand-border hover:bg-brand/10 hover:text-brand disabled:opacity-50"
+            className="inline-flex shrink-0 items-center gap-1.5 self-start rounded-xl border border-black/10 bg-bg-100 px-3.5 py-2 text-sm font-medium text-text-200 transition hover:border-brand-border hover:bg-brand/10 hover:text-brand disabled:opacity-50 sm:self-auto"
           >
             <Link2 className="h-4 w-4" />
             {connecting ? 'Redirection…' : 'Connecter'}

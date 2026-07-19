@@ -55,6 +55,28 @@ function resolveLlmModel(): string {
   return raw;
 }
 
+/**
+ * Front URL pour redirects OAuth.
+ * APP_URL peut être une liste (comme CORS_ORIGINS), séparée par des virgules.
+ * On choisit l’URL canonique www.klanvio.com si présente, sinon la 1ʳᵉ https.
+ */
+function resolveAppUrl(rawEnv: string | undefined): string {
+  const raw = rawEnv?.trim() || "https://www.klanvio.com";
+  const parts = raw
+    .split(",")
+    .map((s) => s.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+  if (parts.length === 0) return "https://www.klanvio.com";
+
+  const prefer = (re: RegExp) => parts.find((u) => re.test(u));
+  const chosen =
+    prefer(/^https:\/\/www\.klanvio\.com$/i) ||
+    prefer(/^https:\/\/klanvio\.com$/i) ||
+    prefer(/^https:\/\//i) ||
+    parts[0]!;
+  return chosen.replace(/\/$/, "");
+}
+
 export const config = {
   port,
   timezone: appTimezone,
@@ -84,16 +106,8 @@ export const config = {
   googleIntegrationsClientSecret: process.env.GOOGLE_INTEGRATIONS_CLIENT_SECRET?.trim() || "",
   /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/google/callback`. */
   googleIntegrationsRedirectUri: process.env.GOOGLE_INTEGRATIONS_REDIRECT_URI?.trim() || "",
-  /**
-   * URL du front (redirect post-OAuth intégrations).
-   * Une seule URL — jamais une liste CORS (virgules). Sinon Google redirige vers
-   * `klanvio.netlify.app,https://app…` (DNS NXDOMAIN).
-   */
-  appUrl: (() => {
-    const raw = process.env.APP_URL?.trim() || "https://www.klanvio.com";
-    const first = raw.split(",")[0]?.trim() || "https://www.klanvio.com";
-    return first.replace(/\/$/, "");
-  })(),
+  /** Front pour redirects OAuth — APP_URL peut être une liste CSV ; on pick www.klanvio.com. */
+  appUrl: resolveAppUrl(process.env.APP_URL),
   typeformClientId: process.env.TYPEFORM_CLIENT_ID?.trim() || "",
   typeformClientSecret: process.env.TYPEFORM_CLIENT_SECRET?.trim() || "",
   /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/typeform/callback`. */

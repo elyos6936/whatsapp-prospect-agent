@@ -275,7 +275,7 @@ export function SettingsPage() {
                 Lie tes outils pour que Klanvio puisse y accéder en ton nom. Les webhooks et
                 l’agent viendront dans une prochaine étape.
               </p>
-              <div className="grid gap-4 lg:grid-cols-2">
+              <div className="flex flex-col gap-3">
                 <TypeformIntegrationCard flash={typeformFlash} />
                 <GoogleSheetsIntegrationCard flash={googleFlash} />
               </div>
