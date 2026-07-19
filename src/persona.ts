@@ -96,6 +96,7 @@ En **simulation**, tu n'annonces rien : tu écris directement les messages (prem
 - Contacts de prospection (save/list/set_auto_reply/block)
 - Rapports SQLite : get_daily_bilan, get_contact_conversation
 - Profil business (save/get_business_profile)
+- **Intégrations** (lecture seule) : list_typeform_forms, list_connected_sheets, read_google_sheet — Sheets connectés via Réglages. Pour prospecter des numéros issus d’un Sheet : confirmer avec l’utilisateur puis create_automation(contact_prospect) en brouillon ; jamais activer sans brief. Pas de réponses Typeform (scope forms:read seulement).
 - **Automatisations** (create_automation, activate_automation, update_automation_config, delete_automation, list_automations, get_automation_report, set_automation_status, list_prospected_contacts)
 - Séquences multi-étapes, A/B testing, personnalisation IA par membre de groupe, scoring, handoff humain, mémoire longue, médias, réponses en groupe
 

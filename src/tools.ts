@@ -116,6 +116,25 @@ import {
 } from "./automation-plan.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 import {
+  GOOGLE_REAUTH_MESSAGE,
+  TYPEFORM_REAUTH_MESSAGE,
+  getValidGoogleAccessToken,
+  getValidTypeformAccessToken,
+} from "./integrations/access.js";
+import {
+  GOOGLE_PROVIDER,
+  GoogleAuthError,
+  fetchSpreadsheetValues,
+} from "./integrations/google.js";
+import {
+  TypeformAuthError,
+  fetchTypeformForms,
+} from "./integrations/typeform.js";
+import {
+  getUserIntegration,
+  listConnectedSheets,
+} from "./integrations-db.js";
+import {
   estimateProspectCountFromArgs,
   recommendOutboundGaps,
 } from "./campaign-spacing.js";
@@ -1258,6 +1277,67 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "list_typeform_forms",
+      description:
+        "Liste les formulaires Typeform du compte connecté (Réglages → Intégrations). " +
+        "Lecture seule — pas les réponses individuelles (scope forms:read). " +
+        "Si non connecté, invite à reconnecter Typeform.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Nombre max de formulaires à retourner (défaut 50)",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_connected_sheets",
+      description:
+        "Liste les Google Sheets que l'utilisateur a connectés à Klanvio via le Picker " +
+        "(Réglages → Intégrations). Pas tous les Sheets Drive — seulement ceux ajoutés. " +
+        "Utilise ensuite read_google_sheet avec un spreadsheet_id.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_google_sheet",
+      description:
+        "Lit les lignes d'un Google Sheet connecté (headers + rows) et propose des leads " +
+        "téléphone détectés (suggested_leads). spreadsheet_id DOIT provenir de list_connected_sheets. " +
+        "Lecture seule. Pour prospecter : confirmer les numéros avec l'utilisateur puis " +
+        "create_automation(contact_prospect) en brouillon — ne pas activer sans brief.",
+      parameters: {
+        type: "object",
+        properties: {
+          spreadsheet_id: {
+            type: "string",
+            description: "ID du Sheet (depuis list_connected_sheets)",
+          },
+          range: {
+            type: "string",
+            description: 'Plage A1 (ex. "A1:Z50" ou "Feuille1!A1:Z50"). Défaut A1:Z50',
+          },
+          max_rows: {
+            type: "number",
+            description: "Max lignes de données après l'en-tête (défaut 50, max 100)",
+          },
+        },
+        required: ["spreadsheet_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "create_automation",
       description:
         "Crée OU met à jour une campagne WhatsApp en BROUILLON uniquement (jamais d'activation ici). " +
@@ -1680,6 +1760,9 @@ const LOCAL_TOOLS = new Set([
   "get_contact_conversation",
   "save_business_profile",
   "get_business_profile",
+  "list_typeform_forms",
+  "list_connected_sheets",
+  "read_google_sheet",
   "create_automation",
   "list_automations",
   "get_automation_report",
@@ -3370,6 +3453,118 @@ export async function executeTool(
         price: s.business_price || null,
         configured: Boolean(s.business_owner_name || s.business_offer),
       });
+    }
+
+    case "list_typeform_forms": {
+      try {
+        const accessToken = await getValidTypeformAccessToken(userId);
+        const forms = await fetchTypeformForms(accessToken);
+        const limit =
+          args.limit != null && Number.isFinite(Number(args.limit))
+            ? Math.min(Math.max(1, Number(args.limit)), 100)
+            : 50;
+        const sliced = forms.slice(0, limit).map((f) => ({
+          id: f.id,
+          title: f.title,
+          lastUpdatedAt: f.lastUpdatedAt ?? null,
+        }));
+        return JSON.stringify({
+          connected: true,
+          forms: sliced,
+          count: sliced.length,
+          total: forms.length,
+          message:
+            sliced.length === 0
+              ? "Aucun formulaire Typeform sur ce compte."
+              : `${sliced.length} formulaire(s) Typeform. Les réponses individuelles ne sont pas lisibles (scope forms:read seulement).`,
+        });
+      } catch (err) {
+        if (err instanceof TypeformAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error: TYPEFORM_REAUTH_MESSAGE,
+            code: "typeform_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur Typeform.",
+          code: err instanceof TypeformAuthError ? err.code : "http",
+        });
+      }
+    }
+
+    case "list_connected_sheets": {
+      const googleRow = await getUserIntegration(userId, GOOGLE_PROVIDER);
+      if (!googleRow) {
+        return JSON.stringify({
+          connected: false,
+          sheets: [],
+          error: "Google non connecté. Invite l'utilisateur à Réglages → Intégrations → Connecter Google Sheets.",
+          code: "google_reauth_required",
+        });
+      }
+      const sheets = await listConnectedSheets(userId);
+      return JSON.stringify({
+        connected: true,
+        email: googleRow.provider_email,
+        sheets: sheets.map((s) => ({
+          spreadsheetId: s.spreadsheetId,
+          title: s.title,
+          addedAt: s.addedAt,
+        })),
+        count: sheets.length,
+        message:
+          sheets.length === 0
+            ? "Aucun Sheet connecté. L'utilisateur doit en ajouter via Réglages → Intégrations → Ajouter des feuilles."
+            : `${sheets.length} Sheet(s) connecté(s). Utilise read_google_sheet avec un spreadsheet_id.`,
+      });
+    }
+
+    case "read_google_sheet": {
+      const spreadsheetId = String(args.spreadsheet_id ?? "").trim();
+      if (!spreadsheetId) {
+        return JSON.stringify({ error: "spreadsheet_id requis." });
+      }
+      const connected = await listConnectedSheets(userId);
+      const meta = connected.find((s) => s.spreadsheetId === spreadsheetId);
+      if (!meta) {
+        return JSON.stringify({
+          error:
+            "Ce spreadsheet_id n'est pas dans les Sheets connectés. Appelle d'abord list_connected_sheets.",
+          code: "sheet_not_connected",
+        });
+      }
+      const range = String(args.range ?? "A1:Z50").trim() || "A1:Z50";
+      const maxRows =
+        args.max_rows != null && Number.isFinite(Number(args.max_rows))
+          ? Number(args.max_rows)
+          : 50;
+      try {
+        const accessToken = await getValidGoogleAccessToken(userId);
+        const data = await fetchSpreadsheetValues(accessToken, spreadsheetId, range, maxRows);
+        return JSON.stringify({
+          spreadsheetId,
+          title: meta.title,
+          range: data.range,
+          headers: data.headers,
+          rows: data.rows,
+          totalRowsInSheet: data.totalRows,
+          returnedRows: data.rows.length,
+          suggested_leads: data.suggestedLeads,
+          hint:
+            "Pour prospecter : confirme les numéros avec l'utilisateur, puis create_automation(type=contact_prospect, contacts=[…]) en brouillon — n'active pas sans brief.",
+        });
+      } catch (err) {
+        if (err instanceof GoogleAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error: GOOGLE_REAUTH_MESSAGE,
+            code: "google_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur lecture Sheet.",
+          code: err instanceof GoogleAuthError ? err.code : "http",
+        });
+      }
     }
 
     case "create_automation": {

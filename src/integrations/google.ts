@@ -147,3 +147,133 @@ export async function fetchGoogleUserInfo(accessToken: string): Promise<GoogleUs
   }
   return (await res.json()) as GoogleUserInfo;
 }
+
+const SHEETS_VALUES_BASE = "https://sheets.googleapis.com/v4/spreadsheets";
+
+export type SpreadsheetValuesResult = {
+  range: string;
+  headers: string[];
+  rows: Array<Record<string, string>>;
+  suggestedLeads: Array<{ name: string | null; phone: string }>;
+  totalRows: number;
+};
+
+const PHONE_HEADER_RE = /^(phone|tel|téléphone|telephone|whatsapp|wa|mobile|num[eé]ro|numero|cell)$/i;
+const NAME_HEADER_RE = /^(name|nom|pr[eé]nom|prenom|full.?name|contact|client)$/i;
+const PHONE_VALUE_RE = /(?:\+?\d[\d\s.\-]{7,}\d)/;
+
+function looksLikePhone(value: string): boolean {
+  const digits = value.replace(/\D/g, "");
+  return digits.length >= 8 && digits.length <= 15 && PHONE_VALUE_RE.test(value);
+}
+
+function suggestLeads(
+  headers: string[],
+  rows: Array<Record<string, string>>,
+): Array<{ name: string | null; phone: string }> {
+  const phoneCols = headers.filter((h) => PHONE_HEADER_RE.test(h.trim()));
+  const nameCols = headers.filter((h) => NAME_HEADER_RE.test(h.trim()));
+  const leads: Array<{ name: string | null; phone: string }> = [];
+  const seen = new Set<string>();
+
+  for (const row of rows) {
+    let phone: string | null = null;
+    if (phoneCols.length) {
+      for (const col of phoneCols) {
+        const v = String(row[col] ?? "").trim();
+        if (v && looksLikePhone(v)) {
+          phone = v;
+          break;
+        }
+      }
+    }
+    if (!phone) {
+      for (const h of headers) {
+        const v = String(row[h] ?? "").trim();
+        if (v && looksLikePhone(v)) {
+          phone = v;
+          break;
+        }
+      }
+    }
+    if (!phone) continue;
+    const norm = phone.replace(/\D/g, "");
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    let name: string | null = null;
+    for (const col of nameCols) {
+      const v = String(row[col] ?? "").trim();
+      if (v) {
+        name = v;
+        break;
+      }
+    }
+    leads.push({ name, phone });
+  }
+  return leads;
+}
+
+/**
+ * Lit une plage de valeurs via Sheets API v4.
+ * `range` ex. "A1:Z50" ou "Feuille1!A1:Z50".
+ */
+export async function fetchSpreadsheetValues(
+  accessToken: string,
+  spreadsheetId: string,
+  range: string,
+  maxRows = 50,
+): Promise<SpreadsheetValuesResult> {
+  const capped = Math.min(Math.max(1, maxRows), 100);
+  const encodedRange = encodeURIComponent(range);
+  const url = `${SHEETS_VALUES_BASE}/${encodeURIComponent(spreadsheetId)}/values/${encodedRange}?majorDimension=ROWS`;
+
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 401 || res.status === 403) {
+    throw new GoogleAuthError("Token Google invalide ou accès Sheet refusé.", "revoked");
+  }
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new GoogleAuthError(
+      `Sheets API HTTP ${res.status}${body ? `: ${body.slice(0, 120)}` : ""}`,
+      "http",
+    );
+  }
+
+  const data = (await res.json()) as {
+    range?: string;
+    values?: string[][];
+  };
+  const values = data.values ?? [];
+  if (values.length === 0) {
+    return {
+      range: data.range || range,
+      headers: [],
+      rows: [],
+      suggestedLeads: [],
+      totalRows: 0,
+    };
+  }
+
+  const rawHeaders = (values[0] ?? []).map((h, i) => {
+    const t = String(h ?? "").trim();
+    return t || `col_${i + 1}`;
+  });
+  const dataRows = values.slice(1, 1 + capped);
+  const rows = dataRows.map((line) => {
+    const obj: Record<string, string> = {};
+    for (let i = 0; i < rawHeaders.length; i++) {
+      obj[rawHeaders[i]!] = String(line[i] ?? "").trim();
+    }
+    return obj;
+  });
+
+  return {
+    range: data.range || range,
+    headers: rawHeaders,
+    rows,
+    suggestedLeads: suggestLeads(rawHeaders, rows),
+    totalRows: Math.max(0, values.length - 1),
+  };
+}
