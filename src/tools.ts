@@ -2682,10 +2682,12 @@ export async function executeTool(
             });
           }
           const { isAwaitingProspectReply } = await import("./outbound-safety.js");
-          if (await isAwaitingProspectReply(userId, chatId)) {
+          const agentThread = await getAgentThread(userId, threadId);
+          const scopedAutomationId = agentThread?.automation_id ?? null;
+          if (await isAwaitingProspectReply(userId, chatId, scopedAutomationId)) {
             return JSON.stringify({
               error:
-                "Un message a déjà été envoyé à ce prospect et il n'a pas encore répondu. " +
+                "Un message a déjà été envoyé à ce prospect (dans cette automatisation) et il n'a pas encore répondu. " +
                 "Interdit d'envoyer un second message tant qu'il n'a pas écrit. Attendez sa réponse (auto-reply).",
             });
           }

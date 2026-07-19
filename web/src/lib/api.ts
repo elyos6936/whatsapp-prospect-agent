@@ -557,13 +557,25 @@ export async function reloadAutomationMembers(
   return request(`/api/automations/${id}/reload-members`, { method: 'POST' });
 }
 
+/** Valide la simulation sans activer — demande confirmation d'activation. */
+export async function validateSimulation(id: number): Promise<{
+  ok: boolean;
+  needsActivationConfirm: boolean;
+  message: string;
+  name?: string;
+  status?: string;
+}> {
+  return request(`/api/automations/${id}/validate-simulation`, { method: 'POST' });
+}
+
+/** Active une automatisation (draft/pause → active). Utilisé par Lancer draft + « Oui, activer ». */
 export async function validateSimulationAndLaunch(id: number): Promise<{
   ok: boolean;
   message: string;
   targetsAdded?: number;
   status?: string;
 }> {
-  return request(`/api/automations/${id}/validate-simulation`, { method: 'POST' });
+  return request(`/api/automations/${id}/activate`, { method: 'POST' });
 }
 
 export async function fetchRoiDashboard(): Promise<RoiDashboard> {

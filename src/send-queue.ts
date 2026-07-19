@@ -98,7 +98,14 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
     }
     if ((await countOutboundToday(userId)) >= (await getEffectiveOutboundLimit(userId))) break;
 
-    // Sécurité critique : jamais 2 sortants d'affilée sans réponse prospect
+    // Opener campagne : conversation neuve AVANT le gate anti-spam (isolation par automation_id)
+    const isCampaignOpener = item.automation_id != null && item.sequence_id == null;
+    if (isCampaignOpener) {
+      const { beginFreshCampaignConversation } = await import("./db.js");
+      await beginFreshCampaignConversation(userId, item.recipient, item.automation_id!);
+    }
+
+    // Sécurité : jamais 2 sortants d'affilée sans réponse — scopé à la campagne
     const gate = await shouldBlockOutboundWhileAwaitingReply(userId, item);
     if (gate.block) {
       await markQueueFailed(userId, item.id, gate.reason || "En attente de réponse");
@@ -118,11 +125,6 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
 
     try {
       if (item.media_url && item.media_type) {
-        // Opener campagne (pas une relance séquence) → conversation neuve si autre campagne
-        if (item.automation_id != null && item.sequence_id == null) {
-          const { beginFreshCampaignConversation } = await import("./db.js");
-          await beginFreshCampaignConversation(userId, item.recipient, item.automation_id);
-        }
         await sendWhatsAppMedia(userId, item.recipient, {
           url: item.media_url,
           type: item.media_type as "image" | "document" | "audio",
@@ -145,10 +147,6 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           }
         }
       } else if (item.message) {
-        if (item.automation_id != null && item.sequence_id == null) {
-          const { beginFreshCampaignConversation } = await import("./db.js");
-          await beginFreshCampaignConversation(userId, item.recipient, item.automation_id);
-        }
         // Conserver / renforcer auto_reply pour les envois de campagne
         let outboundGap: import("./anti-ban.js").OutboundGapOpts | undefined;
         if (item.automation_id != null) {

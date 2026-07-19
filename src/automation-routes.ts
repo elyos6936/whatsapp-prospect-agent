@@ -10,6 +10,7 @@ import {
   listScheduledMessages,
   cancelScheduledMessage,
   saveAgentMessage,
+  saveAgentMessageForAutomation,
   getRecentAgentMessages,
   clearAgentConversation,
   ensureDefaultAgentThread,
@@ -18,6 +19,7 @@ import {
   pauseAutomation,
   resumeAutomation,
   haltAutomationMessaging,
+  pauseOtherActiveAutomations,
   type AutomationStatus,
   type AutomationType,
 } from "./db.js";
@@ -92,6 +94,36 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (!Number.isFinite(id)) {
         return reply.status(400).send({ error: "ID invalide." });
       }
+      const detail = await getAutomationDetail(userId, id);
+      if (!detail) {
+        return reply.status(404).send({ error: "Automatisation introuvable." });
+      }
+      const name = detail.automation.name;
+      const confirmMsg = `Simulation validée. Veux-tu activer « ${name} » maintenant ?`;
+      await updateAutomationConfig(userId, id, {
+        ...detail.automation.config,
+        simulationValidatedAt: new Date().toISOString(),
+      });
+      await saveAgentMessageForAutomation(userId, id, "assistant", confirmMsg).catch(() => {});
+      return {
+        ok: true,
+        needsActivationConfirm: true,
+        automationId: id,
+        name,
+        status: detail.automation.status,
+        message: confirmMsg,
+      };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/api/automations/:id/activate",
+    async (req, reply) => {
+      const userId = requireUserId(req);
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id)) {
+        return reply.status(400).send({ error: "ID invalide." });
+      }
       const result = await activateAutomationCore(userId, id, { source: "simulation_ui" });
       if (!result.ok) {
         return reply.status(400).send({ error: result.error, automationId: result.automationId });
@@ -123,6 +155,8 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       return reply.status(400).send({ error: "name et type requis." });
     }
 
+    // Même règle que activateAutomationCore : pause les autres actives avant d'en créer une en active
+    await pauseOtherActiveAutomations(userId, -1);
     const auto = await createAutomation(userId, {
       name: name.trim(),
       type,

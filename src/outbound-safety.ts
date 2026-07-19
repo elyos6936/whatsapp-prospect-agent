@@ -1,13 +1,13 @@
 /**
  * Garde-fous anti-spam : 1 message sortant max tant que le prospect n'a pas répondu
- * (sur le fil WhatsApp global — pas seulement la campagne courante).
+ * — scopé à la campagne courante (pas l'historique WhatsApp toutes campagnes).
  */
 import {
   cancelPendingSendQueueForRecipient,
-  getAbsoluteLastMessageForContact,
   getContactChatHistory,
   type QueueItem,
 } from "./db.js";
+import { getActiveCampaignTargetIds } from "./campaign-gating.js";
 
 /** Dernier message de l'époque / campagne = sortant → on attend une réponse. */
 export async function isAwaitingProspectReply(
@@ -21,19 +21,23 @@ export async function isAwaitingProspectReply(
   return last.direction === "sortant";
 }
 
-/** Dernier message du contact toutes campagnes = sortant → bloquer tout nouvel opener. */
-export async function isAwaitingProspectReplyAnyCampaign(
-  userId: number,
-  recipient: string
-): Promise<boolean> {
-  const last = await getAbsoluteLastMessageForContact(userId, recipient);
-  if (!last) return false;
-  return last.direction === "sortant";
+function phoneDigits(value: string): string {
+  return value.replace(/@c\.us|@lid|@s\.whatsapp\.net/gi, "").replace(/\D/g, "");
+}
+
+function recipientInTargetSet(recipient: string, ids: Set<string>): boolean {
+  if (ids.has(recipient)) return true;
+  const digits = phoneDigits(recipient);
+  if (!digits) return false;
+  for (const id of ids) {
+    if (phoneDigits(id) === digits) return true;
+  }
+  return false;
 }
 
 /**
- * File campagne / séquence : interdire un 2e envoi tant que le prospect n'a pas répondu.
- * Les envois manuels prioritaires (priority >= 10) ne sont pas concernés.
+ * File campagne / séquence : interdire un 2e envoi tant que le prospect n'a pas répondu
+ * (dans CETTE campagne). Cross-campagne : seulement si une autre auto active cible déjà le contact.
  */
 export async function shouldBlockOutboundWhileAwaitingReply(
   userId: number,
@@ -42,13 +46,15 @@ export async function shouldBlockOutboundWhileAwaitingReply(
   if ((item.priority ?? 0) >= 10) return { block: false };
   if (item.automation_id == null && item.sequence_id == null) return { block: false };
 
-  // Global d'abord : évite qu'une campagne B envoie pendant qu'A attend une réponse
-  const awaitingGlobal = await isAwaitingProspectReplyAnyCampaign(userId, item.recipient);
-  if (awaitingGlobal) {
-    return {
-      block: true,
-      reason: "En attente de réponse du prospect — 1 seul message sortant autorisé sur ce fil",
-    };
+  if (item.automation_id != null) {
+    const otherActiveTargets = await getActiveCampaignTargetIds(userId, item.automation_id);
+    if (recipientInTargetSet(item.recipient, otherActiveTargets)) {
+      return {
+        block: true,
+        reason:
+          "Ce contact est déjà ciblé par une autre campagne active — pas d'envoi croisé",
+      };
+    }
   }
 
   const awaiting = await isAwaitingProspectReply(

@@ -39,6 +39,10 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 - Identité / « qui es-tu » → prénom + offre courte + question
 - Prix / détail → chiffre exact du contexte, sinon « Je te confirme ça juste après »
 - Intérêt → une prochaine étape claire (lien réel, créneau)
+- **Objection / hésitation** (« trop cher », « je réfléchis », « plus tard », « je ne suis pas sûr », doute sans refus net) :
+  → D’abord **reconnaître** le frein (empathie courte), puis une **piste concrète** liée à CE qu’il a dit — pas un pitch générique.
+  → **Ne pousse pas à l’achat à chaque hésitation** : si le ton est prudent / distant, rassure ou laisse une porte ouverte sans CTA ; si le frein est précis (prix, timing, confiance), un argument ciblé OK.
+  → Toujours 1 phrase (2 max) : empathie + piste, pas une info sèche ni une relance agressive.
 - « Juste le lien / prix » → uniquement ça, aucune question
 - Refus clair → « Compris, bonne continuation ! »
 
@@ -292,6 +296,33 @@ function analyzeProspectStyle(text: string): string {
   if (/qui (etes|êtes)-vous|c'?est qui|votre nom|ton nom/i.test(lower)) {
     return "identité — 1 phrase courte SANS inventer de prénom (utiliser le prénom du contexte s'il existe, sinon neutre)";
   }
+  // Refus clair AVANT hésitation (évite de traiter « non merci » comme une objection)
+  if (/pas int[eé]ress|non merci|laisse|stop|occup[eé]/i.test(lower)) {
+    return "refus — clôturer poliment en 1 phrase";
+  }
+  // Objection / hésitation (sans refus net) — distinct de scepticisme et d'intérêt franc
+  if (
+    /trop cher|chers?|co[uû]teux|budget|pas les moyens|je (ne )?peux pas (payer|me le permettre)/i.test(
+      lower
+    ) ||
+    /je r[eé]fl[eé]chis|je vais r[eé]fl[eé]chir|laisse[- ]?moi r[eé]fl[eé]chir|je dois y penser|j.?y pense/i.test(
+      lower
+    ) ||
+    /plus tard|pas maintenant|pas tout de suite|une autre fois|on verra|on s.?en reparle/i.test(
+      lower
+    ) ||
+    /je (ne )?suis pas s[uû]r|pas s[uû]r(e)?|j.?h[eé]site|h[eé]sitation|doute|pas convaincu|bof|mouai/i.test(
+      lower
+    ) ||
+    /peut[- ]?[eê]tre|je (ne )?sais pas (trop|encore)|c.?est (un peu )?serr[eé]|c.?est chaud/i.test(
+      lower
+    )
+  ) {
+    return (
+      "objection/hésitation — empathie d'abord (reconnaître le frein), " +
+      "puis piste concrète liée à CE frein ; ne pas forcer l'achat si le ton est prudent ; 1-2 phrases max"
+    );
+  }
   if (t.length <= 15 && /^(ok|okay|d'accord|dac|merci|bsr|bonjour|salut|oui|non)$/i.test(t)) {
     return "très court — 3-8 mots max";
   }
@@ -300,9 +331,6 @@ function analyzeProspectStyle(text: string): string {
   if (/combien|prix|tarif|co[uû]t|fcfa|franc/i.test(lower)) return "prix — chiffre du contexte si dispo";
   if (/int[eé]ress|curieux|en savoir plus/i.test(lower)) {
     return "intérêt — proposer UNE prochaine étape";
-  }
-  if (/pas int[eé]ress|non merci|laisse|stop|occup[eé]/i.test(lower)) {
-    return "refus — clôturer poliment en 1 phrase";
   }
   if (/rdv|rendez-vous|appel|disponible|cr[eé]neau/i.test(lower)) {
     return "RDV — proposer un créneau concret";
