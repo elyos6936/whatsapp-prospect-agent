@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import { ArrowLeft } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
+import { SeoHead } from '@/components/SeoHead';
 
 export type LegalKind = 'mentions' | 'confidentialite' | 'contact';
 
@@ -10,6 +11,24 @@ type LegalPageProps = {
 };
 
 const CONTACT_EMAIL = 'rapports@klanvio.com';
+
+const SEO: Record<LegalKind, { title: string; description: string; path: string }> = {
+  mentions: {
+    title: 'Mentions légales | Klanvio',
+    description: 'Mentions légales du service Klanvio — agent WhatsApp IA pour la prospection et les ventes.',
+    path: '/mentions',
+  },
+  confidentialite: {
+    title: 'Confidentialité | Klanvio',
+    description: 'Politique de confidentialité Klanvio : données de compte, WhatsApp et campagnes.',
+    path: '/confidentialite',
+  },
+  contact: {
+    title: 'Contact | Klanvio',
+    description: 'Contactez l’équipe Klanvio pour toute question sur l’essai, les campagnes ou le produit.',
+    path: '/contact',
+  },
+};
 
 const CONTENT: Record<LegalKind, { title: string; body: ReactNode }> = {
   mentions: {
@@ -84,9 +103,11 @@ const CONTENT: Record<LegalKind, { title: string; body: ReactNode }> = {
 
 export function LegalPage({ kind, onBack }: LegalPageProps) {
   const page = CONTENT[kind];
+  const seo = SEO[kind];
 
   return (
     <div className="min-h-full bg-[#f7f8fb] text-text-100">
+      <SeoHead title={seo.title} description={seo.description} path={seo.path} />
       <header className="border-b border-black/[0.06] bg-white/90 backdrop-blur-md">
         <div className="mx-auto flex h-14 max-w-3xl items-center justify-between px-4 sm:px-6">
           <KlanvioLogo variant="full" size="md" />

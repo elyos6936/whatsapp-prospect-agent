@@ -13,3 +13,6 @@ export const BRAND_COLORS = {
 
 export const BRAND_LOGO_ICON_URL = '/brand/logo-icon.png';
 export const BRAND_LOGO_FULL_URL = '/brand/logo-full.png';
+export const BRAND_LOGO_SQUARE_URL = '/brand/logo.png';
+export const BRAND_OG_BANNER_URL = 'https://www.klanvio.com/brand/og-banner.jpg?v=2';
+export const SITE_ORIGIN = 'https://www.klanvio.com';
