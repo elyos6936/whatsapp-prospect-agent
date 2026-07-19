@@ -74,7 +74,27 @@ export const config = {
   ).replace(/\/$/, ""),
   /** Modèle chat + tool calling. Toujours DeepSeek V4 Pro (jamais Flash). */
   openaiModel: resolveLlmModel(),
+  /** Login Google (GIS / ID token) — client distinct des intégrations. */
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
+  /**
+   * OAuth Web client « Intégrations » (Sheets / futur Forms, Calendar).
+   * Séparé de GOOGLE_CLIENT_ID (login).
+   */
+  googleIntegrationsClientId: process.env.GOOGLE_INTEGRATIONS_CLIENT_ID?.trim() || "",
+  googleIntegrationsClientSecret: process.env.GOOGLE_INTEGRATIONS_CLIENT_SECRET?.trim() || "",
+  /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/google/callback`. */
+  googleIntegrationsRedirectUri: process.env.GOOGLE_INTEGRATIONS_REDIRECT_URI?.trim() || "",
+  /** URL du front (redirect post-OAuth intégrations). */
+  appUrl: (process.env.APP_URL?.trim() || "https://www.klanvio.com").replace(/\/$/, ""),
+  typeformClientId: process.env.TYPEFORM_CLIENT_ID?.trim() || "",
+  typeformClientSecret: process.env.TYPEFORM_CLIENT_SECRET?.trim() || "",
+  /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/typeform/callback`. */
+  typeformRedirectUri: process.env.TYPEFORM_REDIRECT_URI?.trim() || "",
+  /**
+   * Clé AES-256 (64 hex). Ne JAMAIS changer en prod : les tokens chiffrés
+   * deviennent illisibles. Générer : openssl rand -hex 32
+   */
+  tokensEncryptionKey: process.env.TOKENS_ENCRYPTION_KEY?.trim() || "",
   defaultEvolutionBaseUrl: "http://localhost:8080",
   envOpenAiKey: resolveLlmApiKey(),
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),

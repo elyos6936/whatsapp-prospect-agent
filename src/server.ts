@@ -49,6 +49,7 @@ import { registerAuthRoutes } from "./auth-routes.js";
 import { registerEvolutionRoutes } from "./evolution-routes.js";
 import { registerAutomationRoutes } from "./automation-routes.js";
 import { registerFeatureRoutes } from "./feature-routes.js";
+import { registerIntegrationRoutes } from "./integration-routes.js";
 import { startAutomationEngine } from "./automation-engine.js";
 import { processSendQueue } from "./send-queue.js";
 import { processDueSequences } from "./sequences.js";
@@ -630,6 +631,7 @@ app.post<{ Body: { name?: string; type?: string; data?: string } }>("/api/upload
 await registerEvolutionRoutes(app);
 await registerAutomationRoutes(app);
 await registerFeatureRoutes(app);
+await registerIntegrationRoutes(app);
 
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });

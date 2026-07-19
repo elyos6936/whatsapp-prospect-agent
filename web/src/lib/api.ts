@@ -364,6 +364,94 @@ export async function saveBusinessProfile(body: {
   });
 }
 
+export type IntegrationStatus = {
+  provider: string;
+  connected: boolean;
+  email: string | null;
+  accountId: string | null;
+  connectedAt: string | null;
+  scopes: string | null;
+};
+
+export type TypeformFormSummary = {
+  id: string;
+  title: string;
+  lastUpdatedAt?: string;
+  createdAt?: string;
+};
+
+export async function fetchIntegrations(): Promise<{
+  integrations: IntegrationStatus[];
+  typeformConfigured: boolean;
+  googleConfigured: boolean;
+}> {
+  return request('/api/integrations');
+}
+
+export async function startTypeformConnect(): Promise<{ url: string; redirectUri: string }> {
+  return request('/api/integrations/typeform/connect');
+}
+
+export async function disconnectTypeform(): Promise<void> {
+  await request('/api/integrations/typeform', { method: 'DELETE' });
+}
+
+export async function fetchTypeformForms(): Promise<{ forms: TypeformFormSummary[] }> {
+  return request('/api/integrations/typeform/forms');
+}
+
+export type ConnectedSheetSummary = {
+  spreadsheetId: string;
+  title: string;
+  addedAt: string;
+};
+
+export async function startGoogleConnect(): Promise<{ url: string; redirectUri: string }> {
+  return request('/api/integrations/google/connect');
+}
+
+export async function disconnectGoogle(): Promise<void> {
+  await request('/api/integrations/google', { method: 'DELETE' });
+}
+
+export async function fetchGooglePickerToken(): Promise<{
+  accessToken: string;
+  expiresAt: string;
+}> {
+  return request('/api/integrations/google/picker-token');
+}
+
+export async function fetchGoogleSheets(): Promise<{
+  sheets: ConnectedSheetSummary[];
+  max: number;
+}> {
+  return request('/api/integrations/google/sheets');
+}
+
+export async function addGoogleSheets(
+  sheets: Array<{ id: string; title: string }>,
+): Promise<{
+  added: number;
+  total: number;
+  sheets: ConnectedSheetSummary[];
+  max: number;
+}> {
+  return request('/api/integrations/google/sheets', {
+    method: 'POST',
+    body: JSON.stringify({ sheets }),
+  });
+}
+
+export async function removeGoogleSheet(spreadsheetId: string): Promise<{
+  ok: boolean;
+  sheets: ConnectedSheetSummary[];
+  max: number;
+}> {
+  return request(`/api/integrations/google/sheets/${encodeURIComponent(spreadsheetId)}`, {
+    method: 'DELETE',
+  });
+}
+
 export async function setAutoReply(enabled: boolean): Promise<void> {
   await request('/api/settings/auto-reply', {
     method: 'POST',

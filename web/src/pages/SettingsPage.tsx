@@ -1,25 +1,24 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  CheckCircle2,
   CreditCard,
   Link2,
   LogOut,
   Smartphone,
-  Store,
   Unplug,
 } from 'lucide-react';
 import {
   disconnectWhatsApp,
   fetchSettings,
-  saveBusinessProfile,
   setAutoReply,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { WhatsAppConnectModal } from '@/components/whatsapp/WhatsAppConnectModal';
+import { TypeformIntegrationCard } from '@/components/settings/TypeformIntegrationCard';
+import { GoogleSheetsIntegrationCard } from '@/components/settings/GoogleSheetsIntegrationCard';
 
-type SettingsTab = 'connection' | 'business' | 'billing';
+type SettingsTab = 'connection' | 'integrations' | 'billing';
 
 function Feedback({ text, type }: { text: string; type?: 'ok' | 'err' }) {
   if (!text) return null;
@@ -37,17 +36,80 @@ function Feedback({ text, type }: { text: string; type?: 'ok' | 'err' }) {
   );
 }
 
+function readInitialTab(): SettingsTab {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('settings') === 'integrations') return 'integrations';
+  } catch {
+    /* ignore */
+  }
+  return 'connection';
+}
+
+function readTypeformFlash(): { type: 'ok' | 'err'; text: string } | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const tf = params.get('typeform');
+    if (tf === 'connected') {
+      return { type: 'ok', text: 'Typeform connecté avec succès.' };
+    }
+    if (tf === 'error') {
+      return {
+        type: 'err',
+        text: params.get('message') || 'Échec de la connexion Typeform.',
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function readGoogleFlash(): { type: 'ok' | 'err'; text: string } | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const g = params.get('google');
+    if (g === 'connected') {
+      return { type: 'ok', text: 'Google connecté avec succès.' };
+    }
+    if (g === 'error') {
+      return {
+        type: 'err',
+        text: params.get('message') || 'Échec de la connexion Google.',
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function clearIntegrationQueryParams() {
+  try {
+    const url = new URL(window.location.href);
+    if (
+      !url.searchParams.has('settings') &&
+      !url.searchParams.has('typeform') &&
+      !url.searchParams.has('google')
+    ) {
+      return;
+    }
+    url.searchParams.delete('settings');
+    url.searchParams.delete('typeform');
+    url.searchParams.delete('google');
+    url.searchParams.delete('message');
+    window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function SettingsPage() {
   const { user, logout, refreshUser } = useAuth();
-  const [tab, setTab] = useState<SettingsTab>('connection');
+  const [tab, setTab] = useState<SettingsTab>(() => readInitialTab());
   const [loading, setLoading] = useState(true);
-
-  const [ownerName, setOwnerName] = useState('');
-  const [offer, setOffer] = useState('');
-  const [price, setPrice] = useState('');
-  const [businessFb, setBusinessFb] = useState('');
-  const [savingBusiness, setSavingBusiness] = useState(false);
-  const [integrationsFb, setIntegrationsFb] = useState('');
+  const typeformFlash = useMemo(() => readTypeformFlash(), []);
+  const googleFlash = useMemo(() => readGoogleFlash(), []);
 
   const [autoReplyOn, setAutoReplyOn] = useState(true);
   const [autoReplyBusy, setAutoReplyBusy] = useState(false);
@@ -66,20 +128,28 @@ export function SettingsPage() {
     setLoading(true);
     try {
       const s = await fetchSettings();
-      setOwnerName(s.business.ownerName || user?.name || '');
-      setOffer(s.business.offer || '');
-      setPrice(s.business.price || '');
       setAutoReplyOn(s.autoReply !== false);
     } catch {
       /* ignore */
     } finally {
       setLoading(false);
     }
-  }, [user?.name]);
+  }, []);
 
   useEffect(() => {
     void loadSettings();
   }, [loadSettings]);
+
+  useEffect(() => {
+    // Nettoyer l’URL après lecture du flash OAuth
+    if (
+      typeformFlash ||
+      googleFlash ||
+      new URLSearchParams(window.location.search).get('settings')
+    ) {
+      clearIntegrationQueryParams();
+    }
+  }, [typeformFlash, googleFlash]);
 
   const toggleAutoReply = useCallback(async () => {
     const next = !autoReplyOn;
@@ -96,14 +166,12 @@ export function SettingsPage() {
     }
   }, [autoReplyOn]);
 
-  // Quand déconnecté (et modal ouverte), poll léger pour basculer dès que la session revient.
   useEffect(() => {
     if (connected || !connectModalOpen) return;
     const id = setInterval(() => void refreshUser(), 5_000);
     return () => clearInterval(id);
   }, [connected, connectModalOpen, refreshUser]);
 
-  // Après connexion réussie, fermer la popup.
   useEffect(() => {
     if (connected && connectModalOpen) setConnectModalOpen(false);
   }, [connected, connectModalOpen]);
@@ -115,7 +183,6 @@ export function SettingsPage() {
     try {
       await disconnectWhatsApp();
       await refreshUser();
-      // Reconnexion immédiate via popup centrée
       setConnectModalOpen(true);
     } catch (err) {
       setDisconnectError(
@@ -128,13 +195,13 @@ export function SettingsPage() {
 
   const tabs: { id: SettingsTab; label: string; icon: typeof Smartphone }[] = [
     { id: 'connection', label: 'WhatsApp', icon: Smartphone },
-    { id: 'business', label: 'Profil business', icon: Store },
+    { id: 'integrations', label: 'Intégrations', icon: Link2 },
     { id: 'billing', label: 'Facturation', icon: CreditCard },
   ];
 
   const tabLabels: Record<SettingsTab, { short: string; full: string }> = {
     connection: { short: 'WhatsApp', full: 'WhatsApp' },
-    business: { short: 'Business', full: 'Profil business' },
+    integrations: { short: 'Intégrations', full: 'Intégrations' },
     billing: { short: 'Facturation', full: 'Facturation' },
   };
 
@@ -142,7 +209,6 @@ export function SettingsPage() {
     <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto custom-scrollbar">
       <div className="brand-radial">
         <div className="mx-auto w-full max-w-2xl px-4 py-8 sm:px-6">
-          {/* En-tête */}
           <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
             <div className="min-w-0">
               <h1 className="font-serif text-2xl font-light text-text-100">Réglages</h1>
@@ -158,7 +224,6 @@ export function SettingsPage() {
             </button>
           </div>
 
-          {/* Onglets — grille égale, pas de débordement horizontal */}
           <div className="mb-6 grid w-full grid-cols-3 gap-1 rounded-xl border border-black/10 bg-bg-100 p-1">
             {tabs.map((t) => {
               const Icon = t.icon;
@@ -183,219 +248,36 @@ export function SettingsPage() {
             })}
           </div>
 
-          {loading ? (
+          {loading && tab === 'connection' ? (
             <div className="panel h-40 animate-pulse" />
           ) : tab === 'connection' ? (
             <div className="space-y-4">
-              {/* Bandeau d'état */}
-              <div className="panel p-5">
-                <div className="flex items-center gap-3">
-                  <span
-                    className={cn(
-                      'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl',
-                      connected
-                        ? 'bg-emerald-500/15 text-emerald-400'
-                        : 'bg-amber-500/15 text-amber-400',
-                    )}
-                  >
-                    <Smartphone className="h-5 w-5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="status-dot"
-                        style={{ background: connected ? '#34d399' : '#fbbf24' }}
-                      />
-                      <h2 className="text-sm font-semibold text-text-100">
-                        {connected ? 'WhatsApp connecté' : 'WhatsApp non connecté'}
-                      </h2>
-                    </div>
-                    <p className="mt-0.5 text-xs text-text-400">
-                      {connected
-                        ? 'Ton compte est lié. L’agent peut envoyer et répondre aux messages.'
-                        : 'Scanne le QR code pour lier ton compte WhatsApp.'}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="mt-5 border-t border-black/10 pt-4">
-                  {connected ? (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-xs text-text-500">
-                        Pour changer de numéro, déconnecte puis reconnecte via le QR.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setConfirmDisconnect(true)}
-                        disabled={disconnecting}
-                        className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
-                      >
-                        <Unplug className="h-4 w-4" />
-                        {disconnecting ? 'Déconnexion…' : 'Déconnecter'}
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <p className="text-xs text-text-500">
-                        Relie ton compte en quelques secondes via un QR code.
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setConnectModalOpen(true)}
-                        className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark"
-                      >
-                        <Smartphone className="h-4 w-4" />
-                        Connecter WhatsApp
-                      </button>
-                    </div>
-                  )}
-                  {disconnectError && (
-                    <p className="mt-2 text-xs text-red-400">{disconnectError}</p>
-                  )}
-                </div>
-              </div>
-
-              {/* Interrupteur réponses auto */}
-              <div className="panel p-5">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <h2 className="text-sm font-semibold text-text-100">Réponses automatiques</h2>
-                    <p className="mt-0.5 text-xs text-text-400">
-                      Quand une campagne est active, l’agent répond seul aux prospects contactés.
-                      {autoReplyOn ? '' : ' Actuellement OFF — les messages ne sont pas traités auto.'}
-                    </p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => void toggleAutoReply()}
-                    disabled={autoReplyBusy}
-                    className={cn(
-                      'relative h-8 w-14 shrink-0 rounded-full transition',
-                      autoReplyOn ? 'bg-brand' : 'bg-bg-300',
-                      autoReplyBusy && 'opacity-50',
-                    )}
-                    aria-pressed={autoReplyOn}
-                    aria-label="Activer ou désactiver les réponses auto"
-                  >
-                    <span
-                      className={cn(
-                        'absolute top-1 h-6 w-6 rounded-full bg-white shadow transition',
-                        autoReplyOn ? 'left-7' : 'left-1',
-                      )}
-                    />
-                  </button>
-                </div>
-                <Feedback text={autoReplyFb} type={autoReplyFb.includes('Erreur') ? 'err' : 'ok'} />
-              </div>
-
+              {/* Contenu WhatsApp inchangé — même structure qu’avant */}
+              <WhatsAppSettingsBlock
+                connected={connected}
+                disconnecting={disconnecting}
+                disconnectError={disconnectError}
+                autoReplyOn={autoReplyOn}
+                autoReplyBusy={autoReplyBusy}
+                autoReplyFb={autoReplyFb}
+                onConnect={() => setConnectModalOpen(true)}
+                onAskDisconnect={() => setConfirmDisconnect(true)}
+                onToggleAutoReply={() => void toggleAutoReply()}
+              />
             </div>
-          ) : tab === 'business' ? (
-            <div className="space-y-4">
-              <div className="panel p-6">
-                <div className="mb-5 flex items-center gap-2">
-                  <Store className="h-4 w-4 text-brand" />
-                  <h2 className="text-sm font-semibold text-text-100">Profil business</h2>
-                </div>
-                <p className="-mt-2 mb-5 text-xs text-text-400">
-                  Ces informations aident l’agent à personnaliser tes messages.
-                </p>
-
-                <div className="space-y-4">
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-400">Ton nom</label>
-                    <input
-                      value={ownerName}
-                      onChange={(e) => setOwnerName(e.target.value)}
-                      placeholder="Ex. Awa"
-                      className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-400">Offre</label>
-                    <textarea
-                      value={offer}
-                      onChange={(e) => setOffer(e.target.value)}
-                      rows={3}
-                      placeholder="Ex. Formation en marketing digital, coaching 1-1…"
-                      className="w-full resize-none rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1.5 block text-xs font-medium text-text-400">
-                      Prix <span className="text-text-500">(optionnel)</span>
-                    </label>
-                    <input
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      placeholder="Ex. 25 000 FCFA"
-                      className="w-full rounded-xl border border-black/10 bg-bg-0 px-3.5 py-2.5 text-sm text-text-100 outline-none transition placeholder:text-text-500 focus:border-brand-border focus:ring-2 focus:ring-brand/20"
-                    />
-                  </div>
-                  <button
-                    type="button"
-                    disabled={savingBusiness}
-                    onClick={async () => {
-                      setSavingBusiness(true);
-                      try {
-                        await saveBusinessProfile({ ownerName, offer, price });
-                        setBusinessFb('Profil enregistré.');
-                      } catch (err) {
-                        setBusinessFb(err instanceof Error ? err.message : 'Erreur');
-                      } finally {
-                        setSavingBusiness(false);
-                      }
-                    }}
-                    className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-5 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
-                  >
-                    <CheckCircle2 className="h-4 w-4" />
-                    {savingBusiness ? 'Enregistrement…' : 'Enregistrer'}
-                  </button>
-                  <Feedback
-                    text={businessFb}
-                    type={businessFb.includes('Erreur') ? 'err' : 'ok'}
-                  />
-                </div>
+          ) : tab === 'integrations' ? (
+            <div className="panel p-6">
+              <div className="mb-1 flex items-center gap-2">
+                <Link2 className="h-4 w-4 text-brand" />
+                <h2 className="text-sm font-semibold text-text-100">Intégrations</h2>
               </div>
-
-              <div className="panel p-6">
-                <div className="mb-1 flex items-center gap-2">
-                  <Link2 className="h-4 w-4 text-brand" />
-                  <h2 className="text-sm font-semibold text-text-100">Intégrations</h2>
-                </div>
-                <p className="mb-5 text-xs text-text-400">
-                  Lie tes outils pour que l’agent s’en serve dans tes automatisations WhatsApp.
-                </p>
-
-                <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-black/10 bg-bg-0 px-4 py-3.5">
-                  <div className="min-w-0 flex items-center gap-3">
-                    <span
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold text-white"
-                      style={{ background: '#262627' }}
-                      aria-hidden
-                    >
-                      Tf
-                    </span>
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-text-100">Typeform</p>
-                      <p className="text-xs text-text-400">
-                        Formulaires → leads WhatsApp &amp; campagnes
-                      </p>
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setIntegrationsFb(
-                        'Connexion Typeform bientôt disponible — le bouton est prêt, l’OAuth sera branché ensuite.',
-                      )
-                    }
-                    className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-black/10 bg-bg-100 px-4 py-2 text-sm font-medium text-text-200 transition hover:border-brand-border hover:bg-brand/10 hover:text-brand"
-                  >
-                    <Link2 className="h-4 w-4" />
-                    Connecter
-                  </button>
-                </div>
-                <Feedback text={integrationsFb} />
+              <p className="mb-5 text-xs text-text-400">
+                Lie tes outils pour que Klanvio puisse y accéder en ton nom. Les webhooks et
+                l’agent viendront dans une prochaine étape.
+              </p>
+              <div className="grid gap-4 lg:grid-cols-2">
+                <TypeformIntegrationCard flash={typeformFlash} />
+                <GoogleSheetsIntegrationCard flash={googleFlash} />
               </div>
             </div>
           ) : (
@@ -464,5 +346,127 @@ export function SettingsPage() {
         onConnected={() => setConnectModalOpen(false)}
       />
     </div>
+  );
+}
+
+/** Bloc WhatsApp — même UX qu’avant le remplacement Profil business → Intégrations. */
+function WhatsAppSettingsBlock({
+  connected,
+  disconnecting,
+  disconnectError,
+  autoReplyOn,
+  autoReplyBusy,
+  autoReplyFb,
+  onConnect,
+  onAskDisconnect,
+  onToggleAutoReply,
+}: {
+  connected: boolean;
+  disconnecting: boolean;
+  disconnectError: string;
+  autoReplyOn: boolean;
+  autoReplyBusy: boolean;
+  autoReplyFb: string;
+  onConnect: () => void;
+  onAskDisconnect: () => void;
+  onToggleAutoReply: () => void;
+}) {
+  return (
+    <>
+      <div className="panel p-5">
+        <div className="flex items-center gap-3">
+          <span
+            className={cn(
+              'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl',
+              connected ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400',
+            )}
+          >
+            <Smartphone className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <span
+                className="status-dot"
+                style={{ background: connected ? '#34d399' : '#fbbf24' }}
+              />
+              <h2 className="text-sm font-semibold text-text-100">
+                {connected ? 'WhatsApp connecté' : 'WhatsApp non connecté'}
+              </h2>
+            </div>
+            <p className="mt-0.5 text-xs text-text-400">
+              {connected
+                ? 'Ton compte est lié. L’agent peut envoyer et répondre aux messages.'
+                : 'Scanne le QR code pour lier ton compte WhatsApp.'}
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 border-t border-black/10 pt-4">
+          {connected ? (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-text-500">
+                Pour changer de numéro, déconnecte puis reconnecte via le QR.
+              </p>
+              <button
+                type="button"
+                onClick={onAskDisconnect}
+                disabled={disconnecting}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-2 text-sm font-medium text-red-300 transition hover:bg-red-500/20 disabled:opacity-50"
+              >
+                <Unplug className="h-4 w-4" />
+                {disconnecting ? 'Déconnexion…' : 'Déconnecter'}
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="text-xs text-text-500">
+                Relie ton compte en quelques secondes via un QR code.
+              </p>
+              <button
+                type="button"
+                onClick={onConnect}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark"
+              >
+                <Smartphone className="h-4 w-4" />
+                Connecter WhatsApp
+              </button>
+            </div>
+          )}
+          {disconnectError && <p className="mt-2 text-xs text-red-400">{disconnectError}</p>}
+        </div>
+      </div>
+
+      <div className="panel p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-text-100">Réponses automatiques</h2>
+            <p className="mt-0.5 text-xs text-text-400">
+              Quand une campagne est active, l’agent répond seul aux prospects contactés.
+              {autoReplyOn ? '' : ' Actuellement OFF — les messages ne sont pas traités auto.'}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onToggleAutoReply}
+            disabled={autoReplyBusy}
+            className={cn(
+              'relative h-8 w-14 shrink-0 rounded-full transition',
+              autoReplyOn ? 'bg-brand' : 'bg-bg-300',
+              autoReplyBusy && 'opacity-50',
+            )}
+            aria-pressed={autoReplyOn}
+            aria-label="Activer ou désactiver les réponses auto"
+          >
+            <span
+              className={cn(
+                'absolute top-1 h-6 w-6 rounded-full bg-white shadow transition',
+                autoReplyOn ? 'left-7' : 'left-1',
+              )}
+            />
+          </button>
+        </div>
+        <Feedback text={autoReplyFb} type={autoReplyFb.includes('Erreur') ? 'err' : 'ok'} />
+      </div>
+    </>
   );
 }

@@ -68,6 +68,18 @@ export default function AuthenticatedApp() {
   const showStrategyDock =
     overlayView == null && strategyOpen && strategyPlan != null && strategyPlan.nodes?.length > 0;
 
+  // Retour OAuth Typeform → ouvrir Réglages / Intégrations
+  useEffect(() => {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('settings') === 'integrations') {
+        setOverlayView('settings');
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   const refreshThreads = useCallback(async (preferId?: number | null) => {
     const list = await fetchThreads();
     setThreads(list);

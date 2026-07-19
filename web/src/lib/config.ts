@@ -12,3 +12,15 @@ const PROD_GOOGLE_CLIENT_ID =
 
 export const GOOGLE_CLIENT_ID =
   import.meta.env.VITE_GOOGLE_CLIENT_ID?.trim() || PROD_GOOGLE_CLIENT_ID;
+
+/** Clé API restreinte pour le Google Picker (référers HTTP). */
+export const GOOGLE_PICKER_API_KEY =
+  import.meta.env.VITE_GOOGLE_PICKER_API_KEY?.trim() || '';
+
+/**
+ * Project number (chiffres) — pas le Project ID.
+ * Console → IAM & Admin → Settings → Project number.
+ */
+export const GOOGLE_CLOUD_PROJECT_NUMBER =
+  import.meta.env.VITE_GOOGLE_CLOUD_PROJECT_NUMBER?.trim() || '';
+

@@ -5,6 +5,8 @@ import { config } from "./config.js";
 const PUBLIC_PREFIXES = [
   "/api/auth/",
   "/api/evolution/webhook",
+  "/api/integrations/typeform/callback",
+  "/api/integrations/google/callback",
 ];
 
 const PUBLIC_EXACT = new Set(["/", "/api/health"]);
