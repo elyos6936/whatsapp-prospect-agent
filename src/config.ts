@@ -84,8 +84,16 @@ export const config = {
   googleIntegrationsClientSecret: process.env.GOOGLE_INTEGRATIONS_CLIENT_SECRET?.trim() || "",
   /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/google/callback`. */
   googleIntegrationsRedirectUri: process.env.GOOGLE_INTEGRATIONS_REDIRECT_URI?.trim() || "",
-  /** URL du front (redirect post-OAuth intégrations). */
-  appUrl: (process.env.APP_URL?.trim() || "https://www.klanvio.com").replace(/\/$/, ""),
+  /**
+   * URL du front (redirect post-OAuth intégrations).
+   * Une seule URL — jamais une liste CORS (virgules). Sinon Google redirige vers
+   * `klanvio.netlify.app,https://app…` (DNS NXDOMAIN).
+   */
+  appUrl: (() => {
+    const raw = process.env.APP_URL?.trim() || "https://www.klanvio.com";
+    const first = raw.split(",")[0]?.trim() || "https://www.klanvio.com";
+    return first.replace(/\/$/, "");
+  })(),
   typeformClientId: process.env.TYPEFORM_CLIENT_ID?.trim() || "",
   typeformClientSecret: process.env.TYPEFORM_CLIENT_SECRET?.trim() || "",
   /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/typeform/callback`. */
