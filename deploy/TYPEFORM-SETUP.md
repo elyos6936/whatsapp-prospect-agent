@@ -65,8 +65,12 @@ Appliquer la migration `supabase/migrations/20260719120000_user_integrations.sql
 
 ## Scopes demandés
 
-`offline` · `forms:read` · `responses:read` · `accounts:read`
+`forms:read` · `responses:read` · `accounts:read`
 
-Si Typeform était déjà connecté **avant** `responses:read` : **Déconnecter** puis **Connecter** à nouveau pour re-consentir.
+**Pas de `offline`** : Typeform renvoie souvent
+`Forbidden: this kind of access tokens cannot have refresh tokens`.
+L’access token dure ~7 jours ; au-delà, reconnecter Typeform dans Réglages.
+
+Si Typeform était déjà connecté avec d’anciens scopes : **Déconnecter** puis **Connecter** à nouveau.
 
 (Pas de webhooks pour cette itération — lecture à la demande via l’agent.)

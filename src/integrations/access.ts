@@ -41,10 +41,11 @@ export async function getValidTypeformAccessToken(userId: number): Promise<strin
 
   const { accessToken, refreshToken } = decryptIntegrationTokens(row);
   const expiresAt = row.token_expires_at?.getTime() ?? 0;
-  const needsRefresh = !expiresAt || expiresAt < Date.now() + 120_000;
+  const stillValid = expiresAt > Date.now() + 120_000;
 
-  if (!needsRefresh) return accessToken;
+  if (stillValid) return accessToken;
 
+  // Pas de refresh (Typeform refuse souvent `offline`) → reconnect si expiré
   if (!refreshToken) {
     await deleteUserIntegration(userId, TYPEFORM_PROVIDER);
     throw new TypeformAuthError(TYPEFORM_REAUTH_MESSAGE, "revoked");
@@ -68,7 +69,7 @@ export async function getValidTypeformAccessToken(userId: number): Promise<strin
       await deleteUserIntegration(userId, TYPEFORM_PROVIDER);
       throw new TypeformAuthError(TYPEFORM_REAUTH_MESSAGE, "revoked");
     }
-    if (!needsRefresh || expiresAt > Date.now()) return accessToken;
+    if (expiresAt > Date.now()) return accessToken;
     await deleteUserIntegration(userId, TYPEFORM_PROVIDER);
     throw new TypeformAuthError(TYPEFORM_REAUTH_MESSAGE, "revoked");
   }

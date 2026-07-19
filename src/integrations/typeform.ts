@@ -1,16 +1,22 @@
 /**
- * Client OAuth + API Typeform (scopes : offline, forms:read, responses:read, accounts:read).
+ * Client OAuth + API Typeform (scopes : forms:read, responses:read, accounts:read).
+ * Pas de scope `offline` : Typeform renvoie FORBIDDEN (« cannot have refresh tokens »)
+ * pour beaucoup d’apps ; l’access token dure ~7 jours, puis reconnect.
  */
 
 import { config } from "../config.js";
 
 export const TYPEFORM_PROVIDER = "typeform" as const;
+
+/** Scopes autorisation — sans `offline` (refresh non supporté sur ces tokens). */
 export const TYPEFORM_SCOPES = [
-  "offline",
   "forms:read",
   "responses:read",
   "accounts:read",
 ] as const;
+
+/** Durée par défaut si Typeform n’envoie pas expires_in (doc : ~1 semaine). */
+export const TYPEFORM_DEFAULT_EXPIRES_SEC = 7 * 24 * 3600;
 
 const AUTHORIZE_URL = "https://api.typeform.com/oauth/authorize";
 const TOKEN_URL = "https://api.typeform.com/oauth/token";
@@ -58,18 +64,30 @@ export type TypeformTokenResponse = {
 };
 
 function formatTypeformTokenError(status: number, text: string, raw: Record<string, unknown>): string {
+  const nestedDesc = (() => {
+    const blob = String(raw.error_description || raw.description || raw.message || raw.error || text || "");
+    const m = blob.match(/\{[\s\S]*"description"\s*:\s*"([^"]+)"/);
+    return m?.[1] ?? null;
+  })();
   const detail = String(
-    raw.error_description ||
+    nestedDesc ||
+      raw.error_description ||
       raw.description ||
       raw.message ||
       raw.error ||
       (text.trim() ? text.trim().slice(0, 160) : "") ||
       `HTTP ${status}`,
-  ).slice(0, 160);
-  const redirect = typeformRedirectUri();
+  ).slice(0, 200);
+
+  if (/refresh token/i.test(detail)) {
+    return (
+      "Typeform refuse les refresh tokens pour cette app. " +
+      "Reconnecte sans le scope offline (corrigé côté Klanvio)."
+    );
+  }
   if (status === 400) {
     return (
-      `${detail}. Vérifie Redirect URI Typeform = ${redirect} ` +
+      `${detail}. Vérifie Redirect URI Typeform = ${typeformRedirectUri()} ` +
       `(et CLIENT_ID / SECRET dans le .env Hostinger).`
     );
   }
@@ -106,7 +124,10 @@ async function postToken(body: URLSearchParams): Promise<TypeformTokenResponse> 
   return {
     access_token: access,
     refresh_token: raw.refresh_token ? String(raw.refresh_token) : undefined,
-    expires_in: typeof raw.expires_in === "number" ? raw.expires_in : undefined,
+    expires_in:
+      typeof raw.expires_in === "number" && raw.expires_in > 0
+        ? raw.expires_in
+        : TYPEFORM_DEFAULT_EXPIRES_SEC,
     token_type: raw.token_type ? String(raw.token_type) : undefined,
   };
 }
