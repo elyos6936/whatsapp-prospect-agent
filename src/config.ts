@@ -57,24 +57,79 @@ function resolveLlmModel(): string {
 
 /**
  * Front URL pour redirects OAuth.
- * APP_URL peut être une liste (comme CORS_ORIGINS), séparée par des virgules.
- * On choisit l’URL canonique www.klanvio.com si présente, sinon la 1ʳᵉ https.
+ * APP_URL = liste CSV de fronts autorisés (Vercel preview, www prod, etc.).
  */
-function resolveAppUrl(rawEnv: string | undefined): string {
-  const raw = rawEnv?.trim() || "https://www.klanvio.com";
-  const parts = raw
-    .split(",")
-    .map((s) => s.trim().replace(/\/$/, ""))
-    .filter(Boolean);
-  if (parts.length === 0) return "https://www.klanvio.com";
+function isInfraAppUrl(url: string): boolean {
+  try {
+    const host = new URL(url).hostname.toLowerCase();
+    return (
+      host.includes("hstgr.cloud") ||
+      host.includes("srv1820011") ||
+      host === "localhost" ||
+      host === "127.0.0.1"
+    );
+  } catch {
+    return true;
+  }
+}
 
-  const prefer = (re: RegExp) => parts.find((u) => re.test(u));
-  const chosen =
-    prefer(/^https:\/\/www\.klanvio\.com$/i) ||
-    prefer(/^https:\/\/klanvio\.com$/i) ||
-    prefer(/^https:\/\//i) ||
-    parts[0]!;
-  return chosen.replace(/\/$/, "");
+function normalizeAppOrigin(url: string): string {
+  try {
+    const u = new URL(url.trim());
+    if (u.protocol !== "http:" && u.protocol !== "https:") return "";
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return "";
+  }
+}
+
+/** Parse APP_URL (CSV) → origines front autorisées pour le retour OAuth. */
+export function parseAppUrlAllowlist(rawEnv: string | undefined): string[] {
+  const raw = rawEnv?.trim() || "https://www.klanvio.com,https://klanvio.vercel.app";
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of raw.split(",")) {
+    const origin = normalizeAppOrigin(part);
+    if (!origin || isInfraAppUrl(origin) || seen.has(origin)) continue;
+    seen.add(origin);
+    out.push(origin);
+  }
+  if (out.length === 0) return ["https://www.klanvio.com"];
+  return out;
+}
+
+/** URL front par défaut (prod canonique). */
+export function resolveDefaultAppUrl(rawEnv: string | undefined): string {
+  const allowlist = parseAppUrlAllowlist(rawEnv);
+  return (
+    allowlist.find((u) => /^https:\/\/www\.klanvio\.com$/i.test(u)) ||
+    allowlist.find((u) => /^https:\/\/klanvio\.com$/i.test(u)) ||
+    allowlist[0]!
+  );
+}
+
+/**
+ * Retour OAuth : utilise l’origine du front (Origin / Referer) si elle est dans APP_URL,
+ * sinon le défaut prod (www.klanvio.com).
+ */
+export function resolveOAuthReturnBase(
+  rawEnv: string | undefined,
+  hint?: string | null,
+): string {
+  const allowlist = parseAppUrlAllowlist(rawEnv);
+  const normalizedHint = hint ? normalizeAppOrigin(hint) : "";
+  if (normalizedHint) {
+    const exact = allowlist.find((u) => u.toLowerCase() === normalizedHint.toLowerCase());
+    if (exact) return exact;
+    // Sous-domaines Vercel preview du projet (klanvio-xxx.vercel.app)
+    try {
+      const host = new URL(normalizedHint).hostname.toLowerCase();
+      if (host.endsWith(".vercel.app") && host.startsWith("klanvio")) return normalizedHint;
+    } catch {
+      /* ignore */
+    }
+  }
+  return resolveDefaultAppUrl(rawEnv);
 }
 
 export const config = {
@@ -106,8 +161,10 @@ export const config = {
   googleIntegrationsClientSecret: process.env.GOOGLE_INTEGRATIONS_CLIENT_SECRET?.trim() || "",
   /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/google/callback`. */
   googleIntegrationsRedirectUri: process.env.GOOGLE_INTEGRATIONS_REDIRECT_URI?.trim() || "",
-  /** Front pour redirects OAuth — APP_URL peut être une liste CSV ; on pick www.klanvio.com. */
-  appUrl: resolveAppUrl(process.env.APP_URL),
+  /** Front par défaut (redirect OAuth sans hint) — www.klanvio.com si présent dans APP_URL. */
+  appUrl: resolveDefaultAppUrl(process.env.APP_URL),
+  /** Liste CSV des fronts autorisés pour le retour OAuth dynamique. */
+  appUrlAllowlist: parseAppUrlAllowlist(process.env.APP_URL),
   typeformClientId: process.env.TYPEFORM_CLIENT_ID?.trim() || "",
   typeformClientSecret: process.env.TYPEFORM_CLIENT_SECRET?.trim() || "",
   /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/typeform/callback`. */

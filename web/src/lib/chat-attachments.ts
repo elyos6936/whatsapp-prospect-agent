@@ -1,3 +1,5 @@
+import { API_BASE_URL } from './config';
+
 export interface ChatAttachment {
   id: string;
   name: string;
@@ -7,7 +9,7 @@ export interface ChatAttachment {
 }
 
 function previewUrl(file: ChatAttachment): string {
-  const base = import.meta.env.VITE_API_URL?.trim()?.replace(/\/$/, '') || '';
+  const base = API_BASE_URL;
   if (file.url.startsWith('http')) return file.url;
   return `${base}${file.url}`;
 }

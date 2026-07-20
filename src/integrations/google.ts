@@ -166,6 +166,7 @@ export function buildGoogleAuthorizeUrl(
     scope,
     state,
     access_type: "offline",
+    include_granted_scopes: "true",
     // Contacts : choisir explicitement un compte (≠ Sheets). Sheets : consent refresh.
     prompt: purpose === "contacts" ? "select_account consent" : "consent",
   });

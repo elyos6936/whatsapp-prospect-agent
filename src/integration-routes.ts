@@ -3,7 +3,7 @@
  * Ne touche pas aux campagnes / WhatsApp / agent.
  */
 
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 import { requireUserId } from "./auth.js";
 import { config } from "./config.js";
 import {
@@ -59,19 +59,18 @@ import {
   typeformRedirectUri,
 } from "./integrations/typeform.js";
 import { rawQueryParam } from "./oauth-query.js";
+import { appSettingsRedirectUrl, pickOAuthReturnBase } from "./oauth-return.js";
 import { isTokensEncryptionConfigured } from "./secret-crypto.js";
 
 export { getValidGoogleSheetsToken, getValidGoogleContactsToken, getValidTypeformAccessToken } from "./integrations/access.js";
 /** @deprecated alias Sheets */
 export { getValidGoogleAccessToken } from "./integrations/access.js";
 
-function appSettingsRedirect(query: Record<string, string>): string {
-  const url = new URL("/app", config.appUrl);
-  url.searchParams.set("settings", "integrations");
-  for (const [k, v] of Object.entries(query)) {
-    url.searchParams.set(k, v);
-  }
-  return url.toString();
+function settingsRedirect(
+  query: Record<string, string>,
+  returnBaseUrl?: string | null,
+): string {
+  return appSettingsRedirectUrl(query, returnBaseUrl || config.appUrl);
 }
 
 export async function registerIntegrationRoutes(app: FastifyInstance): Promise<void> {
@@ -103,7 +102,12 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         error: "TOKENS_ENCRYPTION_KEY manquante sur le serveur.",
       });
     }
-    const state = await createOauthPendingState(userId, TYPEFORM_PROVIDER);
+    const state = await createOauthPendingState(
+      userId,
+      TYPEFORM_PROVIDER,
+      null,
+      pickOAuthReturnBase(request),
+    );
     const url = buildTypeformAuthorizeUrl(state);
     return { url, redirectUri: typeformRedirectUri() };
   });
@@ -121,20 +125,20 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     if (error) {
       const msg = error_description || error;
       return reply.redirect(
-        appSettingsRedirect({ typeform: "error", message: String(msg).slice(0, 180) }),
+        settingsRedirect({ typeform: "error", message: String(msg).slice(0, 180) }),
       );
     }
 
     if (!code?.trim() || !state?.trim()) {
       return reply.redirect(
-        appSettingsRedirect({ typeform: "error", message: "Callback OAuth incomplet." }),
+        settingsRedirect({ typeform: "error", message: "Callback OAuth incomplet." }),
       );
     }
 
     const pending = await consumeOauthPendingState(state.trim(), TYPEFORM_PROVIDER);
     if (!pending) {
       return reply.redirect(
-        appSettingsRedirect({
+        settingsRedirect({
           typeform: "error",
           message: "Session OAuth expirée. Réessaie Connecter.",
         }),
@@ -168,11 +172,15 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         providerEmail: email,
       });
 
-      return reply.redirect(appSettingsRedirect({ typeform: "connected" }));
+      return reply.redirect(
+        settingsRedirect({ typeform: "connected" }, pending.returnBaseUrl),
+      );
     } catch (err) {
       const msg =
         err instanceof Error ? err.message.slice(0, 280) : "Échec connexion Typeform.";
-      return reply.redirect(appSettingsRedirect({ typeform: "error", message: msg }));
+      return reply.redirect(
+        settingsRedirect({ typeform: "error", message: msg }, pending.returnBaseUrl),
+      );
     }
   });
 
@@ -206,11 +214,13 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
   // ── Google Sheets + Google Contacts (providers séparés) ───────────────────
 
   async function startGoogleOAuth(
+    request: FastifyRequest,
     userId: number,
     purpose: GoogleOAuthPurpose,
   ): Promise<{ url: string; redirectUri: string; purpose: GoogleOAuthPurpose }> {
     const provider = providerForGooglePurpose(purpose);
-    const state = await createOauthPendingState(userId, provider, purpose);
+    const returnBase = pickOAuthReturnBase(request);
+    const state = await createOauthPendingState(userId, provider, purpose, returnBase);
     const url = buildGoogleAuthorizeUrl(state, { purpose });
     console.log(
       `[google-oauth] connect user=${userId} purpose=${purpose} provider=${provider}`,
@@ -236,7 +246,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
     const forRaw = String(request.query.for ?? "sheets").toLowerCase();
     const purpose: GoogleOAuthPurpose = forRaw === "contacts" ? "contacts" : "sheets";
-    return startGoogleOAuth(userId, purpose);
+    return startGoogleOAuth(request, userId, purpose);
   });
 
   /** Route dédiée Contacts — pas d’ambiguïté avec Sheets. */
@@ -253,7 +263,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         error: "TOKENS_ENCRYPTION_KEY manquante sur le serveur.",
       });
     }
-    return startGoogleOAuth(userId, "contacts");
+    return startGoogleOAuth(request, userId, "contacts");
   });
 
   app.get<{
@@ -265,13 +275,13 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
     if (error) {
       return reply.redirect(
-        appSettingsRedirect({ google: "error", message: String(error).slice(0, 180) }),
+        settingsRedirect({ google: "error", message: String(error).slice(0, 180) }),
       );
     }
 
     if (!code?.trim() || !state?.trim()) {
       return reply.redirect(
-        appSettingsRedirect({ google: "error", message: "Callback OAuth incomplet." }),
+        settingsRedirect({ google: "error", message: "Callback OAuth incomplet." }),
       );
     }
 
@@ -286,6 +296,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     let pending: {
       userId: number;
       purpose: string | null;
+      returnBaseUrl: string | null;
       matchedProvider: string;
     } | null = null;
     for (const p of matchedProviders) {
@@ -297,7 +308,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     }
     if (!pending) {
       return reply.redirect(
-        appSettingsRedirect({
+        settingsRedirect({
           google: "error",
           message: "Session OAuth expirée. Réessaie Connecter.",
         }),
@@ -309,6 +320,8 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     console.log(
       `[google-oauth] callback user=${userId} matched=${pending.matchedProvider} purpose=${purpose} → ${provider}`,
     );
+
+    const oauthReturn = pending.returnBaseUrl;
 
     try {
       if (!isTokensEncryptionConfigured()) {
@@ -348,11 +361,14 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
       if (!tokens.refresh_token && !hadRefresh) {
         return reply.redirect(
-          appSettingsRedirect({
-            google: "error",
-            message:
-              "Google n’a pas renvoyé de refresh token. Révoque l’accès Klanvio sur myaccount.google.com/permissions puis reconnecte.",
-          }),
+          settingsRedirect(
+            {
+              google: "error",
+              message:
+                "Google n’a pas renvoyé de refresh token. Révoque l’accès Klanvio sur myaccount.google.com/permissions puis reconnecte.",
+            },
+            oauthReturn,
+          ),
         );
       }
 
@@ -386,11 +402,11 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       }
 
       const flashKey = purpose === "contacts" ? "contacts_connected" : "connected";
-      return reply.redirect(appSettingsRedirect({ google: flashKey }));
+      return reply.redirect(settingsRedirect({ google: flashKey }, oauthReturn));
     } catch (err) {
       const msg =
         err instanceof Error ? err.message.slice(0, 180) : "Échec connexion Google.";
-      return reply.redirect(appSettingsRedirect({ google: "error", message: msg }));
+      return reply.redirect(settingsRedirect({ google: "error", message: msg }, oauthReturn));
     }
   });
 

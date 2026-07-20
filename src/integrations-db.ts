@@ -377,23 +377,31 @@ export async function createOauthPendingState(
   userId: number,
   provider: string,
   purpose?: string | null,
+  returnBaseUrl?: string | null,
 ): Promise<string> {
   const state = crypto.randomBytes(24).toString("hex");
+  const returnBase = returnBaseUrl?.trim() || null;
   await sql`
     DELETE FROM oauth_pending_states
     WHERE created_at < NOW() - INTERVAL '15 minutes'
   `;
   try {
     await sql`
-      INSERT INTO oauth_pending_states (state, user_id, provider, purpose)
-      VALUES (${state}, ${userId}, ${provider}, ${purpose ?? null})
+      INSERT INTO oauth_pending_states (state, user_id, provider, purpose, return_base_url)
+      VALUES (${state}, ${userId}, ${provider}, ${purpose ?? null}, ${returnBase})
     `;
   } catch {
-    // Colonne purpose absente tant que la migration n'est pas appliquée
-    await sql`
-      INSERT INTO oauth_pending_states (state, user_id, provider)
-      VALUES (${state}, ${userId}, ${provider})
-    `;
+    try {
+      await sql`
+        INSERT INTO oauth_pending_states (state, user_id, provider, purpose)
+        VALUES (${state}, ${userId}, ${provider}, ${purpose ?? null})
+      `;
+    } catch {
+      await sql`
+        INSERT INTO oauth_pending_states (state, user_id, provider)
+        VALUES (${state}, ${userId}, ${provider})
+      `;
+    }
   }
   return state;
 }
@@ -401,29 +409,47 @@ export async function createOauthPendingState(
 export async function consumeOauthPendingState(
   state: string,
   provider: string,
-): Promise<{ userId: number; purpose: string | null } | null> {
+): Promise<{ userId: number; purpose: string | null; returnBaseUrl: string | null } | null> {
   try {
     const rows = await sql`
       DELETE FROM oauth_pending_states
       WHERE state = ${state}
         AND provider = ${provider}
         AND created_at > NOW() - INTERVAL '15 minutes'
-      RETURNING user_id, purpose
+      RETURNING user_id, purpose, return_base_url
     `;
     if (!rows[0]) return null;
     return {
       userId: Number(rows[0].user_id),
       purpose: rows[0].purpose == null ? null : String(rows[0].purpose),
+      returnBaseUrl:
+        rows[0].return_base_url == null ? null : String(rows[0].return_base_url).trim() || null,
     };
   } catch {
-    const rows = await sql`
-      DELETE FROM oauth_pending_states
-      WHERE state = ${state}
-        AND provider = ${provider}
-        AND created_at > NOW() - INTERVAL '15 minutes'
-      RETURNING user_id
-    `;
-    if (!rows[0]) return null;
-    return { userId: Number(rows[0].user_id), purpose: null };
+    try {
+      const rows = await sql`
+        DELETE FROM oauth_pending_states
+        WHERE state = ${state}
+          AND provider = ${provider}
+          AND created_at > NOW() - INTERVAL '15 minutes'
+        RETURNING user_id, purpose
+      `;
+      if (!rows[0]) return null;
+      return {
+        userId: Number(rows[0].user_id),
+        purpose: rows[0].purpose == null ? null : String(rows[0].purpose),
+        returnBaseUrl: null,
+      };
+    } catch {
+      const rows = await sql`
+        DELETE FROM oauth_pending_states
+        WHERE state = ${state}
+          AND provider = ${provider}
+          AND created_at > NOW() - INTERVAL '15 minutes'
+        RETURNING user_id
+      `;
+      if (!rows[0]) return null;
+      return { userId: Number(rows[0].user_id), purpose: null, returnBaseUrl: null };
+    }
   }
 }
