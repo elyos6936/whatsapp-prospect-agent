@@ -69,21 +69,26 @@ export async function clearGoogleContactsEnsuredCache(userId: number): Promise<v
 }
 
 /**
- * Avant enqueueSend : si Google Contacts (People) est connecté, crée la fiche
- * pour ce numéro s'il n'existe pas encore. Ne throw jamais vers l'appelant métier.
+ * Avant enqueueSend / enregistrement manuel : si Google Contacts (People) est
+ * connecté, crée la fiche pour ce numéro s'il n'existe pas encore.
+ * Ne throw jamais vers l'appelant métier.
  */
 export async function ensureGoogleContactBeforeSend(
   userId: number,
   input: { phone: string; name?: string | null },
-): Promise<void> {
+): Promise<{ synced: boolean; reason?: string }> {
   try {
     const phoneKey = phoneKeyFromWhatsAppId(input.phone);
-    if (!phoneKey) return;
+    if (!phoneKey) return { synced: false, reason: "phone_invalid" };
 
-    if (await wasEnsured(userId, phoneKey)) return;
+    if (await wasEnsured(userId, phoneKey)) {
+      return { synced: true, reason: "already_ensured" };
+    }
 
     const row = await getUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
-    if (!row || !hasGoogleContactsScope(row.scopes)) return;
+    if (!row || !hasGoogleContactsScope(row.scopes)) {
+      return { synced: false, reason: "not_connected" };
+    }
 
     const accessToken = await getValidGoogleContactsToken(userId);
     const e164 = toE164Display(phoneKey);
@@ -93,7 +98,7 @@ export async function ensureGoogleContactBeforeSend(
     const existing = await searchGoogleContactByPhone(accessToken, phoneKey);
     if (existing) {
       await markEnsured(userId, phoneKey, existing);
-      return;
+      return { synced: true, reason: "already_in_google" };
     }
 
     const created = await createGoogleContact(accessToken, {
@@ -101,16 +106,18 @@ export async function ensureGoogleContactBeforeSend(
       phoneE164: e164,
     });
     await markEnsured(userId, phoneKey, created);
+    return { synced: true, reason: "created" };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (err instanceof GoogleAuthError && err.code === "revoked") {
       console.warn(
         `[google-contacts] user=${userId} token révoqué — skip création contact (${msg.slice(0, 120)})`,
       );
-      return;
+      return { synced: false, reason: "token_revoked" };
     }
     console.warn(
       `[google-contacts] user=${userId} échec ensure (campagne continue) : ${msg.slice(0, 200)}`,
     );
+    return { synced: false, reason: "error" };
   }
 }

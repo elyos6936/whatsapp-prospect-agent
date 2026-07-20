@@ -398,7 +398,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "save_contact",
       description:
-        "Enregistre ou met à jour un contact de prospection : numéro, nom, notes, statut (nouveau, en_conversation, interesse, stop).",
+        "Enregistre ou met à jour un contact de prospection (base Klanvio) : numéro, nom, notes, statut. Si Google Contacts est connecté, crée aussi la fiche dans Google Contacts.",
       parameters: {
         type: "object",
         properties: {
@@ -2380,10 +2380,25 @@ export async function executeTool(
         status: statusRaw as ContactStatus | undefined,
         autoReply: typeof args.auto_reply === "boolean" ? args.auto_reply : undefined,
       });
+      const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
+      const google = await ensureGoogleContactBeforeSend(userId, {
+        phone: contact.phone,
+        name: contact.name,
+      });
+      const googleNote =
+        google.synced
+          ? " Aussi ajouté / déjà présent dans Google Contacts."
+          : google.reason === "not_connected"
+            ? " (Google Contacts non connecté — fiche Klanvio seulement.)"
+            : google.reason === "token_revoked"
+              ? " (Google Contacts : reconnecte l’intégration pour synchroniser.)"
+              : "";
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
-        message: `Contact ${chatIdToDisplay(contact.phone)} enregistré (statut : ${contact.status}).`,
+        googleContactsSynced: google.synced,
+        googleContactsReason: google.reason ?? null,
+        message: `Contact ${chatIdToDisplay(contact.phone)} enregistré (statut : ${contact.status}).${googleNote}`,
       });
     }
 

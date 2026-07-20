@@ -390,12 +390,18 @@ app.post<{
       status: statusRaw as ContactStatus | undefined,
       autoReply: request.body?.autoReply,
     });
+    const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
+    const google = await ensureGoogleContactBeforeSend(userId, {
+      phone: contact.phone,
+      name: contact.name,
+    });
     return {
       contact: {
         ...contact,
         display: chatIdToDisplay(contact.phone),
         auto_reply: contact.auto_reply === 1,
       },
+      googleContactsSynced: google.synced,
     };
   } catch (err) {
     return reply.status(400).send({
