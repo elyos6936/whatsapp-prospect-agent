@@ -84,8 +84,8 @@ export function GoogleContactsIntegrationCard({ flash }: Props) {
                 {status?.email ? ` · ${status.email}` : ''}
               </p>
             ) : connectedGoogle ? (
-              <p className="text-xs text-amber-700">
-                Google lié — autorise le scope Contacts pour créer les fiches avant campagne
+              <p className="text-xs text-text-400">
+                Connecte Google Contacts pour enregistrer les prospects avant chaque envoi
               </p>
             ) : (
               <p className="text-xs text-text-400">
@@ -112,8 +112,6 @@ export function GoogleContactsIntegrationCard({ flash }: Props) {
                   <Loader2 className="h-4 w-4 animate-spin" />
                   Redirection…
                 </>
-              ) : connectedGoogle ? (
-                'Autoriser Contacts'
               ) : (
                 'Connecter'
               )}

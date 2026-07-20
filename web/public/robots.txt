@@ -1,12 +1,5 @@
-User-agent: Googlebot
-Allow: /
-
-User-agent: Googlebot-Image
-Allow: /
-
-User-agent: Bingbot
-Allow: /
-
+# Autoriser tous les robots (pas de Disallow).
+# https://support.google.com/webmasters/answer/7489871
 User-agent: *
 Allow: /
 
