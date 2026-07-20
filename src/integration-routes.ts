@@ -41,6 +41,7 @@ import {
   isGoogleIntegrationsConfigured,
   mergeScopeStrings,
   providerForGooglePurpose,
+  purposeFromGoogleProvider,
   sheetsScopesOnly,
   type GoogleOAuthPurpose,
 } from "./integrations/google.js";
@@ -204,6 +205,19 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
   // ── Google Sheets + Google Contacts (providers séparés) ───────────────────
 
+  async function startGoogleOAuth(
+    userId: number,
+    purpose: GoogleOAuthPurpose,
+  ): Promise<{ url: string; redirectUri: string; purpose: GoogleOAuthPurpose }> {
+    const provider = providerForGooglePurpose(purpose);
+    const state = await createOauthPendingState(userId, provider, purpose);
+    const url = buildGoogleAuthorizeUrl(state, { purpose });
+    console.log(
+      `[google-oauth] connect user=${userId} purpose=${purpose} provider=${provider}`,
+    );
+    return { url, redirectUri: googleRedirectUri(), purpose };
+  }
+
   app.get<{
     Querystring: { for?: string };
   }>("/api/integrations/google/connect", async (request, reply) => {
@@ -222,11 +236,24 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
     const forRaw = String(request.query.for ?? "sheets").toLowerCase();
     const purpose: GoogleOAuthPurpose = forRaw === "contacts" ? "contacts" : "sheets";
-    const provider = providerForGooglePurpose(purpose);
+    return startGoogleOAuth(userId, purpose);
+  });
 
-    const state = await createOauthPendingState(userId, provider, purpose);
-    const url = buildGoogleAuthorizeUrl(state, { purpose });
-    return { url, redirectUri: googleRedirectUri(), purpose };
+  /** Route dédiée Contacts — pas d’ambiguïté avec Sheets. */
+  app.get("/api/integrations/google/contacts/connect", async (request, reply) => {
+    const userId = requireUserId(request);
+    if (!isGoogleIntegrationsConfigured()) {
+      return reply.status(503).send({
+        error:
+          "Google n’est pas encore configuré sur le serveur (GOOGLE_INTEGRATIONS_CLIENT_ID / SECRET).",
+      });
+    }
+    if (!isTokensEncryptionConfigured()) {
+      return reply.status(503).send({
+        error: "TOKENS_ENCRYPTION_KEY manquante sur le serveur.",
+      });
+    }
+    return startGoogleOAuth(userId, "contacts");
   });
 
   app.get<{
@@ -249,11 +276,25 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     }
 
     const stateTrim = state.trim();
-    // Pending peut être sheets, contacts, ou legacy `google` (OAuth en cours pendant deploy).
-    const pending =
-      (await consumeOauthPendingState(stateTrim, GOOGLE_SHEETS_PROVIDER)) ??
-      (await consumeOauthPendingState(stateTrim, GOOGLE_CONTACTS_PROVIDER)) ??
-      (await consumeOauthPendingState(stateTrim, GOOGLE_PROVIDER));
+    // IMPORTANT : déduire le purpose du provider matché (pas `purpose ?? sheets`).
+    // Sinon un pending Contacts sans colonne purpose écrase google_sheets.
+    const matchedProviders = [
+      GOOGLE_CONTACTS_PROVIDER,
+      GOOGLE_SHEETS_PROVIDER,
+      GOOGLE_PROVIDER,
+    ] as const;
+    let pending: {
+      userId: number;
+      purpose: string | null;
+      matchedProvider: string;
+    } | null = null;
+    for (const p of matchedProviders) {
+      const row = await consumeOauthPendingState(stateTrim, p);
+      if (row) {
+        pending = { ...row, matchedProvider: p };
+        break;
+      }
+    }
     if (!pending) {
       return reply.redirect(
         appSettingsRedirect({
@@ -263,9 +304,11 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       );
     }
     const userId = pending.userId;
-    const purpose: GoogleOAuthPurpose =
-      pending.purpose === "contacts" ? "contacts" : "sheets";
+    const purpose = purposeFromGoogleProvider(pending.matchedProvider, pending.purpose);
     const provider = providerForGooglePurpose(purpose);
+    console.log(
+      `[google-oauth] callback user=${userId} matched=${pending.matchedProvider} purpose=${purpose} → ${provider}`,
+    );
 
     try {
       if (!isTokensEncryptionConfigured()) {

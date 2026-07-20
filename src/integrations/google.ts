@@ -133,6 +133,17 @@ export function providerForGooglePurpose(purpose: GoogleOAuthPurpose): string {
   return purpose === "contacts" ? GOOGLE_CONTACTS_PROVIDER : GOOGLE_SHEETS_PROVIDER;
 }
 
+/** Déduit le purpose OAuth depuis le provider pending (source de vérité). */
+export function purposeFromGoogleProvider(
+  provider: string,
+  purposeHint?: string | null,
+): GoogleOAuthPurpose {
+  if (provider === GOOGLE_CONTACTS_PROVIDER) return "contacts";
+  if (provider === GOOGLE_SHEETS_PROVIDER) return "sheets";
+  // Legacy provider=google : se fier au hint purpose
+  return purposeHint === "contacts" ? "contacts" : "sheets";
+}
+
 export function buildGoogleAuthorizeUrl(
   state: string,
   options?: { purpose?: GoogleOAuthPurpose },

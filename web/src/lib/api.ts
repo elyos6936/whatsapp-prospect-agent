@@ -406,7 +406,8 @@ export async function startGoogleContactsConnect(): Promise<{
   redirectUri: string;
   purpose?: string;
 }> {
-  return request('/api/integrations/google/connect?for=contacts');
+  // Route dédiée (évite toute ambiguïté avec Sheets / query ?for=).
+  return request('/api/integrations/google/contacts/connect');
 }
 
 export async function disconnectTypeform(): Promise<void> {
