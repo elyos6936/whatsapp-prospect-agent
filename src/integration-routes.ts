@@ -26,15 +26,19 @@ import {
 } from "./integrations/access.js";
 import {
   GOOGLE_PROVIDER,
-  GOOGLE_SCOPES,
   GOOGLE_SHEETS_MAX_PER_USER,
+  GOOGLE_SHEETS_SCOPES,
   GoogleAuthError,
   buildGoogleAuthorizeUrl,
   exchangeGoogleCode,
   fetchGoogleUserInfo,
   googleRedirectUri,
+  hasGoogleContactsScope,
   isGoogleIntegrationsConfigured,
+  mergeScopeStrings,
+  type GoogleOAuthPurpose,
 } from "./integrations/google.js";
+import { markGoogleContactsPromptDone } from "./users.js";
 import {
   TYPEFORM_PROVIDER,
   TYPEFORM_SCOPES,
@@ -64,10 +68,12 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
   app.get("/api/integrations", async (request) => {
     const userId = requireUserId(request);
     const integrations = await listIntegrationStatuses(userId);
+    const google = integrations.find((i) => i.provider === "google");
     return {
       integrations,
       typeformConfigured: isTypeformConfigured() && isTokensEncryptionConfigured(),
       googleConfigured: isGoogleIntegrationsConfigured() && isTokensEncryptionConfigured(),
+      googleContactsGranted: hasGoogleContactsScope(google?.scopes),
     };
   });
 
@@ -113,8 +119,8 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       );
     }
 
-    const userId = await consumeOauthPendingState(state.trim(), TYPEFORM_PROVIDER);
-    if (!userId) {
+    const pending = await consumeOauthPendingState(state.trim(), TYPEFORM_PROVIDER);
+    if (!pending) {
       return reply.redirect(
         appSettingsRedirect({
           typeform: "error",
@@ -122,6 +128,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         }),
       );
     }
+    const userId = pending.userId;
 
     try {
       if (!isTokensEncryptionConfigured()) {
@@ -184,9 +191,11 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     }
   });
 
-  // ── Google (Sheets + futur Forms / Calendar) ──────────────────────────────
+  // ── Google (Sheets + Contacts / People) ───────────────────────────────────
 
-  app.get("/api/integrations/google/connect", async (request, reply) => {
+  app.get<{
+    Querystring: { for?: string };
+  }>("/api/integrations/google/connect", async (request, reply) => {
     const userId = requireUserId(request);
     if (!isGoogleIntegrationsConfigured()) {
       return reply.status(503).send({
@@ -199,9 +208,15 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         error: "TOKENS_ENCRYPTION_KEY manquante sur le serveur.",
       });
     }
-    const state = await createOauthPendingState(userId, GOOGLE_PROVIDER);
-    const url = buildGoogleAuthorizeUrl(state);
-    return { url, redirectUri: googleRedirectUri() };
+
+    const forRaw = String(request.query.for ?? "sheets").toLowerCase();
+    const purpose: GoogleOAuthPurpose = forRaw === "contacts" ? "contacts" : "sheets";
+    const existing = await getUserIntegration(userId, GOOGLE_PROVIDER);
+    const alreadyConnected = Boolean(existing);
+
+    const state = await createOauthPendingState(userId, GOOGLE_PROVIDER, purpose);
+    const url = buildGoogleAuthorizeUrl(state, { purpose, alreadyConnected });
+    return { url, redirectUri: googleRedirectUri(), purpose };
   });
 
   app.get<{
@@ -223,8 +238,8 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       );
     }
 
-    const userId = await consumeOauthPendingState(state.trim(), GOOGLE_PROVIDER);
-    if (!userId) {
+    const pending = await consumeOauthPendingState(state.trim(), GOOGLE_PROVIDER);
+    if (!pending) {
       return reply.redirect(
         appSettingsRedirect({
           google: "error",
@@ -232,6 +247,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         }),
       );
     }
+    const userId = pending.userId;
 
     try {
       if (!isTokensEncryptionConfigured()) {
@@ -271,18 +287,36 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         );
       }
 
+      const mergedScopes = mergeScopeStrings(
+        tokens.scope,
+        existing?.scopes,
+        pending.purpose === "contacts" ? undefined : GOOGLE_SHEETS_SCOPES.join(" "),
+      );
+
       await upsertUserIntegration({
         userId,
         provider: GOOGLE_PROVIDER,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token ?? null,
         expiresInSeconds: tokens.expires_in ?? null,
-        scopes: tokens.scope ?? GOOGLE_SCOPES.join(" "),
+        scopes: mergedScopes || GOOGLE_SHEETS_SCOPES.join(" "),
         providerAccountId: accountId,
         providerEmail: email,
       });
 
-      return reply.redirect(appSettingsRedirect({ google: "connected" }));
+      if (hasGoogleContactsScope(mergedScopes) || pending.purpose === "contacts") {
+        try {
+          await markGoogleContactsPromptDone(userId);
+        } catch {
+          /* colonne absente tant que migration non appliquée */
+        }
+      }
+
+      const flashKey =
+        pending.purpose === "contacts" || hasGoogleContactsScope(tokens.scope)
+          ? "contacts_connected"
+          : "connected";
+      return reply.redirect(appSettingsRedirect({ google: flashKey }));
     } catch (err) {
       const msg =
         err instanceof Error ? err.message.slice(0, 180) : "Échec connexion Google.";

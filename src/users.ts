@@ -11,6 +11,7 @@ export interface UserRecord {
   business_owner_name: string;
   business_offer: string;
   business_price: string;
+  google_contacts_prompt_done: boolean;
   created_at: string;
 }
 
@@ -25,6 +26,7 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     business_owner_name: String(row.business_owner_name ?? ""),
     business_offer: String(row.business_offer ?? ""),
     business_price: String(row.business_price ?? ""),
+    google_contacts_prompt_done: Boolean(row.google_contacts_prompt_done),
     created_at: String(row.created_at ?? ""),
   };
 }
@@ -36,6 +38,7 @@ export function publicUser(user: UserRecord) {
     name: user.name,
     avatarUrl: user.avatar_url,
     onboarding_completed: user.onboarding_completed,
+    google_contacts_prompt_done: user.google_contacts_prompt_done,
     business: {
       ownerName: user.business_owner_name,
       offer: user.business_offer,
@@ -44,16 +47,29 @@ export function publicUser(user: UserRecord) {
   };
 }
 
+let promptColumnReady = false;
+
+async function ensureGoogleContactsPromptColumn(): Promise<void> {
+  if (promptColumnReady) return;
+  await sql`
+    ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS google_contacts_prompt_done BOOLEAN NOT NULL DEFAULT false
+  `;
+  promptColumnReady = true;
+}
+
 export async function createUser(input: {
   email: string;
   passwordHash: string;
   name: string;
 }): Promise<UserRecord> {
+  await ensureGoogleContactsPromptColumn();
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO users (email, password_hash, name)
     VALUES (${input.email.trim().toLowerCase()}, ${input.passwordHash}, ${input.name.trim()})
     RETURNING id, email, name, avatar_url, onboarding_completed, onboarding_answers,
-              business_owner_name, business_offer, business_price, created_at
+              business_owner_name, business_offer, business_price,
+              google_contacts_prompt_done, created_at
   `;
   return mapUser(rows[0]);
 }
@@ -65,6 +81,7 @@ export async function createGoogleUser(input: {
   googleSub: string;
   avatarUrl?: string;
 }): Promise<UserRecord> {
+  await ensureGoogleContactsPromptColumn();
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO users (email, name, google_sub, avatar_url)
     VALUES (
@@ -74,7 +91,8 @@ export async function createGoogleUser(input: {
       ${input.avatarUrl?.trim() || null}
     )
     RETURNING id, email, name, avatar_url, onboarding_completed, onboarding_answers,
-              business_owner_name, business_offer, business_price, created_at
+              business_owner_name, business_offer, business_price,
+              google_contacts_prompt_done, created_at
   `;
   return mapUser(rows[0]);
 }
@@ -84,21 +102,25 @@ export async function linkGoogleAccount(
   userId: number,
   input: { googleSub: string; avatarUrl?: string },
 ): Promise<UserRecord> {
+  await ensureGoogleContactsPromptColumn();
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE users SET
       google_sub = ${input.googleSub},
       avatar_url = COALESCE(${input.avatarUrl?.trim() || null}, avatar_url)
     WHERE id = ${userId}
     RETURNING id, email, name, avatar_url, onboarding_completed, onboarding_answers,
-              business_owner_name, business_offer, business_price, created_at
+              business_owner_name, business_offer, business_price,
+              google_contacts_prompt_done, created_at
   `;
   return mapUser(rows[0]);
 }
 
 export async function getUserByEmail(email: string): Promise<(UserRecord & { password_hash: string | null }) | null> {
+  await ensureGoogleContactsPromptColumn();
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, email, password_hash, name, avatar_url, onboarding_completed, onboarding_answers,
-           business_owner_name, business_offer, business_price, created_at
+           business_owner_name, business_offer, business_price,
+           google_contacts_prompt_done, created_at
     FROM users WHERE email = ${email.trim().toLowerCase()}
   `;
   if (!rows.length) return null;
@@ -107,18 +129,22 @@ export async function getUserByEmail(email: string): Promise<(UserRecord & { pas
 }
 
 export async function getUserByGoogleSub(googleSub: string): Promise<UserRecord | null> {
+  await ensureGoogleContactsPromptColumn();
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, email, name, avatar_url, onboarding_completed, onboarding_answers,
-           business_owner_name, business_offer, business_price, created_at
+           business_owner_name, business_offer, business_price,
+           google_contacts_prompt_done, created_at
     FROM users WHERE google_sub = ${googleSub}
   `;
   return rows.length ? mapUser(rows[0]) : null;
 }
 
 export async function getUserById(id: number): Promise<UserRecord | null> {
+  await ensureGoogleContactsPromptColumn();
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, email, name, avatar_url, onboarding_completed, onboarding_answers,
-           business_owner_name, business_offer, business_price, created_at
+           business_owner_name, business_offer, business_price,
+           google_contacts_prompt_done, created_at
     FROM users WHERE id = ${id}
   `;
   return rows.length ? mapUser(rows[0]) : null;
@@ -154,6 +180,7 @@ export async function completeOnboarding(
     business_price?: string;
   },
 ): Promise<UserRecord> {
+  await ensureGoogleContactsPromptColumn();
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE users SET
       onboarding_completed = true,
@@ -163,7 +190,8 @@ export async function completeOnboarding(
       business_price = COALESCE(${input.business_price?.trim() ?? null}, business_price)
     WHERE id = ${userId}
     RETURNING id, email, name, avatar_url, onboarding_completed, onboarding_answers,
-              business_owner_name, business_offer, business_price, created_at
+              business_owner_name, business_offer, business_price,
+              google_contacts_prompt_done, created_at
   `;
   return mapUser(rows[0]);
 }
@@ -179,4 +207,17 @@ export async function saveUserBusinessProfile(
       business_price = COALESCE(${input.price?.trim() ?? null}, business_price)
     WHERE id = ${userId}
   `;
+}
+
+/** Marque la gate Google Contacts comme vue (connectée ou passée). */
+export async function markGoogleContactsPromptDone(userId: number): Promise<UserRecord | null> {
+  await ensureGoogleContactsPromptColumn();
+  const rows = await sql<Record<string, unknown>[]>`
+    UPDATE users SET google_contacts_prompt_done = true
+    WHERE id = ${userId}
+    RETURNING id, email, name, avatar_url, onboarding_completed, onboarding_answers,
+              business_owner_name, business_offer, business_price,
+              google_contacts_prompt_done, created_at
+  `;
+  return rows.length ? mapUser(rows[0]) : null;
 }

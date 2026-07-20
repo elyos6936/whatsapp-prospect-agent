@@ -5,6 +5,7 @@ import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
 import { StrategyDock } from '@/components/chat/PlanPanel';
 import { ThreadStatsPage } from '@/components/chat/ThreadStatsPage';
 import { ConnectWhatsAppGate } from '@/components/whatsapp/ConnectWhatsAppGate';
+import { ConnectGoogleContactsGate } from '@/components/whatsapp/ConnectGoogleContactsGate';
 import { useAuth } from '@/lib/auth';
 import { useMessages } from '@/hooks/useMessages';
 import { useSidebarCollapsed } from '@/hooks/useSidebarCollapsed';
@@ -321,6 +322,10 @@ export default function AuthenticatedApp() {
 
   if (!waConnected && gateConfirmed) {
     return <ConnectWhatsAppGate />;
+  }
+
+  if (waConnected && !user.google_contacts_prompt_done) {
+    return <ConnectGoogleContactsGate />;
   }
 
   return (

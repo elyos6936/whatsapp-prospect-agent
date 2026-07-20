@@ -26,7 +26,6 @@ import { ShaderBackdrop } from '@/components/ui/shader-backdrop';
 import { ShinyButton } from '@/components/ui/shiny-button';
 import type { LegalKind } from '@/pages/LegalPage';
 import { useNavigate } from 'react-router-dom';
-import { SeoHead } from '@/components/SeoHead';
 
 type LandingPageProps = {
   // kept optional for legacy unused landing components
@@ -195,11 +194,7 @@ export function LandingPage(props: LandingPageProps = {}) {
 
   return (
     <div className="min-h-full overflow-x-hidden bg-[#f7f8fb] text-text-100">
-      <SeoHead
-        title="Klanvio | Agent WhatsApp IA — prospection et ventes"
-        description="Automatisez prospection, relances et closing sur WhatsApp avec Klanvio, l’agent IA qui répond comme un humain. Anti-blocage intégré. Essai gratuit 7 jours."
-        path="/"
-      />
+      {/* Meta homepage = index.html uniquement (évite que SeoHead client écrase le head crawlé). */}
       <header className="sticky top-0 z-50 border-b border-black/[0.06] bg-[#f7f8fb]/90 backdrop-blur-md">
         <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
           <div className="min-w-0 shrink">
@@ -278,7 +273,11 @@ export function LandingPage(props: LandingPageProps = {}) {
         <section className="relative flex min-h-[calc(100dvh-3.5rem)] flex-col overflow-hidden">
           <HeroGridBackdrop />
           <div className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-4 py-8 text-center sm:px-6 sm:py-10">
-            <AnimatedContainer delay={0.05} className="flex w-full max-w-full flex-col items-center">
+            <AnimatedContainer
+              eager
+              delay={0.05}
+              className="flex w-full max-w-full flex-col items-center"
+            >
               <h1 className="landing-h1 w-full text-balance text-text-100">
                 Klanvio — l&apos;agent IA qui automatise{' '}
                 <span className="text-brand">tout WhatsApp</span>, pas juste vos réponses

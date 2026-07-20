@@ -12,8 +12,9 @@ import {
 } from "../integrations-db.js";
 import {
   GOOGLE_PROVIDER,
-  GOOGLE_SCOPES,
+  GOOGLE_SHEETS_SCOPES,
   GoogleAuthError,
+  mergeScopeStrings,
   refreshGoogleToken,
 } from "./google.js";
 import {
@@ -105,7 +106,7 @@ export async function getValidGoogleAccessToken(userId: number): Promise<string>
       accessToken: tokens.access_token,
       refreshToken: tokens.refresh_token ?? refreshToken,
       expiresInSeconds: tokens.expires_in ?? null,
-      scopes: tokens.scope ?? row.scopes ?? GOOGLE_SCOPES.join(" "),
+      scopes: mergeScopeStrings(tokens.scope, row.scopes, GOOGLE_SHEETS_SCOPES.join(" ")),
       providerAccountId: row.provider_account_id,
       providerEmail: row.provider_email,
     });

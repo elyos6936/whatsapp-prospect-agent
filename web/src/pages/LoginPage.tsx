@@ -17,7 +17,7 @@ export function LoginPage() {
         title="Connexion | Klanvio"
         description="Connectez-vous à Klanvio pour piloter votre agent WhatsApp IA : campagnes, relances et closing."
         path="/login"
-        robots="noindex, follow"
+        robots="noindex,follow"
       />
       <AuthUI
         initialSignIn

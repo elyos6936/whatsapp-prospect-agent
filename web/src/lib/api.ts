@@ -10,6 +10,7 @@ export interface AuthUser {
   name: string;
   avatarUrl?: string;
   onboarding_completed: boolean;
+  google_contacts_prompt_done?: boolean;
   business: { ownerName: string; offer: string; price: string };
   whatsapp?: { connected: boolean; state: string; message: string };
 }
@@ -384,12 +385,28 @@ export async function fetchIntegrations(): Promise<{
   integrations: IntegrationStatus[];
   typeformConfigured: boolean;
   googleConfigured: boolean;
+  googleContactsGranted?: boolean;
 }> {
   return request('/api/integrations');
 }
 
 export async function startTypeformConnect(): Promise<{ url: string; redirectUri: string }> {
   return request('/api/integrations/typeform/connect');
+}
+
+export async function dismissGoogleContactsPrompt(): Promise<{
+  ok: boolean;
+  user: AuthUser;
+}> {
+  return request('/api/me/google-contacts-prompt-done', { method: 'POST' });
+}
+
+export async function startGoogleContactsConnect(): Promise<{
+  url: string;
+  redirectUri: string;
+  purpose?: string;
+}> {
+  return request('/api/integrations/google/connect?for=contacts');
 }
 
 export async function disconnectTypeform(): Promise<void> {
@@ -407,7 +424,7 @@ export type ConnectedSheetSummary = {
 };
 
 export async function startGoogleConnect(): Promise<{ url: string; redirectUri: string }> {
-  return request('/api/integrations/google/connect');
+  return request('/api/integrations/google/connect?for=sheets');
 }
 
 export async function disconnectGoogle(): Promise<void> {

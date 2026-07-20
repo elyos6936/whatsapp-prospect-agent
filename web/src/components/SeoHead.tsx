@@ -6,8 +6,10 @@ export type SeoHeadProps = {
   title: string;
   description: string;
   path: string;
-  /** Default: index, follow */
+  /** Default: index,follow,max-image-preview:large */
   robots?: string;
+  /** Si false, ne touche pas au link canonical (ex. pages 404). */
+  updateCanonical?: boolean;
 };
 
 function upsertMeta(attr: 'name' | 'property', key: string, content: string) {
@@ -31,20 +33,30 @@ function upsertLink(rel: string, href: string) {
   el.href = href;
 }
 
-/** Met à jour title / description / canonical / OG pour les routes SPA publiques. */
-export function SeoHead({ title, description, path, robots = 'index, follow' }: SeoHeadProps) {
+/** Met à jour title / description / canonical / OG pour les routes SPA secondaires. */
+export function SeoHead({
+  title,
+  description,
+  path,
+  /** Préserver max-image-preview (Google Images / vignettes SERP). */
+  robots = 'index,follow,max-image-preview:large',
+  updateCanonical = true,
+}: SeoHeadProps) {
   useEffect(() => {
-    const url = `${SITE}${path.startsWith('/') ? path : `/${path}`}`;
+    const normalized = path.startsWith('/') ? path : `/${path}`;
+    const url = `${SITE}${normalized === '/' ? '/' : normalized}`;
     document.title = title;
     upsertMeta('name', 'description', description);
     upsertMeta('name', 'robots', robots);
-    upsertLink('canonical', url);
+    if (updateCanonical) {
+      upsertLink('canonical', url);
+      upsertMeta('property', 'og:url', url);
+    }
     upsertMeta('property', 'og:title', title);
     upsertMeta('property', 'og:description', description);
-    upsertMeta('property', 'og:url', url);
     upsertMeta('name', 'twitter:title', title);
     upsertMeta('name', 'twitter:description', description);
-  }, [title, description, path, robots]);
+  }, [title, description, path, robots, updateCanonical]);
 
   return null;
 }

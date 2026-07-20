@@ -17,6 +17,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { WhatsAppConnectModal } from '@/components/whatsapp/WhatsAppConnectModal';
 import { TypeformIntegrationCard } from '@/components/settings/TypeformIntegrationCard';
 import { GoogleSheetsIntegrationCard } from '@/components/settings/GoogleSheetsIntegrationCard';
+import { GoogleContactsIntegrationCard } from '@/components/settings/GoogleContactsIntegrationCard';
 
 type SettingsTab = 'connection' | 'integrations' | 'billing';
 
@@ -70,7 +71,10 @@ function readGoogleFlash(): { type: 'ok' | 'err'; text: string } | null {
     const params = new URLSearchParams(window.location.search);
     const g = params.get('google');
     if (g === 'connected') {
-      return { type: 'ok', text: 'Google connecté avec succès.' };
+      return { type: 'ok', text: 'Google Sheets connecté avec succès.' };
+    }
+    if (g === 'contacts_connected') {
+      return { type: 'ok', text: 'Google Contacts connecté avec succès.' };
     }
     if (g === 'error') {
       return {
@@ -277,7 +281,16 @@ export function SettingsPage() {
               </p>
               <div className="flex flex-col gap-3">
                 <TypeformIntegrationCard flash={typeformFlash} />
-                <GoogleSheetsIntegrationCard flash={googleFlash} />
+                <GoogleSheetsIntegrationCard
+                  flash={
+                    googleFlash && !/contacts/i.test(googleFlash.text) ? googleFlash : null
+                  }
+                />
+                <GoogleContactsIntegrationCard
+                  flash={
+                    googleFlash && /contacts/i.test(googleFlash.text) ? googleFlash : null
+                  }
+                />
               </div>
             </div>
           ) : (

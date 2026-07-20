@@ -3,10 +3,9 @@ import { Navigate, Route, Routes, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { getStoredToken } from '@/lib/auth-storage';
 import type { LegalKind } from '@/pages/LegalPage';
+import { LandingPage } from '@/pages/LandingPage';
+import { NotFoundPage } from '@/pages/NotFoundPage';
 
-const LandingPage = lazy(() =>
-  import('@/pages/LandingPage').then((m) => ({ default: m.LandingPage })),
-);
 const LoginPage = lazy(() =>
   import('@/pages/LoginPage').then((m) => ({ default: m.LoginPage })),
 );
@@ -76,7 +75,7 @@ function PublicRoutes() {
       <Route path="/confidentialite" element={<LegalRoute kind="confidentialite" />} />
       <Route path="/contact" element={<LegalRoute kind="contact" />} />
       <Route path="/app" element={<Navigate to="/login" replace />} />
-      <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="*" element={<NotFoundPage />} />
     </Routes>
   );
 }

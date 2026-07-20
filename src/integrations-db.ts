@@ -269,30 +269,57 @@ export function decryptIntegrationTokens(row: UserIntegrationRow): {
   };
 }
 
-export async function createOauthPendingState(userId: number, provider: string): Promise<string> {
+export async function createOauthPendingState(
+  userId: number,
+  provider: string,
+  purpose?: string | null,
+): Promise<string> {
   const state = crypto.randomBytes(24).toString("hex");
   await sql`
     DELETE FROM oauth_pending_states
     WHERE created_at < NOW() - INTERVAL '15 minutes'
   `;
-  await sql`
-    INSERT INTO oauth_pending_states (state, user_id, provider)
-    VALUES (${state}, ${userId}, ${provider})
-  `;
+  try {
+    await sql`
+      INSERT INTO oauth_pending_states (state, user_id, provider, purpose)
+      VALUES (${state}, ${userId}, ${provider}, ${purpose ?? null})
+    `;
+  } catch {
+    // Colonne purpose absente tant que la migration n'est pas appliquée
+    await sql`
+      INSERT INTO oauth_pending_states (state, user_id, provider)
+      VALUES (${state}, ${userId}, ${provider})
+    `;
+  }
   return state;
 }
 
 export async function consumeOauthPendingState(
   state: string,
   provider: string,
-): Promise<number | null> {
-  const rows = await sql`
-    DELETE FROM oauth_pending_states
-    WHERE state = ${state}
-      AND provider = ${provider}
-      AND created_at > NOW() - INTERVAL '15 minutes'
-    RETURNING user_id
-  `;
-  if (!rows[0]) return null;
-  return Number(rows[0].user_id);
+): Promise<{ userId: number; purpose: string | null } | null> {
+  try {
+    const rows = await sql`
+      DELETE FROM oauth_pending_states
+      WHERE state = ${state}
+        AND provider = ${provider}
+        AND created_at > NOW() - INTERVAL '15 minutes'
+      RETURNING user_id, purpose
+    `;
+    if (!rows[0]) return null;
+    return {
+      userId: Number(rows[0].user_id),
+      purpose: rows[0].purpose == null ? null : String(rows[0].purpose),
+    };
+  } catch {
+    const rows = await sql`
+      DELETE FROM oauth_pending_states
+      WHERE state = ${state}
+        AND provider = ${provider}
+        AND created_at > NOW() - INTERVAL '15 minutes'
+      RETURNING user_id
+    `;
+    if (!rows[0]) return null;
+    return { userId: Number(rows[0].user_id), purpose: null };
+  }
 }

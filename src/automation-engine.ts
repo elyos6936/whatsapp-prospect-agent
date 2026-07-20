@@ -199,6 +199,13 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     // Nouvelle campagne (id différent) → oubli mémoire + historique pré-campagne
     await beginFreshCampaignConversation(userId, target.target_id, auto.id);
 
+    // Google Contacts (People) : no-op si non connecté ; ne bloque jamais l'envoi
+    const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
+    await ensureGoogleContactBeforeSend(userId, {
+      phone: target.target_id,
+      name: target.target_label,
+    });
+
     const priority = shouldPersonalize ? 7 : 6;
     await enqueueSend(userId, {
       recipient: target.target_id,

@@ -10,6 +10,7 @@ import {
   getUserByGoogleSub,
   getUserById,
   completeOnboarding,
+  markGoogleContactsPromptDone,
   publicUser,
 } from "./users.js";
 
@@ -220,6 +221,13 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       business_price: request.body?.business_price,
     });
 
+    return { ok: true, user: publicUser(user) };
+  });
+
+  app.post("/api/me/google-contacts-prompt-done", async (request) => {
+    const userId = requireUserId(request);
+    const user = await markGoogleContactsPromptDone(userId);
+    if (!user) return { error: "Utilisateur introuvable" };
     return { ok: true, user: publicUser(user) };
   });
 }

@@ -170,20 +170,42 @@
     </noscript>
   </head>
   <body>
-    <noscript>
-      <main style="max-width: 42rem; margin: 2rem auto; padding: 0 1rem; font-family: system-ui, sans-serif">
+    <!--
+      Contenu crawlable pour Google (HTML source). Masqué visuellement pour éviter
+      le flash avant le montage React — React remplace #root ensuite.
+    -->
+    <div id="root">
+      <main
+        id="seo-bootstrap"
+        aria-hidden="true"
+        style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0"
+      >
+        <img src="/brand/logo.png" width="96" height="96" alt="Logo Klanvio" />
         <h1>Klanvio — Agent WhatsApp IA pour prospection et ventes</h1>
         <p>
-          Klanvio prospecte, relance et close vos ventes sur WhatsApp avec des réponses humaines,
-          une simulation avant envoi et une protection anti-blocage intégrée. Essai gratuit 7 jours.
+          Automatisez prospection, relances et closing sur WhatsApp avec Klanvio, l’agent IA qui
+          répond comme un humain. Anti-blocage intégré. Essai gratuit 7 jours.
         </p>
         <p>
-          <a href="https://www.klanvio.com/register">Créer un compte</a> ·
-          <a href="https://www.klanvio.com/login">Se connecter</a>
+          Les autres outils se contentent de répondre aux messages. Klanvio prospecte, relance,
+          close vos ventes, gère vos groupes et publie vos statuts — comme un vrai commercial
+          WhatsApp, 24h/24.
+        </p>
+        <img
+          src="/brand/og-banner.jpg"
+          width="1200"
+          height="630"
+          alt="Klanvio — Agent WhatsApp IA pour prospection et ventes"
+        />
+        <p>
+          <a href="/register">Créer un compte</a>
+          ·
+          <a href="/login">Se connecter</a>
+          ·
+          <a href="/contact">Contact</a>
         </p>
       </main>
-    </noscript>
-    <div id="root"></div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

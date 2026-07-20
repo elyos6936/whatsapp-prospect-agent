@@ -5,14 +5,22 @@ type ViewAnimationProps = {
   delay?: number;
   className?: string;
   children: ReactNode;
+  /** Visible dès le 1er paint (hero) — évite opacity:0 pour les crawlers. */
+  eager?: boolean;
 };
 
 /** CSS-only reveal — keeps landing free of framer-motion (~118KB). */
-export function AnimatedContainer({ className, delay = 0.1, children }: ViewAnimationProps) {
+export function AnimatedContainer({
+  className,
+  delay = 0.1,
+  children,
+  eager = false,
+}: ViewAnimationProps) {
   const ref = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
+  const [visible, setVisible] = useState(eager);
 
   useEffect(() => {
+    if (eager) return;
     const el = ref.current;
     if (!el) return;
 
@@ -32,7 +40,7 @@ export function AnimatedContainer({ className, delay = 0.1, children }: ViewAnim
     );
     io.observe(el);
     return () => io.disconnect();
-  }, []);
+  }, [eager]);
 
   return (
     <div
