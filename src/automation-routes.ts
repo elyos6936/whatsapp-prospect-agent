@@ -99,7 +99,10 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         return reply.status(404).send({ error: "Automatisation introuvable." });
       }
       const name = detail.automation.name;
-      const confirmMsg = `Simulation validée. Veux-tu activer « ${name} » maintenant ?`;
+      const confirmMsg =
+        `Simulation validée pour « ${name} ». ` +
+        `Tu veux que je l’active maintenant, ou tu as encore des modifications à faire ` +
+        `(accroche, ton, relances…) ?`;
       await updateAutomationConfig(userId, id, {
         ...detail.automation.config,
         simulationValidatedAt: new Date().toISOString(),

@@ -167,13 +167,13 @@ function isExplicitActivationConfirm(text: string): boolean {
   );
 }
 
-/** L'assistant a déjà demandé si on active la campagne. */
+/** L'assistant a déjà demandé si on active la campagne (ou s’il y a d’autres modifs). */
 function recentAssistantAskedActivationConfirm(history: AgentMessage[]): boolean {
   for (let i = history.length - 1; i >= 0 && i >= history.length - 8; i--) {
     const m = history[i];
     if (m.role !== "assistant") continue;
     if (
-      /veux-tu activer|voulez-vous activer|activer.*maintenant|je lance|lancer (la )?(campagne|automatisation)/i.test(
+      /veux-tu activer|voulez-vous activer|activer.*maintenant|je (l[’'])?active|tu veux que je l[’']active|autres? modifi|modifications? à faire|je lance|lancer (la )?(campagne|automatisation)/i.test(
         m.content
       )
     ) {
@@ -192,20 +192,23 @@ function userWantsSimulationChange(text: string): boolean {
 const ACTIVATION_AFTER_SIMULATION_NUDGE =
   "L'utilisateur a VALIDÉ la simulation (contenu OK). INTERDIT de rappeler show_campaign_simulation. " +
   "INTERDIT d'appeler activate_automation tout de suite. " +
-  "Étape suivante : demande explicitement « Veux-tu activer « [nom] » maintenant ? » " +
+  "Étape suivante : dans CE chat, demande clairement s’il veut **activer maintenant** " +
+  "ou s’il a encore des **modifications** (accroche, ton, relances…). " +
   "N'appelle activate_automation QUE si l'utilisateur répond clairement oui / lance / active / vas-y. " +
-  "Il peut aussi cliquer **Oui, activer** dans la simulation à droite, ou **Lancer** dans l'en-tête.";
+  "S’il veut des modifs → ajuste via update_automation_config / re-simule, sans re-demander de « Valider » pour rien. " +
+  "Il peut aussi cliquer **Lancer** dans l'en-tête. Activer = simulation déjà validée.";
 
 const CONFIRM_ACTIVATE_NOW_NUDGE =
-  "L'utilisateur CONFIRME l'activation (après ta question « activer maintenant ? »). " +
-  "Appelle MAINTENANT activate_automation. INTERDIT de reposer la question. INTERDIT de re-simuler.";
+  "L'utilisateur CONFIRME l'activation (après ta question activer / autres modifs). " +
+  "Appelle MAINTENANT activate_automation. INTERDIT de reposer la question. INTERDIT de re-simuler. " +
+  "INTERDIT de redemander de Valider la simulation — l’activation suffit.";
 
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
   "Le 1er tour « toi » = accroche A.I.D.A. Attention (PAS de prix/lien). " +
   "Parle de **simulation** (à droite) — jamais « panneau » ni « campagne créée ». " +
-  "Dis clairement : « Si c'est bon, clique sur **Valider** dans la simulation à droite — on te demandera ensuite si tu veux activer. » " +
+  "Dis clairement : « Si c'est bon, clique sur **Valider** à droite — je te demanderai ensuite dans ce chat si on active ou s’il y a d’autres modifs. » " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +
   "Après l'outil, le message contient déjà la demande de feedback — ne l'oublie pas. " +
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
@@ -579,7 +582,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         ) {
           result = JSON.stringify({
             error:
-              "Simulation déjà affichée. Ne la répète pas : résume et demande « Veux-tu activer la campagne maintenant ? ». N'appelle activate_automation que sur oui / lance / active explicite.",
+              "Simulation déjà affichée. Ne la répète pas : résume et demande dans ce chat s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
           });
           messages.push({
             role: "tool",

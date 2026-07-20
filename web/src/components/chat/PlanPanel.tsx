@@ -7,11 +7,12 @@ type StrategyDockProps = {
   plan: AutomationVisualPlan;
   onClose: () => void;
   className?: string;
-  onLaunched?: (message: string) => void;
+  /** Message IA après Valider — à injecter dans le chat principal. */
+  onValidated?: (message: string) => void;
 };
 
 /** Panneau droit : simulation de conversation (pas d’envoi WhatsApp). */
-export function StrategyDock({ plan, onClose, className, onLaunched }: StrategyDockProps) {
+export function StrategyDock({ plan, onClose, className, onValidated }: StrategyDockProps) {
   return (
     <aside
       className={cn(
@@ -25,7 +26,7 @@ export function StrategyDock({ plan, onClose, className, onLaunched }: StrategyD
           <p className="text-sm font-semibold leading-snug text-text-100 break-words">
             {plan.title.replace(/\s*#\d+\s*$/, '').replace(/^Campagne\s+\d+$/i, 'Automatisation')}
           </p>
-          <p className="text-[11px] text-text-500">Simulation · validez pour lancer</p>
+          <p className="text-[11px] text-text-500">Simulation · validez puis répondez dans le chat</p>
         </div>
         <button
           type="button"
@@ -42,7 +43,7 @@ export function StrategyDock({ plan, onClose, className, onLaunched }: StrategyD
         <SimulationChatPanel
           key={`${plan.automationId ?? 'p'}-${plan.updatedAt}-${plan.nodes?.length ?? 0}`}
           plan={plan}
-          onLaunched={onLaunched}
+          onValidated={onValidated}
         />
       </div>
     </aside>

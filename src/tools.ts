@@ -2054,9 +2054,9 @@ export async function executeTool(
     case "list_whatsapp_groups": {
       const groups = await listWhatsAppGroups(userId);
       const mapped = groups.map((g) => ({
-        id: g.id,
-        name: g.name,
-        type: "groupe",
+          id: g.id,
+          name: g.name,
+          type: "groupe",
       }));
       return JSON.stringify({
         count: mapped.length,
@@ -2156,8 +2156,8 @@ export async function executeTool(
 
     case "get_group_members": {
       try {
-        const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
-        const data = await getGroupMembers(userId, groupId);
+      const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
+      const data = await getGroupMembers(userId, groupId);
         const members = data.participants.map((p) => ({
           id: p.id,
           display: chatIdToDisplay(p.id),
@@ -3808,8 +3808,8 @@ export async function executeTool(
               ? formatPlanDisplay(
                   plan,
                   `« ${name} » est prêt. Ouvre la **simulation** à droite pour tester les réponses avant de lancer.`
-                )
-              : undefined,
+            )
+          : undefined,
             message: `« ${name} » mis à jour — pas de doublon. Prochaine étape : simulation à droite, puis lancement si tu valides.`,
             simulationHint:
               "Invite à ouvrir la simulation à droite : jouer le prospect, jusqu'à 7 messages, sans WhatsApp réel.",
@@ -3829,7 +3829,7 @@ export async function executeTool(
         const plan = await persistVisualPlan(userId, auto.id);
         const otherActive = (await listActiveAutomations(userId)).filter((a) => a.id !== auto.id);
         const activeNote = otherActive.length
-          ? ` Une campagne est déjà active (${otherActive.map((a) => `« ${a.name} »`).join(", ")}) — elle continue. Celle-ci reste en brouillon : lance-la quand tu es prêt (bouton Activer / Valider) ; l'ancienne passera alors en pause.`
+          ? ` Une campagne est déjà active (${otherActive.map((a) => `« ${a.name} »`).join(", ")}) — elle continue. Celle-ci reste en brouillon : active-la quand tu es prêt (dans le chat ou bouton Lancer) ; l'ancienne passera alors en pause.`
           : " Prochaine étape : simulation à droite, puis lancement après confirmation.";
         return JSON.stringify({
           success: true,
@@ -4047,7 +4047,7 @@ export async function executeTool(
         ...(merged.relance?.messages ?? []).map((m, i) => ({ label: `relance_messages[${i}]`, value: m })),
       ]);
       if (badFields.length) {
-        return JSON.stringify({
+          return JSON.stringify({
           error: `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
         });
       }
@@ -4128,7 +4128,7 @@ export async function executeTool(
     case "list_automations": {
       const thread = await getAgentThread(userId, threadId);
       if (!thread?.automation_id) {
-        return JSON.stringify({
+      return JSON.stringify({
           count: 0,
           automations: [],
           message: "Aucune campagne liée à ce fil. (Les autres automatisations ne sont pas visibles ici.)",
@@ -4142,14 +4142,14 @@ export async function executeTool(
         count: 1,
         automations: [
           {
-            id: a.id,
-            name: a.name,
-            type: a.type,
-            status: a.status,
-            summary: a.summary,
-            stats: a.stats,
-            budgetFcfa: a.budget_fcfa,
-            createdAt: a.created_at,
+          id: a.id,
+          name: a.name,
+          type: a.type,
+          status: a.status,
+          summary: a.summary,
+          stats: a.stats,
+          budgetFcfa: a.budget_fcfa,
+          createdAt: a.created_at,
           },
         ],
         message: "Seul le plan de ce fil est listé (isolation des automatisations).",

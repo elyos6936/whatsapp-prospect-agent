@@ -1,11 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, Loader2, RotateCcw, Send } from 'lucide-react';
 import type { AutomationVisualPlan } from '@/lib/automation-plan';
-import {
-  postSimulationPreview,
-  validateSimulation,
-  validateSimulationAndLaunch,
-} from '@/lib/api';
+import { postSimulationPreview, validateSimulation } from '@/lib/api';
 import { cn } from '@/lib/utils';
 
 type Turn = { role: 'you' | 'prospect'; text: string };
@@ -27,11 +23,12 @@ function guideFromPlan(plan: AutomationVisualPlan): string | undefined {
 type SimulationChatPanelProps = {
   plan: AutomationVisualPlan;
   className?: string;
-  onLaunched?: (message: string) => void;
+  /** Message IA posté dans le chat principal après Valider (activer ou autres modifs ?). */
+  onValidated?: (message: string) => void;
 };
 
 /** Chat de simulation à droite — aucun numéro WhatsApp, 0 envoi réel. */
-export function SimulationChatPanel({ plan, className, onLaunched }: SimulationChatPanelProps) {
+export function SimulationChatPanel({ plan, className, onValidated }: SimulationChatPanelProps) {
   const opener = useMemo(() => openerFromPlan(plan), [plan]);
   const guide = useMemo(() => guideFromPlan(plan), [plan]);
   const automationId = plan.automationId;
@@ -40,14 +37,10 @@ export function SimulationChatPanel({ plan, className, onLaunched }: SimulationC
   const [draft, setDraft] = useState('');
   const [loading, setLoading] = useState(false);
   const [validating, setValidating] = useState(false);
-  const [activating, setActivating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [done, setDone] = useState(false);
-  const [awaitingActivateConfirm, setAwaitingActivateConfirm] = useState(false);
-  const [confirmPrompt, setConfirmPrompt] = useState<string | null>(null);
-  const [launched, setLaunched] = useState(false);
-  const [launchMessage, setLaunchMessage] = useState<string | null>(null);
+  const [validated, setValidated] = useState(false);
 
   useEffect(() => {
     setHistory([{ role: 'you', text: opener }]);
@@ -55,15 +48,12 @@ export function SimulationChatPanel({ plan, className, onLaunched }: SimulationC
     setError(null);
     setFeedback(null);
     setDone(false);
-    setAwaitingActivateConfirm(false);
-    setConfirmPrompt(null);
-    setLaunched(false);
-    setLaunchMessage(null);
+    setValidated(false);
   }, [opener, plan.updatedAt, plan.automationId, plan.title]);
 
   async function sendAsProspect() {
     const text = draft.trim();
-    if (!text || loading || done || awaitingActivateConfirm || launched) return;
+    if (!text || loading || done || validated) return;
     setLoading(true);
     setError(null);
     setDraft('');
@@ -91,20 +81,22 @@ export function SimulationChatPanel({ plan, className, onLaunched }: SimulationC
     setError(null);
     setFeedback(null);
     setDone(false);
-    setAwaitingActivateConfirm(false);
-    setConfirmPrompt(null);
+    setValidated(false);
   }
 
   async function handleValidate() {
-    if (!automationId || validating || launched || awaitingActivateConfirm) return;
+    if (!automationId || validating || validated) return;
     setValidating(true);
     setError(null);
     try {
       const result = await validateSimulation(automationId);
-      setAwaitingActivateConfirm(true);
-      setConfirmPrompt(
+      setValidated(true);
+      setFeedback(
+        'Simulation validée — l’agent vous a écrit dans le chat à gauche : activez, ou dites-lui les modifs à faire.',
+      );
+      onValidated?.(
         result.message ||
-          `Simulation validée. Veux-tu activer « ${result.name || plan.title} » maintenant ?`,
+          `Simulation validée pour « ${result.name || plan.title} ». Tu veux que je l’active maintenant, ou tu as encore des modifications à faire ?`,
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Impossible de valider');
@@ -113,37 +105,12 @@ export function SimulationChatPanel({ plan, className, onLaunched }: SimulationC
     }
   }
 
-  async function handleConfirmActivate() {
-    if (!automationId || activating || launched) return;
-    setActivating(true);
-    setError(null);
-    try {
-      const result = await validateSimulationAndLaunch(automationId);
-      setLaunched(true);
-      setAwaitingActivateConfirm(false);
-      setLaunchMessage(result.message || 'Automatisation lancée.');
-      onLaunched?.(result.message || 'Automatisation lancée.');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Impossible de lancer');
-    } finally {
-      setActivating(false);
-    }
-  }
-
-  function handleLater() {
-    setAwaitingActivateConfirm(false);
-    setConfirmPrompt(null);
-    setFeedback(
-      'Simulation validée — tu pourras activer plus tard avec le bouton Lancer / en le demandant dans le chat.',
-    );
-  }
-
   return (
     <div className={cn('flex min-h-0 flex-1 flex-col', className)}>
       <p className="mb-3 shrink-0 text-[12px] leading-relaxed text-text-500">
         Jouez le prospect ici (sans WhatsApp réel). Si la simulation vous convient, cliquez sur{' '}
-        <span className="font-semibold text-text-200">Valider</span> — on vous demandera ensuite si
-        vous voulez activer l’automatisation.
+        <span className="font-semibold text-text-200">Valider</span> — l’agent vous demandera ensuite
+        dans le chat s’il active ou s’il y a d’autres modifications.
       </p>
 
       <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto rounded-xl bg-bg-100/80 p-3">
@@ -171,46 +138,16 @@ export function SimulationChatPanel({ plan, className, onLaunched }: SimulationC
         )}
       </div>
 
-      {feedback && !launched && !awaitingActivateConfirm && (
-        <div className="mt-3 shrink-0 rounded-xl border border-amber-200/80 bg-amber-50/90 px-3 py-2.5 text-[12px] leading-relaxed text-amber-950 whitespace-pre-wrap">
+      {feedback && (
+        <div
+          className={cn(
+            'mt-3 shrink-0 rounded-xl px-3 py-2.5 text-[12px] leading-relaxed whitespace-pre-wrap',
+            validated
+              ? 'border border-emerald-200/80 bg-emerald-50/90 text-emerald-950'
+              : 'border border-amber-200/80 bg-amber-50/90 text-amber-950',
+          )}
+        >
           {feedback}
-        </div>
-      )}
-
-      {awaitingActivateConfirm && confirmPrompt && !launched && (
-        <div className="mt-3 shrink-0 space-y-2 rounded-xl border border-brand/25 bg-brand/5 px-3 py-3">
-          <p className="text-[13px] leading-relaxed text-text-100">{confirmPrompt}</p>
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => void handleConfirmActivate()}
-              disabled={activating}
-              className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-[13px] font-semibold text-white hover:bg-brand/90 disabled:opacity-50"
-            >
-              {activating ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Activation…
-                </>
-              ) : (
-                'Oui, activer'
-              )}
-            </button>
-            <button
-              type="button"
-              onClick={handleLater}
-              disabled={activating}
-              className="flex flex-1 items-center justify-center rounded-xl border border-black/10 bg-white px-4 py-2.5 text-[13px] font-medium text-text-200 hover:bg-bg-100 disabled:opacity-50"
-            >
-              Plus tard
-            </button>
-          </div>
-        </div>
-      )}
-
-      {launchMessage && (
-        <div className="mt-3 shrink-0 rounded-xl border border-emerald-200/80 bg-emerald-50/90 px-3 py-2.5 text-[12px] leading-relaxed text-emerald-950">
-          {launchMessage}
         </div>
       )}
 
@@ -220,7 +157,7 @@ export function SimulationChatPanel({ plan, className, onLaunched }: SimulationC
         </p>
       )}
 
-      {automationId != null && !launched && !awaitingActivateConfirm && (
+      {automationId != null && !validated && (
         <button
           type="button"
           onClick={() => void handleValidate()}
@@ -260,23 +197,21 @@ export function SimulationChatPanel({ plan, className, onLaunched }: SimulationC
               void sendAsProspect();
             }
           }}
-          disabled={loading || done || launched || awaitingActivateConfirm}
+          disabled={loading || done || validated}
           rows={2}
           placeholder={
-            launched
-              ? 'Automatisation lancée'
-              : awaitingActivateConfirm
-                ? 'Confirmez l’activation ci-dessus'
-                : done
-                  ? 'Simulation terminée — cliquez Valider'
-                  : 'Répondez comme un prospect…'
+            validated
+              ? 'Répondez dans le chat à gauche pour activer ou modifier'
+              : done
+                ? 'Simulation terminée — cliquez Valider'
+                : 'Répondez comme un prospect…'
           }
           className="min-h-[44px] flex-1 resize-none rounded-xl border border-black/[0.08] bg-white px-3 py-2 text-[13px] text-text-100 placeholder:text-text-400 focus:border-brand/40 focus:outline-none focus:ring-2 focus:ring-brand/15 disabled:opacity-60"
         />
         <button
           type="button"
           onClick={() => void sendAsProspect()}
-          disabled={loading || done || launched || awaitingActivateConfirm || !draft.trim()}
+          disabled={loading || done || validated || !draft.trim()}
           className="rounded-xl bg-brand p-2.5 text-white hover:bg-brand/90 disabled:opacity-40"
           aria-label="Envoyer"
         >

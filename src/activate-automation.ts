@@ -35,7 +35,8 @@ export type ActivateAutomationResult =
 /**
  * Active une automatisation (draft/paused → active) + bootstrap cibles.
  * Si d'autres campagnes sont actives, elles passent automatiquement en pause.
- * Utilisé par l'outil agent et le bouton « Valider » / « Activer ».
+ * Utilisé par l'outil agent et le bouton « Lancer » / activation UI.
+ * Activer une campagne implique que la simulation est considérée validée.
  */
 export async function activateAutomationCore(
   userId: number,
@@ -142,7 +143,8 @@ export async function activateAutomationCore(
       safeConfig.relance = defaultRelanceConfig();
     }
   }
-  if (options.source === "simulation_ui") {
+  // Activer = simulation considérée validée (pas de double validation).
+  if (!safeConfig.simulationValidatedAt) {
     safeConfig = { ...safeConfig, simulationValidatedAt: new Date().toISOString() };
   }
 

@@ -405,11 +405,11 @@ export default function AuthenticatedApp() {
             <StrategyDock
               plan={strategyPlan}
               onClose={toggleStrategy}
-              onLaunched={(message) => {
+              onValidated={(message) => {
                 appendLocal({
-                  id: `sim-launch-${Date.now()}`,
+                  id: `sim-validate-${Date.now()}`,
                   kind: 'assistant',
-                  content: `✅ ${message}`,
+                  content: message,
                   created_at: new Date().toISOString(),
                   label: 'Agent',
                 });
@@ -429,11 +429,11 @@ export default function AuthenticatedApp() {
               <StrategyDock
                 plan={strategyPlan}
                 onClose={toggleStrategy}
-                onLaunched={(message) => {
+                onValidated={(message) => {
                   appendLocal({
-                    id: `sim-launch-${Date.now()}`,
+                    id: `sim-validate-${Date.now()}`,
                     kind: 'assistant',
-                    content: `✅ ${message}`,
+                    content: message,
                     created_at: new Date().toISOString(),
                     label: 'Agent',
                   });

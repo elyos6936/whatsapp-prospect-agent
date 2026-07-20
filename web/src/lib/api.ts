@@ -579,7 +579,7 @@ export async function reloadAutomationMembers(
   return request(`/api/automations/${id}/reload-members`, { method: 'POST' });
 }
 
-/** Valide la simulation sans activer — demande confirmation d'activation. */
+/** Valide la simulation sans activer — l’IA demande ensuite dans le chat (activer ou modifs). */
 export async function validateSimulation(id: number): Promise<{
   ok: boolean;
   needsActivationConfirm: boolean;
@@ -590,7 +590,7 @@ export async function validateSimulation(id: number): Promise<{
   return request(`/api/automations/${id}/validate-simulation`, { method: 'POST' });
 }
 
-/** Active une automatisation (draft/pause → active). Utilisé par Lancer draft + « Oui, activer ». */
+/** Active une automatisation (draft/pause → active). Implique simulation validée. */
 export async function validateSimulationAndLaunch(id: number): Promise<{
   ok: boolean;
   message: string;
