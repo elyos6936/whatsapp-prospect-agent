@@ -1779,6 +1779,19 @@ export interface AutomationConfig {
   personalizeMessages?: boolean;
   /** Stickers / emojis autorisés dans les réponses campagne. Défaut false. */
   stickersEnabled?: boolean;
+  /**
+   * Notification WhatsApp optionnelle à un tiers (livreur, commercial…)
+   * quand l'objectif campagne est atteint. Défaut : absent / désactivé.
+   */
+  thirdPartyNotification?: {
+    enabled: boolean;
+    /** Numéro ou chatId du tiers (normalisé @c.us à l'usage). */
+    phone: string;
+    /** Rôle du destinataire (ex. livreur, commercial terrain). */
+    role?: string;
+    /** Consignes / infos à transmettre (adresse, produit, créneau…). */
+    context?: string;
+  };
   abVariants?: Array<{ id: string; message: string }>;
   sequenceSteps?: Array<{ delayDays: number; message: string; condition?: string }>;
   mediaUrl?: string;

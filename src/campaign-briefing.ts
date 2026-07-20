@@ -209,6 +209,8 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
     return (
       "Briefing campagne : les éléments essentiels semblent réunis (≥6 questions). " +
       "Avant create/activate : pose UNE question si pas encore fait — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) ». " +
+      "Puis UNE question optionnelle — « Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, commercial…) sur WhatsApp ? (oui/non) ». " +
+      "Si oui : récupère numéro + rôle + infos à transmettre (une question à la fois), puis create_automation avec third_party_notification_enabled=true et les champs associés. " +
       "Puis crée le brouillon (create_automation draft) avec personalize_messages=true et un initial_message **A.I.D.A. Attention seulement** (accroche courte, SANS prix/lien/pitch complet). " +
       "Propose ensuite une simulation (6-7 messages via show_campaign_simulation, puis feedback)."
     );

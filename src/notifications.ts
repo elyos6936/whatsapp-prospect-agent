@@ -947,6 +947,19 @@ async function runAutoReply(
         });
         await incrementMessagesHandled(userId, activeCampaign.id);
         console.log(`✅ Objectif atteint (confirmation) → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+
+        // Side-effect isolé : notif tiers (ne doit pas bloquer la clôture).
+        void import("./third-party-notification.js")
+          .then((m) =>
+            m.maybeNotifyThirdPartyOnConversion({
+              userId,
+              automation: activeCampaign,
+              prospectChatId: chatId,
+              prospectName: senderName,
+            })
+          )
+          .catch((err) => console.error("Erreur notif tiers:", err));
+
         return;
       }
 

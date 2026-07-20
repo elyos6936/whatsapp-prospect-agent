@@ -140,6 +140,7 @@ import {
   recommendOutboundGaps,
 } from "./campaign-spacing.js";
 import { detectStickerConsent } from "./sticker-consent.js";
+import { parseThirdPartyNotificationArgs } from "./third-party-notification.js";
 import {
   formatVerticalContactList,
   formatVerticalGroupList,
@@ -1420,6 +1421,25 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description:
               "true UNIQUEMENT si l'utilisateur a explicitement accepté stickers/emojis. Défaut false = texte seul.",
           },
+          third_party_notification_enabled: {
+            type: "boolean",
+            description:
+              "true si l'utilisateur veut notifier un tiers (livreur, etc.) à chaque conversion. Défaut false.",
+          },
+          third_party_phone: {
+            type: "string",
+            description:
+              "Numéro WhatsApp du tiers (+229…) — obligatoire si third_party_notification_enabled=true.",
+          },
+          third_party_role: {
+            type: "string",
+            description: "Rôle du tiers (ex. livreur, commercial terrain, assistant).",
+          },
+          third_party_context: {
+            type: "string",
+            description:
+              "Consignes / infos à transmettre au tiers (adresse, produit, créneau, ton…). Message généré dynamiquement par l'IA.",
+          },
           quiet_hours_start: {
             type: "number",
             description:
@@ -1585,6 +1605,19 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           stickers_enabled: {
             type: "boolean",
             description: "true seulement si l'utilisateur autorise stickers/emojis",
+          },
+          third_party_notification_enabled: {
+            type: "boolean",
+            description: "Activer/désactiver la notif WhatsApp à un tiers à la conversion",
+          },
+          third_party_phone: {
+            type: "string",
+            description: "Numéro du tiers (+229…)",
+          },
+          third_party_role: { type: "string", description: "Rôle du tiers (livreur, etc.)" },
+          third_party_context: {
+            type: "string",
+            description: "Consignes / infos à transmettre au tiers",
           },
           quiet_hours_start: { type: "number" },
           quiet_hours_end: { type: "number" },
@@ -1947,6 +1980,7 @@ function buildAutomationConfigFromArgs(
           : args.personalize_messages === true,
     // Stickers/emojis OFF par défaut — uniquement si l'utilisateur a dit oui
     stickersEnabled: args.stickers_enabled === true,
+    thirdPartyNotification: parseThirdPartyNotificationArgs(args),
     abVariants: Array.isArray(args.ab_variants)
       ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
           id: v.id || `v${i + 1}`,
@@ -4023,6 +4057,19 @@ export async function executeTool(
       }
       if (args.stickers_enabled != null) {
         merged.stickersEnabled = args.stickers_enabled === true;
+      }
+      const thirdParty = parseThirdPartyNotificationArgs(args);
+      if (thirdParty) {
+        if (!thirdParty.enabled) {
+          merged.thirdPartyNotification = { enabled: false, phone: "" };
+        } else {
+          merged.thirdPartyNotification = {
+            enabled: true,
+            phone: thirdParty.phone || merged.thirdPartyNotification?.phone || "",
+            role: thirdParty.role ?? merged.thirdPartyNotification?.role,
+            context: thirdParty.context ?? merged.thirdPartyNotification?.context,
+          };
+        }
       }
       if (args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))) {
         merged.quietHoursStart = Math.round(Number(args.quiet_hours_start));
