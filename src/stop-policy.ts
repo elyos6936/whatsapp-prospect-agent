@@ -5,6 +5,7 @@ export type StopReason =
   | "unknown_question"
   | "escalation"
   | "not_interested"
+  | "out_of_scope"
   | "skepticism"
   | "conversation_stall"
   | "off_topic";
@@ -31,6 +32,18 @@ const PRODUCT_QUESTION = /c'est quoi|qu'est.ce que|detail|composition|ingredient
 
 const OFF_TOPIC_PATTERNS =
   /\b(ecris|écris|redige|rédige|compose|genere|génère)\b[^?.!]*\b(poeme|poème|poesie|poésie|chanson|dissertation|redaction|rédaction|code|script|programme|essai|texte|paragraphe|lettre de motivation|cv)\b|\btradui(s|re|sez)\b|\btraduction\b|qui est le president|qui est le président|capitale (de|du|des)|combien font|combien fait|resou(s|dre)|résou(s|dre)|calcule[- ]?moi|raconte[- ]?(moi )?une (blague|histoire)|donne[- ]?moi (la )?recette|quelle (est l.?)?(heure|meteo|météo)|quel jour (on est|sommes)|es[- ]?tu (un|une|réel|reel|vrai|humain|robot|ia|intelligence artificielle|chatgpt|gpt|bot|machine)|t.?es (un|une) (robot|ia|bot|chatgpt|gpt)|\bchat ?gpt\b|\bgpt\b|\bllm\b|fais (mes|un) devoir|aide[- ]?moi (a|à|pour) (mes|le) devoir|resume[- ]?moi ce|résume[- ]?moi ce/i;
+
+/** Le prospect dit clairement ne pas être le bon profil (sans forcément dire « pas intéressé »). */
+const OUT_OF_SCOPE_EXPLICIT =
+  /pas (mon|notre) (domaine|metier|univers|secteur|rayon)|ca (ne )?me concerne pas|cela (ne )?me concerne pas|je (ne )?(suis|fais) pas (dans |de )?(ca|cela|ce domaine|ce metier)|hors (de )?(ma|mon) (cible|secteur)|je (ne )?suis pas (la|le|votre|ton) (cible|profil|genre)|c.?est pas (pour|mon) (moi|metier|domaine|univers)|je (ne )?fais pas (de |du )?(design|motion|contenu|crea|marketing|pub|ads|informatique|digital)/i;
+
+/** Déclaration de métier manuel / hors digital — utile si la campagne est créa / formation digitale. */
+const OUT_OF_SCOPE_TRADE_CLAIM =
+  /\bje (suis|fais|travaille comme|travaille en|bosse comme|bosse en)\b.{0,40}\b(mecanicien|plombier|electricien|macon|chauffeur|taxi|cultivateur|agriculteur|eleveur|boucher|couturier|menuisier|soudeur|carreleur|peintre en batiment|ferronnier|technicien auto|garagiste|agent de securite|vigile|aide.?soignant|infirmier|sage.?femme|militaire|gendarme|policier)\b/i;
+
+/** Campagne orientée digital / création / formation en ligne (blob config). */
+const DIGITAL_CREATIVE_CAMPAIGN =
+  /motion|design|canva|miniatur|youtube|contenu|infopreneur|formation|no.?code|n8n|make\.com|automatisation|facebook|media buying|m[eé]dia buying|ebook|e-book|cr[eé]a(tif|tion)|marketing digital|ads|publicit/i;
 
 const INTEREST_SIGNAL =
   /int[eé]ress|curieux|en savoir plus|dites-moi|comment|combien|prix|rdv|rendez-vous|appel|disponible|oui|ok|d'accord|formation|inscription|acheter|commander|lien|payer|commander/i;
@@ -67,6 +80,32 @@ function detectHostileSkepticism(text: string): boolean {
 /** Message hors-sujet / usage détourné du bot. */
 export function detectOffTopic(text: string): boolean {
   return OFF_TOPIC_PATTERNS.test(text.normalize("NFD").replace(/\p{M}/gu, ""));
+}
+
+/**
+ * Prospect clairement hors profil de la campagne (ex. « je suis mécanicien » sur une offre motion design).
+ * Distinct du refus explicite et du hors-sujet (poème / code…).
+ */
+export function detectOutOfScope(
+  text: string,
+  campaignConfig?: AutomationConfig
+): boolean {
+  const t = normalizeText(text);
+  if (!t || t.length < 4) return false;
+  if (OUT_OF_SCOPE_EXPLICIT.test(t)) return true;
+
+  const campaignBlob = normalizeText(
+    [
+      campaignConfig?.productName,
+      campaignConfig?.conversationGuide,
+      campaignConfig?.salesScript,
+      campaignConfig?.initialMessage,
+    ]
+      .filter(Boolean)
+      .join(" ")
+  );
+  if (!campaignBlob || !DIGITAL_CREATIVE_CAMPAIGN.test(campaignBlob)) return false;
+  return OUT_OF_SCOPE_TRADE_CLAIM.test(t);
 }
 
 export function detectUnknownQuestion(
@@ -170,6 +209,11 @@ export function shouldStopConversation(
     return "not_interested";
   }
 
+  // Hors profil ciblé (ex. métier incompatible) — même arrêt technique qu'un refus.
+  if (detectOutOfScope(text, campaignConfig)) {
+    return "out_of_scope";
+  }
+
   // Question ou signal d'intérêt → poursuivre (sauf hors-sujet déjà géré).
   // Uniquement si ce n'est PAS un refus (déjà traité ci-dessus).
   if (looksLikeQuestion(text) || hasInterestSignal(text)) {
@@ -216,6 +260,8 @@ export function stopReasonLabel(reason: StopReason): string {
       return "demande de contact humain";
     case "not_interested":
       return "prospect non intéressé";
+    case "out_of_scope":
+      return "prospect hors cible / hors profil";
     case "skepticism":
       return "prospect hostile / agressif";
     case "conversation_stall":
@@ -228,6 +274,7 @@ export function stopReasonLabel(reason: StopReason): string {
 export function getStopFarewellReply(reason: StopReason): string {
   switch (reason) {
     case "not_interested":
+    case "out_of_scope":
     case "skepticism":
     case "conversation_stall":
       return "Compris, je ne vous dérange plus. Bonne continuation ! 🙂";
