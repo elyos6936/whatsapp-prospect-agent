@@ -143,6 +143,9 @@ export function detectConversationStall(
  * Décide si la conversation doit être ARRÊTÉE définitivement.
  * Règle d'or : après le 1er message de campagne, on CONTINUE sauf refus clair /
  * hostilité répétée / hors-sujet évident. Le scepticisme d'identité se gère en réponse.
+ *
+ * Ordre critique : refus / désintérêt AVANT le court-circuit « intérêt / question »,
+ * sinon « je ne suis pas intéressé » matchait INTEREST_SIGNAL et ne s'arrêtait jamais.
  */
 export function shouldStopConversation(
   text: string,
@@ -150,22 +153,27 @@ export function shouldStopConversation(
   campaignConfig?: AutomationConfig,
   history?: Array<{ direction: string; body: string }>
 ): StopReason | null {
-  // Question ou signal d'intérêt → toujours poursuivre (même si wording ambigu).
-  if (looksLikeQuestion(text) || hasInterestSignal(text)) {
-    // Sauf hors-sujet flagrant (poème, code…) qui n'est pas une vraie question métier
-    if (!detectOffTopic(text)) return null;
-  }
-
   if (detectOffTopic(text)) return "off_topic";
 
   if (detectNotInterested(text)) {
     const prior = history ? countNotInterestedInbound(history) : 0;
-    // Premier refus net : on coupe. (Le message courant compte ; prior = messages passés.)
-    // Si le « refus » est soft et qu'ils ont déjà montré de l'intérêt avant, exige 2 refus.
+    // Premier refus net : on coupe.
+    // Si intérêt positif antérieur (hors messages de refus), exige 2 refus.
     const hadInterestBefore =
-      history?.some((m) => m.direction === "entrant" && hasInterestSignal(m.body)) ?? false;
+      history?.some(
+        (m) =>
+          m.direction === "entrant" &&
+          hasInterestSignal(m.body) &&
+          !detectNotInterested(m.body),
+      ) ?? false;
     if (hadInterestBefore && prior < 1) return null;
     return "not_interested";
+  }
+
+  // Question ou signal d'intérêt → poursuivre (sauf hors-sujet déjà géré).
+  // Uniquement si ce n'est PAS un refus (déjà traité ci-dessus).
+  if (looksLikeQuestion(text) || hasInterestSignal(text)) {
+    return null;
   }
 
   if (campaignConfig?.stopOnDissatisfaction !== false && detectDissatisfaction(text)) {
@@ -186,6 +194,8 @@ export function shouldStopConversation(
     }
   }
 
+  // Opt-in uniquement (défaut false à la création). Même si activé, le runtime
+  // ne coupe plus la conversation — voir notifications.ts (réponse IA / handoff).
   if (
     campaignConfig?.stopOnUnknownQuestion === true &&
     detectUnknownQuestion(text, business, campaignConfig)
@@ -230,4 +240,9 @@ export function getStopFarewellReply(reason: StopReason): string {
     case "off_topic":
       return "Je réponds uniquement au sujet de mon message initial. Bonne journée ! 🙂";
   }
+}
+
+/** Confirmation courte après détection d'objectif atteint — plus de réponses ensuite sur ce fil campagne. */
+export function getObjectiveReachedReply(): string {
+  return "Parfait, merci ! C'est noté de mon côté. Bonne continuation 🙂";
 }

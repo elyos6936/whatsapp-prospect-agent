@@ -1,13 +1,18 @@
 /**
  * Client OAuth Google (intégrations — Sheets + Contacts / People API).
+ * Deux providers distincts : comptes Google indépendants possibles.
  * Client OAuth séparé du login GIS (GOOGLE_CLIENT_ID).
  */
 
 import { config } from "../config.js";
 
+/** @deprecated legacy — migrer vers google_sheets / google_contacts */
 export const GOOGLE_PROVIDER = "google" as const;
 
-/** Scopes Sheets / Drive (connexion initiale Intégrations). */
+export const GOOGLE_SHEETS_PROVIDER = "google_sheets" as const;
+export const GOOGLE_CONTACTS_PROVIDER = "google_contacts" as const;
+
+/** Scopes Sheets / Drive. */
 export const GOOGLE_SHEETS_SCOPES = [
   "openid",
   "https://www.googleapis.com/auth/userinfo.email",
@@ -18,10 +23,17 @@ export const GOOGLE_SHEETS_SCOPES = [
 
 /**
  * People API — lecture/écriture des contacts (pas contacts.readonly).
- * Auth incrémentale : demandé seulement quand l’utilisateur active Google Contacts.
+ * + openid/email pour afficher le compte connecté.
  */
 export const GOOGLE_CONTACTS_SCOPE =
   "https://www.googleapis.com/auth/contacts" as const;
+
+export const GOOGLE_CONTACTS_SCOPES = [
+  "openid",
+  "https://www.googleapis.com/auth/userinfo.email",
+  "https://www.googleapis.com/auth/userinfo.profile",
+  GOOGLE_CONTACTS_SCOPE,
+] as const;
 
 /** Tous les scopes intégrations (doc / référence). */
 export const GOOGLE_SCOPES = [
@@ -82,21 +94,48 @@ export function hasGoogleContactsScope(scopes: string | null | undefined): boole
     .some((s) => s === GOOGLE_CONTACTS_SCOPE || s === "https://www.googleapis.com/auth/contacts");
 }
 
-function scopesForPurpose(
-  purpose: GoogleOAuthPurpose,
-  alreadyConnected: boolean,
-): string {
-  if (purpose === "contacts") {
-    // Incrémental : seulement Contacts si Google déjà lié (Sheets conservés via include_granted_scopes).
-    if (alreadyConnected) return GOOGLE_CONTACTS_SCOPE;
-    return mergeScopeStrings(GOOGLE_SHEETS_SCOPES.join(" "), GOOGLE_CONTACTS_SCOPE);
-  }
-  return GOOGLE_SHEETS_SCOPES.join(" ");
+/** True si au moins un scope Sheets/Drive est présent. */
+export function hasGoogleSheetsScope(scopes: string | null | undefined): boolean {
+  if (!scopes) return false;
+  const set = new Set(scopes.split(/\s+/).filter(Boolean));
+  return (
+    set.has("https://www.googleapis.com/auth/spreadsheets") ||
+    set.has("https://www.googleapis.com/auth/drive.file")
+  );
+}
+
+/** Ne conserve que les scopes Sheets (retire Contacts). */
+export function sheetsScopesOnly(scopes: string | null | undefined): string {
+  const contacts = new Set([
+    GOOGLE_CONTACTS_SCOPE,
+    "https://www.googleapis.com/auth/contacts",
+    "https://www.googleapis.com/auth/contacts.readonly",
+  ]);
+  const kept = (scopes ?? "")
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s && !contacts.has(s));
+  const merged = mergeScopeStrings(kept.join(" "), GOOGLE_SHEETS_SCOPES.join(" "));
+  return merged || GOOGLE_SHEETS_SCOPES.join(" ");
+}
+
+/** Ne conserve que les scopes Contacts (+ identité). */
+export function contactsScopesOnly(scopes: string | null | undefined): string {
+  const base = new Set<string>(GOOGLE_CONTACTS_SCOPES);
+  const kept = (scopes ?? "")
+    .split(/\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s && (base.has(s) || s === GOOGLE_CONTACTS_SCOPE));
+  return mergeScopeStrings(kept.join(" "), GOOGLE_CONTACTS_SCOPES.join(" "));
+}
+
+export function providerForGooglePurpose(purpose: GoogleOAuthPurpose): string {
+  return purpose === "contacts" ? GOOGLE_CONTACTS_PROVIDER : GOOGLE_SHEETS_PROVIDER;
 }
 
 export function buildGoogleAuthorizeUrl(
   state: string,
-  options?: { purpose?: GoogleOAuthPurpose; alreadyConnected?: boolean },
+  options?: { purpose?: GoogleOAuthPurpose },
 ): string {
   if (!isGoogleIntegrationsConfigured()) {
     throw new GoogleAuthError(
@@ -105,7 +144,10 @@ export function buildGoogleAuthorizeUrl(
     );
   }
   const purpose = options?.purpose ?? "sheets";
-  const scope = scopesForPurpose(purpose, Boolean(options?.alreadyConnected));
+  const scope =
+    purpose === "contacts"
+      ? GOOGLE_CONTACTS_SCOPES.join(" ")
+      : GOOGLE_SHEETS_SCOPES.join(" ");
   const params = new URLSearchParams({
     client_id: config.googleIntegrationsClientId,
     redirect_uri: googleRedirectUri(),
@@ -113,8 +155,8 @@ export function buildGoogleAuthorizeUrl(
     scope,
     state,
     access_type: "offline",
-    prompt: "consent",
-    include_granted_scopes: "true",
+    // Contacts : choisir explicitement un compte (≠ Sheets). Sheets : consent refresh.
+    prompt: purpose === "contacts" ? "select_account consent" : "consent",
   });
   return `${AUTHORIZE_URL}?${params.toString()}`;
 }

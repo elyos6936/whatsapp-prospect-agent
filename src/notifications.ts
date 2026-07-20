@@ -15,8 +15,7 @@ import {
   saveWhatsAppMessage,
   whatsAppMessageExists,
   isAutoReplyEnabled,
-  isContactBlocked,
-  blockContact,
+  getBlockedContactIds,
   touchIncomingContact,
   findMatchingKeywordAutomations,
   listActiveAutomations,
@@ -34,11 +33,10 @@ import {
   hasOutboundReplyAfter,
   setContactWhatsappLid,
   saveAgentMessageForAutomation,
-  setContactAutoReply,
   saveContact,
   incrementAutoStopped,
   incrementMessagesHandled,
-  cancelSequencesForContact,
+  stopAutomationTargetForContact,
 } from "./db.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
 import { scoreIncomingMessage, detectConversionIntent, recordAutomationConversion } from "./lead-scoring.js";
@@ -61,7 +59,7 @@ import {
 } from "./whatsapp-reply.js";
 import { enqueueAutoReply } from "./auto-reply-queue.js";
 import { ANTI_BAN, clampPresenceMs } from "./anti-ban.js";
-import { shouldStopConversation, stopReasonLabel, getStopFarewellReply } from "./stop-policy.js";
+import { shouldStopConversation, stopReasonLabel, getStopFarewellReply, getObjectiveReachedReply } from "./stop-policy.js";
 import type { Automation } from "./db.js";
 
 function extractEvolutionInboundText(message: unknown): string | null {
@@ -801,8 +799,10 @@ async function runAutoReply(
     console.log(`📩 ${senderName} (pas de réponse — auto globale OFF): ${text.slice(0, 40)}`);
     return;
   }
-  if (await isContactBlocked(userId, chatId)) {
-    console.log(`📩 ${senderName} (pas de réponse — STOP): ${text.slice(0, 40)}`);
+  // Liste réglages « blocked_contacts » uniquement — pas contacts.status (stop = cible campagne).
+  const blockedIds = await getBlockedContactIds(userId);
+  if (blockedIds.some((id) => chatIdsMatch(id, chatId))) {
+    console.log(`📩 ${senderName} (pas de réponse — blocked_contacts): ${text.slice(0, 40)}`);
     return;
   }
 
@@ -824,15 +824,20 @@ async function runAutoReply(
 
     if (isStopRequest(text)) {
       reply = getStopConfirmationReply();
-      await blockContact(userId, chatId);
       if (activeCampaign) {
-        const target = await findMatchingAutomationTarget(userId, activeCampaign.id, chatId);
-        if (target) {
-          await updateAutomationTarget(userId, activeCampaign.id, target.target_id, {
-            status: "stopped",
-          });
-        }
-        await cancelSequencesForContact(userId, chatId);
+        await stopAutomationTargetForContact(
+          userId,
+          activeCampaign.id,
+          chatId,
+          "STOP demandé"
+        );
+        await incrementAutoStopped(userId, activeCampaign.id);
+        await saveAgentMessageForAutomation(
+          userId,
+          activeCampaign.id,
+          "assistant",
+          `🛑 STOP demandé par ${senderName} (${chatIdToDisplay(chatId)}) — campagne « ${activeCampaign.name} ». Relances de cette campagne annulées.`
+        );
       }
     } else if (text.startsWith("[") && text.includes("reçu")) {
       // Média non interprétable (transcription/vision indisponible ou sticker/vidéo).
@@ -859,37 +864,26 @@ async function runAutoReply(
         history
       );
 
-      if (stopReason && activeCampaign) {
-        reply = getStopFarewellReply(stopReason);
-        // Blocage permanent seulement sur refus / hostilité / STOP — pas sur escalade humaine
-        const hardStop =
-          stopReason === "not_interested" ||
-          stopReason === "dissatisfaction" ||
-          stopReason === "skepticism" ||
-          stopReason === "conversation_stall" ||
-          stopReason === "off_topic";
-        if (hardStop) {
-          await blockContact(userId, chatId);
-          await setContactAutoReply(userId, chatId, false);
-        } else {
-          await setContactAutoReply(userId, chatId, false);
-        }
-        const target = await findMatchingAutomationTarget(userId, activeCampaign.id, chatId);
-        if (target) {
-          await updateAutomationTarget(userId, activeCampaign.id, target.target_id, {
-            status: "stopped",
-            notes: stopReasonLabel(stopReason),
-          });
-        }
-        await cancelSequencesForContact(userId, chatId);
+      // unknown_question : ne coupe jamais — l'IA répond (ou reconnaît ne pas savoir).
+      const actionableStop =
+        stopReason && stopReason !== "unknown_question" ? stopReason : null;
+
+      if (actionableStop && activeCampaign) {
+        reply = getStopFarewellReply(actionableStop);
+        await stopAutomationTargetForContact(
+          userId,
+          activeCampaign.id,
+          chatId,
+          stopReasonLabel(actionableStop)
+        );
         await incrementAutoStopped(userId, activeCampaign.id);
         await saveAgentMessageForAutomation(
           userId,
           activeCampaign.id,
           "assistant",
-          `⚠️ Prospection arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(stopReason)}. Campagne « ${activeCampaign.name} ». Relances annulées.`
+          `⚠️ Prospection arrêtée avec ${senderName} (${chatIdToDisplay(chatId)}) — ${stopReasonLabel(actionableStop)}. Campagne « ${activeCampaign.name} ». Relances annulées.`
         );
-        console.log(`🛑 Prospection arrêtée — ${stopReasonLabel(stopReason)} (${senderName})`);
+        console.log(`🛑 Prospection arrêtée — ${stopReasonLabel(actionableStop)} (${senderName})`);
 
         const sent = await sendWhatsAppMessage(userId, chatId, reply, {
           enableAutoReply: false,
@@ -920,22 +914,41 @@ async function runAutoReply(
       if (activeCampaign && detectConversionIntent(text)) {
         try {
           await recordAutomationConversion(userId, activeCampaign.id);
-          const target = await findMatchingAutomationTarget(userId, activeCampaign.id, chatId);
-          if (target && target.status !== "stopped") {
-            await updateAutomationTarget(userId, activeCampaign.id, target.target_id, {
-              status: "interested",
-              notes: "Conversion / intention d'achat détectée",
-            });
-          }
+          await stopAutomationTargetForContact(
+            userId,
+            activeCampaign.id,
+            chatId,
+            "objectif atteint"
+          );
           await saveAgentMessageForAutomation(
             userId,
             activeCampaign.id,
             "assistant",
-            `🎉 Conversion détectée avec ${senderName} (${chatIdToDisplay(chatId)}) — campagne « ${activeCampaign.name} ».`
+            `🎉 Objectif atteint avec ${senderName} (${chatIdToDisplay(chatId)}) — campagne « ${activeCampaign.name} ». Fil clôturé.`
           );
         } catch (err) {
           console.error("Erreur conversion:", err);
         }
+
+        reply = getObjectiveReachedReply();
+        try {
+          const typingMs = clampPresenceMs(
+            ANTI_BAN.presenceMinMs +
+              Math.floor(Math.random() * (ANTI_BAN.presenceMaxMs - ANTI_BAN.presenceMinMs + 1))
+          );
+          await sendWhatsAppPresence(userId, chatId, "composing", typingMs);
+        } catch {
+          /* best effort */
+        }
+        const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+          enableAutoReply: false,
+          countsTowardQuota: false,
+          outboundProfile: "auto_reply",
+          automationId: activeCampaign.id,
+        });
+        await incrementMessagesHandled(userId, activeCampaign.id);
+        console.log(`✅ Objectif atteint (confirmation) → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+        return;
       }
 
       const automationContext = await buildAutomationContext(userId, text, chatId, activeCampaign);

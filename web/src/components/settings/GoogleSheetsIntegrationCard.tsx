@@ -40,7 +40,7 @@ export function GoogleSheetsIntegrationCard({ flash }: Props) {
     try {
       const data = await fetchIntegrations();
       setServerReady(data.googleConfigured);
-      const g = data.integrations.find((i) => i.provider === 'google') ?? null;
+      const g = data.integrations.find((i) => i.provider === 'google_sheets') ?? null;
       setStatus(g);
       return g;
     } catch (err) {
@@ -99,7 +99,7 @@ export function GoogleSheetsIntegrationCard({ flash }: Props) {
   const handleDisconnect = async () => {
     if (
       !confirm(
-        'Déconnecter Google ? Les Sheets liés seront retirés de Klanvio (les fichiers restent dans ton Drive).',
+        'Déconnecter Google Sheets ? Les Sheets liés seront retirés de Klanvio (les fichiers restent dans ton Drive). Google Contacts n’est pas affecté.',
       )
     ) {
       return;
@@ -110,14 +110,14 @@ export function GoogleSheetsIntegrationCard({ flash }: Props) {
       await disconnectGoogle();
       setSheets([]);
       setStatus({
-        provider: 'google',
+        provider: 'google_sheets',
         connected: false,
         email: null,
         accountId: null,
         connectedAt: null,
         scopes: null,
       });
-      setFb({ type: 'ok', text: 'Google déconnecté.' });
+      setFb({ type: 'ok', text: 'Google Sheets déconnecté.' });
     } catch (err) {
       setFb({
         type: 'err',

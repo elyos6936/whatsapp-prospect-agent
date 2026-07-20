@@ -135,7 +135,18 @@ export async function findOngoingClosingConversation(
   if (!active.length) return null;
 
   const contact = await getContact(userId, chatId);
-  if (!contact || contact.auto_reply !== 1 || contact.status === "stop") return null;
+  if (!contact || contact.auto_reply !== 1) return null;
+
+  const campaignId =
+    contact.conversation_campaign_id != null
+      ? Number(contact.conversation_campaign_id)
+      : NaN;
+  if (Number.isFinite(campaignId)) {
+    const stopped = await findMatchingAutomationTarget(userId, campaignId, chatId, [
+      "stopped",
+    ]);
+    if (stopped) return null;
+  }
 
   const history = await getContactChatHistory(
     userId,

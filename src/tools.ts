@@ -116,13 +116,13 @@ import {
 } from "./automation-plan.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 import {
-  GOOGLE_REAUTH_MESSAGE,
+  GOOGLE_SHEETS_REAUTH_MESSAGE,
   TYPEFORM_REAUTH_MESSAGE,
-  getValidGoogleAccessToken,
+  getValidGoogleSheetsToken,
   getValidTypeformAccessToken,
 } from "./integrations/access.js";
 import {
-  GOOGLE_PROVIDER,
+  GOOGLE_SHEETS_PROVIDER,
   GoogleAuthError,
   fetchSpreadsheetValues,
 } from "./integrations/google.js";
@@ -1937,7 +1937,8 @@ function buildAutomationConfigFromArgs(
       ? (String(args.closing_goal) as AutomationConfig["closingGoal"])
       : undefined,
     stopOnDissatisfaction: args.stop_on_dissatisfaction !== false,
-    stopOnUnknownQuestion: args.stop_on_unknown_question !== false,
+    // Défaut OFF : une question sans info en config (prix…) ne doit pas couper un prospect engagé.
+    stopOnUnknownQuestion: args.stop_on_unknown_question === true,
     personalizeMessages:
       args.personalize_messages === false
         ? false
@@ -3568,12 +3569,12 @@ export async function executeTool(
     }
 
     case "list_connected_sheets": {
-      const googleRow = await getUserIntegration(userId, GOOGLE_PROVIDER);
+      const googleRow = await getUserIntegration(userId, GOOGLE_SHEETS_PROVIDER);
       if (!googleRow) {
         return JSON.stringify({
           connected: false,
           sheets: [],
-          error: "Google non connecté. Invite l'utilisateur à Réglages → Intégrations → Connecter Google Sheets.",
+          error: "Google Sheets non connecté. Invite l'utilisateur à Réglages → Intégrations → Connecter Google Sheets.",
           code: "google_reauth_required",
         });
       }
@@ -3614,7 +3615,7 @@ export async function executeTool(
           ? Number(args.max_rows)
           : 50;
       try {
-        const accessToken = await getValidGoogleAccessToken(userId);
+        const accessToken = await getValidGoogleSheetsToken(userId);
         const data = await fetchSpreadsheetValues(accessToken, spreadsheetId, range, maxRows);
         return JSON.stringify({
           spreadsheetId,
@@ -3631,7 +3632,7 @@ export async function executeTool(
       } catch (err) {
         if (err instanceof GoogleAuthError && err.code === "revoked") {
           return JSON.stringify({
-            error: GOOGLE_REAUTH_MESSAGE,
+            error: GOOGLE_SHEETS_REAUTH_MESSAGE,
             code: "google_reauth_required",
           });
         }

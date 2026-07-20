@@ -280,15 +280,15 @@ export function SettingsPage() {
                 l’agent viendront dans une prochaine étape.
               </p>
               <div className="flex flex-col gap-3">
+                <GoogleContactsIntegrationCard
+                  flash={
+                    googleFlash && /contacts/i.test(googleFlash.text) ? googleFlash : null
+                  }
+                />
                 <TypeformIntegrationCard flash={typeformFlash} />
                 <GoogleSheetsIntegrationCard
                   flash={
                     googleFlash && !/contacts/i.test(googleFlash.text) ? googleFlash : null
-                  }
-                />
-                <GoogleContactsIntegrationCard
-                  flash={
-                    googleFlash && /contacts/i.test(googleFlash.text) ? googleFlash : null
                   }
                 />
               </div>

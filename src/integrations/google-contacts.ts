@@ -1,13 +1,14 @@
 /**
  * Google Contacts via People API — création avant envoi campagne.
- * No-op silencieux si scope absent ; jamais bloquant pour enqueueSend.
+ * No-op silencieux si provider google_contacts absent / sans scope ;
+ * jamais bloquant pour enqueueSend.
  */
 
 import { sql } from "../pg.js";
 import { getUserIntegration } from "../integrations-db.js";
-import { getValidGoogleAccessToken } from "./access.js";
+import { getValidGoogleContactsToken } from "./access.js";
 import {
-  GOOGLE_PROVIDER,
+  GOOGLE_CONTACTS_PROVIDER,
   GoogleAuthError,
   hasGoogleContactsScope,
   searchGoogleContactByPhone,
@@ -58,6 +59,15 @@ async function markEnsured(
   `;
 }
 
+/** Vide le cache d'idempotence Contacts (après déconnexion / changement de compte). */
+export async function clearGoogleContactsEnsuredCache(userId: number): Promise<void> {
+  await ensureSchema();
+  await sql`
+    DELETE FROM google_contacts_ensured
+    WHERE user_id = ${userId}
+  `;
+}
+
 /**
  * Avant enqueueSend : si Google Contacts (People) est connecté, crée la fiche
  * pour ce numéro s'il n'existe pas encore. Ne throw jamais vers l'appelant métier.
@@ -72,10 +82,10 @@ export async function ensureGoogleContactBeforeSend(
 
     if (await wasEnsured(userId, phoneKey)) return;
 
-    const row = await getUserIntegration(userId, GOOGLE_PROVIDER);
+    const row = await getUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
     if (!row || !hasGoogleContactsScope(row.scopes)) return;
 
-    const accessToken = await getValidGoogleAccessToken(userId);
+    const accessToken = await getValidGoogleContactsToken(userId);
     const e164 = toE164Display(phoneKey);
     const displayName =
       (input.name && String(input.name).trim()) || e164;

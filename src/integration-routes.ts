@@ -19,25 +19,32 @@ import {
   upsertUserIntegration,
 } from "./integrations-db.js";
 import {
-  GOOGLE_REAUTH_MESSAGE,
+  GOOGLE_SHEETS_REAUTH_MESSAGE,
   TYPEFORM_REAUTH_MESSAGE,
-  getValidGoogleAccessToken,
+  getValidGoogleSheetsToken,
   getValidTypeformAccessToken,
 } from "./integrations/access.js";
 import {
+  GOOGLE_CONTACTS_PROVIDER,
+  GOOGLE_CONTACTS_SCOPES,
   GOOGLE_PROVIDER,
   GOOGLE_SHEETS_MAX_PER_USER,
+  GOOGLE_SHEETS_PROVIDER,
   GOOGLE_SHEETS_SCOPES,
   GoogleAuthError,
   buildGoogleAuthorizeUrl,
+  contactsScopesOnly,
   exchangeGoogleCode,
   fetchGoogleUserInfo,
   googleRedirectUri,
   hasGoogleContactsScope,
   isGoogleIntegrationsConfigured,
   mergeScopeStrings,
+  providerForGooglePurpose,
+  sheetsScopesOnly,
   type GoogleOAuthPurpose,
 } from "./integrations/google.js";
+import { clearGoogleContactsEnsuredCache } from "./integrations/google-contacts.js";
 import { markGoogleContactsPromptDone } from "./users.js";
 import {
   TYPEFORM_PROVIDER,
@@ -53,7 +60,9 @@ import {
 import { rawQueryParam } from "./oauth-query.js";
 import { isTokensEncryptionConfigured } from "./secret-crypto.js";
 
-export { getValidGoogleAccessToken, getValidTypeformAccessToken } from "./integrations/access.js";
+export { getValidGoogleSheetsToken, getValidGoogleContactsToken, getValidTypeformAccessToken } from "./integrations/access.js";
+/** @deprecated alias Sheets */
+export { getValidGoogleAccessToken } from "./integrations/access.js";
 
 function appSettingsRedirect(query: Record<string, string>): string {
   const url = new URL("/app", config.appUrl);
@@ -68,12 +77,14 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
   app.get("/api/integrations", async (request) => {
     const userId = requireUserId(request);
     const integrations = await listIntegrationStatuses(userId);
-    const google = integrations.find((i) => i.provider === "google");
+    const contacts = integrations.find((i) => i.provider === "google_contacts");
     return {
       integrations,
       typeformConfigured: isTypeformConfigured() && isTokensEncryptionConfigured(),
       googleConfigured: isGoogleIntegrationsConfigured() && isTokensEncryptionConfigured(),
-      googleContactsGranted: hasGoogleContactsScope(google?.scopes),
+      googleContactsGranted: Boolean(
+        contacts?.connected && hasGoogleContactsScope(contacts.scopes),
+      ),
     };
   });
 
@@ -191,7 +202,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     }
   });
 
-  // ── Google (Sheets + Contacts / People) ───────────────────────────────────
+  // ── Google Sheets + Google Contacts (providers séparés) ───────────────────
 
   app.get<{
     Querystring: { for?: string };
@@ -211,11 +222,10 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
     const forRaw = String(request.query.for ?? "sheets").toLowerCase();
     const purpose: GoogleOAuthPurpose = forRaw === "contacts" ? "contacts" : "sheets";
-    const existing = await getUserIntegration(userId, GOOGLE_PROVIDER);
-    const alreadyConnected = Boolean(existing);
+    const provider = providerForGooglePurpose(purpose);
 
-    const state = await createOauthPendingState(userId, GOOGLE_PROVIDER, purpose);
-    const url = buildGoogleAuthorizeUrl(state, { purpose, alreadyConnected });
+    const state = await createOauthPendingState(userId, provider, purpose);
+    const url = buildGoogleAuthorizeUrl(state, { purpose });
     return { url, redirectUri: googleRedirectUri(), purpose };
   });
 
@@ -238,7 +248,12 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       );
     }
 
-    const pending = await consumeOauthPendingState(state.trim(), GOOGLE_PROVIDER);
+    const stateTrim = state.trim();
+    // Pending peut être sheets, contacts, ou legacy `google` (OAuth en cours pendant deploy).
+    const pending =
+      (await consumeOauthPendingState(stateTrim, GOOGLE_SHEETS_PROVIDER)) ??
+      (await consumeOauthPendingState(stateTrim, GOOGLE_CONTACTS_PROVIDER)) ??
+      (await consumeOauthPendingState(stateTrim, GOOGLE_PROVIDER));
     if (!pending) {
       return reply.redirect(
         appSettingsRedirect({
@@ -248,6 +263,9 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       );
     }
     const userId = pending.userId;
+    const purpose: GoogleOAuthPurpose =
+      pending.purpose === "contacts" ? "contacts" : "sheets";
+    const provider = providerForGooglePurpose(purpose);
 
     try {
       if (!isTokensEncryptionConfigured()) {
@@ -257,10 +275,8 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
 
       if (!tokens.refresh_token) {
         console.warn(
-          `[google-oauth] user=${userId} access_token reçu SANS refresh_token. ` +
-            "Google ne renvoie le refresh qu’au premier consentement (prompt=consent). " +
-            "L’user doit révoquer l’accès Klanvio sur https://myaccount.google.com/permissions " +
-            "puis reconnecter Google dans Réglages → Intégrations.",
+          `[google-oauth] user=${userId} provider=${provider} access_token SANS refresh_token. ` +
+            "Révoquer l’accès Klanvio sur myaccount.google.com/permissions puis reconnecter.",
         );
       }
 
@@ -274,8 +290,18 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         /* profil best-effort */
       }
 
-      const existing = await getUserIntegration(userId, GOOGLE_PROVIDER);
-      const hadRefresh = Boolean(existing?.refresh_token_enc);
+      const existing = await getUserIntegration(userId, provider);
+      // Changement de compte Contacts : supprimer l'ancien grant pour forcer un refresh neuf.
+      if (
+        purpose === "contacts" &&
+        existing?.provider_account_id &&
+        accountId &&
+        existing.provider_account_id !== accountId
+      ) {
+        await deleteUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
+      }
+      const existingAfter = await getUserIntegration(userId, provider);
+      const hadRefresh = Boolean(existingAfter?.refresh_token_enc);
 
       if (!tokens.refresh_token && !hadRefresh) {
         return reply.redirect(
@@ -287,35 +313,36 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         );
       }
 
-      const mergedScopes = mergeScopeStrings(
-        tokens.scope,
-        existing?.scopes,
-        pending.purpose === "contacts" ? undefined : GOOGLE_SHEETS_SCOPES.join(" "),
-      );
+      const scopes =
+        purpose === "contacts"
+          ? contactsScopesOnly(mergeScopeStrings(tokens.scope, GOOGLE_CONTACTS_SCOPES.join(" ")))
+          : sheetsScopesOnly(mergeScopeStrings(tokens.scope, GOOGLE_SHEETS_SCOPES.join(" ")));
 
       await upsertUserIntegration({
         userId,
-        provider: GOOGLE_PROVIDER,
+        provider,
         accessToken: tokens.access_token,
         refreshToken: tokens.refresh_token ?? null,
         expiresInSeconds: tokens.expires_in ?? null,
-        scopes: mergedScopes || GOOGLE_SHEETS_SCOPES.join(" "),
+        scopes,
         providerAccountId: accountId,
         providerEmail: email,
       });
 
-      if (hasGoogleContactsScope(mergedScopes) || pending.purpose === "contacts") {
+      if (purpose === "contacts") {
         try {
           await markGoogleContactsPromptDone(userId);
         } catch {
           /* colonne absente tant que migration non appliquée */
         }
+        try {
+          await clearGoogleContactsEnsuredCache(userId);
+        } catch {
+          /* best effort */
+        }
       }
 
-      const flashKey =
-        pending.purpose === "contacts" || hasGoogleContactsScope(tokens.scope)
-          ? "contacts_connected"
-          : "connected";
+      const flashKey = purpose === "contacts" ? "contacts_connected" : "connected";
       return reply.redirect(appSettingsRedirect({ google: flashKey }));
     } catch (err) {
       const msg =
@@ -324,18 +351,32 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     }
   });
 
+  /** Déconnexion Google Sheets uniquement — ne touche pas Contacts. */
   app.delete("/api/integrations/google", async (request) => {
     const userId = requireUserId(request);
-    await deleteUserIntegration(userId, GOOGLE_PROVIDER);
+    await deleteUserIntegration(userId, GOOGLE_SHEETS_PROVIDER);
+    await deleteUserIntegration(userId, GOOGLE_PROVIDER); // legacy
     await deleteAllConnectedSheets(userId);
+    return { ok: true };
+  });
+
+  /** Déconnexion Google Contacts uniquement — ne touche jamais Sheets. */
+  app.delete("/api/integrations/google/contacts", async (request) => {
+    const userId = requireUserId(request);
+    await deleteUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
+    try {
+      await clearGoogleContactsEnsuredCache(userId);
+    } catch {
+      /* best effort */
+    }
     return { ok: true };
   });
 
   app.get("/api/integrations/google/picker-token", async (request, reply) => {
     const userId = requireUserId(request);
     try {
-      const accessToken = await getValidGoogleAccessToken(userId);
-      const row = await getUserIntegration(userId, GOOGLE_PROVIDER);
+      const accessToken = await getValidGoogleSheetsToken(userId);
+      const row = await getUserIntegration(userId, GOOGLE_SHEETS_PROVIDER);
       const expiresAt = row?.token_expires_at?.getTime() ?? Date.now() + 3_000_000;
       return {
         accessToken,
@@ -344,7 +385,7 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     } catch (err) {
       if (err instanceof GoogleAuthError && err.code === "revoked") {
         return reply.status(409).send({
-          error: GOOGLE_REAUTH_MESSAGE,
+          error: GOOGLE_SHEETS_REAUTH_MESSAGE,
           code: "google_reauth_required",
         });
       }
@@ -365,10 +406,10 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     Body: { sheets?: Array<{ id?: string; title?: string }> };
   }>("/api/integrations/google/sheets", async (request, reply) => {
     const userId = requireUserId(request);
-    const row = await getUserIntegration(userId, GOOGLE_PROVIDER);
+    const row = await getUserIntegration(userId, GOOGLE_SHEETS_PROVIDER);
     if (!row) {
       return reply.status(409).send({
-        error: "Google non connecté.",
+        error: "Google Sheets non connecté.",
         code: "google_reauth_required",
       });
     }

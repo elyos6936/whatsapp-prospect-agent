@@ -3,15 +3,17 @@ import {
   cancelSequencesForContact,
   createContactSequence,
   enqueueSend,
+  findMatchingAutomationTarget,
   getAutomation,
+  getBlockedContactIds,
   getContactChatHistory,
-  isContactBlocked,
   listDueSequences,
   postponeSequence,
   repairStuckSequences,
   type ContactSequence,
   type SequenceStep,
 } from "./db.js";
+import { chatIdsMatch } from "./evolutionapi.js";
 import { isAwaitingProspectReply } from "./outbound-safety.js";
 import { listActiveUserIds } from "./users.js";
 
@@ -69,7 +71,21 @@ async function processDueSequencesForUser(userId: number): Promise<number> {
       continue;
     }
 
-    if (await isContactBlocked(userId, seq.contact_phone)) {
+    if (seq.automation_id) {
+      const stoppedTarget = await findMatchingAutomationTarget(
+        userId,
+        seq.automation_id,
+        seq.contact_phone,
+        ["stopped"]
+      );
+      if (stoppedTarget) {
+        await cancelSequencesForContact(userId, seq.contact_phone, seq.automation_id);
+        continue;
+      }
+    }
+
+    const blockedIds = await getBlockedContactIds(userId);
+    if (blockedIds.some((id) => chatIdsMatch(id, seq.contact_phone))) {
       await cancelSequencesForContact(userId, seq.contact_phone);
       continue;
     }
@@ -89,7 +105,7 @@ async function processDueSequencesForUser(userId: number): Promise<number> {
       );
       const hasReply = history.some((m) => m.direction === "entrant");
       if (hasReply) {
-        await cancelSequencesForContact(userId, seq.contact_phone);
+        await cancelSequencesForContact(userId, seq.contact_phone, seq.automation_id);
         try {
           await startNurtureAfterReply(userId, seq);
         } catch (err) {
@@ -119,7 +135,7 @@ async function processDueSequencesForUser(userId: number): Promise<number> {
       if (seq.automation_id) {
         const auto = await getAutomation(userId, seq.automation_id);
         if (!auto || auto.status !== "active") {
-          await cancelSequencesForContact(userId, seq.contact_phone);
+          await cancelSequencesForContact(userId, seq.contact_phone, seq.automation_id);
           continue;
         }
       }

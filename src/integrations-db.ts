@@ -46,6 +46,8 @@ function mapRow(row: Record<string, unknown>): UserIntegrationRow {
 }
 
 export async function listIntegrationStatuses(userId: number): Promise<IntegrationPublicStatus[]> {
+  await migrateLegacyGoogleIntegrations(userId);
+
   const rows = await sql`
     SELECT provider, provider_email, provider_account_id, connected_at, scopes
     FROM user_integrations
@@ -55,8 +57,7 @@ export async function listIntegrationStatuses(userId: number): Promise<Integrati
     rows.map((r) => [String(r.provider), r] as const),
   );
 
-  // Providers connus — Typeform + Google (Sheets / futur Forms, Calendar).
-  const providers = ["typeform", "google"];
+  const providers = ["typeform", "google_sheets", "google_contacts"];
   return providers.map((provider) => {
     const row = byProvider.get(provider);
     if (!row) {
@@ -84,6 +85,9 @@ export async function getUserIntegration(
   userId: number,
   provider: string,
 ): Promise<UserIntegrationRow | null> {
+  if (provider === "google_sheets" || provider === "google_contacts" || provider === "google") {
+    await migrateLegacyGoogleIntegrations(userId);
+  }
   const rows = await sql`
     SELECT *
     FROM user_integrations
@@ -92,6 +96,106 @@ export async function getUserIntegration(
   `;
   if (!rows[0]) return null;
   return mapRow(rows[0] as Record<string, unknown>);
+}
+
+/**
+ * Découpe l'ancien provider unique `google` en google_sheets / google_contacts
+ * sans invalider les tokens (continuité Sheets + Contacts).
+ */
+export async function migrateLegacyGoogleIntegrations(userId?: number): Promise<void> {
+  const {
+    GOOGLE_PROVIDER,
+    GOOGLE_SHEETS_PROVIDER,
+    GOOGLE_CONTACTS_PROVIDER,
+    hasGoogleContactsScope,
+    hasGoogleSheetsScope,
+    sheetsScopesOnly,
+    contactsScopesOnly,
+  } = await import("./integrations/google.js");
+
+  const legacyRows = userId
+    ? await sql`
+        SELECT *
+        FROM user_integrations
+        WHERE user_id = ${userId} AND provider = ${GOOGLE_PROVIDER}
+      `
+    : await sql`
+        SELECT *
+        FROM user_integrations
+        WHERE provider = ${GOOGLE_PROVIDER}
+      `;
+
+  for (const raw of legacyRows) {
+    const row = mapRow(raw as Record<string, unknown>);
+    const scopes = row.scopes;
+    const wantSheets = hasGoogleSheetsScope(scopes) || !hasGoogleContactsScope(scopes);
+    const wantContacts = hasGoogleContactsScope(scopes);
+
+    // Si scopes ambigus / vides : préserver au moins Sheets (cas le plus fréquent).
+    const createSheets = wantSheets || (!wantSheets && !wantContacts);
+    const createContacts = wantContacts;
+
+    if (createSheets) {
+      const existingSheets = await sql`
+        SELECT id FROM user_integrations
+        WHERE user_id = ${row.user_id} AND provider = ${GOOGLE_SHEETS_PROVIDER}
+        LIMIT 1
+      `;
+      if (!existingSheets[0]) {
+        await sql`
+          INSERT INTO user_integrations (
+            user_id, provider, access_token_enc, refresh_token_enc, token_expires_at,
+            scopes, provider_account_id, provider_email, connected_at, updated_at
+          ) VALUES (
+            ${row.user_id},
+            ${GOOGLE_SHEETS_PROVIDER},
+            ${row.access_token_enc},
+            ${row.refresh_token_enc},
+            ${row.token_expires_at},
+            ${sheetsScopesOnly(scopes)},
+            ${row.provider_account_id},
+            ${row.provider_email},
+            ${row.connected_at},
+            NOW()
+          )
+          ON CONFLICT (user_id, provider) DO NOTHING
+        `;
+      }
+    }
+
+    if (createContacts) {
+      const existingContacts = await sql`
+        SELECT id FROM user_integrations
+        WHERE user_id = ${row.user_id} AND provider = ${GOOGLE_CONTACTS_PROVIDER}
+        LIMIT 1
+      `;
+      if (!existingContacts[0]) {
+        await sql`
+          INSERT INTO user_integrations (
+            user_id, provider, access_token_enc, refresh_token_enc, token_expires_at,
+            scopes, provider_account_id, provider_email, connected_at, updated_at
+          ) VALUES (
+            ${row.user_id},
+            ${GOOGLE_CONTACTS_PROVIDER},
+            ${row.access_token_enc},
+            ${row.refresh_token_enc},
+            ${row.token_expires_at},
+            ${contactsScopesOnly(scopes)},
+            ${row.provider_account_id},
+            ${row.provider_email},
+            ${row.connected_at},
+            NOW()
+          )
+          ON CONFLICT (user_id, provider) DO NOTHING
+        `;
+      }
+    }
+
+    await sql`
+      DELETE FROM user_integrations
+      WHERE user_id = ${row.user_id} AND provider = ${GOOGLE_PROVIDER}
+    `;
+  }
 }
 
 export async function upsertUserIntegration(input: {

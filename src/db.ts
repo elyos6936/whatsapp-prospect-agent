@@ -1099,7 +1099,8 @@ export async function beginFreshCampaignConversation(
           conversation_epoch_at = ${toTsParam(existing.conversation_epoch_at)},
           memory_summary = ${existing.memory_summary},
           lead_score = ${existing.lead_score},
-          status = CASE WHEN status = 'stop' THEN status ELSE 'en_conversation' END,
+          status = 'en_conversation',
+          auto_reply = 1,
           updated_at = NOW()
       WHERE user_id = ${userId} AND phone = ${chatId}
     `;
@@ -1132,7 +1133,8 @@ export async function beginFreshCampaignConversation(
         handoff_status = NULL,
         conversation_epoch_at = NOW() - INTERVAL '5 minutes',
         conversation_campaign_id = ${automationId},
-        status = CASE WHEN status = 'stop' THEN status ELSE 'en_conversation' END,
+        status = 'en_conversation',
+        auto_reply = 1,
         updated_at = NOW()
     WHERE user_id = ${userId} AND phone = ${chatId}
   `;
@@ -2292,6 +2294,53 @@ export async function updateAutomationTarget(
       WHERE user_id = ${userId} AND automation_id = ${automationId} AND target_id = ${targetId}
     `;
   }
+}
+
+/** Statuts cibles encore actifs (éligibles à un stop campagne). */
+export const ACTIVE_TARGET_STATUSES_FOR_STOP: TargetStatus[] = [
+  "pending",
+  "queued",
+  "contacted",
+  "replied",
+  "interested",
+];
+
+/**
+ * Stoppe la cible automation + annule les séquences de cette campagne uniquement.
+ * Ne touche pas contacts.status ni blocked_contacts.
+ * Crée la cible si absente (closing entrant sans target préalable).
+ */
+export async function stopAutomationTargetForContact(
+  userId: number,
+  automationId: number,
+  phone: string,
+  notes: string
+): Promise<void> {
+  const chatId = normalizeContactPhone(phone);
+  let target = await findMatchingAutomationTarget(
+    userId,
+    automationId,
+    chatId,
+    ACTIVE_TARGET_STATUSES_FOR_STOP
+  );
+  if (!target) {
+    target = await findMatchingAutomationTarget(userId, automationId, chatId, [
+      ...TARGET_STATUSES,
+    ]);
+  }
+  if (!target) {
+    await addAutomationTargets(userId, automationId, [{ targetId: chatId }]);
+    target = await findMatchingAutomationTarget(userId, automationId, chatId, [
+      ...TARGET_STATUSES,
+    ]);
+  }
+  if (target) {
+    await updateAutomationTarget(userId, automationId, target.target_id, {
+      status: "stopped",
+      notes,
+    });
+  }
+  await cancelSequencesForContact(userId, chatId, automationId);
   await recomputeAutomationStats(userId, automationId);
 }
 
@@ -2881,8 +2930,23 @@ export async function repairStuckSequences(userId: number): Promise<number> {
   return Number(result.count ?? 0);
 }
 
-export async function cancelSequencesForContact(userId: number, phone: string): Promise<void> {
+export async function cancelSequencesForContact(
+  userId: number,
+  phone: string,
+  automationId?: number | null
+): Promise<void> {
   const chatId = normalizeContactPhone(phone);
+  if (automationId != null && Number.isFinite(Number(automationId))) {
+    const aid = Number(automationId);
+    await sql`
+      UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
+      WHERE user_id = ${userId}
+        AND contact_phone = ${chatId}
+        AND automation_id = ${aid}
+        AND status = 'active'
+    `;
+    return;
+  }
   await sql`
     UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
     WHERE user_id = ${userId} AND contact_phone = ${chatId} AND status = 'active'

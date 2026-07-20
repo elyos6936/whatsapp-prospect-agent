@@ -431,6 +431,10 @@ export async function disconnectGoogle(): Promise<void> {
   await request('/api/integrations/google', { method: 'DELETE' });
 }
 
+export async function disconnectGoogleContacts(): Promise<void> {
+  await request('/api/integrations/google/contacts', { method: 'DELETE' });
+}
+
 export async function fetchGooglePickerToken(): Promise<{
   accessToken: string;
   expiresAt: string;

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Contact, Loader2 } from 'lucide-react';
 import {
+  disconnectGoogleContacts,
   fetchIntegrations,
   startGoogleContactsConnect,
   type IntegrationStatus,
@@ -17,6 +18,7 @@ export function GoogleContactsIntegrationCard({ flash }: Props) {
   const [serverReady, setServerReady] = useState(true);
   const [loading, setLoading] = useState(true);
   const [connecting, setConnecting] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
   const [fb, setFb] = useState<{ type: 'ok' | 'err'; text: string } | null>(flash ?? null);
 
   const loadStatus = useCallback(async () => {
@@ -25,7 +27,8 @@ export function GoogleContactsIntegrationCard({ flash }: Props) {
       const data = await fetchIntegrations();
       setServerReady(data.googleConfigured);
       setContactsGranted(Boolean(data.googleContactsGranted));
-      const g = data.integrations.find((i) => i.provider === 'google') ?? null;
+      const g =
+        data.integrations.find((i) => i.provider === 'google_contacts') ?? null;
       setStatus(g);
     } catch (err) {
       setFb({
@@ -60,7 +63,38 @@ export function GoogleContactsIntegrationCard({ flash }: Props) {
     }
   };
 
-  const connectedGoogle = Boolean(status?.connected);
+  const handleDisconnect = async () => {
+    if (
+      !confirm(
+        'Déconnecter Google Contacts ? Les campagnes ne créeront plus de fiches Contacts automatiquement. Google Sheets n’est pas affecté.',
+      )
+    ) {
+      return;
+    }
+    setDisconnecting(true);
+    setFb(null);
+    try {
+      await disconnectGoogleContacts();
+      setContactsGranted(false);
+      setStatus({
+        provider: 'google_contacts',
+        connected: false,
+        email: null,
+        accountId: null,
+        connectedAt: null,
+        scopes: null,
+      });
+      setFb({ type: 'ok', text: 'Google Contacts déconnecté.' });
+    } catch (err) {
+      setFb({
+        type: 'err',
+        text: err instanceof Error ? err.message : 'Échec déconnexion Contacts.',
+      });
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
   const ready = contactsGranted;
 
   return (
@@ -83,14 +117,8 @@ export function GoogleContactsIntegrationCard({ flash }: Props) {
                 Connecté
                 {status?.email ? ` · ${status.email}` : ''}
               </p>
-            ) : connectedGoogle ? (
-              <p className="text-xs text-text-400">
-                Connecte Google Contacts pour enregistrer les prospects avant chaque envoi
-              </p>
             ) : (
-              <p className="text-xs text-text-400">
-                Enregistre les prospects dans tes contacts avant chaque envoi
-              </p>
+              <p className="text-xs text-text-400">Non connecté</p>
             )}
             <p className="mt-2 text-xs leading-relaxed text-text-500">
               Utilise le compte Google synchronisé avec le téléphone de ton WhatsApp. Sinon les
@@ -100,7 +128,23 @@ export function GoogleContactsIntegrationCard({ flash }: Props) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          {!ready && (
+          {ready ? (
+            <button
+              type="button"
+              disabled={disconnecting || loading}
+              onClick={() => void handleDisconnect()}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-xl border border-black/10 bg-bg-100 px-3.5 py-2 text-sm font-medium text-text-200 transition hover:border-red-300 hover:bg-red-50 hover:text-red-700 disabled:opacity-50"
+            >
+              {disconnecting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  …
+                </>
+              ) : (
+                'Déconnecter'
+              )}
+            </button>
+          ) : (
             <button
               type="button"
               disabled={connecting || loading || !serverReady}
