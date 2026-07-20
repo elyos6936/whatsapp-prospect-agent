@@ -1,5 +1,8 @@
+const PROD_API_URL = 'https://klanvio-api.srv1820011.hstgr.cloud';
+
 export const API_BASE_URL = (
-  import.meta.env.VITE_API_URL?.trim() || 'http://localhost:3001'
+  import.meta.env.VITE_API_URL?.trim() ||
+  (import.meta.env.PROD ? PROD_API_URL : 'http://localhost:3001')
 ).replace(/\/$/, '');
 
 /**
