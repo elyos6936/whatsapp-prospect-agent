@@ -700,18 +700,18 @@ export async function getContactChatHistory(
   if (scopedAutoId != null) {
     rows = await sql<Record<string, unknown>[]>`
       SELECT id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
-      FROM messages
+    FROM messages
       WHERE user_id = ${userId}
         AND automation_id = ${scopedAutoId}
         AND (contact_phone = ${chatId}
-         OR (${digits} != '' AND (
-           contact_phone = ${digits} || '@c.us'
-           OR contact_phone = ${digits} || '@lid'
-           OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+       OR (${digits} != '' AND (
+         contact_phone = ${digits} || '@c.us'
+         OR contact_phone = ${digits} || '@lid'
+         OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
          )))
-      ORDER BY id DESC
-      LIMIT ${limit}
-    `;
+    ORDER BY id DESC
+    LIMIT ${limit}
+  `;
   } else if (epoch) {
     rows = await sql<Record<string, unknown>[]>`
       SELECT id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
@@ -1146,6 +1146,22 @@ export async function setContactHandoff(userId: number, phone: string, status: s
   const chatId = normalizeContactPhone(phone);
   await sql`
     UPDATE contacts SET handoff_status = ${status}, updated_at = NOW() WHERE user_id = ${userId} AND phone = ${chatId}
+  `;
+}
+
+/** Pointeur routage réponses auto → campagne courante (n'efface pas les états des autres campagnes). */
+export async function setConversationCampaignId(
+  userId: number,
+  phone: string,
+  automationId: number
+): Promise<void> {
+  await ensureConversationEpochColumns();
+  const chatId = normalizeContactPhone(phone);
+  await sql`
+    UPDATE contacts
+    SET conversation_campaign_id = ${automationId},
+        updated_at = NOW()
+    WHERE user_id = ${userId} AND phone = ${chatId}
   `;
 }
 
@@ -2021,7 +2037,8 @@ export async function updateAutomationStatus(
   status: AutomationStatus
 ): Promise<Automation | null> {
   await sql`UPDATE automations SET status = ${status}, updated_at = NOW() WHERE user_id = ${userId} AND id = ${id}`;
-  await addAutomationLog(userId, id, "info", `Statut → ${status}`);
+  // Pas de log « Statut → paused » : trop technique. Les actions métier
+  // (pause / activation / échec) journalisent déjà un message lisible.
   return getAutomation(userId, id);
 }
 
@@ -2058,7 +2075,7 @@ export async function haltAutomationMessaging(
     userId,
     automationId,
     "info",
-    `Envois coupés : ${Number(queueResult.count)} file, ${Number(seqResult.count)} relance(s), ${disabledContacts} réponse(s) auto off.`
+    `Envois arrêtés : ${Number(queueResult.count)} message(s) en file annulé(s), ${Number(seqResult.count)} relance(s) coupée(s), réponses auto désactivées pour ${disabledContacts} contact(s).`
   );
   return {
     cancelledQueue: Number(queueResult.count),
@@ -2102,6 +2119,7 @@ export async function pauseAutomation(userId: number, id: number): Promise<Autom
     enableAutoReply: false,
   });
   await haltAutomationMessaging(userId, id);
+  await addAutomationLog(userId, id, "info", "Campagne mise en pause.");
   return getAutomation(userId, id);
 }
 
@@ -2138,6 +2156,7 @@ export async function resumeAutomation(userId: number, id: number): Promise<Auto
   const updated = await updateAutomationStatus(userId, id, "active");
   if (!updated) return null;
   await resumeAutomationMessaging(userId, id);
+  await addAutomationLog(userId, id, "info", "Campagne réactivée — réponses auto reprises.");
   return getAutomation(userId, id);
 }
 
@@ -2938,8 +2957,8 @@ export async function cancelSequencesForContact(
   const chatId = normalizeContactPhone(phone);
   if (automationId != null && Number.isFinite(Number(automationId))) {
     const aid = Number(automationId);
-    await sql`
-      UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
+  await sql`
+    UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
       WHERE user_id = ${userId}
         AND contact_phone = ${chatId}
         AND automation_id = ${aid}

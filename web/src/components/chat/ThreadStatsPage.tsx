@@ -19,6 +19,31 @@ function fmtTime(iso?: string): string {
   return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('fr-FR');
 }
 
+/** Journal lisible : masque les lignes techniques (statut brut, JSON, stack…). */
+function isReadableJournalMessage(message: string): boolean {
+  const t = message.trim();
+  if (!t) return false;
+  if (/^Statut\s*→/i.test(t)) return false;
+  if (/^status\s*[:=→]/i.test(t)) return false;
+  if (/^\{[\s\S]*\}$/.test(t) || /^\[\s*\{/.test(t)) return false;
+  if (/"error"\s*:|"stack"\s*:|"errno"\s*:|"code"\s*:\s*"E/.test(t)) return false;
+  if (/at\s+\S+\s+\([^)]+:\d+:\d+\)/.test(t)) return false;
+  if (/TypeError:|ReferenceError:|ECONNREFUSED|ETIMEDOUT/i.test(t) && t.includes('{')) return false;
+  // Trop de JSON / dumps : plus de 2 guillemets de clés JSON typiques
+  if ((t.match(/"[a-zA-Z0-9_]+"\s*:/g) ?? []).length >= 3) return false;
+  return true;
+}
+
+/** Raccourcit un message d’erreur trop technique pour l’affichage. */
+function softenJournalMessage(message: string): string {
+  const t = message.trim();
+  // « Échec … : {json…} » → garder le préfixe humain
+  const colonJson = t.match(/^(Échec[^:]*:\s*)(\{[\s\S]+)$/i);
+  if (colonJson) return `${colonJson[1].trim()} problème technique — réessayez plus tard.`;
+  if (t.length > 220) return `${t.slice(0, 200).trim()}…`;
+  return t;
+}
+
 type ThreadStatsPageProps = {
   threadId: number;
 };
@@ -180,16 +205,19 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
                 </section>
               )}
 
-              {logs.length > 0 && (
+              {logs.filter((l) => isReadableJournalMessage(l.message)).length > 0 && (
                 <section className="panel p-5">
                   <h3 className="text-sm font-semibold text-text-200">Journal</h3>
                   <div className="mt-3 space-y-1.5">
-                    {logs.slice(0, 25).map((l, i) => (
-                      <p key={i} className="text-sm text-text-400">
-                        <span className="text-xs text-text-500">{fmtTime(l.created_at)} · </span>
-                        {l.message}
-                      </p>
-                    ))}
+                    {logs
+                      .filter((l) => isReadableJournalMessage(l.message))
+                      .slice(0, 25)
+                      .map((l, i) => (
+                        <p key={i} className="text-sm text-text-400">
+                          <span className="text-xs text-text-500">{fmtTime(l.created_at)} · </span>
+                          {softenJournalMessage(l.message)}
+                        </p>
+                      ))}
                   </div>
                 </section>
               )}

@@ -7,6 +7,7 @@ import {
   getContact,
   getContactChatHistory,
   beginFreshCampaignConversation,
+  setConversationCampaignId,
   type Automation,
   type TargetStatus,
 } from "./db.js";
@@ -188,6 +189,8 @@ export async function passesReplyGate(
         status: "en_conversation",
         autoReply: true,
       });
+      // Aligne le pointeur sur la campagne matchée (évite de taguer l'entrant sur une ancienne auto).
+      await setConversationCampaignId(userId, chatId, outbound.automation.id);
     } catch {
       /* best effort */
     }
