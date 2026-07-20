@@ -73,8 +73,9 @@ function isAllowedCorsOrigin(origin: string): boolean {
     const host = new URL(origin).hostname;
     // Domaine principal Klanvio
     if (host === "klanvio.com" || host.endsWith(".klanvio.com")) return true;
-    // Anciens sous-domaines Netlify (redirection / transition)
-    return host === "netlify.app" || host.endsWith(".netlify.app");
+    // Préviews Netlify / Vercel (transition + déploiements preview)
+    if (host === "netlify.app" || host.endsWith(".netlify.app")) return true;
+    return host === "vercel.app" || host.endsWith(".vercel.app");
   } catch {
     return false;
   }

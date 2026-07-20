@@ -13,3 +13,6 @@ remotion/public/*.mp4
 
 # Local Netlify folder
 .netlify
+
+# Local Vercel folder
+.vercel

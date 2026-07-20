@@ -1,0 +1,68 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm install --legacy-peer-deps",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "env": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "VITE_API_URL": "https://klanvio-api.srv1820011.hstgr.cloud",
+    "VITE_GOOGLE_CLIENT_ID": "505015578658-o30f55iuphed69go2klr2lnn1n3esj31.apps.googleusercontent.com",
+    "VITE_GOOGLE_PICKER_API_KEY": "AIzaSyAobBqMFKaX0lYRE6f_qcLoWUoB8ts6gx8",
+    "VITE_GOOGLE_CLOUD_PROJECT_NUMBER": "505015578658"
+  },
+  "redirects": [
+    {
+      "source": "/:path*",
+      "has": [{ "type": "host", "value": "klanvio.com" }],
+      "destination": "https://www.klanvio.com/:path*",
+      "permanent": true
+    }
+  ],
+  "rewrites": [
+    {
+      "source": "/api/:path*",
+      "destination": "https://klanvio-api.srv1820011.hstgr.cloud/api/:path*"
+    },
+    { "source": "/login", "destination": "/index.html" },
+    { "source": "/register", "destination": "/index.html" },
+    { "source": "/mentions", "destination": "/index.html" },
+    { "source": "/confidentialite", "destination": "/index.html" },
+    { "source": "/contact", "destination": "/index.html" },
+    { "source": "/app", "destination": "/index.html" },
+    { "source": "/app/:path*", "destination": "/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "X-Frame-Options", "value": "DENY" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" }
+      ]
+    },
+    {
+      "source": "/",
+      "headers": [{ "key": "X-Robots-Tag", "value": "index, follow, max-image-preview:large" }]
+    },
+    {
+      "source": "/index.html",
+      "headers": [{ "key": "X-Robots-Tag", "value": "index, follow, max-image-preview:large" }]
+    },
+    {
+      "source": "/404.html",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }]
+    },
+    {
+      "source": "/login",
+      "headers": [{ "key": "X-Robots-Tag", "value": "noindex, follow" }]
+    },
+    {
+      "source": "/robots.txt",
+      "headers": [{ "key": "Content-Type", "value": "text/plain; charset=utf-8" }]
+    },
+    {
+      "source": "/sitemap.xml",
+      "headers": [{ "key": "Content-Type", "value": "application/xml; charset=utf-8" }]
+    }
+  ]
+}
