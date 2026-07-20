@@ -40,14 +40,10 @@ import {
   setConversationCampaignId,
 } from "./db.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
-import { scoreIncomingMessage, recordAutomationConversion } from "./lead-scoring.js";
+import { scoreIncomingMessage, recordAutomationConversion, isCampaignObjectiveReached } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
-import {
-  classifyObjectiveReached,
-  findLinkedInactiveCampaign,
-} from "./conversion-classifier.js";
 import { passesReplyGate, findActiveOutboundCampaign } from "./campaign-gating.js";
 import {
   detectInboundMedia,
@@ -794,40 +790,6 @@ async function runGroupAutoReply(
   }
 }
 
-/**
- * Si le gate refuse (ex. campagne pausée) mais le prospect semble avoir converti :
- * alerte opérateur, pas de clôture ni de réponse auto.
- */
-async function warnMissedConversionIfNeeded(
-  userId: number,
-  chatId: string,
-  senderName: string,
-  text: string
-): Promise<void> {
-  const inactive = await findLinkedInactiveCampaign(userId, chatId);
-  if (!inactive) return;
-
-  const history = await getContactChatHistory(userId, chatId, 20, inactive.id);
-  const verdict = await classifyObjectiveReached(userId, {
-    chatId,
-    senderName,
-    incomingText: text,
-    campaign: inactive,
-    history,
-  });
-  if (!(verdict.reached && verdict.confidence === "high")) return;
-
-  console.warn(
-    `⚠️ Conversion probable manquée — campagne non active « ${inactive.name} » (${senderName})`
-  );
-  await saveAgentMessageForAutomation(
-    userId,
-    inactive.id,
-    "assistant",
-    `⚠️ Conversion probable manquée — campagne non active (« ${inactive.name} »). Prospect ${senderName} (${chatIdToDisplay(chatId)}) semble avoir atteint l'objectif, mais la campagne n'est plus active : pas de clôture auto.`
-  );
-}
-
 async function runAutoReply(
   userId: number,
   chatId: string,
@@ -848,7 +810,6 @@ async function runAutoReply(
   const gate = await passesReplyGate(userId, chatId, text);
   if (!gate.allow) {
     console.log(`📩 ${senderName} (pas de réponse — ${gate.reason}): ${text.slice(0, 40)}`);
-    void warnMissedConversionIfNeeded(userId, chatId, senderName, text).catch(() => {});
     return;
   }
 
@@ -951,53 +912,42 @@ async function runAutoReply(
         }
       }
 
-      // Objectif atteint : classifier LLM (échec / doute → on continue le flux normal).
-      if (activeCampaign) {
+      // Objectif atteint : lien/prix/RDV déjà envoyé + ack du prospect → on coupe.
+      if (
+        activeCampaign &&
+        isCampaignObjectiveReached(text, history, activeCampaign.config)
+      ) {
         try {
-          const verdict = await classifyObjectiveReached(userId, {
+          await recordAutomationConversion(userId, activeCampaign.id);
+          await stopAutomationTargetForContact(
+            userId,
+            activeCampaign.id,
             chatId,
-            senderName,
-            incomingText: text,
-            campaign: activeCampaign,
-            history,
-          });
-          if (verdict.reached && verdict.confidence === "high") {
-            try {
-              await recordAutomationConversion(userId, activeCampaign.id);
-              await stopAutomationTargetForContact(
-                userId,
-                activeCampaign.id,
-                chatId,
-                "objectif atteint"
-              );
-              // Pas de message 🎉 dans le chat opérateur — uniquement clôture + confirmation prospect.
-            } catch (err) {
-              console.error("Erreur conversion:", err);
-            }
-
-            reply = getObjectiveReachedReply();
-            try {
-              const typingMs = clampPresenceMs(
-                ANTI_BAN.presenceMinMs +
-                  Math.floor(Math.random() * (ANTI_BAN.presenceMaxMs - ANTI_BAN.presenceMinMs + 1))
-              );
-              await sendWhatsAppPresence(userId, chatId, "composing", typingMs);
-            } catch {
-              /* best effort */
-            }
-            const sent = await sendWhatsAppMessage(userId, chatId, reply, {
-              enableAutoReply: false,
-              countsTowardQuota: false,
-              outboundProfile: "auto_reply",
-              automationId: activeCampaign.id,
-            });
-            await incrementMessagesHandled(userId, activeCampaign.id);
-            console.log(`✅ Objectif atteint (confirmation) → ${senderName} à ${nowFr()} (${sent.idMessage})`);
-            return;
-          }
+            "objectif atteint"
+          );
         } catch (err) {
-          console.error("Erreur détection objectif (continue sans clôturer):", err);
+          console.error("Erreur conversion:", err);
         }
+
+        reply = getObjectiveReachedReply();
+        try {
+          const typingMs = clampPresenceMs(
+            ANTI_BAN.presenceMinMs +
+              Math.floor(Math.random() * (ANTI_BAN.presenceMaxMs - ANTI_BAN.presenceMinMs + 1))
+          );
+          await sendWhatsAppPresence(userId, chatId, "composing", typingMs);
+        } catch {
+          /* best effort */
+        }
+        const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+          enableAutoReply: false,
+          countsTowardQuota: false,
+          outboundProfile: "auto_reply",
+          automationId: activeCampaign.id,
+        });
+        await incrementMessagesHandled(userId, activeCampaign.id);
+        console.log(`✅ Objectif atteint (confirmation) → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+        return;
       }
 
       const automationContext = await buildAutomationContext(userId, text, chatId, activeCampaign);

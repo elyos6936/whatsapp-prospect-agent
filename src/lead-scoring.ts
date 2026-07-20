@@ -5,6 +5,7 @@ import {
   updateAutomationStats,
   getAutomation,
   getContactAutomationState,
+  type AutomationConfig,
 } from "./db.js";
 
 const HOT_KEYWORDS =
@@ -15,6 +16,14 @@ const NEGATIVE_KEYWORDS =
 const HANDOFF_KEYWORDS =
   /parler (à|a) (un |une )?humain|responsable|g[eé]rant|directeur|plainte|remboursement|r[eé]clamation urgente/i;
 
+/** Accusé de réception court après envoi d'un lien / prix / créneau. */
+const SHORT_ACK =
+  /^(ok|okay|oui|ouais|d['']accord|dac|parfait|super|merci|top|nickel|impeccable|c['']est (bon|not[eé])|re[cç]u|bien re[cç]u|je (vais )?regarder|je regarde|partant|volontiers)([\s!.?,;:]|$)/i;
+
+/** L'agent a envoyé quelque chose d'actionnable (lien externe, paiement, RDV). */
+const ACTION_OFFERED =
+  /https?:\/\/|wa\.me\/|chat\.whatsapp\.com\/|bit\.ly\/|calendly\.|fcfa|lien (ici|ci[- ]dessous|suivant)|voici (mon |le )?lien|pour (r[eé]server|payer|rejoindre)/i;
+
 export interface ScoringResult {
   newScore: number;
   delta: number;
@@ -22,6 +31,14 @@ export interface ScoringResult {
   interested: boolean;
   needsHandoff: boolean;
   handoffReason?: string;
+}
+
+function normalizeText(text: string): string {
+  return text
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/['’]/g, " ");
 }
 
 export async function scoreIncomingMessage(userId: number, text: string, chatId: string): Promise<ScoringResult> {
@@ -65,16 +82,37 @@ export async function scoreIncomingMessage(userId: number, text: string, chatId:
   };
 }
 
-/** Le prospect signale qu'il a payé / commandé / pris RDV / cliqué le lien. */
+/** Preuve explicite rare (paiement, etc.) — bonus scoring / filet. */
 export function detectConversionIntent(text: string): boolean {
-  const t = text
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/\p{M}/gu, "")
-    .replace(/['’]/g, " ");
+  const t = normalizeText(text);
   return /j.?ai paye|paiement (fait|effectue|ok|valide)|j.?ai (commande|acheter|achete)|commande (passee|faite)|c.?est commande|j.?ai clique|lien (recu|marche|ok)|rdv (confirme|pris|ok)|rendez[- ]vous (confirme|pris)|c.?est bon j.?ai|ok j.?ai paye|transfert (fait|effectue)/i.test(
     t
   );
+}
+
+/**
+ * Objectif campagne atteint — règles simples, pas de LLM.
+ * Lien / paiement / RDV envoyé par l'agent + « ok » du prospect = on arrête
+ * (on n'attend pas qu'il confirme avoir rejoint / payé sur un site externe).
+ */
+export function isCampaignObjectiveReached(
+  text: string,
+  history: { direction: string; body: string }[],
+  config?: Pick<AutomationConfig, "closingGoal" | "closingLink"> | null
+): boolean {
+  void config;
+  if (detectConversionIntent(text)) return true;
+
+  const t = text.trim();
+  if (!t || t.startsWith("[")) return false;
+  if (!SHORT_ACK.test(t) && !SHORT_ACK.test(normalizeText(t))) return false;
+
+  const recentOut = history
+    .filter((m) => m.direction === "sortant")
+    .slice(-6)
+    .map((m) => m.body);
+
+  return recentOut.some((body) => ACTION_OFFERED.test(body));
 }
 
 export async function recordAutomationConversion(
