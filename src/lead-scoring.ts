@@ -90,6 +90,14 @@ export function detectConversionIntent(text: string): boolean {
   );
 }
 
+const WEEKDAY =
+  /\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd'?hui)\b/i;
+/** Heure style WhatsApp : 14h, 14 h 30, 14:30, 9h. */
+const CLOCK_TIME =
+  /\b([01]?\d|2[0-3])\s*h(?:\s*[0-5]\d)?\b|\b([01]?\d|2[0-3])[:.][0-5]\d\b/i;
+const ASKED_FOR_SLOT =
+  /dispo|disponib|cr[eé]neau|quand|cette semaine|la semaine|on (fixe|voit|book)|pr[eé]f[eè]res|10h ou|appel|rdv|rendez[- ]vous|te book/i;
+
 /**
  * Objectif campagne atteint — règles simples, pas de LLM.
  * Lien / paiement / RDV envoyé par l'agent + « ok » du prospect = on arrête
@@ -113,6 +121,44 @@ export function isCampaignObjectiveReached(
     .map((m) => m.body);
 
   return recentOut.some((body) => ACTION_OFFERED.test(body));
+}
+
+/**
+ * Prise de RDV verbale : le prospect donne un créneau (jour + heure, ou heure
+ * après proposition) alors que l'agent venait de demander une dispo.
+ * Distinct de isCampaignObjectiveReached (ack après lien) pour laisser l'IA
+ * envoyer le lien de résa avant clôture + notif tiers.
+ */
+export function isAppointmentSlotConfirmed(
+  text: string,
+  history: { direction: string; body: string }[],
+  config?: Pick<AutomationConfig, "closingGoal"> | null
+): boolean {
+  const goal = (config?.closingGoal || "").toLowerCase();
+  if (goal && goal !== "appointment") return false;
+
+  const t = text.trim();
+  if (!t || t.startsWith("[")) return false;
+
+  const recentOut = history
+    .filter((m) => m.direction === "sortant")
+    .slice(-6)
+    .map((m) => m.body);
+  if (!recentOut.some((body) => ASKED_FOR_SLOT.test(body))) return false;
+
+  const hasDay = WEEKDAY.test(t);
+  const hasTime = CLOCK_TIME.test(t);
+  if (hasDay && hasTime) return true;
+
+  // « 14h c'est cool » après « 10h ou 14h »
+  if (
+    hasTime &&
+    recentOut.some((body) => CLOCK_TIME.test(body) && /\bou\b|pr[eé]f/i.test(body))
+  ) {
+    return true;
+  }
+
+  return false;
 }
 
 export async function recordAutomationConversion(

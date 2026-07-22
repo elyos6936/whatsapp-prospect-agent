@@ -40,7 +40,12 @@ import {
   setConversationCampaignId,
 } from "./db.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
-import { scoreIncomingMessage, recordAutomationConversion, isCampaignObjectiveReached } from "./lead-scoring.js";
+import {
+  scoreIncomingMessage,
+  recordAutomationConversion,
+  isCampaignObjectiveReached,
+  isAppointmentSlotConfirmed,
+} from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { maybeCreateHandoff } from "./handoff.js";
@@ -822,6 +827,8 @@ async function runAutoReply(
 
   try {
     let reply: string;
+    /** RDV oral confirmé : on laisse l'IA envoyer le lien, puis conversion + notif tiers. */
+    let pendingAppointmentClose = false;
 
     if (isStopRequest(text)) {
       reply = getStopConfirmationReply();
@@ -963,6 +970,15 @@ async function runAutoReply(
         return;
       }
 
+      // Créneau RDV confirmé oralement (ex. « mardi à 14h ») : on continue pour
+      // envoyer le lien, puis on convertit + notifie le tiers après l'envoi.
+      if (
+        activeCampaign &&
+        isAppointmentSlotConfirmed(text, history, activeCampaign.config)
+      ) {
+        pendingAppointmentClose = true;
+      }
+
       const automationContext = await buildAutomationContext(userId, text, chatId, activeCampaign);
       const handoff = await maybeCreateHandoff(userId, {
         chatId,
@@ -1006,6 +1022,31 @@ async function runAutoReply(
       await incrementMessagesHandled(userId, activeCampaign.id);
     }
     console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+
+    if (pendingAppointmentClose && activeCampaign) {
+      try {
+        await recordAutomationConversion(userId, activeCampaign.id);
+        await stopAutomationTargetForContact(
+          userId,
+          activeCampaign.id,
+          chatId,
+          "objectif atteint"
+        );
+      } catch (err) {
+        console.error("Erreur conversion RDV:", err);
+      }
+      void import("./third-party-notification.js")
+        .then((m) =>
+          m.maybeNotifyThirdPartyOnConversion({
+            userId,
+            automation: activeCampaign,
+            prospectChatId: chatId,
+            prospectName: senderName,
+          })
+        )
+        .catch((err) => console.error("Erreur notif tiers:", err));
+      console.log(`✅ RDV confirmé → clôture + notif tiers (${senderName})`);
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`❌ Réponse auto échouée pour ${senderName}:`, msg);

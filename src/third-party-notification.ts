@@ -68,6 +68,19 @@ function goalLabel(goal?: string): string | undefined {
   return map[goal] ?? goal;
 }
 
+/** Message opérationnel sans LLM — filet si la génération IA échoue. */
+export function buildFallbackThirdPartyMessage(facts: ThirdPartyNotifyFacts): string {
+  const lines = [
+    `Salut — prospect converti : ${facts.prospectName} (${facts.prospectPhoneDisplay}).`,
+    `Campagne : ${facts.campaignName}.`,
+  ];
+  const goal = goalLabel(facts.closingGoal);
+  if (goal) lines.push(`Objectif : ${goal}.`);
+  if (facts.productName?.trim()) lines.push(`Offre : ${facts.productName.trim()}.`);
+  if (facts.context?.trim()) lines.push(facts.context.trim());
+  return lines.join("\n");
+}
+
 export async function generateThirdPartyNotificationMessage(
   userId: number,
   facts: ThirdPartyNotifyFacts
@@ -179,7 +192,7 @@ export async function maybeNotifyThirdPartyOnConversion(input: {
     const prospectName =
       contact?.name?.trim() || input.prospectName || chatIdToDisplay(input.prospectChatId);
 
-    const message = await generateThirdPartyNotificationMessage(input.userId, {
+    const facts: ThirdPartyNotifyFacts = {
       role: cfg.role?.trim() || "tiers",
       context: cfg.context,
       prospectName,
@@ -188,7 +201,16 @@ export async function maybeNotifyThirdPartyOnConversion(input: {
       price: input.automation.config.price,
       closingGoal: input.automation.config.closingGoal,
       campaignName: input.automation.name,
-    });
+    };
+
+    let message: string;
+    try {
+      message = await generateThirdPartyNotificationMessage(input.userId, facts);
+    } catch (llmErr) {
+      const detail = llmErr instanceof Error ? llmErr.message : String(llmErr);
+      console.warn(`⚠️ Notif tiers #${autoId}: LLM indisponible (${detail}) — fallback template`);
+      message = buildFallbackThirdPartyMessage(facts);
+    }
 
     await sendWhatsAppMessage(input.userId, thirdPartyChatId, message, {
       enableAutoReply: false,
@@ -200,6 +222,18 @@ export async function maybeNotifyThirdPartyOnConversion(input: {
     console.log(
       `📤 Notif tiers → ${chatIdToDisplay(thirdPartyChatId)} (campagne #${autoId}, prospect ${chatIdToDisplay(input.prospectChatId)})`
     );
+    await addAutomationLog(
+      input.userId,
+      autoId,
+      "success",
+      `Notification tiers envoyée à ${chatIdToDisplay(thirdPartyChatId)} (prospect ${prospectName}).`
+    ).catch(() => {});
+    await saveAgentMessageForAutomation(
+      input.userId,
+      autoId,
+      "assistant",
+      `📤 Associé / tiers prévenu (${chatIdToDisplay(thirdPartyChatId)}) — prospect ${prospectName} (${chatIdToDisplay(input.prospectChatId)}).`
+    ).catch(() => {});
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     await alertOperator(
