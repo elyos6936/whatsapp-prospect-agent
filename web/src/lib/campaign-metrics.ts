@@ -17,7 +17,9 @@ export const TARGET_ORDER = [
   'error',
 ] as const;
 
-/** Métriques réelles : « contacté » DB = encore sans réponse ; « atteints » = tous ceux touchés. */
+/** Métriques réelles : « contacté » DB = encore sans réponse ; « atteints » = tous ceux touchés.
+ * « Réponses » inclut les arrêtés : à l’objectif / refus on passe en `stopped`, ce qui écrase
+ * `replied`/`interested` — sans ça on affichait 0 réponse avec 1 conversion. */
 export function outreachMetrics(stats?: Record<string, number | string | undefined> | null) {
   const pending = Number(stats?.pending ?? 0);
   const waitingReply = Number(stats?.contacted ?? 0);
@@ -26,7 +28,7 @@ export function outreachMetrics(stats?: Record<string, number | string | undefin
   const stopped = Number(stats?.stopped ?? 0);
   const errors = Number(stats?.errors ?? 0);
   const reached = waitingReply + replied + interested + stopped;
-  const answered = replied + interested;
+  const answered = replied + interested + stopped;
   const rate = reached > 0 ? Math.round((answered / reached) * 100) : null;
   const interestRate = answered > 0 ? Math.round((interested / answered) * 100) : null;
   return {

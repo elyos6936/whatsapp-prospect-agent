@@ -480,7 +480,9 @@ app.get<{ Params: { id: string } }>("/api/threads/:id/campaign", async (request,
   const auto = detail.automation;
   const targets = detail.targets;
   const contacted = targets.filter((t) => t.status !== "pending").length;
-  const replied = targets.filter((t) => t.status === "replied" || t.status === "interested").length;
+  const replied = targets.filter(
+    (t) => t.status === "replied" || t.status === "interested" || t.status === "stopped"
+  ).length;
   const interested = targets.filter((t) => t.status === "interested").length;
   const pending = targets.filter((t) => t.status === "pending").length;
   const stopped = targets.filter((t) => t.status === "stopped").length;

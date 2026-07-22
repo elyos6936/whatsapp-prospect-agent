@@ -277,7 +277,9 @@ export async function buildDailyReportText(userId: number, auto: Automation): Pr
   const isToday = (ts: string | null) => !!ts && ts.slice(0, 10) === today;
   const nonPending = targets.filter((t) => t.status !== "pending" && t.status !== "queued");
   const sentToday = nonPending.filter((t) => isToday(t.last_action_at)).length;
-  const replied = targets.filter((t) => t.status === "replied" || t.status === "interested").length;
+  const replied = targets.filter(
+    (t) => t.status === "replied" || t.status === "interested" || t.status === "stopped"
+  ).length;
   const interested = targets.filter((t) => t.status === "interested").length;
   const pendingCount = targets.filter((t) => t.status === "pending" || t.status === "queued").length;
 
