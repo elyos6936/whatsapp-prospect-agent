@@ -654,6 +654,31 @@ export async function getWhatsAppMessageStats(userId: number): Promise<{
   };
 }
 
+/** Compte les messages d'une campagne sur une fenêtre [from, toExclusive). */
+export async function countAutomationMessagesInRange(
+  userId: number,
+  automationId: number,
+  from: Date,
+  toExclusive: Date
+): Promise<{ outbound: number; inbound: number }> {
+  const rows = await sql<Array<{ direction: string; n: number }>>`
+    SELECT direction, COUNT(*)::int as n
+    FROM messages
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND created_at >= ${from}
+      AND created_at < ${toExclusive}
+    GROUP BY direction
+  `;
+  let outbound = 0;
+  let inbound = 0;
+  for (const row of rows) {
+    if (row.direction === "sortant") outbound = Number(row.n);
+    else if (row.direction === "entrant") inbound = Number(row.n);
+  }
+  return { outbound, inbound };
+}
+
 export async function listAllIncomingMessages(userId: number, limit = 100): Promise<WhatsAppMessage[]> {
   const safe = Math.min(Math.max(limit, 1), 500);
   const rows = await sql<Record<string, unknown>[]>`
@@ -1825,7 +1850,9 @@ export interface AutomationStats {
   outboundUsed?: number;
   lastActionAt?: string;
   lastReportDate?: string;
-  /** ISO — dernier envoi email Resend du rapport quotidien. */
+  /** YYYY-MM-DD du vendredi couvert par le dernier rapport hebdomadaire. */
+  lastWeeklyReportWeek?: string;
+  /** ISO — dernier envoi email Resend du rapport (quotidien legacy / hebdo). */
   emailReportSentAt?: string;
   report?: string;
   /** True une fois tous les premiers messages partis (campagne reste active). */
@@ -1965,6 +1992,7 @@ async function recomputeAutomationStats(userId: number, automationId: number): P
     stats.lastActionAt = auto.stats.lastActionAt;
     stats.autoStopped = auto.stats.autoStopped;
     stats.lastReportDate = auto.stats.lastReportDate;
+    stats.lastWeeklyReportWeek = auto.stats.lastWeeklyReportWeek;
     stats.emailReportSentAt = auto.stats.emailReportSentAt;
     stats.conversions = auto.stats.conversions;
     stats.revenueFcfa = auto.stats.revenueFcfa;

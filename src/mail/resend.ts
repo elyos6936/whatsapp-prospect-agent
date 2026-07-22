@@ -102,3 +102,17 @@ export async function sendDailyReportEmail(opts: {
     text: opts.text,
   });
 }
+
+export async function sendWeeklyReportEmail(opts: {
+  to: string;
+  campaignName: string;
+  text: string;
+  html: string;
+}): Promise<SendEmailResult> {
+  return sendEmail({
+    to: opts.to,
+    subject: `Rapport hebdomadaire — ${opts.campaignName}`,
+    text: opts.text,
+    html: opts.html,
+  });
+}

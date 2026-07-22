@@ -9,7 +9,6 @@ import {
   getAppSettings,
   getContact,
   isContactBlocked,
-  saveAgentMessageForAutomation,
   type Automation,
   type AutomationConfig,
 } from "./db.js";
@@ -142,10 +141,8 @@ async function alertOperator(
   message: string
 ): Promise<void> {
   console.warn(`⚠️ Notif tiers #${automationId}: ${message}`);
+  // Journal campagne uniquement — pas de message dans le chat agent.
   await addAutomationLog(userId, automationId, "warning", message).catch(() => {});
-  await saveAgentMessageForAutomation(userId, automationId, "assistant", `⚠️ ${message}`).catch(
-    () => {}
-  );
 }
 
 /**
@@ -227,12 +224,6 @@ export async function maybeNotifyThirdPartyOnConversion(input: {
       autoId,
       "success",
       `Notification tiers envoyée à ${chatIdToDisplay(thirdPartyChatId)} (prospect ${prospectName}).`
-    ).catch(() => {});
-    await saveAgentMessageForAutomation(
-      input.userId,
-      autoId,
-      "assistant",
-      `📤 Associé / tiers prévenu (${chatIdToDisplay(thirdPartyChatId)}) — prospect ${prospectName} (${chatIdToDisplay(input.prospectChatId)}).`
     ).catch(() => {});
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);

@@ -22,6 +22,7 @@ import {
   updateAutomationTarget,
   updateAutomationTargetAb,
   formatLocalDateTime,
+  countAutomationMessagesInRange,
   type Automation,
 } from "./db.js";
 import { pickAbVariant, recordAbSent } from "./ab-testing.js";
@@ -37,7 +38,14 @@ import {
 import { generatePersonalizedOpener } from "./prospect-personalizer.js";
 import { listActiveUserIds, getUserById } from "./users.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
-import { isResendConfigured, sendDailyReportEmail } from "./mail/resend.js";
+import { isResendConfigured, sendWeeklyReportEmail } from "./mail/resend.js";
+import {
+  buildWeeklyReportHtml,
+  buildWeeklyReportText,
+  fridayWeeklyWindow,
+  funnelFromTargetStats,
+  type WeeklyReportPayload,
+} from "./mail/weekly-report.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -261,94 +269,99 @@ async function processAutomation(userId: number, auto: Automation): Promise<void
   }
 }
 
-/** Heure locale (0-23) à partir de laquelle le rapport quotidien est posté. */
-const DAILY_REPORT_HOUR = 20;
+/** Vendredi (0=dim … 5=ven) à partir de laquelle le rapport hebdo peut partir. */
+const WEEKLY_REPORT_DOW = 5;
+/** Heure locale (0-23) — vendredi 20h Porto-Novo. */
+const WEEKLY_REPORT_HOUR = 20;
 
-function todayLocal(): string {
-  return formatLocalDateTime(new Date()).slice(0, 10);
+const APP_PUBLIC_URL = "https://www.klanvio.com";
+
+/** Construit le payload du rapport hebdomadaire (activité 7j + funnel snapshot). */
+export async function buildWeeklyReportPayload(
+  userId: number,
+  auto: Automation,
+  now = new Date()
+): Promise<WeeklyReportPayload> {
+  const win = fridayWeeklyWindow(now);
+  const activity = await countAutomationMessagesInRange(
+    userId,
+    auto.id,
+    win.periodStart,
+    win.periodEndExclusive
+  );
+  const funnel = funnelFromTargetStats(auto.stats ?? {});
+  return {
+    campaignName: auto.name,
+    campaignId: auto.id,
+    campaignStatus: auto.status,
+    periodLabel: win.periodLabel,
+    fridayKey: win.fridayKey,
+    messagesSent: activity.outbound,
+    messagesReceived: activity.inbound,
+    reached: funnel.reached,
+    answered: funnel.answered,
+    waitingReply: funnel.waitingReply,
+    interested: funnel.interested,
+    stopped: funnel.stopped,
+    conversions: Number(auto.stats?.conversions ?? 0),
+    responseRate: funnel.responseRate,
+    appUrl: APP_PUBLIC_URL,
+  };
 }
 
-/** Construit le texte du rapport quotidien d'une campagne (prospection ou closing e-commerce). */
-export async function buildDailyReportText(userId: number, auto: Automation): Promise<string> {
-  const stats = auto.stats ?? {};
-  const today = todayLocal();
-  const targets = await listAutomationTargets(userId, auto.id, { limit: 1000 });
+/**
+ * Poste un rapport hebdomadaire dans le chat (+ email Resend si configuré).
+ * Vendredi ≥ 20h locale, une fois par vendredi / campagne active.
+ * Fenêtre : samedi précédent 00:00 → vendredi 23:59 (7 jours).
+ */
+async function maybeSendWeeklyReport(userId: number, auto: Automation): Promise<void> {
+  const now = new Date();
+  if (now.getDay() !== WEEKLY_REPORT_DOW) return;
+  if (now.getHours() < WEEKLY_REPORT_HOUR) return;
 
-  const isToday = (ts: string | null) => !!ts && ts.slice(0, 10) === today;
-  const nonPending = targets.filter((t) => t.status !== "pending" && t.status !== "queued");
-  const sentToday = nonPending.filter((t) => isToday(t.last_action_at)).length;
-  const replied = targets.filter(
-    (t) => t.status === "replied" || t.status === "interested" || t.status === "stopped"
-  ).length;
-  const interested = targets.filter((t) => t.status === "interested").length;
-  const pendingCount = targets.filter((t) => t.status === "pending" || t.status === "queued").length;
-
-  const lines: string[] = [
-    `📊 Rapport du jour — « ${auto.name} » · statut : ${auto.status}`,
-  ];
-
-  if (auto.config.mode === "inbound_closing" || auto.type === "keyword_sales") {
-    lines.push(
-      `• Clients ayant écrit / échangé : ${stats.messagesHandled ?? 0}`,
-      `• Intéressés : ${interested || stats.interested || 0}`,
-      `• Conversions : ${stats.conversions ?? 0}`
-    );
-  } else {
-    lines.push(
-      `• Messages envoyés aujourd'hui : ${sentToday}`,
-      `• Total contactés : ${nonPending.length}${pendingCount ? ` (restants à contacter : ${pendingCount})` : ""}`,
-      `• Réponses reçues : ${replied} · intéressés : ${interested}`
-    );
-  }
-
-  if (stats.autoStopped) {
-    lines.push(`• Conversations arrêtées automatiquement : ${stats.autoStopped}`);
-  }
-  lines.push("Ouvre Automatisation pour le détail.");
-  return lines.join("\n");
-}
-
-/** Poste un rapport quotidien dans le chat (+ email Resend si configuré). Une fois / jour / campagne. */
-async function maybeSendDailyReport(userId: number, auto: Automation): Promise<void> {
-  if (new Date().getHours() < DAILY_REPORT_HOUR) return;
-  const today = todayLocal();
-  if (auto.stats?.lastReportDate === today) return;
+  const win = fridayWeeklyWindow(now);
+  if (auto.stats?.lastWeeklyReportWeek === win.fridayKey) return;
 
   try {
-    const text = await buildDailyReportText(userId, auto);
+    const payload = await buildWeeklyReportPayload(userId, auto, now);
+    const text = buildWeeklyReportText(payload);
+    const html = buildWeeklyReportHtml(payload);
+
     await saveAgentMessageForAutomation(userId, auto.id, "assistant", text);
     await updateAutomationStats(userId, auto.id, {
-      lastReportDate: today,
+      lastWeeklyReportWeek: win.fridayKey,
       lastActionAt: new Date().toISOString(),
     });
-    console.log(`📊 Rapport quotidien posté — campagne #${auto.id} (user ${userId})`);
+    console.log(`Rapport hebdomadaire posté — campagne #${auto.id} (user ${userId}, ${win.fridayKey})`);
 
     if (isResendConfigured()) {
       try {
         const user = await getUserById(userId);
         const to = user?.email?.trim();
         if (!to) {
-          console.warn(`📧 Rapport #${auto.id} : pas d'email user ${userId}`);
+          console.warn(`Rapport hebdo #${auto.id} : pas d'email user ${userId}`);
         } else {
-          const mail = await sendDailyReportEmail({
+          const mail = await sendWeeklyReportEmail({
             to,
             campaignName: auto.name,
-            campaignId: auto.id,
             text,
+            html,
           });
           if (mail.ok) {
-            console.log(`📧 Rapport email envoyé — campagne #${auto.id} → ${to} (${mail.id})`);
-            await updateAutomationStats(userId, auto.id, { emailReportSentAt: new Date().toISOString() });
+            console.log(`Rapport hebdo email — campagne #${auto.id} → ${to} (${mail.id})`);
+            await updateAutomationStats(userId, auto.id, {
+              emailReportSentAt: new Date().toISOString(),
+            });
           } else {
-            console.error(`📧 Rapport email échoué — campagne #${auto.id}:`, mail.error);
+            console.error(`Rapport hebdo email échoué — campagne #${auto.id}:`, mail.error);
           }
         }
       } catch (mailErr) {
-        console.error(`📧 Rapport email campagne #${auto.id} exception:`, mailErr);
+        console.error(`Rapport hebdo email campagne #${auto.id} exception:`, mailErr);
       }
     }
   } catch (err) {
-    console.error(`📊 Rapport quotidien campagne #${auto.id} échoué:`, err);
+    console.error(`Rapport hebdomadaire campagne #${auto.id} échoué:`, err);
   }
 }
 
@@ -357,7 +370,7 @@ async function processTickForUser(userId: number): Promise<void> {
   for (const auto of active) {
     try {
       await processAutomation(userId, auto);
-      await maybeSendDailyReport(userId, auto);
+      await maybeSendWeeklyReport(userId, auto);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await addAutomationLog(userId, auto.id, "error", `Erreur moteur : ${msg}`);
