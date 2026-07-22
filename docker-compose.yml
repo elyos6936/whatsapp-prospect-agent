@@ -7,7 +7,7 @@ services:
       - "3001:3001"
     labels:
       - traefik.enable=true
-      - traefik.http.routers.klanvio-api.rule=Host(`klanvio-api.srv1820011.hstgr.cloud`)
+      - traefik.http.routers.klanvio-api.rule=Host(`api.klanvio.com`) || Host(`klanvio-api.srv1820011.hstgr.cloud`)
       - traefik.http.routers.klanvio-api.entrypoints=websecure
       - traefik.http.routers.klanvio-api.tls.certresolver=letsencrypt
       - traefik.http.services.klanvio-api.loadbalancer.server.port=3001
@@ -32,7 +32,7 @@ services:
       GOOGLE_INTEGRATIONS_CLIENT_SECRET: ${GOOGLE_INTEGRATIONS_CLIENT_SECRET:-}
       GOOGLE_INTEGRATIONS_REDIRECT_URI: ${GOOGLE_INTEGRATIONS_REDIRECT_URI:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://www.klanvio.com,https://klanvio.com,https://klanvio.vercel.app}
-      PUBLIC_URL: ${PUBLIC_URL:-https://klanvio-api.srv1820011.hstgr.cloud}
+      PUBLIC_URL: ${PUBLIC_URL:-https://api.klanvio.com}
       APP_URL: ${APP_URL:-https://www.klanvio.com,https://klanvio.vercel.app}
       TYPEFORM_CLIENT_ID: ${TYPEFORM_CLIENT_ID:-}
       TYPEFORM_CLIENT_SECRET: ${TYPEFORM_CLIENT_SECRET:-}

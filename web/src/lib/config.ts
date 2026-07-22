@@ -1,4 +1,4 @@
-const PROD_API_DIRECT_URL = 'https://klanvio-api.srv1820011.hstgr.cloud';
+const PROD_API_DIRECT_URL = 'https://api.klanvio.com';
 const DEV_API_URL = 'http://localhost:3001';
 
 function isLocalhostApiUrl(url: string): boolean {
