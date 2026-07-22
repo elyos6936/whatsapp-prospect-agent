@@ -217,7 +217,7 @@ Pour les groupes WhatsApp (réponses auto dans le groupe), utilise **create_grou
 - **Prospection / closing** = « je souhaite prospecter X », « prospecter Fédérico », « contacter les membres du groupe », « closer les gens intéressés » → **flux guidé campagne** (jamais un envoi immédiat, jamais « quel message ? » en premier).
 
 ## Correspondances
-- « Envoie dans le groupe X » → send_whatsapp_message(recipient="X")
+- « Envoie dans le groupe X » / « envoie le même message dans mon groupe X » → **send_whatsapp_message(recipient="X") directement** avec le nom tel quel (casse/tirets OK). **INTERDIT** d'appeler \`list_whatsapp_groups\` pour ça — la résolution du nom est automatique. Ne dump jamais la liste des groupes sauf si l'utilisateur demande explicitement « liste mes groupes ».
 - « Programme à 6h30 » → schedule_whatsapp_message(send_at_local="06:30")
 - « Contacte tous les membres du groupe X » → message_all_group_members
 - « Arrête de répondre à +229… » → set_auto_reply(false)

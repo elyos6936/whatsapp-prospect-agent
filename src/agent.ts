@@ -475,10 +475,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     try {
       response = await callOpenAiWithRetry(() =>
         client.chat.completions.create({
-          model: config.openaiModel,
-          messages,
-          tools: TOOL_DEFINITIONS,
-          tool_choice: "auto",
+        model: config.openaiModel,
+        messages,
+        tools: TOOL_DEFINITIONS,
+        tool_choice: "auto",
           temperature: 0.65,
           max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
             thinkingEnabled: false,
@@ -601,13 +601,24 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           });
         }
 
-        // Listes contacts / groupes : affichage vertical structuré immédiat
+        // Listes : affichage vertical immédiat SEULEMENT si l'utilisateur a demandé une liste.
+        // Sinon (ex. lookup avant envoi dans un groupe nommé) : on laisse la boucle outils
+        // continuer — sinon on dump 100+ groupes au lieu d'exécuter l'action.
+        const userAskedForList =
+          Boolean(detectQuickListIntent(userMessage)) ||
+          (toolCall.function.name === "list_whatsapp_groups" &&
+            /\b(liste|lister|montre|afficher|voir)\b/i.test(userMessage) &&
+            /\bgroupes?\b/i.test(userMessage)) ||
+          (toolCall.function.name !== "list_whatsapp_groups" &&
+            /\b(liste|lister|montre|afficher|voir|extraire)\b/i.test(userMessage));
+
         if (
-          toolCall.function.name === "get_group_members" ||
-          toolCall.function.name === "list_whatsapp_groups" ||
-          toolCall.function.name === "list_personal_contacts" ||
-          toolCall.function.name === "list_contacts" ||
-          toolCall.function.name === "list_prospected_contacts"
+          userAskedForList &&
+          (toolCall.function.name === "get_group_members" ||
+            toolCall.function.name === "list_whatsapp_groups" ||
+            toolCall.function.name === "list_personal_contacts" ||
+            toolCall.function.name === "list_contacts" ||
+            toolCall.function.name === "list_prospected_contacts")
         ) {
           try {
             const parsed = JSON.parse(result) as { success?: boolean; display?: string; error?: string };

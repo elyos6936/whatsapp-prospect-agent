@@ -6,6 +6,7 @@ import {
   getLastIncomingMessages,
   createWhatsAppGroup,
   findGroupByNameOrId,
+  suggestGroupsByName,
   getGroupInfo,
   updateGroupSubject,
   updateGroupDescription,
@@ -162,7 +163,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "list_whatsapp_groups",
       description:
-        "Liste tous les groupes WhatsApp dont l'utilisateur est membre, avec leur nom lisible et leur ID (@g.us).",
+        "Liste les groupes WhatsApp (noms + IDs @g.us). UNIQUEMENT si l'utilisateur demande explicitement la liste (« liste mes groupes »). " +
+        "Pour envoyer / agir dans un groupe nommé, passe le nom à send_whatsapp_message (ou l'outil concerné) — ne liste pas tous les groupes.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -1895,13 +1897,15 @@ async function resolveRecipient(userId: number, recipient: string): Promise<stri
     return normalizePhoneToChatId(trimmed);
   }
 
-  // Nom de groupe (ex. Automax)
+  // Nom de groupe (ex. Automax) — matching souple (tirets/espaces/casse)
   const group = await findGroupByNameOrId(userId, trimmed);
   if (group) return group.id;
 
-  throw new Error(
-    `Destinataire introuvable : « ${trimmed} ». Indiquez un numéro (+229…), un chatId, ou le nom exact d'un groupe WhatsApp.`
-  );
+  const suggestions = await suggestGroupsByName(userId, trimmed, 3).catch(() => []);
+  const hint = suggestions.length
+    ? ` Proches : ${suggestions.map((g) => `« ${g.name} »`).join(", ")}. Réessaie avec le nom exact (sans lister tous les groupes).`
+    : " Indiquez un numéro (+229…), un chatId, ou un nom de groupe plus précis — n'affichez pas toute la liste des groupes.";
+  throw new Error(`Destinataire introuvable : « ${trimmed} ».${hint}`);
 }
 
 async function resolveGroupId(userId: number, groupIdOrName: string): Promise<string> {
@@ -1909,9 +1913,11 @@ async function resolveGroupId(userId: number, groupIdOrName: string): Promise<st
   if (trimmed.endsWith("@g.us")) return trimmed;
   const group = await findGroupByNameOrId(userId, trimmed);
   if (!group) {
-    throw new Error(
-      `Groupe introuvable : « ${trimmed} ». Vérifiez le nom avec list_whatsapp_groups.`
-    );
+    const suggestions = await suggestGroupsByName(userId, trimmed, 3).catch(() => []);
+    const hint = suggestions.length
+      ? ` Proches : ${suggestions.map((g) => `« ${g.name} »`).join(", ")}. Utilise un de ces noms exacts — n'appelle pas list_whatsapp_groups.`
+      : " Précise le nom — n'appelle pas list_whatsapp_groups sauf demande explicite de liste.";
+    throw new Error(`Groupe introuvable : « ${trimmed} ».${hint}`);
   }
   return group.id;
 }
@@ -2092,13 +2098,18 @@ export async function executeTool(
           name: g.name,
           type: "groupe",
       }));
+      // Pas de `display` massif : l'affichage liste se fait via le chemin rapide agent
+      // (demande explicite). Ici = lookup LLM — renvoyer trop de lignes poussait à dumper le chat.
+      const cap = 40;
       return JSON.stringify({
         count: mapped.length,
-        groups: mapped,
-        display: formatVerticalGroupList(mapped),
-        hint: mapped.length
-          ? "Présente display tel quel (liste verticale). Utilisez name pour identifier le groupe."
-          : "Aucun groupe trouvé — vérifiez que WhatsApp est connecté.",
+        groups: mapped.slice(0, cap),
+        truncated: mapped.length > cap,
+        hint:
+          mapped.length === 0
+            ? "Aucun groupe trouvé — vérifiez que WhatsApp est connecté."
+            : "N'affiche PAS ces groupes à l'utilisateur sauf s'il a demandé explicitement la liste. " +
+              "Pour agir sur un groupe nommé, passe le nom à send_whatsapp_message / l'outil concerné (résolution auto).",
       });
     }
 

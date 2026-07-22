@@ -669,31 +669,31 @@ export async function listWhatsAppGroups(
   let lastErr: unknown;
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const data = await evolutionFetch<unknown>(
-        creds,
-        `/group/fetchAllGroups/${creds.instanceName}`,
+  const data = await evolutionFetch<unknown>(
+    creds,
+    `/group/fetchAllGroups/${creds.instanceName}`,
         {
           query: { getParticipants: "false" },
           timeoutMs: attempt === 1 ? 55_000 : 90_000,
         }
-      );
+  );
 
-      const out: Array<{ id: string; name: string; type: string }> = [];
+  const out: Array<{ id: string; name: string; type: string }> = [];
       for (const g of normalizeEvolutionRows(data)) {
-        const id = String(g.id || g.remoteJid || g.jid || "");
-        if (!id.endsWith("@g.us")) continue;
-        const name =
-          pickReadableName(g.subject, g.name, g.pushName) ||
+    const id = String(g.id || g.remoteJid || g.jid || "");
+    if (!id.endsWith("@g.us")) continue;
+    const name =
+      pickReadableName(g.subject, g.name, g.pushName) ||
           `Groupe …${id.replace(/@g\.us$/i, "").slice(-6)}`;
-        out.push({ id, name, type: "group" });
-      }
+    out.push({ id, name, type: "group" });
+  }
       out.sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base" }));
 
       GROUPS_LIST_CACHE.set(userId, {
         groups: out,
         expiresAt: Date.now() + GROUPS_LIST_TTL_MS,
       });
-      return out;
+  return out;
     } catch (err) {
       lastErr = err;
       console.warn(
@@ -879,7 +879,7 @@ export async function getGroupMembers(userId: number, groupId: string): Promise<
         phone && (phone.endsWith("@s.whatsapp.net") || phone.endsWith("@c.us"))
           ? phone
           : lid || phone;
-      return {
+    return {
         id: normalizeGroupParticipantId(preferred),
         name: pickReadableName(row.name) || undefined,
         isAdmin: Boolean(row.isAdmin || row.admin),
@@ -1164,38 +1164,38 @@ export async function sendWhatsAppMessage(
       const safeMessage = sanitizeOutboundWhatsAppText(message);
       const data = await sendTextViaEvolution(creds, chatId, safeMessage, opts.textOptions);
 
-      const idMessage = extractMessageId(data);
+  const idMessage = extractMessageId(data);
       void import("./whatsapp-connection.js")
         .then((m) => m.markWhatsAppOpen(userId))
         .catch(() => {});
 
-      await saveWhatsAppMessage(userId, {
-        contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
-        direction: "sortant",
+  await saveWhatsAppMessage(userId, {
+    contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
+    direction: "sortant",
         body: safeMessage,
-        greenApiId: idMessage,
-        countsTowardQuota: opts.countsTowardQuota !== false,
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
         automationId: opts.automationId ?? null,
-      });
+  });
 
-      const normalized = normalizeGroupParticipantId(chatId);
-      if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
-        try {
-          await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
-        } catch {
-          /* best effort */
-        }
-      } else if (normalized.endsWith("@c.us")) {
-        try {
-          if (!(await getContact(userId, normalized))) {
-            await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: false });
-          }
-        } catch {
-          /* best effort */
-        }
+  const normalized = normalizeGroupParticipantId(chatId);
+  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+    try {
+      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+    } catch {
+      /* best effort */
+    }
+  } else if (normalized.endsWith("@c.us")) {
+    try {
+      if (!(await getContact(userId, normalized))) {
+        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: false });
       }
+    } catch {
+      /* best effort */
+    }
+  }
 
-      return { idMessage, chatId: normalized.endsWith("@g.us") ? chatId : normalized };
+  return { idMessage, chatId: normalized.endsWith("@g.us") ? chatId : normalized };
     },
     gapOpts
   );
@@ -1277,7 +1277,7 @@ export async function sendWhatsAppMedia(
   await assertCanSendTo(userId, chatId);
 
   return withOutboundSpacing(userId, async () => {
-    const number = formatEvolutionSendNumber(chatId);
+  const number = formatEvolutionSendNumber(chatId);
     // Evolution accepte l'URL ou le base64 dans le même champ `media`. On retire un
     // éventuel préfixe data:...;base64, car l'API attend le base64 nu.
     const media = input.url.startsWith("data:")
@@ -1291,14 +1291,14 @@ export async function sendWhatsAppMedia(
     let idMessage: string;
     let confirmed = true;
     try {
-      const data = await evolutionFetch<unknown>(creds, `/message/sendMedia/${creds.instanceName}`, {
-        method: "POST",
-        body: {
-          number,
-          mediatype: input.type,
+  const data = await evolutionFetch<unknown>(creds, `/message/sendMedia/${creds.instanceName}`, {
+    method: "POST",
+    body: {
+      number,
+      mediatype: input.type,
           media,
-          caption: input.caption,
-          fileName: input.fileName,
+      caption: input.caption,
+      fileName: input.fileName,
           ...(input.mimetype ? { mimetype: input.mimetype } : {}),
         },
         timeoutMs: 120_000,
@@ -1360,7 +1360,7 @@ export async function sendWhatsAppVoice(
       body: { number, audio: payload },
     });
 
-    const idMessage = extractMessageId(data);
+  const idMessage = extractMessageId(data);
 
     await saveWhatsAppMessage(userId, {
       contactPhone: normalizeGroupParticipantId(chatId),
@@ -1411,24 +1411,24 @@ export async function sendWhatsAppLocation(
     const idMessage = extractMessageId(data);
     const label = `[localisation] ${input.name || ""} (${input.latitude}, ${input.longitude})`.trim();
 
-    await saveWhatsAppMessage(userId, {
-      contactPhone: normalizeGroupParticipantId(chatId),
-      direction: "sortant",
-      body: label,
-      greenApiId: idMessage,
-      countsTowardQuota: opts.countsTowardQuota !== false,
-    });
+  await saveWhatsAppMessage(userId, {
+    contactPhone: normalizeGroupParticipantId(chatId),
+    direction: "sortant",
+    body: label,
+    greenApiId: idMessage,
+    countsTowardQuota: opts.countsTowardQuota !== false,
+  });
 
-    const normalized = normalizeGroupParticipantId(chatId);
-    if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
-      try {
-        await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
-      } catch {
-        /* best effort */
-      }
+  const normalized = normalizeGroupParticipantId(chatId);
+  if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
+    try {
+      await saveContact(userId, { phone: normalized, status: "en_conversation", autoReply: true });
+    } catch {
+      /* best effort */
     }
+  }
 
-    return { idMessage, chatId: normalized };
+  return { idMessage, chatId: normalized };
   });
 }
 
@@ -1636,6 +1636,43 @@ export async function sendWhatsAppSticker(
   });
 }
 
+/**
+ * Clé de recherche groupe : casse / accents / tirets / ponctuation → espaces.
+ * « le labo du no code » ≡ « Le Labo du No-Code ».
+ */
+export function normalizeGroupSearchKey(s: string): string {
+  return s
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .replace(/[^a-z0-9]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function scoreGroupNameMatch(queryKey: string, nameKey: string): number {
+  if (!queryKey || !nameKey) return 0;
+  if (queryKey === nameKey) return 10_000;
+  if (nameKey.includes(queryKey)) return 5_000 + queryKey.length;
+  if (queryKey.includes(nameKey) && nameKey.length >= 4) return 4_000 + nameKey.length;
+
+  const qTokens = queryKey.split(" ").filter((t) => t.length > 0);
+  const nTokens = new Set(nameKey.split(" ").filter((t) => t.length > 0));
+  if (!qTokens.length) return 0;
+
+  // Ignore articles FR très courts pour le score « requête couverte »
+  const meaningful = qTokens.filter((t) => !/^(le|la|les|du|de|des|un|une|et|au|aux)$/.test(t));
+  const tokens = meaningful.length ? meaningful : qTokens;
+  let hits = 0;
+  for (const t of tokens) {
+    if (nTokens.has(t)) hits++;
+    else if ([...nTokens].some((n) => n.includes(t) || t.includes(n))) hits += 0.5;
+  }
+  const ratio = hits / tokens.length;
+  if (ratio < 0.75) return 0;
+  return Math.round(1_000 * ratio + hits * 10 + Math.min(nameKey.length, 40));
+}
+
 export async function findGroupByNameOrId(
   userId: number,
   nameOrId: string
@@ -1644,21 +1681,42 @@ export async function findGroupByNameOrId(
   if (raw.endsWith("@g.us")) return { id: raw, name: raw };
 
   const groups = await listWhatsAppGroups(userId);
-  const normalize = (s: string) =>
-    s
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/\p{M}/gu, "")
-      .trim();
+  const target = normalizeGroupSearchKey(raw);
+  if (!target) return null;
 
-  const target = normalize(raw);
-  const exact = groups.find((g) => normalize(g.name) === target);
-  if (exact) return { id: exact.id, name: exact.name };
+  let best: { id: string; name: string; score: number } | null = null;
+  for (const g of groups) {
+    const score = scoreGroupNameMatch(target, normalizeGroupSearchKey(g.name));
+    if (score <= 0) continue;
+    if (!best || score > best.score) {
+      best = { id: g.id, name: g.name, score };
+    }
+  }
+  return best ? { id: best.id, name: best.name } : null;
+}
 
-  const partial = groups.find(
-    (g) => normalize(g.name).includes(target) || target.includes(normalize(g.name))
-  );
-  return partial ? { id: partial.id, name: partial.name } : null;
+/** Suggestions proches (pour messages d'erreur), sans dump de toute la liste. */
+export async function suggestGroupsByName(
+  userId: number,
+  nameOrId: string,
+  limit = 5
+): Promise<Array<{ id: string; name: string }>> {
+  const raw = nameOrId.trim();
+  if (!raw || raw.endsWith("@g.us")) return [];
+  const groups = await listWhatsAppGroups(userId);
+  const target = normalizeGroupSearchKey(raw);
+  if (!target) return [];
+
+  return groups
+    .map((g) => ({
+      id: g.id,
+      name: g.name,
+      score: scoreGroupNameMatch(target, normalizeGroupSearchKey(g.name)),
+    }))
+    .filter((g) => g.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, Math.max(1, limit))
+    .map(({ id, name }) => ({ id, name }));
 }
 
 export async function messageGroupMembers(
