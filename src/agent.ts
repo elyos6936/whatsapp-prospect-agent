@@ -35,21 +35,23 @@ function detectQuickListIntent(
   // Membres / contacts D'UN groupe — pas une liste de tous les groupes
   if (detectQuickGroupMembersIntent(msg)) return null;
 
+  // Action / prospection sur un groupe → JAMAIS de catalogue
+  if (isGroupActionNotCatalogRequest(t)) return null;
+
   const num =
     t.match(/\b(\d{1,3})\s*(?:groupes?|contacts?)\b/) ||
     t.match(/\b(?:groupes?|contacts?)\s*(\d{1,3})\b/) ||
     t.match(/\bliste[- ]?moi\s+(\d{1,3})\b/);
   const limit = num ? Math.min(200, Math.max(1, Number(num[1]))) : undefined;
 
-  if (
-    /\b(groupes?|groups?)\b/i.test(t) &&
-    /\b(liste|lister|montre|afficher|voir|mes|tous|all)\b/i.test(t)
-  ) {
+  // Catalogue groupes : demande EXPLICITE seulement
+  // (évite le faux positif « prospecter TOUS les membres de ce GROUPE »)
+  if (wantsExplicitGroupCatalog(t)) {
     return { kind: "groups", limit };
   }
   if (
     /\b(contacts?)\b/i.test(t) &&
-    /\b(liste|lister|montre|afficher|voir|mes|tous|all)\b/i.test(t) &&
+    /\b(liste|lister|montre|afficher|voir)\b/i.test(t) &&
     !/\bgroupes?\b/i.test(t) &&
     // Ne jamais déclencher si l'utilisateur donne des numéros précis à prospecter
     !/\+?\d[\d\s.\-]{7,}\d/.test(t) &&
@@ -58,6 +60,53 @@ function detectQuickListIntent(
     return { kind: "contacts", limit };
   }
   return null;
+}
+
+/**
+ * True si l'utilisateur veut AGIR sur un/des groupe(s), pas voir le catalogue.
+ * Ex. « prospecter tous les membres de ce groupe », « envoie dans mon groupe X ».
+ */
+function isGroupActionNotCatalogRequest(t: string): boolean {
+  if (/\bprospect/i.test(t)) return true;
+  if (/\b(membres?|participants?)\b/i.test(t) && /\bgroupes?\b/i.test(t)) return true;
+  if (
+    /\b(envoie|envoyer|ecris|écrire|ecrire|poste|publie|mentionne|tague|contacte|contacter|lance|lancer|cree|créer|create)\b/i.test(
+      t
+    ) &&
+    /\bgroupes?\b/i.test(t)
+  ) {
+    return true;
+  }
+  // « ce groupe » / « le groupe » / « mon groupe » = cible, pas catalogue
+  if (/\b(ce|cet|du|de\s+ce|dans\s+(ce\s+|le\s+|mon\s+)?|mon|ma)\s+groupe\b/i.test(t)) {
+    return true;
+  }
+  return false;
+}
+
+/** Demande explicite de voir la liste des groupes WhatsApp. */
+function wantsExplicitGroupCatalog(t: string): boolean {
+  if (isGroupActionNotCatalogRequest(t)) return false;
+
+  // « liste / montre / affiche / vois mes groupes »
+  if (
+    /\b(liste|lister|montre|afficher|voir)\b/i.test(t) &&
+    /\b(mes\s+)?groupes?\b/i.test(t)
+  ) {
+    return true;
+  }
+  // « quels sont mes groupes »
+  if (/\b(quels?|quelles?)\s+(sont\s+)?(mes\s+)?groupes?\b/i.test(t)) {
+    return true;
+  }
+  // « tous mes groupes » / « all my groups » (catalogue), sans « membres »
+  if (
+    /\b(tous|all)\s+(mes\s+|my\s+)?groupes?\b/i.test(t) ||
+    /\bgroupes?\s+(whatsapp\s+)?(disponibles?|connectes?|connectés?)\b/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Extraction membres d'un groupe nommé — évite list_whatsapp_groups à la place. */
@@ -593,6 +642,26 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           continue;
         }
 
+        // Interdit de lister tous les groupes pendant une action / prospection
+        if (
+          toolCall.function.name === "list_whatsapp_groups" &&
+          isGroupActionNotCatalogRequest(userMessage.toLowerCase())
+        ) {
+          result = JSON.stringify({
+            error:
+              "INTERDIT de lister tous les groupes. L'utilisateur veut une action sur un groupe " +
+              "(prospection, envoi, membres…). Si le groupe n'est pas nommé (« ce groupe »), " +
+              "demande UNIQUEMENT le nom du groupe — une question courte. Sinon utilise le nom " +
+              "dans create_automation / send_whatsapp_message / get_group_members.",
+          });
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: result,
+          });
+          continue;
+        }
+
         try {
           result = await executeTool(userId, threadId, toolCall.function.name, args);
         } catch (err) {
@@ -601,16 +670,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           });
         }
 
-        // Listes : affichage vertical immédiat SEULEMENT si l'utilisateur a demandé une liste.
-        // Sinon (ex. lookup avant envoi dans un groupe nommé) : on laisse la boucle outils
-        // continuer — sinon on dump 100+ groupes au lieu d'exécuter l'action.
+        // Listes : affichage vertical immédiat SEULEMENT si catalogue explicitement demandé.
         const userAskedForList =
           Boolean(detectQuickListIntent(userMessage)) ||
           (toolCall.function.name === "list_whatsapp_groups" &&
-            /\b(liste|lister|montre|afficher|voir)\b/i.test(userMessage) &&
-            /\bgroupes?\b/i.test(userMessage)) ||
+            wantsExplicitGroupCatalog(userMessage.toLowerCase())) ||
           (toolCall.function.name !== "list_whatsapp_groups" &&
-            /\b(liste|lister|montre|afficher|voir|extraire)\b/i.test(userMessage));
+            /\b(liste|lister|montre|afficher|voir|extraire)\b/i.test(userMessage) &&
+            !isGroupActionNotCatalogRequest(userMessage.toLowerCase()));
 
         if (
           userAskedForList &&
