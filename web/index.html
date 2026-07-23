@@ -3,12 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <!-- Favicon absolus : Google Search les résout mieux (surtout après redirect apex→www) -->
-    <link rel="icon" href="https://www.klanvio.com/favicon.ico" sizes="any" />
-    <link rel="icon" href="https://www.klanvio.com/favicon.jpeg" type="image/jpeg" />
-    <link rel="icon" type="image/png" sizes="48x48" href="https://www.klanvio.com/favicon-48.png" />
-    <link rel="apple-touch-icon" sizes="180x180" href="https://www.klanvio.com/apple-touch-icon.png" />
-    <link rel="shortcut icon" href="https://www.klanvio.com/favicon.ico" />
+    <!-- Favicon : PNG 48/96 (Google Search) + ICO fallback. Pas de JPEG en icon. -->
+    <link rel="icon" href="/favicon-96.png" type="image/png" sizes="96x96" />
+    <link rel="icon" href="/favicon-48.png" type="image/png" sizes="48x48" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="shortcut icon" href="/favicon.ico" />
     <link rel="manifest" href="/site.webmanifest" />
     <meta name="color-scheme" content="light" />
     <meta name="robots" content="index,follow,max-image-preview:large" />
@@ -33,7 +33,9 @@
       property="og:description"
       content="Prospectez, relancez et closez sur WhatsApp avec un agent IA naturel. Simulation avant envoi, protection anti-blocage, rapports quotidiens."
     />
-    <meta property="og:image" content="https://www.klanvio.com/brand/og-banner.jpg?v=2" />
+    <meta property="og:image" content="https://www.klanvio.com/brand/og-banner.jpg?v=3" />
+    <meta property="og:image:secure_url" content="https://www.klanvio.com/brand/og-banner.jpg?v=3" />
+    <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta property="og:image:alt" content="Klanvio — Agent WhatsApp IA pour prospection et ventes" />
@@ -44,7 +46,7 @@
       name="twitter:description"
       content="Prospection, relances et closing WhatsApp automatisés. Réponses humaines, anti-blocage, essai 7 jours."
     />
-    <meta name="twitter:image" content="https://www.klanvio.com/brand/og-banner.jpg?v=2" />
+    <meta name="twitter:image" content="https://www.klanvio.com/brand/og-banner.jpg?v=3" />
 
     <meta name="theme-color" content="#2057CE" />
     <meta name="application-name" content="Klanvio" />
@@ -61,9 +63,9 @@
             "url": "https://www.klanvio.com/",
             "logo": {
               "@type": "ImageObject",
-              "url": "https://www.klanvio.com/brand/logo.png",
-              "width": 1000,
-              "height": 1000
+              "url": "https://www.klanvio.com/apple-touch-icon.png",
+              "width": 180,
+              "height": 180
             },
             "description": "Agent WhatsApp IA pour prospection, relances et closing.",
             "sameAs": [

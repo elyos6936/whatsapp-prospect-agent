@@ -2742,10 +2742,27 @@ export async function getInstanceQr(userId: number): Promise<{
   message: string;
 }> {
   // Sticky d'abord : ne PAS régénérer un QR pendant une flap / heal
-  const { getWhatsAppConnectionStatus, healWhatsAppSession, isWhatsAppStickyOpen } =
-    await import("./whatsapp-connection.js");
+  const {
+    getWhatsAppConnectionStatus,
+    healWhatsAppSession,
+    isWhatsAppIntentionallyLoggedOut,
+    isWhatsAppStickyOpen,
+  } = await import("./whatsapp-connection.js");
   const sticky = await getWhatsAppConnectionStatus(userId);
   if (sticky.connected) {
+    const unique = await enforceUniqueWhatsAppPhoneOnConnect(userId);
+    if (!unique.ok) {
+      const { markWhatsAppLoggedOut, setWhatsAppConnectUiMessage } = await import(
+        "./whatsapp-connection.js"
+      );
+      const conflictMsg =
+        "Ce numéro WhatsApp est déjà connecté sur un autre compte Klanvio. " +
+        "Un seul compte par numéro est autorisé — déconnecte l’autre compte ou utilise un autre numéro.";
+      setWhatsAppConnectUiMessage(userId, conflictMsg);
+      markWhatsAppLoggedOut(userId);
+      await logoutInstance(userId).catch(() => {});
+      throw new EvolutionApiError(conflictMsg);
+    }
     return {
       base64: null,
       pairingCode: null,
@@ -2756,7 +2773,7 @@ export async function getInstanceQr(userId: number): Promise<{
   }
 
   const raw = await testEvolutionConnection(userId, { bypassCache: true });
-  if (raw.connected && raw.state === "open") {
+  if (raw.connected && raw.state === "open" && !isWhatsAppIntentionallyLoggedOut(userId)) {
     return {
       base64: null,
       pairingCode: null,
@@ -2766,21 +2783,23 @@ export async function getInstanceQr(userId: number): Promise<{
     };
   }
 
-  // Si session récemment ouverte ou en close flaky → restart doux, JAMAIS connect (QR)
-  if (isWhatsAppStickyOpen(userId) || raw.state === "close" || raw.state === "connecting") {
-    await healWhatsAppSession(userId, "getInstanceQr-avoid-qr-churn");
-    await new Promise((r) => setTimeout(r, 2500));
-    const after = await getWhatsAppConnectionStatus(userId, { bypassCache: true });
-    if (after.connected) {
-      return {
-        base64: null,
-        pairingCode: null,
-        state: after.state,
-        connected: true,
-        message: after.message || "Session WhatsApp restaurée.",
-      };
+  // Après logout volontaire : pas de heal (qui retarderait le QR) — on régénère tout de suite.
+  // Sinon, close flaky → restart doux, JAMAIS connect (QR) tant que possible.
+  if (!isWhatsAppIntentionallyLoggedOut(userId)) {
+    if (isWhatsAppStickyOpen(userId) || raw.state === "close" || raw.state === "connecting") {
+      await healWhatsAppSession(userId, "getInstanceQr-avoid-qr-churn");
+      await new Promise((r) => setTimeout(r, 2500));
+      const after = await getWhatsAppConnectionStatus(userId, { bypassCache: true });
+      if (after.connected) {
+        return {
+          base64: null,
+          pairingCode: null,
+          state: after.state,
+          connected: true,
+          message: after.message || "Session WhatsApp restaurée.",
+        };
+      }
     }
-    // Encore close après heal : seulement là on autorise un vrai QR
   }
 
   await createInstance(userId);
@@ -2793,14 +2812,18 @@ export async function getInstanceQr(userId: number): Promise<{
 
   const rawQr = await connectInstance(userId);
   const { base64, pairingCode } = parseConnectQrPayload(rawQr);
+  const { getWhatsAppConnectUiMessage } = await import("./whatsapp-connection.js");
+  const uiMsg = getWhatsAppConnectUiMessage(userId);
   return {
     base64,
     pairingCode,
     state: raw.state,
     connected: false,
-    message: base64 || pairingCode
-      ? "Scannez le QR code avec WhatsApp (Appareils connectés)."
-      : raw.message,
+    message:
+      uiMsg ||
+      (base64 || pairingCode
+        ? "Scannez le QR code avec WhatsApp (Appareils connectés)."
+        : raw.message),
   };
 }
 
@@ -2821,9 +2844,132 @@ export async function restartInstance(userId: number): Promise<unknown> {
  * être généré pour connecter un autre numéro. N'efface pas l'instance elle-même.
  */
 export async function logoutInstance(userId: number): Promise<unknown> {
+  const { markWhatsAppLoggedOut } = await import("./whatsapp-connection.js");
+  // Coupe sticky + heal AVANT l'appel Evolution pour que /api/me reflète
+  // immédiatement « déconnecté » (sinon sticky 120s gardait « connecté »).
+  markWhatsAppLoggedOut(userId);
+
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
-  return evolutionFetch(creds, `/instance/logout/${creds.instanceName}`, { method: "DELETE" });
+  try {
+    return await evolutionFetch(creds, `/instance/logout/${creds.instanceName}`, {
+      method: "DELETE",
+    });
+  } finally {
+    invalidateConnectionStateCache(userId);
+  }
+}
+
+/** Normalise un owner/JID Evolution → chiffres uniquement. */
+export function normalizeWhatsAppOwnerPhone(raw: string): string {
+  return String(raw || "")
+    .replace(/@.*$/, "")
+    .replace(/\D/g, "");
+}
+
+export type EvolutionInstanceSummary = {
+  instanceName: string;
+  ownerPhone: string | null;
+  state: string;
+};
+
+/** Liste toutes les instances de la plateforme Evolution (clé partagée). */
+export async function listEvolutionInstanceSummaries(
+  userId: number
+): Promise<EvolutionInstanceSummary[]> {
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) return [];
+  const data = await evolutionFetch<unknown>(creds, `/instance/fetchInstances`, {
+    timeoutMs: 20_000,
+  });
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  const out: EvolutionInstanceSummary[] = [];
+  for (const row of rows) {
+    if (!row || typeof row !== "object") continue;
+    const o = row as Record<string, unknown>;
+    const inst =
+      o.instance && typeof o.instance === "object"
+        ? (o.instance as Record<string, unknown>)
+        : null;
+    const name = String(inst?.instanceName ?? o.instanceName ?? o.name ?? "").trim();
+    if (!name) continue;
+    const ownerRaw = o.owner ?? o.ownerJid ?? inst?.owner ?? inst?.ownerJid;
+    const ownerPhone =
+      typeof ownerRaw === "string" && ownerRaw.trim()
+        ? normalizeWhatsAppOwnerPhone(ownerRaw)
+        : null;
+    const state = String(
+      o.connectionStatus ?? o.status ?? inst?.state ?? inst?.status ?? o.state ?? "unknown"
+    );
+    out.push({ instanceName: name, ownerPhone: ownerPhone || null, state });
+  }
+  return out;
+}
+
+/**
+ * Deux numéros sont « le même » si égalité stricte des digits, ou si l’un est
+ * le suffixe de l’autre (variantes indicatif, min. 8 chiffres).
+ */
+export function whatsappPhonesMatch(a: string, b: string): boolean {
+  const x = normalizeWhatsAppOwnerPhone(a);
+  const y = normalizeWhatsAppOwnerPhone(b);
+  if (!x || !y) return false;
+  if (x === y) return true;
+  if (x.length >= 8 && y.length >= 8 && (x.endsWith(y) || y.endsWith(x))) return true;
+  return false;
+}
+
+/**
+ * Cherche une autre instance Evolution déjà liée au même numéro WhatsApp.
+ */
+export async function findWhatsAppPhoneConflict(
+  userId: number,
+  phoneDigits: string
+): Promise<{ instanceName: string; otherUserId: number | null } | null> {
+  const phone = normalizeWhatsAppOwnerPhone(phoneDigits);
+  if (!phone || phone.length < 8) return null;
+
+  const creds = await getEvolutionCredentials(userId);
+  if (!creds) return null;
+
+  const { userIdFromEvolutionInstance } = await import("./config.js");
+  const instances = await listEvolutionInstanceSummaries(userId);
+  for (const inst of instances) {
+    if (!inst.ownerPhone) continue;
+    if (inst.instanceName === creds.instanceName) continue;
+    if (!whatsappPhonesMatch(phone, inst.ownerPhone)) continue;
+    return {
+      instanceName: inst.instanceName,
+      otherUserId: userIdFromEvolutionInstance(inst.instanceName),
+    };
+  }
+  return null;
+}
+
+/**
+ * Après connexion (`open`) : refuse si le numéro est déjà pris ailleurs.
+ * Appelle logout + marque logout volontaire si conflit.
+ */
+export async function enforceUniqueWhatsAppPhoneOnConnect(userId: number): Promise<{
+  ok: boolean;
+  phone?: string;
+  conflictInstance?: string;
+  conflictUserId?: number | null;
+}> {
+  const owner = await getConnectedOwnerId(userId);
+  if (!owner) return { ok: true };
+  const phone = normalizeWhatsAppOwnerPhone(owner);
+  if (!phone) return { ok: true };
+
+  const conflict = await findWhatsAppPhoneConflict(userId, phone);
+  if (!conflict) return { ok: true, phone };
+
+  return {
+    ok: false,
+    phone,
+    conflictInstance: conflict.instanceName,
+    conflictUserId: conflict.otherUserId,
+  };
 }
 
 export async function setEvolutionWebhook(userId: number, webhookUrl: string): Promise<unknown> {

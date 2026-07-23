@@ -190,8 +190,14 @@ export function WhatsAppConnectModal({
             </p>
           )}
 
-          {!qrData?.connected && friendlyMsg && qrData?.base64 && (
-            <p className="mt-3 text-xs text-text-500">{friendlyMsg}</p>
+          {!qrData?.connected && friendlyMsg && (
+            /déjà connecté|autre compte|un seul compte/i.test(friendlyMsg) ? (
+              <p className="mt-3 rounded-xl border border-red-500/25 bg-red-500/10 px-3 py-2.5 text-left text-xs leading-relaxed text-red-300">
+                {friendlyMsg}
+              </p>
+            ) : qrData?.base64 ? (
+              <p className="mt-3 text-xs text-text-500">{friendlyMsg}</p>
+            ) : null
           )}
 
           <div className="mt-5 flex flex-wrap justify-center gap-2">

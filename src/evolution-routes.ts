@@ -300,7 +300,21 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
     const userId = requireUserId(request);
     try {
       const result = await logoutInstance(userId);
-      return { ok: true, result };
+      const { getWhatsAppConnectionStatus } = await import("./whatsapp-connection.js");
+      // sticky:false : l’UI doit voir « déconnecté » immédiatement (pas le sticky 120s).
+      const whatsapp = await getWhatsAppConnectionStatus(userId, {
+        sticky: false,
+        bypassCache: true,
+      });
+      return {
+        ok: true,
+        result,
+        whatsapp: {
+          connected: false,
+          state: whatsapp.state === "open" ? "close" : whatsapp.state,
+          message: "WhatsApp déconnecté.",
+        },
+      };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.status(400).send({ error: msg });

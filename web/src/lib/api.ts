@@ -509,7 +509,10 @@ export async function rebootEvolutionInstance(): Promise<{ message: string }> {
   return request('/api/evolution/instance/restart', { method: 'POST' });
 }
 
-export async function disconnectWhatsApp(): Promise<{ ok: boolean }> {
+export async function disconnectWhatsApp(): Promise<{
+  ok: boolean;
+  whatsapp: { connected: boolean; state: string; message: string };
+}> {
   return request('/api/evolution/instance/logout', { method: 'POST' });
 }
 

@@ -109,7 +109,7 @@ function clearIntegrationQueryParams() {
 }
 
 export function SettingsPage() {
-  const { user, logout, refreshUser } = useAuth();
+  const { user, logout, refreshUser, patchWhatsApp } = useAuth();
   const [tab, setTab] = useState<SettingsTab>(() => readInitialTab());
   const [loading, setLoading] = useState(true);
   const typeformFlash = useMemo(() => readTypeformFlash(), []);
@@ -185,7 +185,15 @@ export function SettingsPage() {
     setDisconnecting(true);
     setDisconnectError('');
     try {
-      await disconnectWhatsApp();
+      const res = await disconnectWhatsApp();
+      // Optimistic + réponse API : l’UI passe « déconnecté » sans attendre sticky/poll.
+      patchWhatsApp(
+        res.whatsapp ?? {
+          connected: false,
+          state: 'close',
+          message: 'WhatsApp déconnecté.',
+        },
+      );
       await refreshUser();
       setConnectModalOpen(true);
     } catch (err) {

@@ -35,6 +35,8 @@ type AuthState = {
   register: (email: string, password: string, name: string) => Promise<void>;
   logout: () => void;
   refreshUser: () => Promise<void>;
+  /** Met à jour immédiatement le statut WhatsApp côté UI (ex. après Déconnecter). */
+  patchWhatsApp: (whatsapp: MeResponse['whatsapp']) => void;
   retrySession: () => Promise<void>;
 };
 
@@ -192,6 +194,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSessionError(null);
   }, [applyUser]);
 
+  const patchWhatsApp = useCallback((whatsapp: MeResponse['whatsapp']) => {
+    setUser((current) => {
+      if (!current) return current;
+      const next = { ...current, whatsapp };
+      setStoredUser(next);
+      return next;
+    });
+  }, []);
+
   const value = useMemo(
     () => ({
       user,
@@ -202,6 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       refreshUser,
+      patchWhatsApp,
       retrySession,
     }),
     [
@@ -213,6 +225,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       refreshUser,
+      patchWhatsApp,
       retrySession,
     ],
   );

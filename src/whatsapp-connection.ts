@@ -1,4 +1,5 @@
 import {
+  enforceUniqueWhatsAppPhoneOnConnect,
   invalidateConnectionStateCache,
   restartInstance,
   testEvolutionConnection,
@@ -7,6 +8,10 @@ import {
 
 /** Dernière confirmation `open` (évite de basculer l’UI sur un faux offline). */
 const lastOpenAt = new Map<number, number>();
+/** Logout volontaire — ignore sticky + heal jusqu’au prochain scan QR / open. */
+const loggedOutAt = new Map<number, number>();
+/** Message à afficher dans la modale de connexion WhatsApp (pas le chat). */
+const connectUiMessage = new Map<number, string>();
 /** Anti-boucle heal (restart Baileys). */
 const lastHealAt = new Map<number, number>();
 const HEAL_COOLDOWN_MS = 90_000;
@@ -14,7 +19,39 @@ const HEAL_COOLDOWN_MS = 90_000;
 export const CONNECTION_STICKY_MS = 120_000;
 
 export function markWhatsAppOpen(userId: number): void {
+  loggedOutAt.delete(userId);
+  connectUiMessage.delete(userId);
   lastOpenAt.set(userId, Date.now());
+}
+
+/** Appelé juste avant / après un logout volontaire (Réglages → Déconnecter). */
+export function markWhatsAppLoggedOut(userId: number): void {
+  lastOpenAt.delete(userId);
+  loggedOutAt.set(userId, Date.now());
+  invalidateConnectionStateCache(userId);
+}
+
+export function clearWhatsAppLoggedOut(userId: number): void {
+  loggedOutAt.delete(userId);
+}
+
+export function isWhatsAppIntentionallyLoggedOut(userId: number): boolean {
+  return loggedOutAt.has(userId);
+}
+
+/** Message visible dans WhatsAppConnectModal (conflit numéro, etc.). */
+export function setWhatsAppConnectUiMessage(userId: number, message: string): void {
+  const clean = message.trim();
+  if (clean) connectUiMessage.set(userId, clean);
+  else connectUiMessage.delete(userId);
+}
+
+export function getWhatsAppConnectUiMessage(userId: number): string | null {
+  return connectUiMessage.get(userId) ?? null;
+}
+
+export function clearWhatsAppConnectUiMessage(userId: number): void {
+  connectUiMessage.delete(userId);
 }
 
 export function getLastWhatsAppOpenAt(userId: number): number | null {
@@ -22,6 +59,7 @@ export function getLastWhatsAppOpenAt(userId: number): number | null {
 }
 
 export function isWhatsAppStickyOpen(userId: number, stickyMs = CONNECTION_STICKY_MS): boolean {
+  if (loggedOutAt.has(userId)) return false;
   const at = lastOpenAt.get(userId);
   return at != null && Date.now() - at < stickyMs;
 }
@@ -33,6 +71,9 @@ export async function healWhatsAppSession(
   userId: number,
   reason: string
 ): Promise<{ healed: boolean; skipped?: string }> {
+  if (isWhatsAppIntentionallyLoggedOut(userId)) {
+    return { healed: false, skipped: "intentional-logout" };
+  }
   const now = Date.now();
   const last = lastHealAt.get(userId) ?? 0;
   if (now - last < HEAL_COOLDOWN_MS) {
@@ -81,6 +122,28 @@ export async function handleConnectionUpdate(userId: number, data: unknown): Pro
   console.log(`🔌 CONNECTION_UPDATE user=${userId} → ${rawState}`);
 
   if (rawState === "open" || rawState === "connected") {
+    // Anti-doublon : même numéro déjà lié à une autre instance Klanvio.
+    try {
+      const unique = await enforceUniqueWhatsAppPhoneOnConnect(userId);
+      if (!unique.ok) {
+        console.warn(
+          `⛔ WhatsApp phone conflict user=${userId} — déjà sur ${unique.conflictInstance ?? "?"}`
+        );
+        const conflictMsg =
+          "Ce numéro WhatsApp est déjà connecté sur un autre compte Klanvio. " +
+          "Un seul compte par numéro est autorisé — déconnecte l’autre compte ou utilise un autre numéro.";
+        setWhatsAppConnectUiMessage(userId, conflictMsg);
+        markWhatsAppLoggedOut(userId);
+        const { logoutInstance } = await import("./evolutionapi.js");
+        await logoutInstance(userId).catch(() => {});
+        return 1;
+      }
+    } catch (err) {
+      console.warn(
+        `⚠️ enforceUniqueWhatsAppPhoneOnConnect user=${userId}:`,
+        err instanceof Error ? err.message : err
+      );
+    }
     markWhatsAppOpen(userId);
     return 1;
   }
@@ -92,7 +155,9 @@ export async function handleConnectionUpdate(userId: number, data: unknown): Pro
     rawState === "refused" ||
     rawState.includes("disconnect")
   ) {
-    void healWhatsAppSession(userId, `webhook:${rawState}`).catch(() => {});
+    if (!isWhatsAppIntentionallyLoggedOut(userId)) {
+      void healWhatsAppSession(userId, `webhook:${rawState}`).catch(() => {});
+    }
   }
 
   return 1;
@@ -105,6 +170,17 @@ export function applyConnectionSticky(
   userId: number,
   raw: EvolutionConnectionState
 ): EvolutionConnectionState {
+  // Logout volontaire : jamais de sticky ni de faux « connecté », même si Evolution
+  // renvoie encore `open` pendant la course logout (quelques secondes).
+  if (isWhatsAppIntentionallyLoggedOut(userId)) {
+    const uiMsg = getWhatsAppConnectUiMessage(userId);
+    return {
+      connected: false,
+      state: raw.state === "open" ? "close" : raw.state || "close",
+      message: uiMsg || "WhatsApp déconnecté.",
+    };
+  }
+
   if (raw.connected && raw.state === "open") {
     markWhatsAppOpen(userId);
     return raw;
@@ -176,7 +252,10 @@ export async function watchWhatsAppConnections(
         markWhatsAppOpen(userId);
         continue;
       }
-      if (raw.state === "close" || raw.state === "closed" || raw.state === "conflict") {
+      if (
+        (raw.state === "close" || raw.state === "closed" || raw.state === "conflict") &&
+        !isWhatsAppIntentionallyLoggedOut(userId)
+      ) {
         await healWhatsAppSession(userId, `watchdog:${raw.state}`);
       }
     } catch {
