@@ -8,6 +8,7 @@ import {
   addAutomationLog,
   getAppSettings,
   getContact,
+  getContactChatHistory,
   isContactBlocked,
   type Automation,
   type AutomationConfig,
@@ -42,8 +43,13 @@ export const THIRD_PARTY_NOTIFICATION_PROMPT = `Tu rédiges un message WhatsApp 
 Inclus uniquement les infos utiles au destinataire parmi celles fournies : qui a converti (nom / numéro), offre ou produit, objectif atteint, et le contexte / consignes de l'opérateur.
 Si une info manque, omets-la sans inventer.
 
+## Contrainte impérative : UN SEUL message
+- Rédige **un unique message complet**, jamais deux blocs, jamais un message qui annonce une info « à suivre ».
+- Si une adresse / info de livraison est fournie (voir « Infos données par le prospect »), **inclus-la directement dans le message**.
+- N'écris JAMAIS « voici son adresse », « je t'envoie l'adresse » ou une phrase qui promet une info que tu ne mets pas dans CE message. Soit tu as l'info et tu la donnes ici, soit tu ne la mentionnes pas.
+
 ## Sortie
-Réponds UNIQUEMENT avec le texte du message WhatsApp, rien d'autre.`;
+Réponds UNIQUEMENT avec le texte du message WhatsApp (un seul bloc), rien d'autre.`;
 
 export type ThirdPartyNotifyFacts = {
   role: string;
@@ -54,6 +60,8 @@ export type ThirdPartyNotifyFacts = {
   price?: string;
   closingGoal?: string;
   campaignName: string;
+  /** Infos utiles fournies par le prospect (ex. adresse de livraison) extraites de la conversation. */
+  prospectDetails?: string;
 };
 
 function goalLabel(goal?: string): string | undefined {
@@ -76,6 +84,7 @@ export function buildFallbackThirdPartyMessage(facts: ThirdPartyNotifyFacts): st
   const goal = goalLabel(facts.closingGoal);
   if (goal) lines.push(`Objectif : ${goal}.`);
   if (facts.productName?.trim()) lines.push(`Offre : ${facts.productName.trim()}.`);
+  if (facts.prospectDetails?.trim()) lines.push(facts.prospectDetails.trim());
   if (facts.context?.trim()) lines.push(facts.context.trim());
   return lines.join("\n");
 }
@@ -96,6 +105,9 @@ export async function generateThirdPartyNotificationMessage(
     facts.productName ? `Produit / offre : ${facts.productName}` : null,
     facts.price ? `Prix : ${facts.price}` : null,
     goalLabel(facts.closingGoal) ? `Objectif atteint : ${goalLabel(facts.closingGoal)}` : null,
+    facts.prospectDetails?.trim()
+      ? `Infos données par le prospect (adresse de livraison, précisions…) : ${facts.prospectDetails.trim()}`
+      : null,
   ].filter(Boolean);
 
   const userContent =
@@ -133,6 +145,33 @@ function resolveThirdPartyChatId(phoneRaw: string): string {
     return normalizePhoneToChatId(trimmed);
   }
   return normalizePhoneToChatId(trimmed);
+}
+
+/**
+ * Extrait les infos utiles fournies par le prospect (adresse de livraison,
+ * précisions de commande…) depuis ses derniers messages entrants, pour que la
+ * notification tierce soit complète en UN seul message.
+ */
+async function collectProspectDetails(
+  userId: number,
+  prospectChatId: string,
+  automationId: number | null
+): Promise<string | undefined> {
+  try {
+    const history = await getContactChatHistory(userId, prospectChatId, 14, automationId).catch(
+      () => []
+    );
+    const inbound = history
+      .filter((m) => m.direction === "entrant")
+      .map((m) => (m.body || "").trim())
+      .filter((b) => b.length > 0)
+      .slice(-6);
+    if (inbound.length === 0) return undefined;
+    const joined = inbound.join(" | ").replace(/\s+/g, " ").trim();
+    return joined ? joined.slice(0, 600) : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 async function alertOperator(
@@ -189,6 +228,12 @@ export async function maybeNotifyThirdPartyOnConversion(input: {
     const prospectName =
       contact?.name?.trim() || input.prospectName || chatIdToDisplay(input.prospectChatId);
 
+    const prospectDetails = await collectProspectDetails(
+      input.userId,
+      input.prospectChatId,
+      autoId
+    );
+
     const facts: ThirdPartyNotifyFacts = {
       role: cfg.role?.trim() || "tiers",
       context: cfg.context,
@@ -198,6 +243,7 @@ export async function maybeNotifyThirdPartyOnConversion(input: {
       price: input.automation.config.price,
       closingGoal: input.automation.config.closingGoal,
       campaignName: input.automation.name,
+      prospectDetails,
     };
 
     let message: string;

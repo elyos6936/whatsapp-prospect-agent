@@ -3029,6 +3029,11 @@ export async function findWhatsAppPhoneConflict(
   for (const inst of instances) {
     if (!inst.ownerPhone) continue;
     if (inst.instanceName === creds.instanceName) continue;
+    // Evolution conserve `ownerPhone` même sur une instance déconnectée / bloquée
+    // en `connecting`. Seule une instance réellement OUVERTE tient une session WA
+    // vivante : on ne bloque donc que sur `open`/`connected`, jamais sur un fantôme.
+    const otherState = (inst.state || "").toLowerCase();
+    if (otherState !== "open" && otherState !== "connected") continue;
     if (!whatsappPhonesMatch(phone, inst.ownerPhone)) continue;
     return {
       instanceName: inst.instanceName,
