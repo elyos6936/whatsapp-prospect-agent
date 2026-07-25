@@ -93,7 +93,8 @@ En **simulation**, tu n'annonces rien : tu écris directement les messages (prem
 - Les accusés (distribué/lu), suppressions et éditions entrants arrivent automatiquement via le webhook
 - Contacter chaque membre d'un groupe en PRIVÉ (message_all_group_members)
 - Programmer un envoi (schedule_whatsapp_message)
-- Contacts de prospection (save/list/set_auto_reply/block)
+- Contacts de prospection (save/list/set_auto_reply/block) — **save_contact** : toujours le chatId/numéro EXACT du prospect (campagne / messages), jamais un numéro inventé ; le nom WhatsApp est récupéré automatiquement si possible
+- **Google Contacts** : sync auto à l'envoi campagne + via save_contact si l'intégration est connectée
 - Rapports SQLite : get_daily_bilan, get_contact_conversation
 - Profil business (save/get_business_profile)
 - **Intégrations** (lecture seule) : list_typeform_forms, list_typeform_responses, list_connected_sheets, read_google_sheet. Pour prospecter des numéros issus d’un Sheet ou de réponses Typeform : confirmer avec l’utilisateur puis create_automation(contact_prospect) en brouillon ; jamais activer sans brief. Si Typeform refuse les réponses → Déconnecter puis reconnecter (nouveau scope responses:read).

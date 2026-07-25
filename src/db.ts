@@ -822,6 +822,13 @@ export interface Contact {
   updated_at: string;
 }
 
+function canonicalizeContactDigits(digits: string): string {
+  let d = digits.replace(/\D/g, "");
+  // Bénin : +229 01 XX XX XX XX → +229XXXXXXXX
+  if (d.startsWith("22901") && d.length === 14) d = `229${d.slice(5)}`;
+  return d;
+}
+
 function normalizeContactPhone(phone: string): string {
   const trimmed = phone.trim();
   if (trimmed.endsWith("@g.us")) {
@@ -829,23 +836,23 @@ function normalizeContactPhone(phone: string): string {
   }
   if (trimmed.endsWith("@lid")) return trimmed;
   if (trimmed.endsWith("@c.us")) {
-    const digits = trimmed.replace(/@c\.us/gi, "").replace(/\D/g, "");
-    if (digits.length >= 8 && digits.length <= 13) return trimmed;
+    const digits = canonicalizeContactDigits(trimmed.replace(/@c\.us/gi, ""));
+    if (digits.length >= 8 && digits.length <= 13) return `${digits}@c.us`;
     if (digits.length >= 8) return `${digits}@lid`;
     return trimmed;
   }
   if (trimmed.endsWith("@s.whatsapp.net")) {
-    const digits = trimmed.replace(/@s\.whatsapp\.net/gi, "").replace(/\D/g, "");
+    const digits = canonicalizeContactDigits(trimmed.replace(/@s\.whatsapp\.net/gi, ""));
     if (digits.length >= 8 && digits.length <= 13) return `${digits}@c.us`;
     if (digits.length >= 8) return `${digits}@lid`;
   }
   if (trimmed.includes("@")) {
-    const digits = trimmed.replace(/@\w+/g, "").replace(/\D/g, "");
+    const digits = canonicalizeContactDigits(trimmed.replace(/@\w+/g, ""));
     if (digits.length >= 8 && digits.length <= 13) return `${digits}@c.us`;
     if (digits.length >= 8) return `${digits}@lid`;
     return trimmed;
   }
-  const digits = trimmed.replace(/\D/g, "");
+  const digits = canonicalizeContactDigits(trimmed);
   if (!digits) throw new Error("Numéro de téléphone invalide.");
   return `${digits}@c.us`;
 }
@@ -1029,6 +1036,30 @@ async function findContactForChat(userId: number, chatId: string): Promise<Conta
   const digits = trimmed.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
   if (digits.length < 8) return null;
   return lookupContactRow(userId, `${digits}@c.us`);
+}
+
+/** Dernier pushName WhatsApp vu sur un message entrant de ce chat. */
+export async function getLatestInboundSenderName(
+  userId: number,
+  chatId: string,
+): Promise<string | null> {
+  const digits = chatId.replace(/\D/g, "").slice(0, 15);
+  const rows = await sql`
+    SELECT sender_name
+    FROM messages
+    WHERE user_id = ${userId}
+      AND direction = 'entrant'
+      AND sender_name IS NOT NULL
+      AND TRIM(sender_name) <> ''
+      AND (
+        contact_phone = ${chatId}
+        OR contact_phone LIKE ${"%" + digits + "%"}
+      )
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  const name = rows[0]?.sender_name != null ? String(rows[0].sender_name).trim() : "";
+  return name || null;
 }
 
 export async function getContact(userId: number, phone: string): Promise<Contact | null> {
@@ -2321,6 +2352,23 @@ export async function findMatchingAutomationTarget(
     }
   }
   return null;
+}
+
+export async function updateAutomationTargetLabel(
+  userId: number,
+  automationId: number,
+  targetId: string,
+  label: string,
+): Promise<void> {
+  const trimmed = label.trim().slice(0, 120);
+  if (!trimmed) return;
+  await sql`
+    UPDATE automation_targets
+    SET target_label = ${trimmed}
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND target_id = ${targetId}
+  `;
 }
 
 export async function updateAutomationTarget(

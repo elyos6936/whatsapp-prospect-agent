@@ -63,6 +63,10 @@ import {
   chatIdToDisplay,
   chatIdToNumber,
   requireEvolutionConnected,
+  canonicalizePhoneDigits,
+  isPhoneLikeLabel,
+  resolveWhatsAppDisplayName,
+  phoneDigitsVariants,
 } from "./evolutionapi.js";
 import { needsAppointmentLink } from "./campaign-briefing.js";
 import {
@@ -144,7 +148,6 @@ import { detectStickerConsent } from "./sticker-consent.js";
 import { parseThirdPartyNotificationArgs } from "./third-party-notification.js";
 import {
   formatVerticalContactList,
-  formatVerticalGroupList,
   formatVerticalMemberList,
   userFacingError,
 } from "./user-facing.js";
@@ -401,12 +404,25 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "save_contact",
       description:
-        "Enregistre ou met à jour un contact de prospection (base Klanvio) : numéro, nom, notes, statut. Si Google Contacts est connecté, crée aussi la fiche dans Google Contacts.",
+        "Enregistre ou met à jour un contact de prospection (base Klanvio) : numéro, nom, notes, statut. " +
+        "Si Google Contacts est connecté, crée aussi la fiche dans Google Contacts avec le nom WhatsApp. " +
+        "CRITIQUE : phone = chatId/numéro EXACT du prospect (ex. 22996158855@c.us ou +22996158855). " +
+        "Interdit d'inventer un numéro. Pour « enregistre ce prospect », utilise le target_id / contact_phone " +
+        "de la campagne ou des messages — jamais un numéro approximatif. Si le nom WhatsApp est connu " +
+        "(pushName / messages), passe-le dans name ; sinon l'outil le récupère automatiquement.",
       parameters: {
         type: "object",
         properties: {
-          phone: { type: "string", description: "Numéro (+229…) ou chatId" },
-          name: { type: "string", description: "Nom du contact" },
+          phone: {
+            type: "string",
+            description:
+              "Numéro E.164 (+229…) ou chatId WhatsApp exact (229…@c.us). Jamais un numéro inventé.",
+          },
+          name: {
+            type: "string",
+            description:
+              "Nom d'affichage (pushName WhatsApp de préférence). Si omis, récupéré depuis WhatsApp / messages.",
+          },
           notes: { type: "string", description: "Notes libres (activité, contexte…)" },
           status: {
             type: "string",
@@ -2411,16 +2427,75 @@ export async function executeTool(
     }
 
     case "save_contact": {
-      const phone = String(args.phone ?? "");
       const statusRaw = args.status ? String(args.status) : undefined;
       if (statusRaw && !CONTACT_STATUSES.includes(statusRaw as ContactStatus)) {
         return JSON.stringify({
           error: `Statut invalide. Attendu : ${CONTACT_STATUSES.join(", ")}`,
         });
       }
+
+      let chatId: string;
+      try {
+        chatId = await resolveRecipient(userId, String(args.phone ?? ""));
+      } catch (err) {
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Numéro invalide.",
+        });
+      }
+      if (chatId.endsWith("@g.us") || chatId.endsWith("@lid")) {
+        return JSON.stringify({
+          error:
+            "save_contact exige un numéro WhatsApp téléphone (@c.us), pas un groupe ni un @lid non résolu.",
+        });
+      }
+
+      // Canoniser (ex. Bénin 22901…) puis vérifier que le numéro existe réellement sur WA
+      const digits = canonicalizePhoneDigits(chatIdToNumber(chatId));
+      chatId = `${digits}@c.us`;
+      try {
+        const variants = phoneDigitsVariants(chatId);
+        const checks = await checkWhatsAppNumbers(userId, variants);
+        const hit = checks.find((c) => c.exists && c.jid);
+        if (!hit) {
+          return JSON.stringify({
+            error:
+              `Ce numéro n'est pas sur WhatsApp (${chatIdToDisplay(chatId)}). ` +
+              `Utilise le chatId exact du prospect (messages / campagne), sans inventer de numéro.`,
+          });
+        }
+        const jidDigits = canonicalizePhoneDigits(chatIdToNumber(String(hit.jid)));
+        if (jidDigits.length >= 8 && jidDigits.length <= 13) {
+          chatId = `${jidDigits}@c.us`;
+        }
+      } catch (err) {
+        // WhatsApp indisponible : n'autoriser que si le numéro est déjà connu en base / messages
+        const known = await getContact(userId, chatId).catch(() => null);
+        if (!known) {
+          return JSON.stringify({
+            error:
+              `Impossible de vérifier le numéro (WhatsApp déconnecté ou erreur : ${
+                err instanceof Error ? err.message : String(err)
+              }). ` +
+              `Passe le chatId exact déjà connu (ex. 22996158855@c.us).`,
+          });
+        }
+      }
+
+      const preferredName =
+        args.name !== undefined && String(args.name).trim()
+          ? String(args.name).trim()
+          : undefined;
+      const waName = await resolveWhatsAppDisplayName(userId, chatId, preferredName).catch(
+        () => null,
+      );
+      const displayName =
+        (waName && !isPhoneLikeLabel(waName) ? waName : null) ||
+        (preferredName && !isPhoneLikeLabel(preferredName) ? preferredName : null) ||
+        undefined;
+
       const contact = await saveContact(userId, {
-        phone,
-        name: args.name !== undefined ? String(args.name) : undefined,
+        phone: chatId,
+        name: displayName,
         notes: args.notes !== undefined ? String(args.notes) : undefined,
         status: statusRaw as ContactStatus | undefined,
         autoReply: typeof args.auto_reply === "boolean" ? args.auto_reply : undefined,
@@ -2428,7 +2503,7 @@ export async function executeTool(
       const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
       const google = await ensureGoogleContactBeforeSend(userId, {
         phone: contact.phone,
-        name: contact.name,
+        name: contact.name || displayName,
       });
       const googleNote =
         google.synced
@@ -2437,13 +2512,17 @@ export async function executeTool(
             ? " (Google Contacts non connecté — fiche Klanvio seulement.)"
             : google.reason === "token_revoked"
               ? " (Google Contacts : reconnecte l’intégration pour synchroniser.)"
-              : "";
+              : google.reason === "verify_failed" || google.reason === "create_empty"
+                ? " (Google Contacts : création non confirmée — réessaie.)"
+                : "";
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
         googleContactsSynced: google.synced,
         googleContactsReason: google.reason ?? null,
-        message: `Contact ${chatIdToDisplay(contact.phone)} enregistré (statut : ${contact.status}).${googleNote}`,
+        message: `Contact ${chatIdToDisplay(contact.phone)}${
+          contact.name ? ` (${contact.name})` : ""
+        } enregistré (statut : ${contact.status}).${googleNote}`,
       });
     }
 
@@ -3944,13 +4023,38 @@ export async function executeTool(
         const failed: string[] = [];
         for (const raw of rawContacts) {
           try {
-            const id = await resolveRecipient(userId, raw);
+            let id = await resolveRecipient(userId, raw);
             if (id.endsWith("@g.us")) {
               failed.push(`${raw} (c'est un groupe — utilise group_prospect)`);
               continue;
             }
+            // Canoniser + JID WhatsApp réel (évite 22901… / numéros inventés)
+            try {
+              const variants = phoneDigitsVariants(id);
+              const checks = await checkWhatsAppNumbers(userId, variants);
+              const hit = checks.find((c) => c.exists && c.jid);
+              if (!hit) {
+                failed.push(`${raw} (pas sur WhatsApp)`);
+                continue;
+              }
+              const jidDigits = canonicalizePhoneDigits(chatIdToNumber(String(hit.jid)));
+              if (jidDigits.length >= 8 && jidDigits.length <= 13) {
+                id = `${jidDigits}@c.us`;
+              }
+            } catch {
+              id = `${canonicalizePhoneDigits(chatIdToNumber(id))}@c.us`;
+            }
+
+            const hintLabel = /^[\d+\s\-().]+$/.test(raw) ? undefined : raw;
+            const waName = await resolveWhatsAppDisplayName(userId, id, hintLabel).catch(
+              () => null,
+            );
+            const label =
+              (waName && !isPhoneLikeLabel(waName) ? waName : null) ||
+              (hintLabel && !isPhoneLikeLabel(hintLabel) ? hintLabel : undefined);
+
             if (!resolved.some((r) => r.id === id)) {
-              resolved.push({ id, label: /^[\d+\s\-().]+$/.test(raw) ? undefined : raw });
+              resolved.push({ id, label });
             }
           } catch {
             failed.push(raw);

@@ -2,6 +2,9 @@
  * Google Contacts via People API — création avant envoi campagne.
  * No-op silencieux si provider google_contacts absent / sans scope ;
  * jamais bloquant pour enqueueSend.
+ *
+ * Perf : cache hit = 1 lecture SQL, zéro appel Google/Evolution.
+ * Coût réseau seulement au 1er sync d'un numéro (create + vérif légère).
  */
 
 import { sql } from "../pg.js";
@@ -13,9 +16,15 @@ import {
   hasGoogleContactsScope,
   searchGoogleContactByPhone,
   createGoogleContact,
+  getGoogleContactByResource,
+  updateGoogleContactName,
   phoneKeyFromWhatsAppId,
   toE164Display,
 } from "./google.js";
+import {
+  isPhoneLikeLabel,
+  resolveWhatsAppDisplayName,
+} from "../evolutionapi.js";
 
 let schemaReady = false;
 
@@ -33,15 +42,22 @@ async function ensureSchema(): Promise<void> {
   schemaReady = true;
 }
 
-async function wasEnsured(userId: number, phoneKey: string): Promise<boolean> {
+async function getEnsuredRow(
+  userId: number,
+  phoneKey: string,
+): Promise<{ resource_name: string | null } | null> {
   await ensureSchema();
   const rows = await sql`
-    SELECT 1
+    SELECT resource_name
     FROM google_contacts_ensured
     WHERE user_id = ${userId} AND phone_key = ${phoneKey}
     LIMIT 1
   `;
-  return Boolean(rows[0]);
+  if (!rows[0]) return null;
+  return {
+    resource_name:
+      rows[0].resource_name == null ? null : String(rows[0].resource_name),
+  };
 }
 
 async function markEnsured(
@@ -59,6 +75,14 @@ async function markEnsured(
   `;
 }
 
+async function clearEnsuredPhone(userId: number, phoneKey: string): Promise<void> {
+  await ensureSchema();
+  await sql`
+    DELETE FROM google_contacts_ensured
+    WHERE user_id = ${userId} AND phone_key = ${phoneKey}
+  `;
+}
+
 /** Vide le cache d'idempotence Contacts (après déconnexion / changement de compte). */
 export async function clearGoogleContactsEnsuredCache(userId: number): Promise<void> {
   await ensureSchema();
@@ -66,6 +90,23 @@ export async function clearGoogleContactsEnsuredCache(userId: number): Promise<v
     DELETE FROM google_contacts_ensured
     WHERE user_id = ${userId}
   `;
+}
+
+async function resolveDisplayName(
+  userId: number,
+  phone: string,
+  preferred?: string | null,
+): Promise<string> {
+  // Si l'appelant a déjà un vrai nom (campagne / save_contact), ne pas re-interroquer Evolution
+  if (preferred && !isPhoneLikeLabel(preferred)) {
+    return String(preferred).trim().slice(0, 100);
+  }
+  const waName = await resolveWhatsAppDisplayName(userId, phone, preferred).catch(
+    () => null,
+  );
+  if (waName && !isPhoneLikeLabel(waName)) return waName;
+  const phoneKey = phoneKeyFromWhatsAppId(phone);
+  return phoneKey ? toE164Display(phoneKey) : String(preferred || phone).trim();
 }
 
 /**
@@ -76,13 +117,22 @@ export async function clearGoogleContactsEnsuredCache(userId: number): Promise<v
 export async function ensureGoogleContactBeforeSend(
   userId: number,
   input: { phone: string; name?: string | null },
-): Promise<{ synced: boolean; reason?: string }> {
+): Promise<{ synced: boolean; reason?: string; displayName?: string }> {
   try {
     const phoneKey = phoneKeyFromWhatsAppId(input.phone);
     if (!phoneKey) return { synced: false, reason: "phone_invalid" };
 
-    if (await wasEnsured(userId, phoneKey)) {
-      return { synced: true, reason: "already_ensured" };
+    // Fast path : déjà syncé → aucun appel Google / Evolution
+    const cached = await getEnsuredRow(userId, phoneKey);
+    if (cached?.resource_name) {
+      return {
+        synced: true,
+        reason: "already_ensured",
+        displayName: input.name && !isPhoneLikeLabel(input.name) ? String(input.name) : undefined,
+      };
+    }
+    if (cached && !cached.resource_name) {
+      await clearEnsuredPhone(userId, phoneKey);
     }
 
     const row = await getUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
@@ -92,21 +142,51 @@ export async function ensureGoogleContactBeforeSend(
 
     const accessToken = await getValidGoogleContactsToken(userId);
     const e164 = toE164Display(phoneKey);
-    const displayName =
-      (input.name && String(input.name).trim()) || e164;
+    const displayName = await resolveDisplayName(userId, input.phone, input.name);
 
     const existing = await searchGoogleContactByPhone(accessToken, phoneKey);
     if (existing) {
-      await markEnsured(userId, phoneKey, existing);
-      return { synced: true, reason: "already_in_google" };
+      // Une seule lecture légère pour confirmer + éventuellement mettre à jour le nom
+      const verified = await getGoogleContactByResource(
+        accessToken,
+        existing,
+        phoneKey,
+      ).catch(() => null);
+      const resourceName = verified?.resourceName ?? existing;
+      if (
+        verified &&
+        displayName &&
+        !isPhoneLikeLabel(displayName) &&
+        isPhoneLikeLabel(verified.displayName)
+      ) {
+        // Non bloquant : ne retarde pas l'envoi campagne
+        void updateGoogleContactName(accessToken, resourceName, displayName).catch(() => false);
+      }
+      await markEnsured(userId, phoneKey, resourceName);
+      return { synced: true, reason: "already_in_google", displayName };
     }
 
     const created = await createGoogleContact(accessToken, {
       name: displayName,
       phoneE164: e164,
     });
+    if (!created) {
+      console.warn(
+        `[google-contacts] user=${userId} createContact sans resourceName pour ${phoneKey}`,
+      );
+      return { synced: false, reason: "create_empty", displayName };
+    }
+
+    // createContact renvoie déjà resourceName → on marque tout de suite (pas d'attente d'indexation).
+    // Vérif async optionnelle : si la fiche est illisible, on invalide le cache pour un prochain essai.
     await markEnsured(userId, phoneKey, created);
-    return { synced: true, reason: "created" };
+    void getGoogleContactByResource(accessToken, created)
+      .then(async (ok) => {
+        if (!ok) await clearEnsuredPhone(userId, phoneKey);
+      })
+      .catch(() => {});
+
+    return { synced: true, reason: "created", displayName };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (err instanceof GoogleAuthError && err.code === "revoked") {

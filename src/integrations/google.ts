@@ -392,7 +392,11 @@ export function phoneKeyFromWhatsAppId(phoneOrJid: string): string | null {
   if (!raw) return null;
   if (/@lid$/i.test(raw) || raw.toLowerCase().includes("@lid")) return null;
   if (/@g\.us$/i.test(raw) || /@newsletter/i.test(raw)) return null;
-  const digits = raw.replace(/\D/g, "");
+  let digits = raw.replace(/\D/g, "");
+  // Bénin : +229 01 XX XX XX XX → sans le 01 national
+  if (digits.startsWith("22901") && digits.length === 14) {
+    digits = `229${digits.slice(5)}`;
+  }
   if (digits.length < 8 || digits.length > 15) return null;
   return digits;
 }
@@ -453,6 +457,48 @@ export async function searchGoogleContactByPhone(
   return null;
 }
 
+/** Vérifie qu'une fiche People existe encore et porte bien ce numéro. */
+export async function getGoogleContactByResource(
+  accessToken: string,
+  resourceName: string,
+  expectedPhoneKey?: string,
+): Promise<{ resourceName: string; displayName: string | null } | null> {
+  const rn = resourceName.replace(/^people\//, "");
+  const url = new URL(`${PEOPLE_BASE}/people/${rn}`);
+  url.searchParams.set("personFields", "names,phoneNumbers,memberships");
+  const res = await fetch(url.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (res.status === 404) return null;
+  if (res.status === 401 || res.status === 403) {
+    throw new GoogleAuthError("Token Google invalide ou People API refusée.", "revoked");
+  }
+  if (!res.ok) return null;
+
+  const data = (await res.json()) as {
+    resourceName?: string;
+    names?: Array<{ displayName?: string; givenName?: string }>;
+    phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
+  };
+  if (!data.resourceName) return null;
+
+  if (expectedPhoneKey) {
+    const want = expectedPhoneKey.replace(/\D/g, "");
+    const phones = data.phoneNumbers ?? [];
+    const match = phones.some((p) => {
+      const v = String(p.canonicalForm || p.value || "").replace(/\D/g, "");
+      return Boolean(v) && (v === want || v.endsWith(want) || want.endsWith(v));
+    });
+    if (!match) return null;
+  }
+
+  const displayName =
+    data.names?.[0]?.displayName?.trim() ||
+    data.names?.[0]?.givenName?.trim() ||
+    null;
+  return { resourceName: data.resourceName, displayName };
+}
+
 export async function createGoogleContact(
   accessToken: string,
   input: { name: string; phoneE164: string },
@@ -467,6 +513,13 @@ export async function createGoogleContact(
     body: JSON.stringify({
       names: [{ givenName: given.slice(0, 100) }],
       phoneNumbers: [{ value: input.phoneE164, type: "mobile" }],
+      memberships: [
+        {
+          contactGroupMembership: {
+            contactGroupResourceName: "contactGroups/myContacts",
+          },
+        },
+      ],
     }),
   });
   if (res.status === 401 || res.status === 403) {
@@ -481,4 +534,47 @@ export async function createGoogleContact(
   }
   const data = (await res.json()) as { resourceName?: string };
   return data.resourceName ?? null;
+}
+
+/** Met à jour le nom d'une fiche existante (si on a un meilleur pushName). */
+export async function updateGoogleContactName(
+  accessToken: string,
+  resourceName: string,
+  name: string,
+): Promise<boolean> {
+  const given = name.trim().slice(0, 100);
+  if (!given) return false;
+  const rn = resourceName.startsWith("people/") ? resourceName : `people/${resourceName}`;
+  const getUrl = new URL(`${PEOPLE_BASE}/${rn}`);
+  getUrl.searchParams.set("personFields", "names,metadata");
+  const existing = await fetch(getUrl.toString(), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  if (!existing.ok) return false;
+  const person = (await existing.json()) as {
+    etag?: string;
+    names?: Array<{ givenName?: string; displayName?: string }>;
+  };
+  const current =
+    person.names?.[0]?.displayName?.trim() || person.names?.[0]?.givenName?.trim() || "";
+  if (current === given) return true;
+
+  const res = await fetch(
+    `${PEOPLE_BASE}/${rn}:updateContact?updatePersonFields=names`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        etag: person.etag,
+        names: [{ givenName: given }],
+      }),
+    },
+  );
+  if (res.status === 401 || res.status === 403) {
+    throw new GoogleAuthError("Token Google invalide ou People API refusée.", "revoked");
+  }
+  return res.ok;
 }

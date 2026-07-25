@@ -402,6 +402,7 @@ app.post<{
         auto_reply: contact.auto_reply === 1,
       },
       googleContactsSynced: google.synced,
+      googleContactsReason: google.reason ?? null,
     };
   } catch (err) {
     return reply.status(400).send({

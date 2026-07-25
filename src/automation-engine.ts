@@ -21,6 +21,7 @@ import {
   updateAutomationStatus,
   updateAutomationTarget,
   updateAutomationTargetAb,
+  updateAutomationTargetLabel,
   formatLocalDateTime,
   countAutomationMessagesInRange,
   type Automation,
@@ -207,17 +208,43 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     // Nouvelle campagne (id différent) → oubli mémoire + historique pré-campagne
     await beginFreshCampaignConversation(userId, target.target_id, auto.id);
 
-    // Google Contacts (People) : no-op si non connecté ; ne bloque jamais l'envoi
+    // Google Contacts : nom WA si besoin ; cache hit = quasi instantané
+    const { resolveWhatsAppDisplayName, isPhoneLikeLabel } = await import("./evolutionapi.js");
+    let googleName: string | null =
+      target.target_label && !isPhoneLikeLabel(target.target_label)
+        ? target.target_label
+        : null;
+    if (!googleName) {
+      const waName = await resolveWhatsAppDisplayName(
+        userId,
+        target.target_id,
+        target.target_label,
+      ).catch(() => null);
+      if (waName && !isPhoneLikeLabel(waName)) googleName = waName;
+    }
+
+    if (googleName && googleName !== target.target_label) {
+      void updateAutomationTargetLabel(userId, auto.id, target.target_id, googleName).catch(
+        () => null,
+      );
+    }
+
     const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
-    await ensureGoogleContactBeforeSend(userId, {
-      phone: target.target_id,
-      name: target.target_label,
-    });
+    // Ne bloque jamais l'envoi si Google est lent : timeout 4s max
+    await Promise.race([
+      ensureGoogleContactBeforeSend(userId, {
+        phone: target.target_id,
+        name: googleName ?? target.target_label,
+      }),
+      new Promise<{ synced: false; reason: string }>((resolve) =>
+        setTimeout(() => resolve({ synced: false, reason: "timeout" }), 4000),
+      ),
+    ]).catch(() => null);
 
     const priority = shouldPersonalize ? 7 : 6;
     await enqueueSend(userId, {
       recipient: target.target_id,
-      recipientLabel: target.target_label ?? undefined,
+      recipientLabel: googleName ?? target.target_label ?? undefined,
       message: sanitizeOutboundWhatsAppText(message),
       mediaUrl: auto.config.mediaUrl,
       mediaType: auto.config.mediaType,
@@ -230,7 +257,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     await setContactAutoReply(userId, target.target_id, true);
     await saveContact(userId, {
       phone: target.target_id,
-      name: target.target_label ?? undefined,
+      name: googleName ?? target.target_label ?? undefined,
       status: "en_conversation",
       autoReply: true,
     });
@@ -591,10 +618,26 @@ export async function bootstrapContactProspectTargets(
     );
   }
 
+  const { resolveWhatsAppDisplayName, isPhoneLikeLabel } = await import("./evolutionapi.js");
+  const enriched = await Promise.all(
+    eligible.map(async (c) => {
+      // Si un vrai label est déjà là, zéro appel Evolution
+      if (c.label && !isPhoneLikeLabel(c.label)) {
+        return { id: c.id, label: c.label };
+      }
+      const waName = await resolveWhatsAppDisplayName(userId, c.id, c.label).catch(() => null);
+      const label =
+        (waName && !isPhoneLikeLabel(waName) ? waName : null) ||
+        (c.label && !isPhoneLikeLabel(c.label) ? c.label : undefined) ||
+        undefined;
+      return { id: c.id, label };
+    }),
+  );
+
   const added = await addAutomationTargets(
     userId,
     automationId,
-    eligible.map((c) => ({
+    enriched.map((c) => ({
       targetId: c.id,
       targetLabel: c.label ?? chatIdToDisplay(c.id),
     }))

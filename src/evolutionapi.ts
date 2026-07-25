@@ -142,8 +142,32 @@ export function isLikelyPhoneJid(jid: string): boolean {
   return digits.length >= 8 && digits.length <= 13;
 }
 
+/**
+ * Canonise les chiffres internationaux.
+ * Bénin : +229 01 XX XX XX XX (14 chiffres) → +229XXXXXXXX (sans le 01 national).
+ */
+export function canonicalizePhoneDigits(digits: string): string {
+  let d = String(digits ?? "").replace(/\D/g, "");
+  if (d.startsWith("22901") && d.length === 14) {
+    d = `229${d.slice(5)}`;
+  }
+  return d;
+}
+
+/** True si le libellé n'est qu'un numéro (ex. +22996158855) — pas un vrai nom. */
+export function isPhoneLikeLabel(name: string | null | undefined): boolean {
+  const t = String(name ?? "").trim();
+  if (!t) return true;
+  if (/@/.test(t)) return true;
+  const compact = t.replace(/[\s\-().]/g, "");
+  if (/^\+?\d{8,15}$/.test(compact)) return true;
+  const digits = t.replace(/\D/g, "");
+  if (digits.length >= 8 && digits.length >= Math.floor(t.length * 0.6)) return true;
+  return false;
+}
+
 export function normalizePhoneToChatId(phone: string): string {
-  const digits = phone.replace(/\D/g, "");
+  const digits = canonicalizePhoneDigits(phone);
   if (!digits) throw new EvolutionApiError("Numéro de téléphone invalide.");
   return `${digits}@c.us`;
 }
@@ -225,9 +249,77 @@ export async function resolveInboundChatId(
 
 export function chatIdToDisplay(chatId: string): string {
   if (chatId.endsWith("@c.us") || chatId.endsWith("@s.whatsapp.net")) {
-    return "+" + chatIdToNumber(chatId);
+    return "+" + canonicalizePhoneDigits(chatIdToNumber(chatId));
   }
   return chatId;
+}
+
+/**
+ * Résout le meilleur nom d'affichage WhatsApp pour un prospect
+ * (pushName / profil / messages / contact DB).
+ * Ordre rapide : preferred → DB → messages → profil Evolution (1 appel, timeout court).
+ * Pas de scan du carnet (trop lent pour le chemin campagne).
+ */
+export async function resolveWhatsAppDisplayName(
+  userId: number,
+  chatId: string,
+  preferred?: string | null,
+): Promise<string | null> {
+  if (preferred && !isPhoneLikeLabel(preferred)) {
+    return String(preferred).trim().slice(0, 100);
+  }
+
+  try {
+    const { getContact, getLatestInboundSenderName } = await import("./db.js");
+    const [contact, fromMsg] = await Promise.all([
+      getContact(userId, chatId).catch(() => null),
+      getLatestInboundSenderName(userId, chatId).catch(() => null),
+    ]);
+    if (contact?.name && !isPhoneLikeLabel(contact.name)) {
+      return contact.name.trim().slice(0, 100);
+    }
+    if (fromMsg && !isPhoneLikeLabel(fromMsg)) {
+      return fromMsg.trim().slice(0, 100);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  // Dernier recours : 1 appel profil, borné à 2.5s pour ne pas freiner l'envoi
+  try {
+    const profile = await Promise.race([
+      fetchContactProfile(userId, chatId),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 2500)),
+    ]);
+    if (profile) {
+      const name = pickReadableName(
+        profile.pushName,
+        profile.name,
+        profile.notify,
+        profile.verifiedName,
+        (profile as { contactName?: unknown }).contactName,
+      );
+      if (name && !isPhoneLikeLabel(name)) return name.slice(0, 100);
+    }
+  } catch {
+    /* ignore */
+  }
+
+  return null;
+}
+
+/** Variantes à tester pour un numéro BJ / saisie ambiguë. */
+export function phoneDigitsVariants(phoneOrJid: string): string[] {
+  const raw = String(phoneOrJid ?? "").replace(/\D/g, "");
+  const canon = canonicalizePhoneDigits(raw);
+  const out = new Set<string>();
+  if (raw) out.add(raw);
+  if (canon) out.add(canon);
+  if (raw.startsWith("22901") && raw.length === 14) out.add(`229${raw.slice(5)}`);
+  if (canon.startsWith("229") && canon.length === 11) {
+    out.add(`22901${canon.slice(3)}`);
+  }
+  return [...out].filter((d) => d.length >= 8 && d.length <= 15);
 }
 
 function isNewsletterJid(chatId: string): boolean {
