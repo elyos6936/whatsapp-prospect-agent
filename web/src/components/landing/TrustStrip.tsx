@@ -1,4 +1,5 @@
 import { Clock3, Lock, ShieldCheck } from 'lucide-react';
+import { TRIAL_DAYS } from '@/lib/pricing';
 
 const POINTS = [
   {
@@ -8,7 +9,7 @@ const POINTS = [
   },
   {
     icon: Clock3,
-    title: '7 jours d’essai',
+    title: `${TRIAL_DAYS} jours d’essai`,
     text: 'Testez toutes les fonctions avant de décider.',
   },
   {

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowRight,
   Check,
@@ -16,6 +16,7 @@ import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import { FacebookIcon, LinkedinIcon, YoutubeIcon } from '@/components/brand/SocialIcons';
 import { AnimatedContainer } from '@/components/landing/AnimatedContainer';
 import { BillingSection } from '@/components/landing/BillingSection';
+import { IntegrationsSection } from '@/components/landing/IntegrationsSection';
 import { LandingFaq } from '@/components/landing/LandingFaq';
 import { TrustStrip } from '@/components/landing/TrustStrip';
 import { FeatureCard } from '@/components/ui/grid-feature-cards';
@@ -26,6 +27,8 @@ import { ShaderBackdrop } from '@/components/ui/shader-backdrop';
 import { ShinyButton } from '@/components/ui/shiny-button';
 import type { LegalKind } from '@/pages/LegalPage';
 import { useNavigate } from 'react-router-dom';
+import { COMPARE_PRICE_LABEL, TRIAL_BADGE, TRIAL_DAYS } from '@/lib/pricing';
+import { cn } from '@/lib/utils';
 
 type LandingPageProps = {
   // kept optional for legacy unused landing components
@@ -37,7 +40,7 @@ type LandingPageProps = {
 const NAV_LINKS = [
   ['features', 'Fonctionnalités'],
   ['how', 'Comment ça marche'],
-  ['compare', 'Comparatif'],
+  ['integrations', 'Intégrations'],
   ['pricing', 'Tarif'],
   ['faq', 'FAQ'],
 ] as const;
@@ -182,6 +185,22 @@ export function LandingPage(props: LandingPageProps = {}) {
   const { onLogin, onRegister, onOpenLegal } = props;
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const root = document.getElementById('root');
+    const read = () =>
+      setScrolled(
+        (root?.scrollTop ?? 0) > 8 || window.scrollY > 8 || document.documentElement.scrollTop > 8,
+      );
+    read();
+    root?.addEventListener('scroll', read, { passive: true });
+    window.addEventListener('scroll', read, { passive: true });
+    return () => {
+      root?.removeEventListener('scroll', read);
+      window.removeEventListener('scroll', read);
+    };
+  }, []);
 
   const goLogin = onLogin ?? (() => navigate('/login'));
   const goRegister = onRegister ?? (() => navigate('/register'));
@@ -189,69 +208,86 @@ export function LandingPage(props: LandingPageProps = {}) {
 
   const scrollTo = (id: string) => {
     setMenuOpen(false);
-    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
+    const el = document.getElementById(id);
+    if (!el) return;
+    // html/body/#root ont height:100% + overflow-x:hidden : le conteneur qui défile
+    // est #root, pas la fenêtre, donc window.scrollTo() reste sans effet.
+    // scrollIntoView remonte au bon conteneur ; l'offset du header vient du
+    // scroll-margin-top posé sur section[id] dans index.css.
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
+  // overflow-x-clip (et non hidden) sur le wrapper : `hidden` en ferait un conteneur
+  // de scroll, ce qui désactiverait le position:sticky du header.
   return (
-    <div className="min-h-full overflow-x-hidden bg-[#f7f8fb] text-text-100">
+    <div className="min-h-full overflow-x-clip bg-[#f7f8fb] text-text-100">
       {/* Meta homepage = index.html uniquement (évite que SeoHead client écrase le head crawlé). */}
-      <header className="sticky top-0 z-50 border-b border-black/[0.06] bg-[#f7f8fb]/90 backdrop-blur-md">
-        <div className="relative mx-auto flex h-14 max-w-6xl items-center justify-between gap-3 px-4 sm:px-6">
-          <div className="min-w-0 shrink">
+      <header
+        className={cn(
+          'sticky top-0 z-50 border-b transition-[background-color,border-color,box-shadow] duration-300',
+          scrolled
+            ? 'border-black/[0.08] bg-white/85 shadow-[0_10px_30px_-24px_rgba(10,15,26,0.45)] backdrop-blur-xl'
+            : 'border-black/[0.05] bg-[#f7f8fb]/80 backdrop-blur-md',
+        )}
+      >
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
+          <div className="flex min-w-0 flex-1 items-center">
             <KlanvioLogo variant="full" size="md" />
           </div>
 
-          <nav className="absolute left-1/2 hidden -translate-x-1/2 items-center gap-6 text-sm font-medium text-text-400 lg:flex">
+          <nav className="hidden items-center gap-0.5 rounded-full border border-black/[0.08] bg-gradient-to-b from-white to-[#f5f7fc] p-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.9),0_1px_2px_rgba(10,15,26,0.05)] lg:flex">
             {NAV_LINKS.map(([id, label]) => (
               <button
                 key={id}
                 type="button"
                 onClick={() => scrollTo(id)}
-                className="cursor-pointer whitespace-nowrap transition hover:text-text-100"
+                className="cursor-pointer whitespace-nowrap rounded-full px-3.5 py-1.5 text-[0.8125rem] font-medium text-text-400 transition hover:bg-black/[0.045] hover:text-text-100"
               >
                 {label}
               </button>
             ))}
           </nav>
 
-          <div className="hidden shrink-0 items-center gap-2.5 lg:flex">
+          <div className="flex flex-1 items-center justify-end gap-2.5">
             <button
               type="button"
               onClick={goLogin}
-              className="inline-flex h-9 cursor-pointer items-center justify-center rounded-full border border-black/10 bg-white px-3.5 text-[0.8125rem] font-semibold text-text-200 shadow-sm transition hover:border-black/15 hover:bg-white hover:text-text-100"
+              className="hidden h-9 cursor-pointer items-center justify-center rounded-full border border-black/10 bg-white px-3.5 text-[0.8125rem] font-semibold text-text-200 shadow-sm transition hover:border-black/15 hover:text-text-100 lg:inline-flex"
             >
               Connexion
             </button>
-            <ShinyButton size="sm" onClick={goRegister}>
-              Essai gratuit
-            </ShinyButton>
-          </div>
+            <div className="hidden lg:block">
+              <ShinyButton size="sm" onClick={goRegister}>
+                Essai gratuit
+              </ShinyButton>
+            </div>
 
-          <button
-            type="button"
-            className="shrink-0 cursor-pointer rounded-lg p-2 text-text-400 lg:hidden"
-            onClick={() => setMenuOpen((v) => !v)}
-            aria-label="Menu"
-            aria-expanded={menuOpen}
-          >
-            {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
+            <button
+              type="button"
+              className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-black/[0.08] bg-white text-text-300 shadow-sm transition hover:text-text-100 lg:hidden"
+              onClick={() => setMenuOpen((v) => !v)}
+              aria-label="Menu"
+              aria-expanded={menuOpen}
+            >
+              {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+            </button>
+          </div>
         </div>
 
         {menuOpen && (
-          <div className="border-t border-black/[0.06] bg-white px-4 py-4 lg:hidden">
-            <div className="mx-auto flex max-w-6xl flex-col gap-1 text-sm font-medium text-text-400">
+          <div className="border-t border-black/[0.06] bg-white/95 px-4 pb-4 pt-3 backdrop-blur-xl sm:px-6 lg:hidden">
+            <div className="mx-auto flex max-w-6xl flex-col gap-0.5 text-sm font-medium text-text-400">
               {NAV_LINKS.map(([id, label]) => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => scrollTo(id)}
-                  className="cursor-pointer rounded-lg px-1 py-2.5 text-left hover:text-text-100"
+                  className="cursor-pointer rounded-xl px-3 py-2.5 text-left transition hover:bg-black/[0.04] hover:text-text-100"
                 >
                   {label}
                 </button>
               ))}
-              <div className="mt-2 flex flex-col gap-2.5 border-t border-black/[0.06] pt-3 sm:flex-row sm:items-center">
+              <div className="mt-3 flex flex-col gap-2.5 border-t border-black/[0.06] pt-3 sm:flex-row sm:items-center">
                 <button
                   type="button"
                   onClick={goLogin}
@@ -270,7 +306,7 @@ export function LandingPage(props: LandingPageProps = {}) {
 
       <main>
         {/* HERO — fills viewport; denser type so less empty feel */}
-        <section className="relative flex min-h-[calc(100dvh-3.5rem)] flex-col overflow-hidden">
+        <section className="relative flex min-h-[calc(100dvh-4rem)] flex-col overflow-hidden">
           <HeroGridBackdrop />
           <div className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-4 py-8 text-center sm:px-6 sm:py-10">
             <AnimatedContainer
@@ -291,7 +327,7 @@ export function LandingPage(props: LandingPageProps = {}) {
 
               <div className="mt-5 flex w-full justify-center">
                 <ShinyButton onClick={goRegister} className="max-w-full">
-                  Essayer gratuitement 7 jours
+                  Essayer gratuitement {TRIAL_DAYS} jours
                   <ArrowRight className="h-4 w-4 shrink-0" />
                 </ShinyButton>
               </div>
@@ -364,7 +400,7 @@ export function LandingPage(props: LandingPageProps = {}) {
                   <p className="text-sm font-medium text-text-200">Tarif</p>
                   <div className="mt-2.5 grid grid-cols-2 gap-3 text-xs">
                     <p className="text-text-400">40€ à 400€+/mois</p>
-                    <p className="font-semibold text-brand">15€/mois · essai 7 jours</p>
+                    <p className="font-semibold text-brand">{COMPARE_PRICE_LABEL}</p>
                   </div>
                 </div>
               </div>
@@ -399,7 +435,7 @@ export function LandingPage(props: LandingPageProps = {}) {
                       <td className="px-4 py-3 font-medium text-text-200 md:px-5">Tarif</td>
                       <td className="px-3 py-3 text-text-400 md:px-5">40€ à 400€+/mois</td>
                       <td className="px-3 py-3 font-semibold text-brand md:px-5">
-                        15€/mois · essai 7 jours
+                        {COMPARE_PRICE_LABEL}
                       </td>
                     </tr>
                   </tbody>
@@ -440,7 +476,11 @@ export function LandingPage(props: LandingPageProps = {}) {
           </AnimatedContainer>
         </section>
 
-        {/* BILLING */}
+        {/* INTEGRATIONS then PRICING */}
+        <AnimatedContainer>
+          <IntegrationsSection />
+        </AnimatedContainer>
+
         <AnimatedContainer>
           <BillingSection onStartTrial={goRegister} />
         </AnimatedContainer>
@@ -451,7 +491,7 @@ export function LandingPage(props: LandingPageProps = {}) {
         <div className="pb-4 sm:pb-6">
           <AnimatedContainer>
             <CTASection
-              badge="Essai gratuit 7 jours"
+              badge={TRIAL_BADGE}
               title="Prêt à laisser Klanvio automatiser tout votre WhatsApp ?"
               description="Prospection, closing, groupes, statuts, anti-blocage. Connectez votre numéro et laissez l’agent travailler."
               buttonLabel="Commencer gratuitement"

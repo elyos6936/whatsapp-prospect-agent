@@ -18,6 +18,17 @@ import { WhatsAppConnectModal } from '@/components/whatsapp/WhatsAppConnectModal
 import { TypeformIntegrationCard } from '@/components/settings/TypeformIntegrationCard';
 import { GoogleSheetsIntegrationCard } from '@/components/settings/GoogleSheetsIntegrationCard';
 import { GoogleContactsIntegrationCard } from '@/components/settings/GoogleContactsIntegrationCard';
+import {
+  PLANS,
+  TRIAL_DAYS,
+  accountsLabel,
+  formatEuro,
+  getPlan,
+  periodSuffix,
+  planPrice,
+  type BillingPeriod,
+  type PlanId,
+} from '@/lib/pricing';
 
 type SettingsTab = 'connection' | 'integrations' | 'billing';
 
@@ -120,6 +131,8 @@ export function SettingsPage() {
   const [autoReplyFb, setAutoReplyFb] = useState('');
   const [billingNote, setBillingNote] = useState<string | null>(null);
   const [billingBusy, setBillingBusy] = useState(false);
+  const [billingPlan, setBillingPlan] = useState<PlanId>('pro');
+  const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>('monthly');
 
   const [disconnecting, setDisconnecting] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -306,16 +319,84 @@ export function SettingsPage() {
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-100">Abonnement Klanvio</h2>
                 <p className="mt-1 text-xs leading-relaxed text-text-400">
-                  Plan Pro · 15€/mois · 7 jours d’essai inclus à l’inscription
+                  Choisissez votre palier · essai {TRIAL_DAYS} jours inclus · résiliable à tout
+                  moment
                 </p>
               </div>
 
-              <div className="rounded-xl border border-black/10 bg-bg-0 px-4 py-3">
-                <div className="flex flex-wrap items-end gap-1">
-                  <span className="text-3xl font-semibold tracking-tight text-text-100">15€</span>
-                  <span className="mb-1 text-sm text-text-400">/mois</span>
-                </div>
-                <p className="mt-1 text-xs text-text-500">Tout inclus · résiliable à tout moment</p>
+              <div className="flex flex-wrap items-center gap-2.5">
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={billingPeriod === 'annual'}
+                  onClick={() =>
+                    setBillingPeriod((p) => (p === 'annual' ? 'monthly' : 'annual'))
+                  }
+                  className={cn(
+                    'relative h-7 w-[46px] shrink-0 rounded-full border transition-colors',
+                    billingPeriod === 'annual'
+                      ? 'border-brand bg-brand'
+                      : 'border-black/10 bg-bg-0',
+                  )}
+                >
+                  <span
+                    className={cn(
+                      'absolute top-0.5 left-0.5 size-5 rounded-full bg-white shadow-sm transition-transform',
+                      billingPeriod === 'annual' && 'translate-x-[18px]',
+                    )}
+                  />
+                </button>
+                <span className="text-xs text-text-400">
+                  Facturation{' '}
+                  <strong className="font-semibold text-text-200">
+                    {billingPeriod === 'annual' ? 'annuelle' : 'mensuelle'}
+                  </strong>
+                </span>
+                <span className="rounded-md border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 font-mono text-[10px] text-emerald-700">
+                  Annuel = 2 mois offerts
+                </span>
+              </div>
+
+              <div className="grid gap-2">
+                {PLANS.map((plan) => {
+                  const selected = billingPlan === plan.id;
+                  const price = planPrice(plan, billingPeriod);
+                  return (
+                    <button
+                      key={plan.id}
+                      type="button"
+                      onClick={() => setBillingPlan(plan.id)}
+                      className={cn(
+                        'flex min-w-0 items-center justify-between gap-3 rounded-xl border px-3.5 py-3 text-left transition',
+                        selected
+                          ? 'border-brand bg-brand/[0.06] ring-1 ring-brand/20'
+                          : 'border-black/10 bg-bg-0 hover:border-black/15',
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-text-100">
+                          {plan.name}
+                          {plan.featured ? (
+                            <span className="ml-2 rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+                              Populaire
+                            </span>
+                          ) : null}
+                        </p>
+                        <p className="mt-0.5 text-[11px] text-text-500">
+                          {accountsLabel(plan.accounts)}
+                        </p>
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <p className="font-mono text-base font-semibold text-text-100">
+                          {formatEuro(price)}
+                          <span className="text-xs font-normal text-text-500">
+                            {periodSuffix(billingPeriod)}
+                          </span>
+                        </p>
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
 
               <button
@@ -334,7 +415,11 @@ export function SettingsPage() {
                 className="inline-flex w-full max-w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-60"
               >
                 <CreditCard className="h-4 w-4 shrink-0" />
-                <span className="truncate">{billingBusy ? 'Redirection…' : 'Payer 15€ / mois'}</span>
+                <span className="truncate">
+                  {billingBusy
+                    ? 'Redirection…'
+                    : `Continuer — ${formatEuro(planPrice(getPlan(billingPlan), billingPeriod))}${periodSuffix(billingPeriod)}`}
+                </span>
               </button>
 
               {billingNote && (

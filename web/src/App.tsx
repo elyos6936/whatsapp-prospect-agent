@@ -15,6 +15,12 @@ const RegisterPage = lazy(() =>
 const LegalPage = lazy(() =>
   import('@/pages/LegalPage').then((m) => ({ default: m.LegalPage })),
 );
+const IntegrationsHubPage = lazy(() =>
+  import('@/pages/IntegrationsHubPage').then((m) => ({ default: m.IntegrationsHubPage })),
+);
+const IntegrationDetailPage = lazy(() =>
+  import('@/pages/IntegrationDetailPage').then((m) => ({ default: m.IntegrationDetailPage })),
+);
 const AuthenticatedApp = lazy(() => import('@/AuthenticatedApp'));
 
 function FullScreen({ children }: { children: React.ReactNode }) {
@@ -65,15 +71,26 @@ function LegalRoute({ kind }: { kind: LegalKind }) {
   return <LegalPage kind={kind} onBack={() => navigate('/')} />;
 }
 
+/** Pages marketing / légales accessibles connecté ou non (SEO + liens footer). */
+function marketingRoutes() {
+  return (
+    <>
+      <Route path="/mentions" element={<LegalRoute kind="mentions" />} />
+      <Route path="/confidentialite" element={<LegalRoute kind="confidentialite" />} />
+      <Route path="/contact" element={<LegalRoute kind="contact" />} />
+      <Route path="/integrations" element={<IntegrationsHubPage />} />
+      <Route path="/integrations/:slug" element={<IntegrationDetailPage />} />
+    </>
+  );
+}
+
 function PublicRoutes() {
   return (
     <Routes>
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
-      <Route path="/mentions" element={<LegalRoute kind="mentions" />} />
-      <Route path="/confidentialite" element={<LegalRoute kind="confidentialite" />} />
-      <Route path="/contact" element={<LegalRoute kind="contact" />} />
+      {marketingRoutes()}
       <Route path="/app" element={<Navigate to="/login" replace />} />
       <Route path="*" element={<NotFoundPage />} />
     </Routes>
@@ -126,6 +143,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Navigate to="/app" replace />} />
         <Route path="/register" element={<Navigate to="/app" replace />} />
+        {marketingRoutes()}
         <Route path="/*" element={<AuthenticatedApp />} />
       </Routes>
     </Suspense>

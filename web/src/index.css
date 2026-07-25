@@ -119,6 +119,11 @@ body {
   padding-block: clamp(2rem, 1.4rem + 1.4vw, 3rem);
 }
 
+/* Ancrages : le header sticky (h-16) ne doit pas recouvrir le haut de section. */
+section[id] {
+  scroll-margin-top: 5rem;
+}
+
 .landing-reveal {
   opacity: 0;
   transform: translateY(10px);

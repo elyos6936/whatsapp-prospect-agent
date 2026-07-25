@@ -16,7 +16,7 @@ type CTASectionProps = {
 
 /** Compact dither CTA — WebGL only when scrolled into view. */
 export function CTASection({
-  badge = 'Essai gratuit 7 jours',
+  badge = 'Essai gratuit 3 jours',
   title,
   description,
   buttonLabel,

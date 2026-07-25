@@ -15,7 +15,7 @@ export function RegisterPage() {
     <>
       <SeoHead
         title="Créer un compte | Klanvio"
-        description="Créez votre compte Klanvio et essayez gratuitement 7 jours l’agent WhatsApp IA pour prospecter et closer."
+        description="Créez votre compte Klanvio et essayez gratuitement 3 jours l’agent WhatsApp IA pour prospecter et closer."
         path="/register"
       />
       <AuthUI
