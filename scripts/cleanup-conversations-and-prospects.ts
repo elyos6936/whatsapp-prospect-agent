@@ -28,6 +28,9 @@ async function main() {
   const scheduled = await sql`DELETE FROM scheduled_messages`.catch(() => ({ count: 0 }));
   console.log("  scheduled_messages:", scheduled.count);
 
+  const cas = await sql`DELETE FROM contact_automation_state`.catch(() => ({ count: 0 }));
+  console.log("  contact_automation_state:", cas.count);
+
   const msgs = await sql`DELETE FROM messages`;
   console.log("  messages (conversations WhatsApp):", msgs.count);
 

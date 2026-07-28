@@ -2872,6 +2872,29 @@ export async function resumeAutomation(userId: number, id: number): Promise<Auto
   await setAutoReplyEnabled(userId, true);
   const updated = await updateAutomationStatus(userId, id, "active");
   if (!updated) return null;
+
+  // Cibles effacées (nettoyage DB) ou jamais chargées → re-bootstrap
+  const existingTargets = await listAutomationTargets(userId, id, { limit: 1 });
+  if (
+    existingTargets.length === 0 &&
+    (updated.type === "group_prospect" || updated.type === "contact_prospect")
+  ) {
+    const { bootstrapGroupProspectTargets, bootstrapContactProspectTargets } =
+      await import("./automation-engine.js");
+    const { requireEvolutionConnected } = await import("./evolutionapi.js");
+    try {
+      await requireEvolutionConnected(userId, "la reprise de la campagne");
+      if (updated.type === "group_prospect") {
+        await bootstrapGroupProspectTargets(userId, id);
+      } else {
+        await bootstrapContactProspectTargets(userId, id);
+      }
+    } catch (err) {
+      await pauseAutomation(userId, id);
+      throw err;
+    }
+  }
+
   await resumeAutomationMessaging(userId, id);
   await addAutomationLog(userId, id, "info", "Campagne réactivée — réponses auto reprises.");
   return getAutomation(userId, id);

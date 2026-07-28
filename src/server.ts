@@ -62,7 +62,7 @@ if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 // bodyLimit relevé pour accepter les uploads base64 (fichiers du chat, audio de dictée vocale).
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
-const corsOrigins = (process.env.CORS_ORIGINS || "https://www.klanvio.com,https://klanvio.com,http://localhost:3000,http://localhost:5174,http://localhost:8888")
+const corsOrigins = (process.env.CORS_ORIGINS || "https://www.klanvio.com,https://klanvio.com,http://localhost:3000,http://localhost:5174,http://127.0.0.1:5174,http://127.0.0.1:3000,http://localhost:8888")
   .split(",")
   .map((o) => o.trim())
   .filter(Boolean);
@@ -70,7 +70,15 @@ const corsOrigins = (process.env.CORS_ORIGINS || "https://www.klanvio.com,https:
 function isAllowedCorsOrigin(origin: string): boolean {
   if (corsOrigins.includes("*") || corsOrigins.includes(origin)) return true;
   try {
-    const host = new URL(origin).hostname;
+    const u = new URL(origin);
+    const host = u.hostname;
+    // Dev local : localhost et 127.0.0.1 sur ports Vite/API
+    if (
+      (host === "localhost" || host === "127.0.0.1") &&
+      ["5174", "5175", "3000", "3001", "8888"].includes(u.port)
+    ) {
+      return true;
+    }
     // Domaine principal Klanvio
     if (host === "klanvio.com" || host.endsWith(".klanvio.com")) return true;
     // Préviews Netlify / Vercel (transition + déploiements preview)

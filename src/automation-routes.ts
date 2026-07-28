@@ -60,22 +60,28 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       if (!status || !["active", "paused", "completed", "failed"].includes(status)) {
         return reply.status(400).send({ error: "Statut invalide (active, paused, completed, failed)." });
       }
-      const updated =
-        status === "paused"
-          ? await pauseAutomation(userId, id)
-          : status === "active"
-            ? await resumeAutomation(userId, id)
-            : await (async () => {
-                const cur = await getAutomation(userId, id);
-                if (cur) {
-                  await haltAutomationMessaging(userId, id);
-                  await updateAutomationConfig(userId, id, {
-                    ...cur.config,
-                    enableAutoReply: false,
-                  });
-                }
-                return updateAutomationStatus(userId, id, status);
-              })();
+      let updated;
+      try {
+        updated =
+          status === "paused"
+            ? await pauseAutomation(userId, id)
+            : status === "active"
+              ? await resumeAutomation(userId, id)
+              : await (async () => {
+                  const cur = await getAutomation(userId, id);
+                  if (cur) {
+                    await haltAutomationMessaging(userId, id);
+                    await updateAutomationConfig(userId, id, {
+                      ...cur.config,
+                      enableAutoReply: false,
+                    });
+                  }
+                  return updateAutomationStatus(userId, id, status);
+                })();
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return reply.status(400).send({ error: msg });
+      }
       if (!updated) {
         return reply.status(404).send({ error: "Automatisation introuvable." });
       }

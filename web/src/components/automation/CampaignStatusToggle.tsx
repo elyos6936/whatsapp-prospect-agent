@@ -39,14 +39,12 @@ export function CampaignStatusToggle({
     try {
       if (isActive) {
         await updateAutomationStatus(automationId, 'paused');
-      } else if (status === 'draft') {
-        // Lancement complet : pause les autres actives + charge les cibles
+      } else {
+        // draft ou paused → activation complète (bootstrap cibles + vérif WhatsApp)
         const result = await validateSimulationAndLaunch(automationId);
         if (result.message) {
           /* statut rafraîchi via onUpdated */
         }
-      } else {
-        await updateAutomationStatus(automationId, 'active');
       }
       await onUpdated?.();
     } catch (err) {

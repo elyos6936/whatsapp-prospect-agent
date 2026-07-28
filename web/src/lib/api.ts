@@ -67,16 +67,27 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const hasBody = init?.body != null;
   let res: Response;
   try {
-    res = await fetch(`${API_BASE_URL}${path}`, {
-      ...init,
-      headers: {
-        ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        ...init?.headers,
-      },
-    });
+    const controller = new AbortController();
+    const timeoutMs = path.startsWith('/api/chat') ? 420_000 : 45_000;
+    const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      res = await fetch(`${API_BASE_URL}${path}`, {
+        ...init,
+        signal: controller.signal,
+        headers: {
+          ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...init?.headers,
+        },
+      });
+    } finally {
+      window.clearTimeout(timer);
+    }
   } catch (err) {
     const raw = err instanceof Error ? err.message : String(err);
+    if (err instanceof Error && err.name === 'AbortError') {
+      throw new ApiError('Le serveur met trop de temps à répondre. Réessayez.');
+    }
     if (/failed to fetch|networkerror|load failed|network request failed/i.test(raw)) {
       throw new ApiError(
         'Connexion au serveur interrompue. Réessayez — si le problème continue, vérifiez votre réseau.',

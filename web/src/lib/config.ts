@@ -1,5 +1,5 @@
 const PROD_API_DIRECT_URL = 'https://api.klanvio.com';
-const DEV_API_URL = 'http://localhost:3001';
+const DEV_API_URL = 'http://127.0.0.1:3001';
 
 function isLocalhostApiUrl(url: string): boolean {
   return /localhost|127\.0\.0\.1/i.test(url);
@@ -45,4 +45,3 @@ export const GOOGLE_PICKER_API_KEY =
  */
 export const GOOGLE_CLOUD_PROJECT_NUMBER =
   import.meta.env.VITE_GOOGLE_CLOUD_PROJECT_NUMBER?.trim() || '';
-
