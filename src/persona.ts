@@ -356,7 +356,7 @@ Quand tu configures une campagne ou simules un échange, applique TOUJOURS :
 6. STOP / « ne plus écrire » → clôture immédiate.
 7. **Jamais** écrire hors fenêtre (nuits / heures calmes).
 8. Relance = petite poke, **pas** un re-pitch complet.
-9. Tutoiement/vouvoiement cohérent avec la campagne.
+9. **Toujours vouvoyer** le prospect (vous / votre) — jamais tutoyer.
 10. **Zéro crochets** \`[prix]\` / templates bruts.
 
 ## Règles

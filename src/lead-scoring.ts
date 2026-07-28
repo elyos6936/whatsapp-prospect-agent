@@ -16,13 +16,21 @@ const NEGATIVE_KEYWORDS =
 const HANDOFF_KEYWORDS =
   /parler (à|a) (un |une )?humain|responsable|g[eé]rant|directeur|plainte|remboursement|r[eé]clamation urgente/i;
 
-/** Accusé de réception court après envoi d'un lien / prix / créneau. */
+/** Accusé de réception court après envoi d'un lien / prix / créneau / handoff livraison. */
 const SHORT_ACK =
   /^(ok|okay|oui|ouais|d['']accord|dac|parfait|super|merci|top|nickel|impeccable|c['']est (bon|not[eé])|re[cç]u|bien re[cç]u|je (vais )?regarder|je regarde|partant|volontiers)([\s!.?,;:]|$)/i;
 
-/** L'agent a envoyé quelque chose d'actionnable (lien externe, paiement, RDV). */
+/** L'agent a envoyé quelque chose d'actionnable (lien, paiement, RDV, handoff livreur). */
 const ACTION_OFFERED =
-  /https?:\/\/|wa\.me\/|chat\.whatsapp\.com\/|bit\.ly\/|calendly\.|fcfa|lien (ici|ci[- ]dessous|suivant)|voici (mon |le )?lien|pour (r[eé]server|payer|rejoindre)/i;
+  /https?:\/\/|wa\.me\/|chat\.whatsapp\.com\/|bit\.ly\/|calendly\.|fcfa|lien (ici|ci[- ]dessous|suivant)|voici (mon |le )?lien|pour (r[eé]server|payer|rejoindre)|je (lui |vous |te )?(envoie|transmets)|je (vais )?(contacter|pr[eé]venir|appeler).{0,50}livreur|livreur.{0,60}(appelle|contactera|contact)|adresse (not[eé]e|re[cç]ue)|point exact|en arrivant (à|au|chez)/i;
+
+/**
+ * L'agent a déjà annoncé la clôture verbale (transmission faite / livreur qui appelle).
+ * Dans ce cas, un ack prospect → stop sans renvoyer une 2e confirmation.
+ * Ne match PAS une simple offre (« le livreur peut passer… ? »).
+ */
+export const VERBAL_CLOSE_DONE =
+  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé])|le livreur (vous |t['’]|te )?(appelle|contactera)|il (vous |te )contactera|dans quelques minutes|bonne continuation|c['’]est not[eé] de mon c[oô]t[eé]/i;
 
 export interface ScoringResult {
   newScore: number;
@@ -100,8 +108,8 @@ const ASKED_FOR_SLOT =
 
 /**
  * Objectif campagne atteint — règles simples, pas de LLM.
- * Lien / paiement / RDV envoyé par l'agent + « ok » du prospect = on arrête
- * (on n'attend pas qu'il confirme avoir rejoint / payé sur un site externe).
+ * Lien / paiement / RDV / handoff livraison déjà proposé par l'agent + « ok »
+ * du prospect = on arrête (on n'attend pas qu'il confirme sur un site externe).
  */
 export function isCampaignObjectiveReached(
   text: string,
@@ -121,6 +129,16 @@ export function isCampaignObjectiveReached(
     .map((m) => m.body);
 
   return recentOut.some((body) => ACTION_OFFERED.test(body));
+}
+
+/** True si un message sortant récent a déjà clôturé à l'oral (évite double confirmation). */
+export function wasVerballyClosed(
+  history: { direction: string; body: string }[]
+): boolean {
+  return history
+    .filter((m) => m.direction === "sortant")
+    .slice(-4)
+    .some((m) => VERBAL_CLOSE_DONE.test(m.body));
 }
 
 /**

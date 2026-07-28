@@ -44,6 +44,7 @@ import {
   scoreIncomingMessage,
   recordAutomationConversion,
   isCampaignObjectiveReached,
+  wasVerballyClosed,
   isAppointmentSlotConfirmed,
 } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
@@ -694,12 +695,13 @@ function buildActiveCampaignContext(auto: Automation): string {
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
     "",
     `PARCOURS CONVERSATION (obligatoire) :`,
-    `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair.`,
+    `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair OU objectif atteint.`,
     `2. Si le prospect demande qui tu es / est surpris → réponds brièvement (prénom business SEULEMENT s'il est dans le contexte ; sinon neutre, SANS inventer de nom) + rappel offre + question utile.`,
     `3. Si intéressé / pose des questions → réponds, qualifie, puis avance vers l'objectif (${goal}).`,
     `4. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
     `5. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
-    `RÈGLES : messages COURTS (1-2 phrases), ton WhatsApp naturel. Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. AUCUN texte entre crochets [ ].`,
+    `6. Objectif livraison : une fois adresse notée + confirmation que le livreur contacte le client → UNE courte confirmation puis STOP. Interdit d'enchaîner « le livreur vous appelle » / « parfait il vous contactera » en boucle.`,
+    `RÈGLES : messages COURTS (1-2 phrases), ton WhatsApp naturel, VOUS (jamais tu/ton/ta/te). Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. AUCUN texte entre crochets [ ].`,
   ].filter((l) => l !== undefined);
   return lines.join("\n");
 }
@@ -851,8 +853,8 @@ async function runAutoReply(
       // Média non interprétable (transcription/vision indisponible ou sticker/vidéo).
       const isVoice = /vocal|audio/i.test(text);
       reply = isVoice
-        ? "Merci pour ton vocal ! Je n'ai pas pu l'écouter correctement de mon côté — tu peux m'écrire en quelques mots ? 🙂"
-        : "Merci ! Tu peux m'en dire un mot en texte pour que je te réponde au mieux ? 🙂";
+        ? "Merci pour votre vocal ! Je n'ai pas pu l'écouter correctement de mon côté — vous pouvez m'écrire en quelques mots ? 🙂"
+        : "Merci ! Vous pouvez m'en dire un mot en texte pour que je vous réponde au mieux ? 🙂";
     } else {
       const settings = await getAppSettings(userId);
       const history = await getContactChatHistory(
@@ -919,7 +921,7 @@ async function runAutoReply(
         }
       }
 
-      // Objectif atteint : lien/prix/RDV déjà envoyé + ack du prospect → on coupe.
+      // Objectif atteint : lien/prix/RDV/handoff livraison + ack du prospect → on coupe.
       if (
         activeCampaign &&
         isCampaignObjectiveReached(text, history, activeCampaign.config)
@@ -934,6 +936,27 @@ async function runAutoReply(
           );
         } catch (err) {
           console.error("Erreur conversion:", err);
+        }
+
+        // Side-effect isolé : notif tiers (ne doit pas bloquer la clôture).
+        void import("./third-party-notification.js")
+          .then((m) =>
+            m.maybeNotifyThirdPartyOnConversion({
+              userId,
+              automation: activeCampaign,
+              prospectChatId: chatId,
+              prospectName: senderName,
+            })
+          )
+          .catch((err) => console.error("Erreur notif tiers:", err));
+
+        // Si l'IA a déjà clôturé à l'oral (« je transmets au livreur… »), silence :
+        // pas de 2e « Parfait merci » qui rallonge le fil.
+        if (wasVerballyClosed(history)) {
+          console.log(
+            `✅ Objectif atteint (déjà clôturé à l'oral, silence) → ${senderName}`
+          );
+          return;
         }
 
         reply = getObjectiveReachedReply();
@@ -954,18 +977,6 @@ async function runAutoReply(
         });
         await incrementMessagesHandled(userId, activeCampaign.id);
         console.log(`✅ Objectif atteint (confirmation) → ${senderName} à ${nowFr()} (${sent.idMessage})`);
-
-        // Side-effect isolé : notif tiers (ne doit pas bloquer la clôture).
-        void import("./third-party-notification.js")
-          .then((m) =>
-            m.maybeNotifyThirdPartyOnConversion({
-              userId,
-              automation: activeCampaign,
-              prospectChatId: chatId,
-              prospectName: senderName,
-            })
-          )
-          .catch((err) => console.error("Erreur notif tiers:", err));
 
         return;
       }
