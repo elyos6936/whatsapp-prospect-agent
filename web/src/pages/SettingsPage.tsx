@@ -55,7 +55,7 @@ function readInitialTab(): SettingsTab {
   } catch {
     /* ignore */
   }
-  return 'connection';
+  return 'billing';
 }
 
 function readTypeformFlash(): { type: 'ok' | 'err'; text: string } | null {
@@ -219,15 +219,15 @@ export function SettingsPage() {
   };
 
   const tabs: { id: SettingsTab; label: string; icon: typeof Smartphone }[] = [
-    { id: 'connection', label: 'WhatsApp', icon: Smartphone },
-    { id: 'integrations', label: 'Intégrations', icon: Link2 },
     { id: 'billing', label: 'Facturation', icon: CreditCard },
+    { id: 'integrations', label: 'Intégrations', icon: Link2 },
+    { id: 'connection', label: 'WhatsApp', icon: Smartphone },
   ];
 
   const tabLabels: Record<SettingsTab, { short: string; full: string }> = {
-    connection: { short: 'WhatsApp', full: 'WhatsApp' },
-    integrations: { short: 'Intégrations', full: 'Intégrations' },
     billing: { short: 'Facturation', full: 'Facturation' },
+    integrations: { short: 'Intégrations', full: 'Intégrations' },
+    connection: { short: 'WhatsApp', full: 'WhatsApp' },
   };
 
   return (

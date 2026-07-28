@@ -193,7 +193,8 @@ const CONFIRM_ACTIVATE_NOW_NUDGE =
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
-  "Le 1er tour « toi » = accroche A.I.D.A. Attention (PAS de prix/lien). " +
+  "Le 1er tour « toi » = l'accroche validée (initial_message / variante choisie) — Attention seulement, PAS de prix/lien/pitch. " +
+  "Les tours suivants : même mission / pacing (pousser l'intérêt, pas de « Ah super » vide), vouvoiement, sans prénom du prospect à tout va. " +
   "Parle de **simulation** (à droite) — jamais « panneau » ni « campagne créée ». " +
   "Dis clairement : « Si c'est bon, clique sur **Valider** à droite — je te demanderai ensuite dans ce chat si on active ou s’il y a d’autres modifs. » " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +
@@ -290,7 +291,8 @@ async function buildBusinessContext(
       `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois). ` +
       `Après « nouvelle campagne » → 1ʳᵉ question = offre ACTUELLE (ouverte, sans inventer). ` +
       `Demande aussi la fenêtre horaire d'envoi et le jour/heure de lancement. ` +
-      `Objectif RDV → lien de réservation. Simulation = 6-7 messages max + feedback.`
+      `Objectif RDV → lien de réservation. Avant brouillon : propose 5 variantes d'accroche, fais valider, puis create avec ab_variants. ` +
+      `Simulation = 6-7 messages max + feedback (1er tour = accroche validée).`
     );
 
   try {
@@ -310,6 +312,22 @@ async function buildBusinessContext(
             `Ce fil ne gère qu'UNE automatisation. Pour une nouvelle campagne → l'utilisateur doit cliquer « Nouvelle automatisation » dans la barre latérale.\n` +
             `Modifications → update_automation_config (ne cite JAMAIS d'identifiant numérique de campagne à l'utilisateur).`
         );
+        if (auto.config.initialMessage?.trim()) {
+          const variants = (auto.config.abVariants ?? [])
+            .map((v) => v.message?.trim())
+            .filter(Boolean)
+            .slice(0, 5);
+          lines.push(
+            `## Accroche validée (cadre strict)\n` +
+              `initial_message : « ${auto.config.initialMessage.trim()} »\n` +
+              (variants.length
+                ? `ab_variants (${variants.length}) :\n` +
+                  variants.map((m, i) => `${i + 1}. « ${m} »`).join("\n") +
+                  "\n"
+                : "") +
+              `En simulation et en envoi : rester dans CE cadre (micro-variation OK). Pas de pitch complet au 1er message.`
+          );
+        }
       }
     } else {
       lines.push(
@@ -430,9 +448,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
       .join("\n\n");
     try {
+      let approvedOpener: string | null = null;
+      if (thread?.automation_id) {
+        const auto = await getAutomation(userId, thread.automation_id);
+        approvedOpener = auto?.config.initialMessage?.trim() || null;
+      }
       const display = await generateCampaignSimulationDirect(client, {
         businessContext,
         recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
+        approvedOpener,
       });
       if (display?.trim()) return display.trim();
     } catch (err) {

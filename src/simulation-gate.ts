@@ -103,7 +103,7 @@ export function userWantsExplicitResimulation(text: string): boolean {
 /** Modif de campagne (ton, accroche…) SANS redemander une simulation. */
 export function userWantsSilentCampaignTweak(text: string): boolean {
   if (userWantsExplicitResimulation(text)) return false;
-  return /\b(?:modifie|change|ajuste|ton|accroche|message|relance|plus court|plus long|moins agressif|moins direct|retire|enl[eè]ve|ajoute|remplace|plut[oô]t|adouci|plus poli|(?:vouvoi|vouvoy|tutoi|tutoy)\w*)\b/i.test(
+  return /\b(?:modifie|change|ajuste|ton|accroche|message|relance|variante|plus court|plus long|moins agressif|moins direct|retire|enl[eè]ve|ajoute|remplace|plut[oô]t|adouci|plus poli|(?:vouvoi|vouvoy|tutoi|tutoy)\w*)\b/i.test(
     text
   );
 }

@@ -112,6 +112,7 @@ import {
   unblockContact,
 } from "./db.js";
 import { getContactPresence } from "./notifications.js";
+import { formatAttentionOpenerError, isValidAttentionOpener } from "./opener-frame.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
 import {
@@ -1417,7 +1418,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           initial_message: {
             type: "string",
             description:
-              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases accrocheuses). INTERDIT : prix, lien paiement/RDV, pitch complet. Les détails vont dans price / closing_link / conversation_guide.",
+              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases, ≤200 car., vouvoiement, SANS prénom du prospect). INTERDIT : prix, lien, pitch complet. Choisir parmi les 5 variantes validées avec l'utilisateur.",
           },
           max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
           max_per_day: {
@@ -1528,11 +1529,16 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           personalize_messages: {
             type: "boolean",
             description:
-              "Personnaliser chaque accroche (différente par prospect). Défaut true en prospection sortante — recommandé toujours ON.",
+              "Micro-variation de wording par prospect DANS le cadre de initial_message / ab_variants (pas un nouvel angle). Défaut true en prospection sortante.",
           },
           stop_on_dissatisfaction: { type: "boolean" },
           stop_on_unknown_question: { type: "boolean" },
-          ab_variants: { type: "array", items: { type: "object" } },
+          ab_variants: {
+            type: "array",
+            items: { type: "object" },
+            description:
+              "Exactement 5 accroches Attention validées avec l'utilisateur : [{id:'v1',message:'…'}, …]. Obligatoire en prospection sortante.",
+          },
           sequence_steps: { type: "array", items: { type: "object" } },
           media_url: { type: "string" },
           media_type: { type: "string", enum: ["image", "document", "audio"] },
@@ -1640,6 +1646,11 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           quiet_hours_start: { type: "number" },
           quiet_hours_end: { type: "number" },
           scheduled_start_at: { type: "string" },
+          ab_variants: {
+            type: "array",
+            items: { type: "object" },
+            description: "Remplacer les 5 accroches Attention : [{id,message}, …] (exactement 5)",
+          },
         },
         required: ["automation_id"],
         additionalProperties: false,
@@ -3813,6 +3824,7 @@ export async function executeTool(
       }
 
       const config = buildAutomationConfigFromArgs(args, type);
+      const isOutbound = type === "group_prospect" || type === "contact_prospect";
 
       // Interdit de stocker des crochets dans les textes de campagne (ils finiraient chez les prospects).
       const badFields = findPlaceholderFields([
@@ -3873,16 +3885,26 @@ export async function executeTool(
           error: "initial_message contient des crochets. Remplace-les par de vraies valeurs.",
         });
       }
-      if (config.initialMessage) {
-        const opener = config.initialMessage;
-        const hasUrl = /https?:\/\/\S+/i.test(opener);
-        const hasPrice = /\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)\b/i.test(opener);
-        const tooLong = opener.trim().length > 280;
-        if (hasUrl || (hasPrice && tooLong) || (hasUrl && hasPrice)) {
+      if (config.initialMessage && !isValidAttentionOpener(config.initialMessage)) {
+        return JSON.stringify({
+          error: formatAttentionOpenerError("initial_message", config.initialMessage),
+        });
+      }
+      const abVariantsExplicit = Array.isArray(args.ab_variants);
+      if (isOutbound && (!explicitAutomationId || abVariantsExplicit)) {
+        const variants = (config.abVariants ?? []).filter((v) => v.message?.trim());
+        if (variants.length !== 5) {
           return JSON.stringify({
             error:
-              "initial_message viole A.I.D.A. (Attention). Le 1er message doit être une accroche courte SANS lien et SANS prix/pitch complet. Mets le lien dans closing_link et le prix dans price ; garde les détails dans conversation_guide. Réécris initial_message (1-2 phrases) puis réessaie.",
+              "Prospection sortante : ab_variants doit contenir exactement 5 accroches Attention validées avec l'utilisateur (après les avoir proposées dans le chat). initial_message = la variante choisie.",
           });
+        }
+        for (const v of variants) {
+          if (!isValidAttentionOpener(v.message)) {
+            return JSON.stringify({
+              error: formatAttentionOpenerError(`ab_variants.${v.id}`, v.message),
+            });
+          }
         }
       }
 
@@ -3918,6 +3940,7 @@ export async function executeTool(
               contactTargets: cfg.contactTargets ?? reusable.config.contactTargets,
               initialMessage: cfg.initialMessage ?? reusable.config.initialMessage,
               conversationGuide: cfg.conversationGuide ?? reusable.config.conversationGuide,
+              abVariants: cfg.abVariants ?? reusable.config.abVariants,
             }
           : { ...cfg, enableAutoReply: true };
 
@@ -4152,6 +4175,14 @@ export async function executeTool(
 
       if (args.initial_message) merged.initialMessage = String(args.initial_message);
       if (args.conversation_guide) merged.conversationGuide = String(args.conversation_guide);
+      if (Array.isArray(args.ab_variants)) {
+        merged.abVariants = (args.ab_variants as Array<{ id?: string; message?: string }>).map(
+          (v, i) => ({
+            id: v.id || `v${i + 1}`,
+            message: String(v.message ?? ""),
+          })
+        );
+      }
       if (Array.isArray(args.trigger_phrases)) {
         merged.triggerPhrases = args.trigger_phrases.map(String);
         merged.keywords = merged.triggerPhrases;
@@ -4225,11 +4256,32 @@ export async function executeTool(
         { label: "closing_link", value: merged.closingLink },
         { label: "sales_script", value: merged.salesScript },
         ...(merged.relance?.messages ?? []).map((m, i) => ({ label: `relance_messages[${i}]`, value: m })),
+        ...(merged.abVariants ?? []).map((v) => ({ label: `ab_variants.${v.id}`, value: v.message })),
       ]);
       if (badFields.length) {
           return JSON.stringify({
           error: `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
         });
+      }
+      if (merged.initialMessage && !isValidAttentionOpener(merged.initialMessage)) {
+        return JSON.stringify({
+          error: formatAttentionOpenerError("initial_message", merged.initialMessage),
+        });
+      }
+      if (Array.isArray(args.ab_variants)) {
+        const variants = (merged.abVariants ?? []).filter((v) => v.message?.trim());
+        if (variants.length !== 5) {
+          return JSON.stringify({
+            error: "ab_variants doit contenir exactement 5 accroches Attention.",
+          });
+        }
+        for (const v of variants) {
+          if (!isValidAttentionOpener(v.message)) {
+            return JSON.stringify({
+              error: formatAttentionOpenerError(`ab_variants.${v.id}`, v.message),
+            });
+          }
+        }
       }
 
       const updated = await updateAutomationConfig(userId, id, {

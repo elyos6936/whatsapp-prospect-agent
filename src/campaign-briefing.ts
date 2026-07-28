@@ -159,6 +159,17 @@ export function assessCampaignBriefing(
     missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
   }
 
+  // Identité face aux prospects — obligatoire pour « qui êtes-vous ? »
+  const hasIdentity =
+    /\b(se pr[eé]sent|pr[eé]sentation|comment (je |tu |on )?me pr[eé]sente|comment (je |tu |on )?dois me pr[eé]sent|qui (je |tu )?suis|mon pr[eé]nom|mon nom|appelle[- ]moi|je m.?appelle|pr[eé]sente[- ]toi|pr[eé]sente[- ]moi|face aux prospects|aux prospects.*(pr[eé]nom|nom)|owner_name|business_owner)\b/i.test(
+      blob
+    );
+  if (!hasIdentity) {
+    missing.push(
+      "présentation face aux prospects (prénom/nom + formule si on demande « qui êtes-vous ? »)"
+    );
+  }
+
   // Au moins 6 questions posées + aucun élément critique manquant
   const criticalMissing = missing.filter(
     (m) =>
@@ -170,7 +181,8 @@ export function assessCampaignBriefing(
       m.includes("objectif") ||
       m.includes("cible") ||
       m.includes("horaires") ||
-      m.includes("rythme")
+      m.includes("rythme") ||
+      m.includes("présentation")
   );
   const readyForDraft = questionsAsked >= 6 && criticalMissing.length === 0;
 
@@ -211,8 +223,10 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
       "Avant create/activate : pose UNE question si pas encore fait — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) ». " +
       "Puis UNE question optionnelle — « Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, commercial…) sur WhatsApp ? (oui/non) ». " +
       "Si oui : récupère numéro + rôle + infos à transmettre (une question à la fois), puis create_automation avec third_party_notification_enabled=true et les champs associés. " +
-      "Puis crée le brouillon (create_automation draft) avec personalize_messages=true et un initial_message **A.I.D.A. Attention seulement** (accroche courte, SANS prix/lien/pitch complet). " +
-      "Propose ensuite une simulation (6-7 messages via show_campaign_simulation, puis feedback)."
+      "Ensuite OBLIGATOIRE : propose **exactement 5 variantes** d'accroche A.I.D.A. Attention (liste 1–5, courtes, SANS prix/lien/pitch, vouvoiement, sans prénom du prospect). " +
+      "Attends le choix / validation de l'utilisateur. " +
+      "Puis crée le brouillon (create_automation draft) avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes. " +
+      "Propose ensuite une simulation (6-7 messages via show_campaign_simulation, 1er tour = initial_message validé)."
     );
   }
 
@@ -225,6 +239,13 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
       `N'affirme JAMAIS l'offre du profil business — elle peut être obsolète.`
     );
   }
+  if (next.includes("présentation")) {
+    return (
+      `Briefing campagne (${q}/6 question(s)) : identité face aux prospects manquante. ` +
+      `Pose UNE seule question : comment tu dois te présenter si un prospect demande « qui êtes-vous ? » ` +
+      `(prénom/nom + formule courte). Enregistre via save_business_profile. INTERDIT d'inventer un nom.`
+    );
+  }
   return (
     `## Briefing campagne EN COURS (obligatoire)\n` +
     `Questions déjà posées ≈ ${q}/6 minimum. Éléments encore manquants : ${
@@ -235,6 +256,7 @@ export function buildBriefingNudge(assessment: BriefingAssessment): string | nul
     `Même si l'utilisateur dit « c'est un test », « plus tard », « comme tu veux », « fais simple » → insiste pour une réponse concrète exploitable. Un test = vrais paramètres.\n` +
     `Si objectif = rendez-vous → tu DOIS obtenir le **lien de réservation** (URL) avant tout brouillon.\n` +
     `N'oublie pas le **planning** : fenêtre horaire d'envoi + jour/heure de lancement (une question à la fois).\n` +
+    `N'oublie pas l'**identité** : comment se présenter aux prospects si on demande « qui êtes-vous ? » (prénom/nom réel, save_business_profile) — INTERDIT d'inventer.\n` +
     `Avant activation : demande aussi si l'utilisateur veut des **stickers** dans les conversations (oui/non).\n` +
     `Valable pour TOUS produits / services / support client.`
   );

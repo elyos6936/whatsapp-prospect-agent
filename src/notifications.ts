@@ -694,13 +694,15 @@ function buildActiveCampaignContext(auto: Automation): string {
       : "",
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
     "",
-    `PARCOURS CONVERSATION (obligatoire) :`,
+    `PARCOURS CONVERSATION (obligatoire — même mission partout, seuls les mots varient) :`,
     `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair OU objectif atteint.`,
     `2. Si le prospect demande qui tu es / est surpris → réponds brièvement (prénom business SEULEMENT s'il est dans le contexte ; sinon neutre, SANS inventer de nom) + rappel offre + question utile.`,
-    `3. Si intéressé / pose des questions → réponds, qualifie, puis avance vers l'objectif (${goal}).`,
+    `3. Si intéressé / pose des questions → réponds, qualifie, pousse l'intérêt, puis avance vers l'objectif (${goal}).`,
     `4. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
     `5. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
     `6. Objectif livraison : une fois adresse notée + confirmation que le livreur contacte le client → UNE courte confirmation puis STOP. Interdit d'enchaîner « le livreur vous appelle » / « parfait il vous contactera » en boucle.`,
+    `7. INTERDIT réactions vides (« Ah super », « Ok », « Parfait ») sans question ou prochaine étape liée à l'objectif.`,
+    `8. N'utilise PAS le prénom du prospect à tout va.`,
     `RÈGLES : messages COURTS (1-2 phrases), ton WhatsApp naturel, VOUS (jamais tu/ton/ta/te). Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. AUCUN texte entre crochets [ ].`,
   ].filter((l) => l !== undefined);
   return lines.join("\n");
