@@ -30,7 +30,7 @@ export interface UserRecord {
 function mapUser(row: Record<string, unknown>): UserRecord {
   const levelRaw = Number(row.outreach_level ?? 1);
   const level = (levelRaw >= 1 && levelRaw <= 5 ? levelRaw : 1) as OutreachLevel;
-  const statusRaw = String(row.subscription_status ?? "trial");
+  const statusRaw = String(row.subscription_status ?? "active");
   const status: SubscriptionStatus =
     statusRaw === "active" || statusRaw === "expired" ? statusRaw : "trial";
   return {
@@ -96,7 +96,7 @@ export async function ensureUserOutreachSchema(): Promise<void> {
   `;
   await sql`
     ALTER TABLE users
-      ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'trial'
+      ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'active'
   `;
   await sql`
     ALTER TABLE users
@@ -126,7 +126,7 @@ export async function createUser(input: {
     )
     VALUES (
       ${input.email.trim().toLowerCase()}, ${input.passwordHash}, ${input.name.trim()},
-      0, 1, 'trial', 0
+      0, 1, 'active', 0
     )
     RETURNING
       id, email, name, avatar_url, onboarding_completed, onboarding_answers,
@@ -155,7 +155,7 @@ export async function createGoogleUser(input: {
       ${input.name.trim()},
       ${input.googleSub},
       ${input.avatarUrl?.trim() || null},
-      0, 1, 'trial', 0
+      0, 1, 'active', 0
     )
     RETURNING
       id, email, name, avatar_url, onboarding_completed, onboarding_answers,

@@ -2,7 +2,7 @@
 ALTER TABLE users
   ADD COLUMN IF NOT EXISTS total_messages_sent INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS outreach_level INTEGER NOT NULL DEFAULT 1,
-  ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'trial',
+      ADD COLUMN IF NOT EXISTS subscription_status TEXT NOT NULL DEFAULT 'active',
   ADD COLUMN IF NOT EXISTS trial_conversations_used INTEGER NOT NULL DEFAULT 0,
   ADD COLUMN IF NOT EXISTS last_weekly_report_week TEXT,
   ADD COLUMN IF NOT EXISTS last_reported_outreach_level INTEGER;
