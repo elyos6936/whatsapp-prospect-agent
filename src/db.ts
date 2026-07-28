@@ -1968,13 +1968,23 @@ export async function isStartingNewConversation(
   automationId?: number | null
 ): Promise<boolean> {
   const phone = normalizeContactPhone(chatId);
+  const digits = phone.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
   const epochIso = await conversationEpochForContact(userId, phone, automationId);
+
+  const phoneMatch = sql`
+    (contact_phone = ${phone}
+      OR (${digits} != '' AND (
+        contact_phone = ${digits} || '@c.us'
+        OR contact_phone = ${digits} || '@lid'
+        OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+      )))
+  `;
 
   if (automationId != null) {
     const rows = await sql<{ x: number }[]>`
       SELECT 1 as x FROM messages
       WHERE user_id = ${userId}
-        AND contact_phone = ${phone}
+        AND ${phoneMatch}
         AND direction = 'sortant'
         AND COALESCE(counts_toward_quota, 1) = 1
         AND automation_id = ${automationId}
@@ -1987,7 +1997,7 @@ export async function isStartingNewConversation(
   const rows = await sql<{ x: number }[]>`
     SELECT 1 as x FROM messages
     WHERE user_id = ${userId}
-      AND contact_phone = ${phone}
+      AND ${phoneMatch}
       AND direction = 'sortant'
       AND COALESCE(counts_toward_quota, 1) = 1
       AND created_at >= ${epochIso}
@@ -2765,8 +2775,8 @@ export async function haltAutomationMessaging(
   automationId: number
 ): Promise<{ cancelledQueue: number; cancelledSequences: number; disabledContacts: number }> {
   const queueResult = await sql`
-    UPDATE send_queue SET status = 'cancelled', error = 'Campagne mise en pause'
-    WHERE user_id = ${userId} AND automation_id = ${automationId} AND status = 'pending'
+    UPDATE send_queue SET status = 'cancelled', error = 'Campagne mise en pause', claimed_at = NULL
+    WHERE user_id = ${userId} AND automation_id = ${automationId} AND status IN ('pending', 'processing')
   `;
   const seqResult = await sql`
     UPDATE contact_sequences SET status = 'cancelled', next_step_at = NULL
@@ -3482,9 +3492,9 @@ export async function cancelPendingSendQueueForRecipient(
   const digits = recipient.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
   const result = await sql`
     UPDATE send_queue
-    SET status = 'cancelled', error = 'Doublon / remplacé'
+    SET status = 'cancelled', error = 'Doublon / remplacé', claimed_at = NULL
     WHERE user_id = ${userId}
-      AND status = 'pending'
+      AND status IN ('pending', 'processing')
       AND (
         recipient = ${recipient}
         OR (${digits} != '' AND replace(replace(recipient, '@c.us', ''), '@lid', '') = ${digits})
@@ -3542,16 +3552,97 @@ export async function getDueQueueItems(userId: number, limit = 3): Promise<Queue
   return rows.map(mapQueueItem);
 }
 
+let sendQueueClaimSchemaReady = false;
+
+/** Statut processing + claimed_at pour claim atomique multi-workers. */
+export async function ensureSendQueueClaimSchema(): Promise<void> {
+  if (sendQueueClaimSchemaReady) return;
+  await sql`
+    ALTER TABLE send_queue DROP CONSTRAINT IF EXISTS send_queue_status_check
+  `;
+  await sql`
+    ALTER TABLE send_queue
+      ADD CONSTRAINT send_queue_status_check
+      CHECK (status IN ('pending', 'processing', 'sent', 'failed', 'cancelled'))
+  `.catch(() => {
+    /* constraint may already exist with correct values */
+  });
+  await sql`
+    ALTER TABLE send_queue ADD COLUMN IF NOT EXISTS claimed_at TIMESTAMPTZ
+  `;
+  sendQueueClaimSchemaReady = true;
+}
+
+/** Débloque les claims abandonnés (crash / overlap deploy). */
+export async function releaseStaleProcessingQueueItems(userId: number): Promise<number> {
+  await ensureSendQueueClaimSchema();
+  const result = await sql`
+    UPDATE send_queue
+    SET status = 'pending', claimed_at = NULL
+    WHERE user_id = ${userId}
+      AND status = 'processing'
+      AND claimed_at IS NOT NULL
+      AND claimed_at < NOW() - INTERVAL '3 minutes'
+  `;
+  return Number(result.count);
+}
+
+/**
+ * Claim atomique (FOR UPDATE SKIP LOCKED) : un seul worker traite une ligne pending.
+ */
+export async function claimDueQueueItems(userId: number, limit = 3): Promise<QueueItem[]> {
+  await ensureSendQueueClaimSchema();
+  await releaseStaleProcessingQueueItems(userId);
+  const rows = await sql<Record<string, unknown>[]>`
+    WITH picked AS (
+      SELECT id
+      FROM send_queue
+      WHERE user_id = ${userId}
+        AND status = 'pending'
+        AND send_at <= NOW()
+      ORDER BY priority DESC, send_at ASC
+      LIMIT ${limit}
+      FOR UPDATE SKIP LOCKED
+    )
+    UPDATE send_queue sq
+    SET status = 'processing', claimed_at = NOW()
+    FROM picked
+    WHERE sq.id = picked.id
+    RETURNING sq.*
+  `;
+  return rows.map(mapQueueItem);
+}
+
 export async function markQueueSent(userId: number, id: number): Promise<void> {
-  await sql`UPDATE send_queue SET status = 'sent', sent_at = NOW() WHERE user_id = ${userId} AND id = ${id}`;
+  await sql`
+    UPDATE send_queue
+    SET status = 'sent', sent_at = NOW(), claimed_at = NULL
+    WHERE user_id = ${userId} AND id = ${id}
+  `;
 }
 
 export async function markQueueFailed(userId: number, id: number, error: string): Promise<void> {
-  await sql`UPDATE send_queue SET status = 'failed', error = ${error} WHERE user_id = ${userId} AND id = ${id}`;
+  await sql`
+    UPDATE send_queue
+    SET status = 'failed', error = ${error}, claimed_at = NULL
+    WHERE user_id = ${userId} AND id = ${id}
+  `;
+}
+
+export async function markQueueCancelled(userId: number, id: number, reason: string): Promise<void> {
+  await sql`
+    UPDATE send_queue
+    SET status = 'cancelled', error = ${reason}, claimed_at = NULL
+    WHERE user_id = ${userId} AND id = ${id}
+  `;
 }
 
 export async function rescheduleSendQueueItem(userId: number, id: number, sendAt: string): Promise<void> {
-  await sql`UPDATE send_queue SET send_at = ${toTsParam(sendAt)} WHERE user_id = ${userId} AND id = ${id}`;
+  await sql`
+    UPDATE send_queue
+    SET send_at = ${toTsParam(sendAt)}, status = 'pending', claimed_at = NULL
+    WHERE user_id = ${userId} AND id = ${id}
+  `;
 }
 
 export async function cancelPendingSendQueue(userId: number): Promise<number> {

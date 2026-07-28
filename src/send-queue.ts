@@ -3,10 +3,12 @@ import {
   cancelPendingSendQueue,
   canStartNewConversation,
   classifyNewConversationKind,
+  claimDueQueueItems,
   ensureDefaultAgentThread,
   formatLocalDateTime,
   getAutomation,
-  getDueQueueItems,
+  isStartingNewConversation,
+  markQueueCancelled,
   markQueueFailed,
   markQueueSent,
   rescheduleSendQueueItem,
@@ -120,7 +122,7 @@ async function rescheduleDailyQuota(
 
 async function processSendQueueForUser(userId: number, limit: number): Promise<number> {
   let sent = 0;
-  const items = await getDueQueueItems(userId, limit);
+  const items = await claimDueQueueItems(userId, limit);
 
   for (const item of items) {
     const quiet = await quietHoursForItem(userId, item);
@@ -131,6 +133,29 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
 
     // Opener campagne = toujours un nouveau fil (époque fraîche juste avant envoi)
     const isCampaignOpener = item.automation_id != null && item.sequence_id == null;
+
+    // Garde-fou : opener déjà en base (autre worker a envoyé entre-temps)
+    if (isCampaignOpener) {
+      const stillNew = await isStartingNewConversation(
+        userId,
+        item.recipient,
+        item.automation_id
+      );
+      if (!stillNew) {
+        const label = item.recipient_label || chatIdToDisplay(item.recipient);
+        await markQueueCancelled(userId, item.id, "Opener déjà envoyé — doublon évité");
+        console.warn(`⏭️ Queue #${item.id} ignorée (${label}) — opener déjà présent`);
+        if (item.automation_id) {
+          await addAutomationLog(
+            userId,
+            item.automation_id,
+            "info",
+            `Doublon évité pour ${label} — le premier message était déjà parti.`
+          );
+        }
+        continue;
+      }
+    }
 
     // Check plafond AVANT beginFresh (éviter de reset l'époque si on reporte)
     let newKind: "none" | "outbound" | "inbound" = "none";
