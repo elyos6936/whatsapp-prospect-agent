@@ -11,6 +11,7 @@ type AppHeaderProps = {
   automationId?: number | null;
   hasStrategy: boolean;
   strategyOpen: boolean;
+  outreachLevel?: number | null;
   onGoToChat: () => void;
   onOpenSettings: () => void;
   onOpenStats?: () => void;
@@ -27,6 +28,7 @@ export function AppHeader({
   automationId,
   hasStrategy,
   strategyOpen,
+  outreachLevel,
   onGoToChat,
   onOpenSettings,
   onOpenStats,
@@ -36,6 +38,10 @@ export function AppHeader({
 }: AppHeaderProps) {
   const onChat = overlayView == null;
   const title = onChat ? threadTitle || 'Automatisation' : getOverlayTitle(overlayView);
+  const level =
+    outreachLevel != null && Number.isFinite(outreachLevel)
+      ? Math.min(5, Math.max(1, Math.floor(outreachLevel)))
+      : null;
 
   return (
     <header className="relative z-30 flex h-12 shrink-0 items-center gap-2 border-b border-black/[0.06] bg-bg-0/95 px-3 backdrop-blur-md sm:h-14 sm:gap-4 sm:px-5">
@@ -59,6 +65,19 @@ export function AppHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+        {level != null && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            className="hidden items-center gap-1 rounded-lg border border-black/[0.08] bg-bg-100 px-2 py-1 font-mono text-[11px] text-text-400 transition hover:border-brand/30 hover:text-text-200 sm:inline-flex"
+            title={`Niveau outreach ${level} / 5 — ouvrir Facturation`}
+          >
+            <span className="text-text-500">Niv.</span>
+            <span className="font-semibold text-text-200">{level}</span>
+            <span className="text-text-500">/5</span>
+          </button>
+        )}
+
         {hasCampaign && automationId != null && campaignStatus && (
           <CampaignStatusToggle
             automationId={automationId}
@@ -104,6 +123,11 @@ export function AppHeader({
         >
           <Settings className="h-3.5 w-3.5" />
           <span className="hidden sm:inline">Paramètres</span>
+          {level != null && (
+            <span className="rounded bg-bg-200 px-1 py-0.5 font-mono text-[10px] text-text-400 sm:hidden">
+              N{level}
+            </span>
+          )}
         </button>
       </div>
     </header>

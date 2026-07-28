@@ -83,6 +83,7 @@ import {
   getContact,
   getContactThread,
   getDailyBilan,
+  getOutreachQuotaSnapshot,
   listContacts,
   listIncomingMessages,
   listScheduledMessages,
@@ -947,7 +948,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "get_daily_bilan",
       description:
-        "Bilan / rapport du jour (ou d'une date) depuis SQLite : messages entrants/sortants, contacts, top conversations, programmés. À utiliser pour « bilan », « rapport », « combien de messages aujourd'hui ».",
+        "Bilan / rapport du jour (ou d'une date) : messages entrants/sortants, contacts, top conversations, programmés. Pour « bilan », « rapport », « combien de messages aujourd'hui ». NE remplace PAS get_outreach_status pour niveau / plafonds max.",
       parameters: {
         type: "object",
         properties: {
@@ -956,6 +957,19 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description: "Date YYYY-MM-DD (optionnel, défaut = aujourd'hui heure locale)",
           },
         },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_outreach_status",
+      description:
+        "Niveau outreach, essai, plafonds journaliers de NOUVEAUX fils (entrant/sortant) et restants aujourd'hui. OBLIGATOIRE pour « combien de messages max », « mon niveau », « mon quota », « combien puis-je envoyer ». Ne jamais inventer ces chiffres.",
+      parameters: {
+        type: "object",
+        properties: {},
         additionalProperties: false,
       },
     },
@@ -1849,6 +1863,7 @@ const LOCAL_TOOLS = new Set([
   "list_scheduled_messages",
   "cancel_scheduled_message",
   "get_daily_bilan",
+  "get_outreach_status",
   "get_contact_conversation",
   "save_business_profile",
   "get_business_profile",
@@ -3573,6 +3588,14 @@ export async function executeTool(
       return JSON.stringify({
         ...bilan,
         summary: `Bilan ${bilan.date} : ${bilan.incoming} entrant(s), ${bilan.outgoing} sortant(s), ${bilan.uniqueContacts} contact(s) actifs. Pipeline : ${bilan.contactsByStatus.nouveau} nouveau · ${bilan.contactsByStatus.en_conversation} en conversation · ${bilan.contactsByStatus.interesse} intéressé · ${bilan.contactsByStatus.stop} STOP. Programmés : ${bilan.scheduledSentToday} envoyé(s) ce jour, ${bilan.scheduledPending} en attente.`,
+      });
+    }
+
+    case "get_outreach_status": {
+      const snap = await getOutreachQuotaSnapshot(userId);
+      return JSON.stringify({
+        ...snap,
+        summary: snap.summaryForAgent,
       });
     }
 

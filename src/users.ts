@@ -68,6 +68,8 @@ export function publicUser(user: UserRecord) {
     google_contacts_prompt_done: user.google_contacts_prompt_done,
     subscription_status: user.subscription_status,
     outreach_level: user.outreach_level,
+    total_messages_sent: user.total_messages_sent,
+    trial_conversations_used: user.trial_conversations_used,
     business: {
       ownerName: user.business_owner_name,
       offer: user.business_offer,

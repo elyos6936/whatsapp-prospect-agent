@@ -1,7 +1,15 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
 import { SYSTEM_PROMPT } from "./persona.js";
-import { getAppSettings, getAgentThread, getAutomation, getRecentAgentMessages, type AgentMessage, type AppSettings } from "./db.js";
+import {
+  getAppSettings,
+  getAgentThread,
+  getAutomation,
+  getOutreachQuotaSnapshot,
+  getRecentAgentMessages,
+  type AgentMessage,
+  type AppSettings,
+} from "./db.js";
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
@@ -294,6 +302,20 @@ async function buildBusinessContext(
       `Objectif RDV → lien de réservation. Avant brouillon : propose 5 variantes d'accroche, fais valider, puis create avec ab_variants. ` +
       `Simulation = 6-7 messages max + feedback (1er tour = accroche validée).`
     );
+
+  try {
+    const quota = await getOutreachQuotaSnapshot(userId);
+    lines.push(
+      `## Niveau & plafonds Klanvio (SOURCE DE VÉRITÉ — ne jamais inventer d'autres chiffres)\n` +
+        `${quota.summaryForAgent}\n\n` +
+        `Si l'utilisateur demande « combien de messages max », « mon niveau », « mon quota » → ` +
+        `réponds avec CES chiffres (ou rappelle get_outreach_status). ` +
+        `Distingue clairement : (1) niveau lifetime, (2) nouveaux fils / jour, (3) messages illimités dans un fil déjà ouvert. ` +
+        `Pour une campagne, \`max_per_day\` ne doit pas dépasser le restant de nouveaux fils sortants du jour.`
+    );
+  } catch {
+    /* ignore */
+  }
 
   try {
     const thread = await getAgentThread(userId, threadId);

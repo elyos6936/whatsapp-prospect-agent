@@ -322,6 +322,26 @@ export function SettingsPage() {
                   Choisissez votre palier · essai {TRIAL_DAYS} jours inclus · résiliable à tout
                   moment
                 </p>
+                {(user?.outreach_level != null || user?.subscription_status) && (
+                  <p className="mt-2 text-xs text-text-400">
+                    <span className="font-mono font-medium text-text-200">
+                      Niveau {Math.min(5, Math.max(1, Math.floor(user.outreach_level ?? 1)))}/5
+                    </span>
+                    {user.subscription_status === 'trial' ? (
+                      <>
+                        {' '}
+                        · Essai
+                        {typeof user.trial_conversations_used === 'number'
+                          ? ` · ${user.trial_conversations_used}/20 nouvelles conversations`
+                          : null}
+                      </>
+                    ) : user.subscription_status === 'active' ? (
+                      <> · Abonnement actif</>
+                    ) : user.subscription_status === 'expired' ? (
+                      <> · Abonnement expiré</>
+                    ) : null}
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-2.5">

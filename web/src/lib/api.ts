@@ -11,6 +11,10 @@ export interface AuthUser {
   avatarUrl?: string;
   onboarding_completed: boolean;
   google_contacts_prompt_done?: boolean;
+  subscription_status?: 'trial' | 'active' | 'expired';
+  outreach_level?: number;
+  total_messages_sent?: number;
+  trial_conversations_used?: number;
   business: { ownerName: string; offer: string; price: string };
   whatsapp?: { connected: boolean; state: string; message: string };
 }

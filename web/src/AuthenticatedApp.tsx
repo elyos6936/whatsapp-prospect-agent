@@ -388,6 +388,7 @@ export default function AuthenticatedApp() {
           campaignStatus={activeThread?.automation_status ?? null}
           hasStrategy={Boolean(strategyPlan?.nodes?.length)}
           strategyOpen={showStrategyDock}
+          outreachLevel={user?.outreach_level ?? null}
           onGoToChat={() => setOverlayView(null)}
           onOpenSettings={() => setOverlayView('settings')}
           onCampaignStatusChange={() => void refreshThreads(activeThreadId)}

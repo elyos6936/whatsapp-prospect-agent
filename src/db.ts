@@ -1807,6 +1807,92 @@ export async function getEffectiveOutboundLimit(userId: number): Promise<number>
   return caps.outbound + bonus;
 }
 
+/** Snapshot niveau / plafonds pour le contexte agent (chiffres réels, pas d'invention). */
+export async function getOutreachQuotaSnapshot(userId: number): Promise<{
+  subscriptionStatus: string;
+  trial: boolean;
+  trialConversationsUsed: number;
+  trialConversationsMax: number;
+  trialConversationsRemaining: number;
+  outreachLevel: number;
+  totalMessagesSent: number;
+  messagesUntilNextLevel: number | null;
+  dailyNewOutboundUsed: number;
+  dailyNewOutboundCap: number;
+  dailyNewOutboundRemaining: number;
+  dailyNewInboundUsed: number;
+  dailyNewInboundCap: number;
+  dailyNewInboundRemaining: number;
+  outboundBonusToday: number;
+  summaryForAgent: string;
+}> {
+  const { getUserById } = await import("./users.js");
+  const { messagesUntilNextLevel, TRIAL_MAX_CONVERSATIONS, LEVEL_DAILY_CAPS } =
+    await import("./outreach-level.js");
+  const user = await getUserById(userId);
+  const caps = await getUserDailyConversationCaps(userId);
+  const bonus = await getOutboundQuotaBonus(userId);
+  const outUsed = await countNewConversationsToday(userId, "outbound");
+  const inUsed = await countNewConversationsToday(userId, "inbound");
+  const outCap = caps.outbound + bonus;
+  const inCap = caps.inbound;
+  const total = user?.total_messages_sent ?? 0;
+  const level = user?.outreach_level ?? caps.level ?? 1;
+  const trial = caps.trial || user?.subscription_status === "trial";
+  const trialUsed = user?.trial_conversations_used ?? 0;
+  const trialRemaining = Math.max(0, TRIAL_MAX_CONVERSATIONS - trialUsed);
+  const untilNext = messagesUntilNextLevel(total);
+
+  const levelTable = ([1, 2, 3, 4, 5] as const)
+    .map((lv) => {
+      const c = LEVEL_DAILY_CAPS[lv];
+      return `L${lv}: ${c.outbound} sortants / ${c.inbound} entrants (nouveaux fils/jour)`;
+    })
+    .join(" · ");
+
+  let summary: string;
+  if (trial) {
+    summary =
+      `Compte en ESSAI (trial). Plafond : ${TRIAL_MAX_CONVERSATIONS} nouvelles conversations à vie ` +
+      `(utilisées ${trialUsed}, restantes ${trialRemaining}). ` +
+      `Les plafonds journaliers par niveau ne s'appliquent qu'après passage en abonnement actif. ` +
+      `Niveau lifetime actuel (messages sortants comptés) : ${level}/5, total envoyé : ${total}` +
+      (untilNext != null ? `, encore ${untilNext} message(s) sortant(s) avant le niveau suivant.` : " (niveau max).") +
+      ` Aujourd'hui nouveaux fils : sortants ${outUsed}, entrants ${inUsed}. ` +
+      `IMPORTANT : le plafond compte les NOUVEAUX fils (1ʳᵉ prise de contact), pas chaque message dans un fil déjà ouvert.`;
+  } else {
+    summary =
+      `Niveau outreach ${level}/5 (lifetime messages sortants : ${total}` +
+      (untilNext != null ? `, encore ${untilNext} avant le prochain niveau` : ", niveau max") +
+      `). Aujourd'hui nouveaux fils sortants : ${outUsed}/${outCap}` +
+      (bonus > 0 ? ` (dont bonus +${bonus})` : "") +
+      ` → restants ${Math.max(0, outCap - outUsed)}. ` +
+      `Nouveaux fils entrants : ${inUsed}/${inCap} → restants ${Math.max(0, inCap - inUsed)}. ` +
+      `Référence niveaux : ${levelTable}. ` +
+      `IMPORTANT : ces plafonds = NOUVEAUX fils uniquement (pas les réponses dans un fil déjà ouvert). ` +
+      `Ne jamais inventer d'autres chiffres (15, 25, 50…) — utiliser UNIQUEMENT ces valeurs.`;
+  }
+
+  return {
+    subscriptionStatus: user?.subscription_status ?? "trial",
+    trial,
+    trialConversationsUsed: trialUsed,
+    trialConversationsMax: TRIAL_MAX_CONVERSATIONS,
+    trialConversationsRemaining: trialRemaining,
+    outreachLevel: level,
+    totalMessagesSent: total,
+    messagesUntilNextLevel: untilNext,
+    dailyNewOutboundUsed: outUsed,
+    dailyNewOutboundCap: outCap,
+    dailyNewOutboundRemaining: Math.max(0, outCap - outUsed),
+    dailyNewInboundUsed: inUsed,
+    dailyNewInboundCap: inCap,
+    dailyNewInboundRemaining: Math.max(0, inCap - inUsed),
+    outboundBonusToday: bonus,
+    summaryForAgent: summary,
+  };
+}
+
 export async function setDailyOutboundLimit(userId: number, limit: number): Promise<number> {
   // Conservé pour API legacy — n'écrase plus le système de niveau
   const safe = Math.min(Math.max(Math.floor(limit), 5), 500);
