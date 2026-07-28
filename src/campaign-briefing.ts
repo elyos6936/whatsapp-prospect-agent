@@ -46,7 +46,71 @@ export type BriefingAssessment = {
   questionsAsked: number;
   missing: string[];
   readyForDraft: boolean;
+  /** L'utilisateur a indiqué l'angle / le ton souhaité pour le 1er message (après question dédiée). */
+  openerDirectionCollected: boolean;
+  /** Les 5 variantes ont été proposées dans le chat. */
+  openerVariantsProposed: boolean;
 };
+
+const OPENER_DIRECTION_ASK_RE =
+  /\b(premier\s+message|premi[eè]re\s+(approche|accroche|phrase|ouverture)|comment\s+tu\s+veux\s+(aborder|commencer|ouvrir)|quelle\s+approche|quel\s+angle|premier\s+contact|naturel\s+comme\s+premi[eè]re|premi[eè]re\s+fois\s+que\s+tu\s+[ée]cris)\b/i;
+
+const OPENER_VARIANTS_PROPOSED_RE =
+  /\b(5\s+(pistes|variantes|accroches)|voici\s+5\s+(pistes|variantes|accroches))\b/i;
+
+function isSubstantiveUserReply(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 12) return false;
+  if (/^(oui|non|ok|ouais|non merci|peu importe|d'accord|vas[- ]y|nickel|parfait)$/i.test(t)) return false;
+  return true;
+}
+
+function lastAssistantMatchIndex(history: AgentMessage[], re: RegExp): number {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.role === "assistant" && re.test(m.content)) return i;
+  }
+  return -1;
+}
+
+/** L'agent a posé la question sur le 1er message souhaité (obligatoire avant variantes). */
+export function hasAgentAskedOpenerDirection(history: AgentMessage[]): boolean {
+  return lastAssistantMatchIndex(history, OPENER_DIRECTION_ASK_RE) >= 0;
+}
+
+/** L'utilisateur a répondu avec un angle / une idée après cette question. */
+export function hasUserProvidedOpenerDirection(
+  history: AgentMessage[],
+  userMessage: string
+): boolean {
+  const askIdx = lastAssistantMatchIndex(history, OPENER_DIRECTION_ASK_RE);
+  if (askIdx < 0) return false;
+
+  for (let i = askIdx + 1; i < history.length; i++) {
+    const m = history[i];
+    if (m?.role === "user" && isSubstantiveUserReply(m.content)) return true;
+  }
+
+  const usersAfterAsk = history.slice(askIdx + 1).filter((m) => m.role === "user").length;
+  if (usersAfterAsk === 0 && isSubstantiveUserReply(userMessage)) return true;
+
+  return false;
+}
+
+/** Les 5 variantes ont déjà été listées dans le fil. */
+export function hasProposedOpenerVariants(history: AgentMessage[]): boolean {
+  return history
+    .slice(-24)
+    .some((m) => m.role === "assistant" && OPENER_VARIANTS_PROPOSED_RE.test(m.content));
+}
+
+function hasStickersQuestionAsked(blob: string): boolean {
+  return /\bsticker/i.test(blob);
+}
+
+function hasThirdPartyQuestionAsked(blob: string): boolean {
+  return /\btiers\b|pr[ée]venir\s+automatiquement|third.party|livreur.*whatsapp/i.test(blob);
+}
 
 function conversationBlob(history: AgentMessage[], userMessage: string): string {
   const recent = history.slice(-24);
@@ -93,7 +157,14 @@ export function assessCampaignBriefing(
     );
 
   if (!inFlow) {
-    return { inCampaignFlow: false, questionsAsked: 0, missing: [], readyForDraft: false };
+    return {
+      inCampaignFlow: false,
+      questionsAsked: 0,
+      missing: [],
+      readyForDraft: false,
+      openerDirectionCollected: false,
+      openerVariantsProposed: false,
+    };
   }
 
   const blob = conversationBlob(history, userMessage);
@@ -185,12 +256,16 @@ export function assessCampaignBriefing(
       m.includes("présentation")
   );
   const readyForDraft = questionsAsked >= 6 && criticalMissing.length === 0;
+  const openerDirectionCollected = hasUserProvidedOpenerDirection(history, userMessage);
+  const openerVariantsProposed = hasProposedOpenerVariants(history);
 
   return {
     inCampaignFlow: true,
     questionsAsked,
     missing,
     readyForDraft,
+    openerDirectionCollected,
+    openerVariantsProposed,
   };
 }
 
@@ -215,18 +290,60 @@ export function buildThreadCampaignBlockNudge(
   return null;
 }
 
-export function buildBriefingNudge(assessment: BriefingAssessment): string | null {
+export function buildBriefingNudge(
+  assessment: BriefingAssessment,
+  history: AgentMessage[],
+  userMessage: string
+): string | null {
   if (!assessment.inCampaignFlow) return null;
   if (assessment.readyForDraft) {
+    const blob = conversationBlob(history, userMessage);
+
+    if (!hasStickersQuestionAsked(blob)) {
+      return (
+        "Briefing campagne : éléments essentiels réunis (≥6 questions). " +
+        "Pose UNE question — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) » — puis ARRÊTE-TOI. " +
+        "INTERDIT : résumer + proposer des variantes de 1er message dans le même message."
+      );
+    }
+
+    if (!hasThirdPartyQuestionAsked(blob)) {
+      return (
+        "Briefing campagne : pose UNE question optionnelle — « Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, commercial…) sur WhatsApp ? (oui/non) ». " +
+        "Si oui : récupère numéro + rôle + infos (une question à la fois). " +
+        "INTERDIT : proposer des variantes de 1er message avant d'avoir posé la question sur le premier message souhaité."
+      );
+    }
+
+    if (!hasAgentAskedOpenerDirection(history)) {
+      return (
+        "Briefing campagne : avant toute variante, pose UNE question sur le **premier message** souhaité — " +
+        "ex. « Comment tu veux aborder le premier contact ? (ton direct, question ouverte, mystère, formel…) — donne-moi une idée ou une phrase type. » " +
+        "Puis ARRÊTE-TOI et attends sa réponse. " +
+        "**INTERDIT ABSOLU** : lister 5 variantes, proposer des accroches, ou mélanger récap + variantes dans ce message."
+      );
+    }
+
+    if (!assessment.openerDirectionCollected) {
+      return (
+        "Tu as demandé le premier message — **ATTENDS** la réponse de l'utilisateur (angle, ton, exemple). " +
+        "INTERDIT : proposer des variantes, create_automation, ou simulation tant qu'il n'a pas donné son idée."
+      );
+    }
+
+    if (!assessment.openerVariantsProposed) {
+      return (
+        "L'utilisateur a indiqué son angle pour le 1er message. " +
+        "Propose maintenant **exactement 5 variantes** d'accroche A.I.D.A. Attention (liste numérotée 1–5), alignées sur **SA** direction — courtes, SANS prix/lien/pitch, vouvoiement, sans prénom du prospect. " +
+        "Attends son choix / validation. Puis create_automation draft (initial_message + ab_variants). " +
+        "Ensuite propose la simulation (show_campaign_simulation, 6-7 tours)."
+      );
+    }
+
     return (
-      "Briefing campagne : les éléments essentiels semblent réunis (≥6 questions). " +
-      "Avant create/activate : pose UNE question si pas encore fait — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) ». " +
-      "Puis UNE question optionnelle — « Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, commercial…) sur WhatsApp ? (oui/non) ». " +
-      "Si oui : récupère numéro + rôle + infos à transmettre (une question à la fois), puis create_automation avec third_party_notification_enabled=true et les champs associés. " +
-      "Ensuite OBLIGATOIRE : propose **exactement 5 variantes** d'accroche A.I.D.A. Attention (liste 1–5, courtes, SANS prix/lien/pitch, vouvoiement, sans prénom du prospect). " +
-      "Attends le choix / validation de l'utilisateur. " +
-      "Puis crée le brouillon (create_automation draft) avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes. " +
-      "Propose ensuite une simulation (6-7 messages via show_campaign_simulation, 1er tour = initial_message validé)."
+      "Les 5 variantes ont été proposées — attends le choix ou la validation de l'utilisateur. " +
+      "Puis create_automation draft avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes. " +
+      "Propose ensuite la simulation (6-7 messages via show_campaign_simulation)."
     );
   }
 

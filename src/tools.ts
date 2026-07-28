@@ -1551,7 +1551,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "array",
             items: { type: "object" },
             description:
-              "Exactement 5 accroches Attention validées avec l'utilisateur : [{id:'v1',message:'…'}, …]. Obligatoire en prospection sortante.",
+              "Exactement 5 accroches Attention validées avec l'utilisateur : [{id:'v1',message:'…'}, …]. Obligatoire en prospection sortante — UNIQUEMENT après que l'utilisateur a indiqué son angle pour le 1er message et que les 5 variantes ont été proposées dans le chat.",
           },
           sequence_steps: { type: "array", items: { type: "object" } },
           media_url: { type: "string" },
@@ -3919,7 +3919,7 @@ export async function executeTool(
         if (variants.length !== 5) {
           return JSON.stringify({
             error:
-              "Prospection sortante : ab_variants doit contenir exactement 5 accroches Attention validées avec l'utilisateur (après les avoir proposées dans le chat). initial_message = la variante choisie.",
+              "Prospection sortante : ab_variants doit contenir exactement 5 accroches Attention validées avec l'utilisateur (après avoir demandé son angle pour le 1er message, puis proposé les 5 variantes dans le chat). initial_message = la variante choisie.",
           });
         }
         for (const v of variants) {

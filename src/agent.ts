@@ -299,7 +299,7 @@ async function buildBusinessContext(
       `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois). ` +
       `Après « nouvelle campagne » → 1ʳᵉ question = offre ACTUELLE (ouverte, sans inventer). ` +
       `Demande aussi la fenêtre horaire d'envoi et le jour/heure de lancement. ` +
-      `Objectif RDV → lien de réservation. Avant brouillon : propose 5 variantes d'accroche, fais valider, puis create avec ab_variants. ` +
+      `Objectif RDV → lien de réservation. Après brief : demande d'abord le 1er message souhaité, puis propose 5 variantes d'accroche, fais valider, puis create avec ab_variants. ` +
       `Simulation = 6-7 messages max + feedback (1er tour = accroche validée).`
     );
 
@@ -495,7 +495,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   } else if (turnMode === "activation_nudge") {
     messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
   } else if (!recentHistoryHasSimulation(history)) {
-    const nudge = buildBriefingNudge(briefing);
+    const nudge = buildBriefingNudge(briefing, history, userMessage);
     if (nudge) messages.push({ role: "system", content: nudge });
   }
 
@@ -583,25 +583,57 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         // Pendant un briefing incomplet : bloquer create/activate
         if (
           !hasSimAlready &&
-          !briefing.readyForDraft &&
           briefing.inCampaignFlow &&
           (toolCall.function.name === "create_automation" ||
             toolCall.function.name === "activate_automation")
         ) {
-          const block = JSON.stringify({
-            error:
-              `Briefing incomplet (≈${briefing.questionsAsked}/5 questions, manques : ${
-                briefing.missing.join(", ") || "détails"
-              }). Pose encore UNE question ciblée — n'appelle pas cet outil maintenant.`,
-          });
-          messages.push({
-            role: "tool",
-            tool_call_id: toolCall.id,
-            content: block,
-          });
-          const nudge = buildBriefingNudge(briefing);
-          if (nudge) messages.push({ role: "system", content: nudge });
-          continue;
+          if (!briefing.readyForDraft) {
+            const block = JSON.stringify({
+              error:
+                `Briefing incomplet (≈${briefing.questionsAsked}/5 questions, manques : ${
+                  briefing.missing.join(", ") || "détails"
+                }). Pose encore UNE question ciblée — n'appelle pas cet outil maintenant.`,
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
+
+          if (!briefing.openerDirectionCollected) {
+            const block = JSON.stringify({
+              error:
+                "INTERDIT de créer le brouillon avant que l'utilisateur ait indiqué comment il veut aborder le premier message. " +
+                "Pose UNE question sur son angle / ton / idée, attends sa réponse, puis propose 5 variantes.",
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
+
+          if (!briefing.openerVariantsProposed) {
+            const block = JSON.stringify({
+              error:
+                "INTERDIT de créer le brouillon avant d'avoir proposé les 5 variantes d'accroche dans le chat et d'avoir obtenu le choix de l'utilisateur.",
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
         }
 
         let args: Record<string, unknown> = {};

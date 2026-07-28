@@ -340,16 +340,61 @@ console.log("\n=== G) contrats prompts ===");
     "persona: Attention seulement",
     /A\s*=\s*Attention|Attention seulement/i.test(SYSTEM_PROMPT)
   );
+  assert(
+    "persona: demande 1er message avant variantes",
+    /demander le 1er message|Étape A/i.test(SYSTEM_PROMPT)
+  );
 
-  const ready: BriefingAssessment = {
+  const readyBase: BriefingAssessment = {
     inCampaignFlow: true,
     readyForDraft: true,
     questionsAsked: 6,
     missing: [],
+    openerDirectionCollected: false,
+    openerVariantsProposed: false,
   };
-  const nudge = buildBriefingNudge(ready) || "";
-  assert("briefing ready → 5 variantes", /5 variantes/i.test(nudge));
-  assert("briefing ready → ab_variants", /ab_variants/i.test(nudge));
+
+  const nudgeStickers =
+    buildBriefingNudge(readyBase, [], "oui c'est bon") || "";
+  assert("briefing ready → stickers d'abord", /sticker/i.test(nudgeStickers));
+  assert(
+    "briefing ready → pas variantes avant 1er message",
+    !/exactement 5 variantes/i.test(nudgeStickers)
+  );
+
+  const histStickersTiers: AgentMessage[] = [
+    msg("assistant", "Tu veux des stickers dans les conversations ? (oui/non)"),
+    msg("user", "non"),
+    msg(
+      "assistant",
+      "Quand un prospect convertit, tu veux prévenir automatiquement un tiers sur WhatsApp ? (oui/non)"
+    ),
+    msg("user", "non merci"),
+  ];
+  const nudgeAskOpener =
+    buildBriefingNudge(readyBase, histStickersTiers, "non") || "";
+  assert("briefing ready → question 1er message", /premier message/i.test(nudgeAskOpener));
+  assert(
+    "briefing ready → interdit variantes sans angle",
+    /INTERDIT/i.test(nudgeAskOpener)
+  );
+
+  const histWithDirection: AgentMessage[] = [
+    ...histStickersTiers,
+    msg(
+      "assistant",
+      "Comment tu veux aborder le premier contact ? Ton direct, question ouverte…"
+    ),
+    msg("user", "Je veux quelque chose de direct qui parle de formation WhatsApp sans vendre tout de suite."),
+  ];
+  const readyWithDirection: BriefingAssessment = {
+    ...readyBase,
+    openerDirectionCollected: true,
+  };
+  const nudgeVariants =
+    buildBriefingNudge(readyWithDirection, histWithDirection, "direct") || "";
+  assert("briefing avec angle → 5 variantes", /5 variantes/i.test(nudgeVariants));
+  assert("briefing avec angle → ab_variants", /ab_variants/i.test(nudgeVariants));
 
   assert(
     "reply prompt: réactions vides interdites",
