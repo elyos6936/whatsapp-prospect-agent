@@ -3,7 +3,7 @@ import { config, evolutionInstanceName } from "./config.js";
 import { getUserById } from "./users.js";
 import { matchesAnyTriggerPhrase } from "./phrase-matching.js";
 
-export const DAILY_OUTBOUND_LIMIT = 25;
+export const DAILY_OUTBOUND_LIMIT = 25; // legacy — plafonds réels = niveau / essai
 export const CONTACT_STATUSES = ["nouveau", "en_conversation", "interesse", "stop"] as const;
 export type ContactStatus = (typeof CONTACT_STATUSES)[number];
 
@@ -537,6 +537,12 @@ export async function saveWhatsAppMessage(userId: number, input: {
     )
     RETURNING id, contact_phone, sender_name, direction, body, green_api_id, automation_id, created_at
   `;
+  // Lifetime level : tous les sortants comptabilisés
+  if (input.direction === "sortant" && countsTowardQuota === 1) {
+    void import("./users.js")
+      .then((m) => m.recordOutboundMessageSent(userId))
+      .catch((err) => console.warn("[outreach] recordOutboundMessageSent:", err));
+  }
   return mapWhatsAppMessage(rows[0]);
 }
 
@@ -666,6 +672,28 @@ export async function countAutomationMessagesInRange(
     FROM messages
     WHERE user_id = ${userId}
       AND automation_id = ${automationId}
+      AND created_at >= ${from}
+      AND created_at < ${toExclusive}
+    GROUP BY direction
+  `;
+  let outbound = 0;
+  let inbound = 0;
+  for (const row of rows) {
+    if (row.direction === "sortant") outbound = Number(row.n);
+    else if (row.direction === "entrant") inbound = Number(row.n);
+  }
+  return { outbound, inbound };
+}
+
+export async function countUserMessagesInRange(
+  userId: number,
+  from: Date,
+  toExclusive: Date
+): Promise<{ outbound: number; inbound: number }> {
+  const rows = await sql<Array<{ direction: string; n: number }>>`
+    SELECT direction, COUNT(*)::int as n
+    FROM messages
+    WHERE user_id = ${userId}
       AND created_at >= ${from}
       AND created_at < ${toExclusive}
     GROUP BY direction
@@ -1421,14 +1449,18 @@ export async function hasOutboundReplyAfter(
 }
 
 export async function getDailyOutboundLimit(userId: number): Promise<number> {
-  const raw = await getSetting(userId, "daily_outbound_limit");
-  const n = Number(raw);
-  if (Number.isFinite(n) && n >= 5) return Math.min(Math.floor(n), 500);
-  return DAILY_OUTBOUND_LIMIT;
+  // Compat anciens appels : renvoie le plafond « nouveaux fils sortants » du jour
+  const caps = await getUserDailyConversationCaps(userId);
+  return caps.outbound;
 }
 
 function outboundQuotaBonusKey(): string {
   return `outbound_quota_bonus_${formatLocalDateTime(new Date()).slice(0, 10)}`;
+}
+
+function newConversationsKey(kind: "outbound" | "inbound"): string {
+  const day = formatLocalDateTime(new Date()).slice(0, 10);
+  return `new_${kind}_conversations_${day}`;
 }
 
 export async function getOutboundQuotaBonus(userId: number): Promise<number> {
@@ -1436,29 +1468,34 @@ export async function getOutboundQuotaBonus(userId: number): Promise<number> {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
-export async function getEffectiveOutboundLimit(userId: number): Promise<number> {
-  const base = await getDailyOutboundLimit(userId);
-  const bonus = await getOutboundQuotaBonus(userId);
-  // Warmup : comptes récents plafonnés même si limite user plus haute
-  let warmCap = base;
-  try {
-    const { getUserById } = await import("./users.js");
-    const { warmupDailyCap } = await import("./anti-ban.js");
-    const user = await getUserById(userId);
-    if (user?.created_at) {
-      const created = new Date(user.created_at.includes("T") ? user.created_at : user.created_at.replace(" ", "T"));
-      if (!Number.isNaN(created.getTime())) {
-        const days = (Date.now() - created.getTime()) / 86_400_000;
-        warmCap = Math.min(base, warmupDailyCap(days));
-      }
-    }
-  } catch {
-    /* best effort */
+/** Plafonds journaliers (nouveaux fils) selon niveau — ou illimités côté niveau en essai. */
+export async function getUserDailyConversationCaps(
+  userId: number
+): Promise<{ inbound: number; outbound: number; trial: boolean; level: number }> {
+  const { getUserById } = await import("./users.js");
+  const { dailyCapsForLevel, TRIAL_MAX_CONVERSATIONS } = await import("./outreach-level.js");
+  const user = await getUserById(userId);
+  if (!user || user.subscription_status === "trial") {
+    // Essai : le plafond 20 à vie remplace le système de niveau (pas de cap jour niveau)
+    return {
+      inbound: TRIAL_MAX_CONVERSATIONS,
+      outbound: TRIAL_MAX_CONVERSATIONS,
+      trial: true,
+      level: user?.outreach_level ?? 1,
+    };
   }
-  return warmCap + bonus;
+  const caps = dailyCapsForLevel(user.outreach_level);
+  return { ...caps, trial: false, level: user.outreach_level };
+}
+
+export async function getEffectiveOutboundLimit(userId: number): Promise<number> {
+  const caps = await getUserDailyConversationCaps(userId);
+  const bonus = await getOutboundQuotaBonus(userId);
+  return caps.outbound + bonus;
 }
 
 export async function setDailyOutboundLimit(userId: number, limit: number): Promise<number> {
+  // Conservé pour API legacy — n'écrase plus le système de niveau
   const safe = Math.min(Math.max(Math.floor(limit), 5), 500);
   await setSetting(userId, "daily_outbound_limit", String(safe));
   return safe;
@@ -1470,49 +1507,258 @@ export async function resetOutboundQuotaForToday(userId: number, extra = 15): Pr
   bonus: number;
   effectiveLimit: number;
 }> {
-  const sent = await countOutboundToday(userId);
-  const limit = await getDailyOutboundLimit(userId);
+  const sent = await countNewConversationsToday(userId, "outbound");
+  const limit = await getEffectiveOutboundLimit(userId);
   const needed = Math.max(0, sent - limit);
   const bonus = needed + extra;
   await setSetting(userId, outboundQuotaBonusKey(), String(bonus));
   return { sent, limit, bonus, effectiveLimit: limit + bonus };
 }
 
+/** @deprecated Prefer countNewConversationsToday — legacy = messages sortants du jour. */
 export async function countOutboundToday(userId: number): Promise<number> {
-  const [row] = await sql<{ n: number }[]>`
-    SELECT COUNT(*)::int as n FROM messages
-    WHERE user_id = ${userId}
-      AND direction = 'sortant'
-      AND COALESCE(counts_toward_quota, 1) = 1
-      AND created_at::date = CURRENT_DATE
-  `;
-  return Number(row?.n ?? 0);
+  return countNewConversationsToday(userId, "outbound");
 }
 
-export async function canSendOutbound(userId: number): Promise<
-  { ok: true } | { ok: false; reason: string; sent: number; limit: number }
-> {
-  const sent = await countOutboundToday(userId);
-  const limit = (await getDailyOutboundLimit(userId)) + (await getOutboundQuotaBonus(userId));
-  if (sent >= limit) {
+export async function countNewConversationsToday(
+  userId: number,
+  kind: "outbound" | "inbound"
+): Promise<number> {
+  const n = Number((await getSetting(userId, newConversationsKey(kind))) || 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
+
+async function incrementNewConversationsToday(
+  userId: number,
+  kind: "outbound" | "inbound"
+): Promise<number> {
+  const key = newConversationsKey(kind);
+  const cur = await countNewConversationsToday(userId, kind);
+  const next = cur + 1;
+  await setSetting(userId, key, String(next));
+  return next;
+}
+
+async function conversationEpochForContact(
+  userId: number,
+  phone: string,
+  automationId?: number | null
+): Promise<Date> {
+  await ensureConversationEpochColumns().catch(() => {});
+  if (automationId != null) {
+    await ensureContactAutomationStateSchema().catch(() => {});
+    const state = await getContactAutomationState(userId, phone, automationId);
+    if (state?.conversation_epoch_at) {
+      return parseLocalDateTime(state.conversation_epoch_at);
+    }
+  }
+  const contact = await getContact(userId, phone);
+  if (contact?.conversation_epoch_at) {
+    return parseLocalDateTime(contact.conversation_epoch_at);
+  }
+  return new Date(0);
+}
+
+/**
+ * Vrai si aucun sortant comptabilisé n'existe encore dans l'époque courante
+ * pour ce contact (+ automation si fournie) → démarrage d'un nouveau fil.
+ */
+export async function isStartingNewConversation(
+  userId: number,
+  chatId: string,
+  automationId?: number | null
+): Promise<boolean> {
+  const phone = normalizeContactPhone(chatId);
+  const epochIso = await conversationEpochForContact(userId, phone, automationId);
+
+  if (automationId != null) {
+    const rows = await sql<{ x: number }[]>`
+      SELECT 1 as x FROM messages
+      WHERE user_id = ${userId}
+        AND contact_phone = ${phone}
+        AND direction = 'sortant'
+        AND COALESCE(counts_toward_quota, 1) = 1
+        AND automation_id = ${automationId}
+        AND created_at >= ${epochIso}
+      LIMIT 1
+    `;
+    return rows.length === 0;
+  }
+
+  const rows = await sql<{ x: number }[]>`
+    SELECT 1 as x FROM messages
+    WHERE user_id = ${userId}
+      AND contact_phone = ${phone}
+      AND direction = 'sortant'
+      AND COALESCE(counts_toward_quota, 1) = 1
+      AND created_at >= ${epochIso}
+    LIMIT 1
+  `;
+  return rows.length === 0;
+}
+
+async function hasInboundInEpoch(
+  userId: number,
+  phone: string,
+  automationId: number | null | undefined,
+  epochIso: Date
+): Promise<boolean> {
+  if (automationId != null) {
+    const rows = await sql<{ x: number }[]>`
+      SELECT 1 as x FROM messages
+      WHERE user_id = ${userId}
+        AND contact_phone = ${phone}
+        AND direction = 'entrant'
+        AND automation_id = ${automationId}
+        AND created_at >= ${epochIso}
+      LIMIT 1
+    `;
+    return rows.length > 0;
+  }
+  const rows = await sql<{ x: number }[]>`
+    SELECT 1 as x FROM messages
+    WHERE user_id = ${userId}
+      AND contact_phone = ${phone}
+      AND direction = 'entrant'
+      AND created_at >= ${epochIso}
+    LIMIT 1
+  `;
+  return rows.length > 0;
+}
+
+/**
+ * Classifie le prochain envoi : fil déjà ouvert, nouveau fil sortant (on ouvre),
+ * ou nouveau fil entrant (le prospect a écrit en premier).
+ */
+export async function classifyNewConversationKind(
+  userId: number,
+  chatId: string,
+  automationId?: number | null
+): Promise<"none" | "outbound" | "inbound"> {
+  const phone = normalizeContactPhone(chatId);
+  if (!(await isStartingNewConversation(userId, phone, automationId))) {
+    return "none";
+  }
+  const epochIso = await conversationEpochForContact(userId, phone, automationId);
+  if (await hasInboundInEpoch(userId, phone, automationId, epochIso)) {
+    return "inbound";
+  }
+  return "outbound";
+}
+
+export type NewConversationGate =
+  | { ok: true }
+  | {
+      ok: false;
+      reason: string;
+      code: "trial_exhausted" | "daily_outbound" | "daily_inbound";
+      used: number;
+      limit: number;
+    };
+
+/**
+ * Autorise le démarrage d'un nouveau fil (entrant ou sortant).
+ * Les réponses dans un fil déjà ouvert ne passent PAS par ici.
+ */
+export async function canStartNewConversation(
+  userId: number,
+  kind: "outbound" | "inbound"
+): Promise<NewConversationGate> {
+  const { getUserById } = await import("./users.js");
+  const { TRIAL_MAX_CONVERSATIONS } = await import("./outreach-level.js");
+  const user = await getUserById(userId);
+  if (!user) {
     return {
       ok: false,
-      reason: `Limite journalière atteinte (${sent}/${limit} messages sortants comptabilisés). Réinitialisez le quota dans la barre latérale ou réessayez demain.`,
-      sent,
+      reason: "Compte introuvable.",
+      code: "trial_exhausted",
+      used: 0,
+      limit: 0,
+    };
+  }
+
+  if (user.subscription_status === "trial") {
+    if (user.trial_conversations_used >= TRIAL_MAX_CONVERSATIONS) {
+      return {
+        ok: false,
+        reason: `Essai gratuit terminé (${TRIAL_MAX_CONVERSATIONS} conversations). Activez votre abonnement pour continuer.`,
+        code: "trial_exhausted",
+        used: user.trial_conversations_used,
+        limit: TRIAL_MAX_CONVERSATIONS,
+      };
+    }
+    // Essai : pas de plafond jour niveau — seulement le 20 à vie (consommé à l'enregistrement)
+    return { ok: true };
+  }
+
+  const caps = await getUserDailyConversationCaps(userId);
+  const used = await countNewConversationsToday(userId, kind);
+  const bonus = kind === "outbound" ? await getOutboundQuotaBonus(userId) : 0;
+  const limit = (kind === "outbound" ? caps.outbound : caps.inbound) + bonus;
+  if (used >= limit) {
+    return {
+      ok: false,
+      reason:
+        kind === "outbound"
+          ? `Limite du jour atteinte (${used}/${limit} nouveaux fils sortants, niveau ${caps.level}). L'envoi sera repris demain.`
+          : `Limite du jour atteinte (${used}/${limit} nouveaux fils entrants, niveau ${caps.level}). Reprise demain.`,
+      code: kind === "outbound" ? "daily_outbound" : "daily_inbound",
+      used,
       limit,
     };
   }
   return { ok: true };
 }
 
-export async function assertCanSendTo(userId: number, chatId: string): Promise<void> {
+/**
+ * À appeler APRÈS envoi réussi quand on démarre un nouveau fil :
+ * incrémente compteur jour (+ essai si trial).
+ */
+export async function recordNewConversationStarted(
+  userId: number,
+  kind: "outbound" | "inbound"
+): Promise<void> {
+  const { getUserById, tryConsumeTrialConversation } = await import("./users.js");
+  const user = await getUserById(userId);
+  if (user?.subscription_status === "trial") {
+    const ok = await tryConsumeTrialConversation(userId);
+    if (!ok) return;
+  }
+  await incrementNewConversationsToday(userId, kind);
+}
+
+export async function canSendOutbound(userId: number): Promise<
+  { ok: true } | { ok: false; reason: string; sent: number; limit: number }
+> {
+  // Compat : traite comme démarrage de nouveau fil sortant
+  const gate = await canStartNewConversation(userId, "outbound");
+  if (!gate.ok) {
+    return { ok: false, reason: gate.reason, sent: gate.used, limit: gate.limit };
+  }
+  return { ok: true };
+}
+
+export async function assertCanSendTo(
+  userId: number,
+  chatId: string,
+  opts?: {
+    automationId?: number | null;
+    /** Force le check même si un sortant existe déjà (rare). */
+    forceKind?: "outbound" | "inbound";
+  }
+): Promise<void> {
   if (!chatId.endsWith("@g.us") && (await isContactBlocked(userId, chatId))) {
     throw new Error(
       `Contact ${chatId} est en statut STOP. Aucun envoi possible. Débloquez-le d'abord si vraiment nécessaire.`
     );
   }
-  const check = await canSendOutbound(userId);
-  if (!check.ok) throw new Error(check.reason);
+  const kind =
+    opts?.forceKind ??
+    (await classifyNewConversationKind(userId, chatId, opts?.automationId ?? null));
+  if (kind === "none") return; // fil déjà ouvert : pas de plafond jour / essai
+
+  const gate = await canStartNewConversation(userId, kind);
+  if (!gate.ok) throw new Error(gate.reason);
 }
 
 export type ScheduledStatus = "pending" | "sent" | "failed" | "cancelled";

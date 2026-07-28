@@ -829,6 +829,44 @@ async function runAutoReply(
 
   const activeCampaign = gate.outboundCampaign ?? gate.inboundCampaign;
 
+  // Nouveau fil entrant : respecter plafond jour / essai (sans toucher aux fils ouverts)
+  try {
+    const { classifyNewConversationKind, canStartNewConversation, ensureDefaultAgentThread, saveAgentMessage } =
+      await import("./db.js");
+    const newKind = await classifyNewConversationKind(
+      userId,
+      chatId,
+      activeCampaign?.id ?? null
+    );
+    if (newKind !== "none") {
+      const convGate = await canStartNewConversation(userId, newKind);
+      if (!convGate.ok) {
+        console.log(
+          `📩 ${senderName} (pas de réponse — ${convGate.code}): ${text.slice(0, 40)}`
+        );
+        if (activeCampaign) {
+          await saveAgentMessageForAutomation(
+            userId,
+            activeCampaign.id,
+            "assistant",
+            `Nouveau fil avec ${senderName} reporté — ${convGate.reason}`
+          );
+        } else {
+          const thread = await ensureDefaultAgentThread(userId);
+          await saveAgentMessage(
+            userId,
+            thread.id,
+            "assistant",
+            `Nouveau fil avec ${senderName} reporté — ${convGate.reason}`
+          );
+        }
+        return;
+      }
+    }
+  } catch (err) {
+    console.warn("[outreach] gate auto-reply:", err);
+  }
+
   try {
     let reply: string;
     /** RDV oral confirmé : on laisse l'IA envoyer le lien, puis conversion + notif tiers. */
@@ -899,7 +937,6 @@ async function runAutoReply(
 
         const sent = await sendWhatsAppMessage(userId, chatId, reply, {
           enableAutoReply: false,
-          countsTowardQuota: false,
           outboundProfile: "auto_reply",
           automationId: activeCampaign.id,
         });
@@ -973,7 +1010,6 @@ async function runAutoReply(
         }
         const sent = await sendWhatsAppMessage(userId, chatId, reply, {
           enableAutoReply: false,
-          countsTowardQuota: false,
           outboundProfile: "auto_reply",
           automationId: activeCampaign.id,
         });
@@ -1027,7 +1063,6 @@ async function runAutoReply(
 
     const sent = await sendWhatsAppMessage(userId, chatId, reply, {
       enableAutoReply: false,
-      countsTowardQuota: false,
       outboundProfile: "auto_reply",
       automationId: activeCampaign?.id ?? null,
     });

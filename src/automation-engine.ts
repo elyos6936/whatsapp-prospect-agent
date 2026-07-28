@@ -15,7 +15,9 @@ import {
   getBlockedContactIds,
   getContact,
   isContactBlocked,
+  saveAgentMessage,
   saveAgentMessageForAutomation,
+  ensureDefaultAgentThread,
   unblockContact,
   updateAutomationStats,
   updateAutomationStatus,
@@ -24,6 +26,7 @@ import {
   updateAutomationTargetLabel,
   formatLocalDateTime,
   countAutomationMessagesInRange,
+  countUserMessagesInRange,
   type Automation,
 } from "./db.js";
 import { pickAbVariant, recordAbSent } from "./ab-testing.js";
@@ -37,7 +40,7 @@ import {
   requireEvolutionConnected,
 } from "./evolutionapi.js";
 import { generatePersonalizedOpener } from "./prospect-personalizer.js";
-import { listActiveUserIds, getUserById } from "./users.js";
+import { listActiveUserIds, getUserById, markWeeklyReportSent } from "./users.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 import { isResendConfigured, sendWeeklyReportEmail } from "./mail/resend.js";
 import {
@@ -89,7 +92,12 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
 
   const quota = await canSendOutbound(userId);
   if (!quota.ok) {
-    await addAutomationLog(userId, auto.id, "warning", quota.reason ?? "Quota journalier atteint — envois en pause.");
+    await addAutomationLog(
+      userId,
+      auto.id,
+      "info",
+      quota.reason ?? "Plafond nouveaux fils atteint — reprise demain (fils ouverts non bloqués)."
+    );
     return;
   }
 
@@ -303,92 +311,151 @@ const WEEKLY_REPORT_HOUR = 20;
 
 const APP_PUBLIC_URL = "https://www.klanvio.com";
 
-/** Construit le payload du rapport hebdomadaire (activité 7j + funnel snapshot). */
+/** Construit le payload du rapport hebdomadaire (activité 7j + niveau + funnel optionnel). */
 export async function buildWeeklyReportPayload(
   userId: number,
-  auto: Automation,
+  auto: Automation | null,
   now = new Date()
 ): Promise<WeeklyReportPayload> {
   const win = fridayWeeklyWindow(now);
-  const activity = await countAutomationMessagesInRange(
-    userId,
-    auto.id,
-    win.periodStart,
-    win.periodEndExclusive
-  );
-  const funnel = funnelFromTargetStats(auto.stats ?? {});
+  const user = await getUserById(userId);
+  const outreachLevel = user?.outreach_level ?? 1;
+  const totalMessagesSent = user?.total_messages_sent ?? 0;
+  const previous = user?.last_reported_outreach_level ?? null;
+  const leveledUp =
+    previous != null && outreachLevel > previous;
+
+  let messagesSent = 0;
+  let messagesReceived = 0;
+  let funnel = {
+    reached: 0,
+    answered: 0,
+    waitingReply: 0,
+    interested: 0,
+    stopped: 0,
+    responseRate: null as number | null,
+  };
+  let conversions = 0;
+  let campaignName = "Votre compte Klanvio";
+  let campaignId: number | null = null;
+  let campaignStatus = "active";
+
+  if (auto) {
+    const activity = await countAutomationMessagesInRange(
+      userId,
+      auto.id,
+      win.periodStart,
+      win.periodEndExclusive
+    );
+    messagesSent = activity.outbound;
+    messagesReceived = activity.inbound;
+    funnel = funnelFromTargetStats(auto.stats ?? {});
+    conversions = Number(auto.stats?.conversions ?? 0);
+    campaignName = auto.name;
+    campaignId = auto.id;
+    campaignStatus = auto.status;
+  } else {
+    const activity = await countUserMessagesInRange(
+      userId,
+      win.periodStart,
+      win.periodEndExclusive
+    );
+    messagesSent = activity.outbound;
+    messagesReceived = activity.inbound;
+  }
+
   return {
-    campaignName: auto.name,
-    campaignId: auto.id,
-    campaignStatus: auto.status,
+    campaignName,
+    campaignId,
+    campaignStatus,
     periodLabel: win.periodLabel,
     fridayKey: win.fridayKey,
-    messagesSent: activity.outbound,
-    messagesReceived: activity.inbound,
+    messagesSent,
+    messagesReceived,
     reached: funnel.reached,
     answered: funnel.answered,
     waitingReply: funnel.waitingReply,
     interested: funnel.interested,
     stopped: funnel.stopped,
-    conversions: Number(auto.stats?.conversions ?? 0),
+    conversions,
     responseRate: funnel.responseRate,
     appUrl: APP_PUBLIC_URL,
+    outreachLevel,
+    totalMessagesSent,
+    leveledUp,
+    previousOutreachLevel: previous,
   };
 }
 
 /**
- * Poste un rapport hebdomadaire dans le chat (+ email Resend si configuré).
- * Vendredi ≥ 20h locale, une fois par vendredi / campagne active.
- * Fenêtre : samedi précédent 00:00 → vendredi 23:59 (7 jours).
+ * Rapport hebdo au niveau utilisateur (pas conditionné à une campagne active).
+ * Vendredi ≥ 20h locale, une fois par vendredi / user.
+ * Funnel campagne si une campagne active existe, sinon activité globale + niveau.
  */
-async function maybeSendWeeklyReport(userId: number, auto: Automation): Promise<void> {
+async function maybeSendUserWeeklyReport(userId: number): Promise<void> {
   const now = new Date();
   if (now.getDay() !== WEEKLY_REPORT_DOW) return;
   if (now.getHours() < WEEKLY_REPORT_HOUR) return;
 
   const win = fridayWeeklyWindow(now);
-  if (auto.stats?.lastWeeklyReportWeek === win.fridayKey) return;
+  const user = await getUserById(userId);
+  if (!user) return;
+  if (user.last_weekly_report_week === win.fridayKey) return;
 
   try {
+    const active = await listActiveAutomations(userId);
+    const auto = active[0] ?? null;
     const payload = await buildWeeklyReportPayload(userId, auto, now);
     const text = buildWeeklyReportText(payload);
     const html = buildWeeklyReportHtml(payload);
 
-    await saveAgentMessageForAutomation(userId, auto.id, "assistant", text);
-    await updateAutomationStats(userId, auto.id, {
-      lastWeeklyReportWeek: win.fridayKey,
-      lastActionAt: new Date().toISOString(),
-    });
-    console.log(`Rapport hebdomadaire posté — campagne #${auto.id} (user ${userId}, ${win.fridayKey})`);
+    if (auto) {
+      await saveAgentMessageForAutomation(userId, auto.id, "assistant", text);
+    } else {
+      const thread = await ensureDefaultAgentThread(userId);
+      await saveAgentMessage(userId, thread.id, "assistant", text);
+    }
+
+    await markWeeklyReportSent(userId, win.fridayKey, payload.outreachLevel);
+    if (auto) {
+      await updateAutomationStats(userId, auto.id, {
+        lastWeeklyReportWeek: win.fridayKey,
+        lastActionAt: new Date().toISOString(),
+      });
+    }
+    console.log(
+      `Rapport hebdomadaire posté — user ${userId} (niveau ${payload.outreachLevel}, ${win.fridayKey})`
+    );
 
     if (isResendConfigured()) {
       try {
-        const user = await getUserById(userId);
-        const to = user?.email?.trim();
+        const to = user.email?.trim();
         if (!to) {
-          console.warn(`Rapport hebdo #${auto.id} : pas d'email user ${userId}`);
+          console.warn(`Rapport hebdo user ${userId} : pas d'email`);
         } else {
           const mail = await sendWeeklyReportEmail({
             to,
-            campaignName: auto.name,
+            campaignName: payload.campaignName,
             text,
             html,
           });
           if (mail.ok) {
-            console.log(`Rapport hebdo email — campagne #${auto.id} → ${to} (${mail.id})`);
-            await updateAutomationStats(userId, auto.id, {
-              emailReportSentAt: new Date().toISOString(),
-            });
+            console.log(`Rapport hebdo email — user ${userId} → ${to} (${mail.id})`);
+            if (auto) {
+              await updateAutomationStats(userId, auto.id, {
+                emailReportSentAt: new Date().toISOString(),
+              });
+            }
           } else {
-            console.error(`Rapport hebdo email échoué — campagne #${auto.id}:`, mail.error);
+            console.error(`Rapport hebdo email échoué — user ${userId}:`, mail.error);
           }
         }
       } catch (mailErr) {
-        console.error(`Rapport hebdo email campagne #${auto.id} exception:`, mailErr);
+        console.error(`Rapport hebdo email user ${userId} exception:`, mailErr);
       }
     }
   } catch (err) {
-    console.error(`Rapport hebdomadaire campagne #${auto.id} échoué:`, err);
+    console.error(`Rapport hebdomadaire user ${userId} échoué:`, err);
   }
 }
 
@@ -397,12 +464,12 @@ async function processTickForUser(userId: number): Promise<void> {
   for (const auto of active) {
     try {
       await processAutomation(userId, auto);
-      await maybeSendWeeklyReport(userId, auto);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       await addAutomationLog(userId, auto.id, "error", `Erreur moteur : ${msg}`);
     }
   }
+  await maybeSendUserWeeklyReport(userId);
 }
 
 async function processTick(): Promise<void> {

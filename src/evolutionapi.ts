@@ -1,11 +1,13 @@
 import {
   assertCanSendTo,
+  classifyNewConversationKind,
   countOutboundToday,
   findProspectPhoneForLidReply,
   getAppSettings,
   getContact,
   getEffectiveOutboundLimit,
   isContactBlocked,
+  recordNewConversationStarted,
   saveContact,
   saveWhatsAppMessage,
   setContactWhatsappLid,
@@ -1241,7 +1243,15 @@ export async function sendWhatsAppMessage(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("WhatsApp non configuré.");
 
-  await assertCanSendTo(userId, chatId);
+  const newKind = await classifyNewConversationKind(
+    userId,
+    chatId,
+    opts.automationId ?? null
+  );
+  await assertCanSendTo(userId, chatId, {
+    automationId: opts.automationId ?? null,
+    forceKind: newKind === "none" ? undefined : newKind,
+  });
 
   const gapOpts =
     opts.outboundProfile === "auto_reply"
@@ -1261,14 +1271,21 @@ export async function sendWhatsAppMessage(
         .then((m) => m.markWhatsAppOpen(userId))
         .catch(() => {});
 
+  const countsTowardQuota = opts.countsTowardQuota !== false;
   await saveWhatsAppMessage(userId, {
     contactPhone: chatId.endsWith("@g.us") ? chatId : normalizeGroupParticipantId(chatId),
     direction: "sortant",
         body: safeMessage,
     greenApiId: idMessage,
-    countsTowardQuota: opts.countsTowardQuota !== false,
+    countsTowardQuota,
         automationId: opts.automationId ?? null,
   });
+
+  if (newKind !== "none" && countsTowardQuota) {
+    await recordNewConversationStarted(userId, newKind).catch((err) =>
+      console.warn("[outreach] recordNewConversationStarted:", err)
+    );
+  }
 
   const normalized = normalizeGroupParticipantId(chatId);
   if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {
@@ -1366,7 +1383,15 @@ export async function sendWhatsAppMedia(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
-  await assertCanSendTo(userId, chatId);
+  const newKind = await classifyNewConversationKind(
+    userId,
+    chatId,
+    opts.automationId ?? null
+  );
+  await assertCanSendTo(userId, chatId, {
+    automationId: opts.automationId ?? null,
+    forceKind: newKind === "none" ? undefined : newKind,
+  });
 
   return withOutboundSpacing(userId, async () => {
   const number = formatEvolutionSendNumber(chatId);
@@ -1405,14 +1430,21 @@ export async function sendWhatsAppMedia(
     const source = input.url.startsWith("data:") ? "[base64]" : input.url;
     const label = input.caption || `[${input.type}] ${source}`;
 
+    const countsTowardQuota = opts.countsTowardQuota !== false;
     await saveWhatsAppMessage(userId, {
       contactPhone: normalizeGroupParticipantId(chatId),
       direction: "sortant",
       body: label,
       greenApiId: idMessage,
-      countsTowardQuota: opts.countsTowardQuota !== false,
+      countsTowardQuota,
       automationId: opts.automationId ?? null,
     });
+
+    if (newKind !== "none" && countsTowardQuota) {
+      await recordNewConversationStarted(userId, newKind).catch((err) =>
+        console.warn("[outreach] recordNewConversationStarted:", err)
+      );
+    }
 
     const normalized = normalizeGroupParticipantId(chatId);
     if (normalized.endsWith("@c.us") && opts.enableAutoReply !== false) {

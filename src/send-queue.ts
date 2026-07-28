@@ -1,14 +1,16 @@
 import {
   addAutomationLog,
   cancelPendingSendQueue,
-  countOutboundToday,
+  canStartNewConversation,
+  classifyNewConversationKind,
+  ensureDefaultAgentThread,
   formatLocalDateTime,
   getAutomation,
   getDueQueueItems,
-  getEffectiveOutboundLimit,
   markQueueFailed,
   markQueueSent,
   rescheduleSendQueueItem,
+  saveAgentMessage,
   type QueueItem,
 } from "./db.js";
 import { chatIdToDisplay, sendWhatsAppMedia, sendWhatsAppMessage } from "./evolutionapi.js";
@@ -59,6 +61,13 @@ async function quietHoursForItem(
   return { start: DEFAULT_QUIET_START, end: DEFAULT_QUIET_END };
 }
 
+function tomorrowMorningLocal(): string {
+  const next = new Date();
+  next.setDate(next.getDate() + 1);
+  next.setHours(8, 30, 0, 0);
+  return formatLocalDateTime(next);
+}
+
 async function rescheduleQuiet(
   userId: number,
   item: QueueItem,
@@ -84,9 +93,32 @@ async function rescheduleQuiet(
   }
 }
 
-async function processSendQueueForUser(userId: number, limit: number): Promise<number> {
-  if ((await countOutboundToday(userId)) >= (await getEffectiveOutboundLimit(userId))) return 0;
+async function rescheduleDailyQuota(
+  userId: number,
+  item: QueueItem,
+  reason: string
+): Promise<void> {
+  const when = tomorrowMorningLocal();
+  await rescheduleSendQueueItem(userId, item.id, when);
+  const label = item.recipient_label || chatIdToDisplay(item.recipient);
+  console.log(`📅 Queue #${item.id} → ${label} reporté à ${when} (plafond nouveaux fils)`);
+  if (item.automation_id) {
+    await addAutomationLog(userId, item.automation_id, "info", reason);
+  }
+  try {
+    const thread = await ensureDefaultAgentThread(userId);
+    await saveAgentMessage(
+      userId,
+      thread.id,
+      "assistant",
+      `Nouveau fil reporté à demain pour ${label} — plafond du jour atteint. Les conversations déjà ouvertes continuent normalement.`
+    );
+  } catch {
+    /* best effort */
+  }
+}
 
+async function processSendQueueForUser(userId: number, limit: number): Promise<number> {
   let sent = 0;
   const items = await getDueQueueItems(userId, limit);
 
@@ -96,10 +128,37 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       await rescheduleQuiet(userId, item, quiet.end);
       continue;
     }
-    if ((await countOutboundToday(userId)) >= (await getEffectiveOutboundLimit(userId))) break;
 
-    // Opener campagne : conversation neuve AVANT le gate anti-spam (isolation par automation_id)
+    // Opener campagne = toujours un nouveau fil (époque fraîche juste avant envoi)
     const isCampaignOpener = item.automation_id != null && item.sequence_id == null;
+
+    // Check plafond AVANT beginFresh (éviter de reset l'époque si on reporte)
+    let newKind: "none" | "outbound" | "inbound" = "none";
+    if (isCampaignOpener) {
+      newKind = "outbound";
+    } else {
+      newKind = await classifyNewConversationKind(
+        userId,
+        item.recipient,
+        item.automation_id ?? null
+      );
+    }
+
+    if (newKind !== "none") {
+      const gate = await canStartNewConversation(userId, newKind);
+      if (!gate.ok) {
+        if (gate.code === "trial_exhausted") {
+          await markQueueFailed(userId, item.id, gate.reason);
+          if (item.automation_id) {
+            await addAutomationLog(userId, item.automation_id, "warning", gate.reason);
+          }
+        } else {
+          await rescheduleDailyQuota(userId, item, gate.reason);
+        }
+        continue;
+      }
+    }
+
     if (isCampaignOpener) {
       const { beginFreshCampaignConversation } = await import("./db.js");
       await beginFreshCampaignConversation(userId, item.recipient, item.automation_id!);
@@ -183,6 +242,15 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Plafond atteint au moment de l'envoi → reporter, ne pas échouer définitivement
+      if (/Limite du jour|Essai gratuit terminé|reporté|repris demain/i.test(msg)) {
+        if (/Essai gratuit terminé/i.test(msg)) {
+          await markQueueFailed(userId, item.id, msg);
+        } else {
+          await rescheduleDailyQuota(userId, item, msg);
+        }
+        continue;
+      }
       await markQueueFailed(userId, item.id, msg);
       if (item.automation_id) {
         await addAutomationLog(

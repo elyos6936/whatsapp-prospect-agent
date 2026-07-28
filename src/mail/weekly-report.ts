@@ -1,11 +1,12 @@
 /**
- * Rapport hebdomadaire campagne — payload, texte chat, HTML email.
+ * Rapport hebdomadaire — payload, texte chat, HTML email.
  * Sans emojis. HTML table-safe (clients mail), pas de JS ni images externes.
  */
 
 export type WeeklyReportPayload = {
+  /** Nom campagne ou libellé compte si aucune campagne. */
   campaignName: string;
-  campaignId: number;
+  campaignId: number | null;
   campaignStatus: string;
   /** Ex. « Semaine du 16/07/2026 au 22/07/2026 » */
   periodLabel: string;
@@ -22,6 +23,12 @@ export type WeeklyReportPayload = {
   /** Pourcentage entier, ou null si pas d'atteints. */
   responseRate: number | null;
   appUrl: string;
+  /** Niveau d'outreach lifetime (1–5). */
+  outreachLevel: number;
+  totalMessagesSent: number;
+  /** Félicitation si le niveau a monté depuis le dernier rapport. */
+  leveledUp: boolean;
+  previousOutreachLevel: number | null;
 };
 
 const BRAND = "#2057CE";
@@ -98,30 +105,61 @@ export function funnelFromTargetStats(stats: {
   return { waitingReply, replied, interested, stopped, reached, answered, responseRate };
 }
 
+function levelBlock(p: WeeklyReportPayload): string[] {
+  const lines = [
+    "Niveau d'outreach",
+    `• Niveau actuel : ${p.outreachLevel} / 5`,
+    `• Messages sortants (lifetime) : ${p.totalMessagesSent}`,
+  ];
+  if (p.leveledUp && p.previousOutreachLevel != null) {
+    lines.push(
+      "",
+      `Félicitations — vous êtes passé(e) du niveau ${p.previousOutreachLevel} au niveau ${p.outreachLevel}. Vos plafonds journaliers de nouveaux fils ont augmenté.`
+    );
+  }
+  return lines;
+}
+
 export function buildWeeklyReportText(p: WeeklyReportPayload): string {
   const rate =
     p.responseRate != null ? `${p.responseRate}%` : "— (aucun prospect atteint)";
-  return [
-    `Rapport hebdomadaire — « ${p.campaignName} » · ${p.campaignStatus}`,
+  const hasCampaign = p.campaignId != null;
+  const header = hasCampaign
+    ? `Rapport hebdomadaire — « ${p.campaignName} » · ${p.campaignStatus}`
+    : `Rapport hebdomadaire — ${p.campaignName}`;
+  const parts = [
+    header,
     p.periodLabel,
+    "",
+    ...levelBlock(p),
     "",
     "Activité (7 jours)",
     `• Messages envoyés : ${p.messagesSent}`,
     `• Messages reçus : ${p.messagesReceived}`,
-    "",
-    "Funnel campagne",
-    `• Atteints : ${p.reached}`,
-    `• Réponses : ${p.answered}`,
-    `• Sans réponse : ${p.waitingReply}`,
-    `• Intéressés : ${p.interested}`,
-    `• Arrêtés : ${p.stopped}`,
-    `• Conversions : ${p.conversions}`,
-    "",
-    "Performance",
-    `• Taux de réponse : ${rate}`,
-    "",
-    `Ouvre Klanvio pour le détail : ${p.appUrl}`,
-  ].join("\n");
+  ];
+  if (hasCampaign) {
+    parts.push(
+      "",
+      "Funnel campagne",
+      `• Atteints : ${p.reached}`,
+      `• Réponses : ${p.answered}`,
+      `• Sans réponse : ${p.waitingReply}`,
+      `• Intéressés : ${p.interested}`,
+      `• Arrêtés : ${p.stopped}`,
+      `• Conversions : ${p.conversions}`,
+      "",
+      "Performance",
+      `• Taux de réponse : ${rate}`
+    );
+  } else {
+    parts.push(
+      "",
+      "Funnel campagne",
+      "• Aucune campagne active cette semaine — activité globale ci-dessus."
+    );
+  }
+  parts.push("", `Ouvre Klanvio pour le détail : ${p.appUrl}`);
+  return parts.join("\n");
 }
 
 function esc(s: string): string {
@@ -161,6 +199,38 @@ function rateBar(pct: number | null): string {
 
 export function buildWeeklyReportHtml(p: WeeklyReportPayload): string {
   const rateLabel = p.responseRate != null ? `${p.responseRate}%` : "—";
+  const hasCampaign = p.campaignId != null;
+  const congrats =
+    p.leveledUp && p.previousOutreachLevel != null
+      ? `<div style="margin-top:12px;padding:12px 14px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;font-size:14px;color:#065f46;">
+          Félicitations — niveau ${p.previousOutreachLevel} → ${p.outreachLevel}. Vos plafonds journaliers ont augmenté.
+        </div>`
+      : "";
+  const funnelSection = hasCampaign
+    ? `<tr>
+          <td style="padding:8px 28px 16px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Funnel campagne</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${metricRow("Atteints", p.reached)}${metricRow("Réponses", p.answered)}${metricRow("Sans réponse", p.waitingReply)}${metricRow("Intéressés", p.interested)}${metricRow("Arrêtés", p.stopped)}${metricRow("Conversions", p.conversions)}</table>
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:8px 28px 24px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND};margin-bottom:4px;">Performance</div>
+            <div style="font-size:28px;font-weight:700;color:${TEXT};line-height:1.2;">${esc(rateLabel)}</div>
+            <div style="font-size:13px;color:${MUTED};">Taux de réponse (réponses / atteints)</div>
+            ${rateBar(p.responseRate)}
+          </td>
+        </tr>`
+    : `<tr>
+          <td style="padding:8px 28px 24px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Funnel campagne</div>
+            <p style="margin:0;font-size:14px;color:${MUTED};">Aucune campagne active — activité globale ci-dessus.</p>
+          </td>
+        </tr>`;
+  const campaignMeta = hasCampaign
+    ? `<div style="font-size:13px;color:${MUTED};margin-top:4px;">Campagne ${esc(p.campaignStatus)} · #${p.campaignId}</div>`
+    : `<div style="font-size:13px;color:${MUTED};margin-top:4px;">Compte actif</div>`;
+
   return `<!DOCTYPE html>
 <html lang="fr">
 <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -179,7 +249,14 @@ export function buildWeeklyReportHtml(p: WeeklyReportPayload): string {
         <tr>
           <td style="padding:24px 28px 8px;">
             <div style="font-size:16px;font-weight:600;color:${TEXT};">${esc(p.campaignName)}</div>
-            <div style="font-size:13px;color:${MUTED};margin-top:4px;">Campagne ${esc(p.campaignStatus)} · #${p.campaignId}</div>
+            ${campaignMeta}
+          </td>
+        </tr>
+        <tr>
+          <td style="padding:16px 28px;">
+            <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Niveau d'outreach</div>
+            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${metricRow("Niveau", `${p.outreachLevel} / 5`)}${metricRow("Messages sortants (lifetime)", p.totalMessagesSent)}</table>
+            ${congrats}
           </td>
         </tr>
         <tr>
@@ -188,20 +265,7 @@ export function buildWeeklyReportHtml(p: WeeklyReportPayload): string {
             <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${metricRow("Messages envoyés", p.messagesSent)}${metricRow("Messages reçus", p.messagesReceived)}</table>
           </td>
         </tr>
-        <tr>
-          <td style="padding:8px 28px 16px;">
-            <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND};margin-bottom:8px;">Funnel campagne</div>
-            <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${metricRow("Atteints", p.reached)}${metricRow("Réponses", p.answered)}${metricRow("Sans réponse", p.waitingReply)}${metricRow("Intéressés", p.interested)}${metricRow("Arrêtés", p.stopped)}${metricRow("Conversions", p.conversions)}</table>
-          </td>
-        </tr>
-        <tr>
-          <td style="padding:8px 28px 24px;">
-            <div style="font-size:12px;font-weight:700;letter-spacing:0.06em;text-transform:uppercase;color:${BRAND};margin-bottom:4px;">Performance</div>
-            <div style="font-size:28px;font-weight:700;color:${TEXT};line-height:1.2;">${esc(rateLabel)}</div>
-            <div style="font-size:13px;color:${MUTED};">Taux de réponse (réponses / atteints)</div>
-            ${rateBar(p.responseRate)}
-          </td>
-        </tr>
+        ${funnelSection}
         <tr>
           <td style="padding:0 28px 28px;" align="center">
             <a href="${esc(p.appUrl)}" style="display:inline-block;background:${BRAND};color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;padding:12px 22px;border-radius:8px;">Ouvrir Klanvio</a>
@@ -239,6 +303,10 @@ export function sampleWeeklyReportPayload(overrides?: Partial<WeeklyReportPayloa
     conversions: 3,
     responseRate: 36,
     appUrl: "https://www.klanvio.com",
+    outreachLevel: 2,
+    totalMessagesSent: 1240,
+    leveledUp: true,
+    previousOutreachLevel: 1,
     ...overrides,
   };
 }
