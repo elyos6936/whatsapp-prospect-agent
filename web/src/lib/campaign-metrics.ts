@@ -66,12 +66,26 @@ export type StatCard = {
   accent?: 'default' | 'success' | 'warn';
 };
 
+export type PeriodAnalyticsSummary = {
+  discussing?: number;
+  discussingLifetime?: number;
+  inboundMessages?: number;
+  outboundMessages?: number;
+  newlyReached?: number;
+  newlyAnswered?: number;
+  newlyInterested?: number;
+};
+
 /** KPIs adaptés au type / objectif de campagne (e-commerce, RDV, support…). */
 export function goalAwareStatCards(input: {
   type: string;
   closingGoal?: string | null;
   productName?: string | null;
   stats?: Record<string, number | string | undefined> | null;
+  /** Stats filtrées par période (prioritaires sur messagesHandled pour l'inbound). */
+  period?: PeriodAnalyticsSummary | null;
+  /** true si un filtre de date est actif (pas « tout »). */
+  periodFiltered?: boolean;
 }): { title: string; subtitle: string; cards: StatCard[]; funnelLabels: [string, string, string, string] } {
   const metrics = outreachMetrics(input.stats);
   const handled = Number(input.stats?.messagesHandled ?? 0);
@@ -81,6 +95,17 @@ export function goalAwareStatCards(input: {
   const isOutbound = type === 'group_prospect' || type === 'contact_prospect';
   const isInbound = type === 'keyword_sales';
   const productHint = input.productName?.trim();
+  const discussing =
+    input.periodFiltered && input.period?.discussing != null
+      ? Number(input.period.discussing)
+      : Number(
+          input.period?.discussingLifetime ??
+            input.stats?.discussing ??
+            input.period?.discussing ??
+            0,
+        );
+  const inboundMsgs = Number(input.period?.inboundMessages ?? handled);
+  const periodHint = input.periodFiltered ? 'sur la période' : undefined;
 
   if (goal === 'appointment' || /\brdv|rendez/.test(productHint || '')) {
     return {
@@ -88,12 +113,25 @@ export function goalAwareStatCards(input: {
       subtitle: 'Focus : conversations engagées et RDV confirmés',
       funnelLabels: ['Cibles', 'Atteints', 'Réponses', 'RDV'],
       cards: [
-        { key: 'reached', label: 'Atteints', value: metrics.reached },
-        { key: 'answered', label: 'Réponses', value: metrics.answered },
+        {
+          key: 'reached',
+          label: 'Atteints',
+          value: input.periodFiltered ? (input.period?.newlyReached ?? metrics.reached) : metrics.reached,
+          hint: periodHint,
+        },
+        {
+          key: 'answered',
+          label: 'Réponses',
+          value: input.periodFiltered
+            ? (input.period?.newlyAnswered ?? metrics.answered)
+            : metrics.answered,
+          hint: periodHint,
+        },
         {
           key: 'rate',
           label: 'Taux de réponse',
           value: metrics.rate != null ? `${metrics.rate}%` : '—',
+          hint: input.periodFiltered ? 'taux lifetime' : undefined,
         },
         {
           key: 'conversions',
@@ -113,25 +151,68 @@ export function goalAwareStatCards(input: {
       title: goal === 'delivery' ? 'E-commerce · livraison' : 'Vente / e-commerce',
       subtitle: 'Focus : intérêt, conversion et suivi commandes',
       funnelLabels: ['Cibles', 'Atteints', 'Réponses', 'Achats'],
-      cards: [
-        { key: 'reached', label: isOutbound ? 'Atteints' : 'Messages', value: isOutbound ? metrics.reached : handled },
-        { key: 'answered', label: 'Réponses', value: isOutbound ? metrics.answered : handled },
-        {
-          key: 'interested',
-          label: 'Intéressés',
-          value: metrics.interested,
-          accent: 'success',
-        },
-        {
-          key: 'conversions',
-          label,
-          value: conversions,
-          accent: 'success',
-          hint: metrics.answered
-            ? `${pct(conversions, metrics.answered || handled || 1)}% des réponses`
-            : undefined,
-        },
-      ],
+      cards: isOutbound
+        ? [
+            {
+              key: 'reached',
+              label: 'Atteints',
+              value: input.periodFiltered
+                ? (input.period?.newlyReached ?? metrics.reached)
+                : metrics.reached,
+              hint: periodHint,
+            },
+            {
+              key: 'answered',
+              label: 'Réponses',
+              value: input.periodFiltered
+                ? (input.period?.newlyAnswered ?? metrics.answered)
+                : metrics.answered,
+              hint: periodHint,
+            },
+            {
+              key: 'interested',
+              label: 'Intéressés',
+              value: input.periodFiltered
+                ? (input.period?.newlyInterested ?? metrics.interested)
+                : metrics.interested,
+              accent: 'success',
+              hint: periodHint,
+            },
+            {
+              key: 'conversions',
+              label,
+              value: conversions,
+              accent: 'success',
+            },
+          ]
+        : [
+            {
+              key: 'discussing',
+              label: 'Personnes en discussion',
+              value: discussing,
+              hint: inboundMsgs
+                ? `${inboundMsgs} message(s) reçu(s)${periodHint ? ` ${periodHint}` : ''}`
+                : periodHint,
+            },
+            {
+              key: 'inbound',
+              label: 'Messages reçus',
+              value: inboundMsgs,
+              hint: 'événements, pas de personnes',
+            },
+            {
+              key: 'interested',
+              label: 'Intéressés',
+              value: metrics.interested,
+              accent: 'success',
+            },
+            {
+              key: 'conversions',
+              label,
+              value: conversions,
+              accent: 'success',
+            },
+          ],
     };
   }
 
@@ -141,8 +222,20 @@ export function goalAwareStatCards(input: {
       subtitle: 'Focus : clics / ouvertures du lien envoyé',
       funnelLabels: ['Cibles', 'Atteints', 'Réponses', 'Liens'],
       cards: [
-        { key: 'reached', label: 'Atteints', value: metrics.reached },
-        { key: 'answered', label: 'Réponses', value: metrics.answered },
+        {
+          key: 'reached',
+          label: 'Atteints',
+          value: input.periodFiltered ? (input.period?.newlyReached ?? metrics.reached) : metrics.reached,
+          hint: periodHint,
+        },
+        {
+          key: 'answered',
+          label: 'Réponses',
+          value: input.periodFiltered
+            ? (input.period?.newlyAnswered ?? metrics.answered)
+            : metrics.answered,
+          hint: periodHint,
+        },
         {
           key: 'rate',
           label: 'Taux de réponse',
@@ -161,27 +254,36 @@ export function goalAwareStatCards(input: {
   if (isInbound || type === 'custom_followup') {
     return {
       title: isInbound ? 'Support / closing entrant' : 'Suivi personnalisé',
-      subtitle: 'Focus : messages traités et conversions',
-      funnelLabels: ['Messages', 'Engagés', 'Intéressés', 'Conversions'],
+      subtitle: 'Focus : personnes qui vous ont écrit et conversions',
+      funnelLabels: ['Personnes', 'Messages', 'Intéressés', 'Conversions'],
       cards: [
-        { key: 'handled', label: 'Messages traités', value: handled },
+        {
+          key: 'discussing',
+          label: 'Personnes en discussion',
+          value: discussing,
+          hint: inboundMsgs
+            ? `${inboundMsgs} message(s) reçu(s)${periodHint ? ` · ${periodHint}` : ''}`
+            : periodHint || 'contacts distincts ayant écrit',
+        },
+        {
+          key: 'inbound',
+          label: 'Messages reçus',
+          value: inboundMsgs,
+          hint: 'chaque message compte 1 — pas les personnes',
+        },
         {
           key: 'conversions',
           label: 'Conversions',
           value: conversions,
           accent: 'success',
-          hint: handled ? `${pct(conversions, handled)}%` : undefined,
+          hint: discussing > 0 ? `${pct(conversions, discussing)}% des personnes` : undefined,
         },
         {
           key: 'interested',
           label: 'Intéressés',
-          value: metrics.interested,
-        },
-        {
-          key: 'stopped',
-          label: 'Arrêtés',
-          value: metrics.stopped,
-          accent: 'warn',
+          value: input.periodFiltered
+            ? (input.period?.newlyInterested ?? metrics.interested)
+            : metrics.interested,
         },
       ],
     };
@@ -193,18 +295,34 @@ export function goalAwareStatCards(input: {
     subtitle: 'Focus : atteinte, réponses et intérêt',
     funnelLabels: ['Cibles', 'Atteints', 'Réponses', 'Intéressés'],
     cards: [
-      { key: 'reached', label: 'Atteints', value: metrics.reached },
-      { key: 'answered', label: 'Réponses', value: metrics.answered },
+      {
+        key: 'reached',
+        label: 'Atteints',
+        value: input.periodFiltered ? (input.period?.newlyReached ?? metrics.reached) : metrics.reached,
+        hint: periodHint,
+      },
+      {
+        key: 'answered',
+        label: 'Réponses',
+        value: input.periodFiltered
+          ? (input.period?.newlyAnswered ?? metrics.answered)
+          : metrics.answered,
+        hint: periodHint,
+      },
       {
         key: 'rate',
         label: 'Taux de réponse',
         value: metrics.rate != null ? `${metrics.rate}%` : '—',
+        hint: input.periodFiltered ? 'taux lifetime' : undefined,
       },
       {
         key: 'interested',
         label: 'Intéressés',
-        value: metrics.interested,
+        value: input.periodFiltered
+          ? (input.period?.newlyInterested ?? metrics.interested)
+          : metrics.interested,
         accent: 'success',
+        hint: periodHint,
       },
     ],
   };

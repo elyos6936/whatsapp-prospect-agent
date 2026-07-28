@@ -707,6 +707,319 @@ export async function countUserMessagesInRange(
   return { outbound, inbound };
 }
 
+export type CampaignAnalyticsDay = {
+  date: string;
+  /** Personnes distinctes ayant écrit ce jour (messages entrants). */
+  discussing: number;
+  /** Nouveaux atteints (1er message sortant campagne ce jour). */
+  newlyReached: number;
+  /** Nouvelles réponses (1er message entrant campagne ce jour). */
+  newlyAnswered: number;
+  /** Cibles passées intéressées ce jour (last_action_at). */
+  newlyInterested: number;
+  inboundMessages: number;
+  outboundMessages: number;
+};
+
+export type CampaignAnalytics = {
+  from: string;
+  to: string;
+  summary: {
+    /** Personnes distinctes ayant écrit au moins 1 fois dans la période. */
+    discussing: number;
+    /** Lifetime (hors filtre) — même définition. */
+    discussingLifetime: number;
+    inboundMessages: number;
+    outboundMessages: number;
+    newlyReached: number;
+    newlyAnswered: number;
+    newlyInterested: number;
+  };
+  series: CampaignAnalyticsDay[];
+};
+
+function startOfLocalDayFromKey(dateKey: string): Date {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+}
+
+function addLocalDaysDate(d: Date, days: number): Date {
+  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  x.setDate(x.getDate() + days);
+  return x;
+}
+
+function dateKeyLocal(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+/**
+ * Analytics campagne sur [from, toExclusive) :
+ * - discussing = COUNT DISTINCT contacts ayant écrit (entrant) — pas messagesHandled
+ * - séries journalières pour graphes de temporalité
+ */
+export function resolveCampaignAnalyticsWindow(opts: {
+  range?: string;
+  from?: string;
+  to?: string;
+  campaignCreatedAt?: string;
+  now?: Date;
+}): { from: Date; toExclusive: Date; range: string } {
+  const now = opts.now ?? new Date();
+  const endExclusive = new Date(
+    now.getFullYear(),
+    now.getMonth(),
+    now.getDate() + 1,
+    0,
+    0,
+    0,
+    0
+  );
+
+  const parseKey = (raw?: string): Date | null => {
+    const s = raw?.trim();
+    if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+    const [y, m, d] = s.split("-").map(Number);
+    const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+    return Number.isNaN(dt.getTime()) ? null : dt;
+  };
+
+  const customFrom = parseKey(opts.from);
+  const customTo = parseKey(opts.to);
+  if (customFrom && customTo) {
+    const toEx = addLocalDaysDate(customTo, 1);
+    if (toEx > customFrom) {
+      return { from: customFrom, toExclusive: toEx, range: "custom" };
+    }
+  }
+
+  const range = (opts.range || "30d").toLowerCase();
+  if (range === "all") {
+    let from = parseKey(opts.campaignCreatedAt?.slice(0, 10));
+    if (!from && opts.campaignCreatedAt) {
+      const d = new Date(
+        opts.campaignCreatedAt.includes("T")
+          ? opts.campaignCreatedAt
+          : opts.campaignCreatedAt.replace(" ", "T")
+      );
+      if (!Number.isNaN(d.getTime())) {
+        from = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+      }
+    }
+    if (!from) {
+      from = addLocalDaysDate(endExclusive, -365);
+    }
+    return { from, toExclusive: endExclusive, range: "all" };
+  }
+
+  const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
+  const from = addLocalDaysDate(endExclusive, -days);
+  return { from, toExclusive: endExclusive, range: `${days}d` };
+}
+
+/**
+ * Analytics campagne sur [from, toExclusive) :
+ * - discussing = COUNT DISTINCT contacts ayant écrit (entrant) — pas messagesHandled
+ * - séries journalières pour graphes de temporalité
+ */
+export async function getCampaignAnalytics(
+  userId: number,
+  automationId: number,
+  from: Date,
+  toExclusive: Date
+): Promise<CampaignAnalytics> {
+  await ensureContactAutomationStateSchema().catch(() => {});
+
+  const [discussingRow] = await sql<Array<{ n: number }>>`
+    SELECT COUNT(DISTINCT contact_phone)::int AS n
+    FROM messages
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND direction = 'entrant'
+      AND created_at >= ${from}
+      AND created_at < ${toExclusive}
+  `;
+
+  const [discussingLifetimeRow] = await sql<Array<{ n: number }>>`
+    SELECT COUNT(DISTINCT contact_phone)::int AS n
+    FROM messages
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND direction = 'entrant'
+  `;
+
+  const msgCounts = await countAutomationMessagesInRange(
+    userId,
+    automationId,
+    from,
+    toExclusive
+  );
+
+  const [reachedRow] = await sql<Array<{ n: number }>>`
+    SELECT COUNT(*)::int AS n FROM (
+      SELECT contact_phone, MIN(created_at) AS first_at
+      FROM messages
+      WHERE user_id = ${userId}
+        AND automation_id = ${automationId}
+        AND direction = 'sortant'
+        AND COALESCE(counts_toward_quota, 1) = 1
+      GROUP BY contact_phone
+    ) t
+    WHERE first_at >= ${from} AND first_at < ${toExclusive}
+  `;
+
+  const [answeredRow] = await sql<Array<{ n: number }>>`
+    SELECT COUNT(*)::int AS n FROM (
+      SELECT contact_phone, MIN(created_at) AS first_at
+      FROM messages
+      WHERE user_id = ${userId}
+        AND automation_id = ${automationId}
+        AND direction = 'entrant'
+      GROUP BY contact_phone
+    ) t
+    WHERE first_at >= ${from} AND first_at < ${toExclusive}
+  `;
+
+  const [interestedRow] = await sql<Array<{ n: number }>>`
+    SELECT COUNT(*)::int AS n
+    FROM automation_targets
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND status = 'interested'
+      AND last_action_at IS NOT NULL
+      AND last_action_at >= ${from}
+      AND last_action_at < ${toExclusive}
+  `;
+
+  const dailyMsgs = await sql<
+    Array<{ d: string; direction: string; msgs: number; people: number }>
+  >`
+    SELECT
+      to_char(created_at::date, 'YYYY-MM-DD') AS d,
+      direction,
+      COUNT(*)::int AS msgs,
+      COUNT(DISTINCT contact_phone)::int AS people
+    FROM messages
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND created_at >= ${from}
+      AND created_at < ${toExclusive}
+    GROUP BY created_at::date, direction
+    ORDER BY d ASC
+  `;
+
+  const dailyFirstOut = await sql<Array<{ d: string; n: number }>>`
+    SELECT to_char(first_at::date, 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
+    FROM (
+      SELECT contact_phone, MIN(created_at) AS first_at
+      FROM messages
+      WHERE user_id = ${userId}
+        AND automation_id = ${automationId}
+        AND direction = 'sortant'
+        AND COALESCE(counts_toward_quota, 1) = 1
+      GROUP BY contact_phone
+    ) t
+    WHERE first_at >= ${from} AND first_at < ${toExclusive}
+    GROUP BY first_at::date
+    ORDER BY d ASC
+  `;
+
+  const dailyFirstIn = await sql<Array<{ d: string; n: number }>>`
+    SELECT to_char(first_at::date, 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
+    FROM (
+      SELECT contact_phone, MIN(created_at) AS first_at
+      FROM messages
+      WHERE user_id = ${userId}
+        AND automation_id = ${automationId}
+        AND direction = 'entrant'
+      GROUP BY contact_phone
+    ) t
+    WHERE first_at >= ${from} AND first_at < ${toExclusive}
+    GROUP BY first_at::date
+    ORDER BY d ASC
+  `;
+
+  const dailyInterested = await sql<Array<{ d: string; n: number }>>`
+    SELECT to_char(last_action_at::date, 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
+    FROM automation_targets
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND status = 'interested'
+      AND last_action_at IS NOT NULL
+      AND last_action_at >= ${from}
+      AND last_action_at < ${toExclusive}
+    GROUP BY last_action_at::date
+    ORDER BY d ASC
+  `;
+
+  const byDay = new Map<string, CampaignAnalyticsDay>();
+  const ensure = (key: string): CampaignAnalyticsDay => {
+    let row = byDay.get(key);
+    if (!row) {
+      row = {
+        date: key,
+        discussing: 0,
+        newlyReached: 0,
+        newlyAnswered: 0,
+        newlyInterested: 0,
+        inboundMessages: 0,
+        outboundMessages: 0,
+      };
+      byDay.set(key, row);
+    }
+    return row;
+  };
+
+  for (const row of dailyMsgs) {
+    const day = ensure(String(row.d));
+    if (row.direction === "entrant") {
+      day.inboundMessages = Number(row.msgs);
+      day.discussing = Number(row.people);
+    } else if (row.direction === "sortant") {
+      day.outboundMessages = Number(row.msgs);
+    }
+  }
+  for (const row of dailyFirstOut) {
+    ensure(String(row.d)).newlyReached = Number(row.n);
+  }
+  for (const row of dailyFirstIn) {
+    ensure(String(row.d)).newlyAnswered = Number(row.n);
+  }
+  for (const row of dailyInterested) {
+    ensure(String(row.d)).newlyInterested = Number(row.n);
+  }
+
+  // Remplir tous les jours de la fenêtre (zéros inclus)
+  const fromKey = dateKeyLocal(from);
+  const lastInclusive = addLocalDaysDate(toExclusive, -1);
+  const toKey = dateKeyLocal(lastInclusive);
+  let cursor = startOfLocalDayFromKey(fromKey);
+  const end = startOfLocalDayFromKey(toKey);
+  const series: CampaignAnalyticsDay[] = [];
+  // Garde-fou : max 366 jours
+  for (let i = 0; i < 370 && cursor.getTime() <= end.getTime(); i++) {
+    const key = dateKeyLocal(cursor);
+    series.push(ensure(key));
+    cursor = addLocalDaysDate(cursor, 1);
+  }
+
+  return {
+    from: fromKey,
+    to: toKey,
+    summary: {
+      discussing: Number(discussingRow?.n ?? 0),
+      discussingLifetime: Number(discussingLifetimeRow?.n ?? 0),
+      inboundMessages: msgCounts.inbound,
+      outboundMessages: msgCounts.outbound,
+      newlyReached: Number(reachedRow?.n ?? 0),
+      newlyAnswered: Number(answeredRow?.n ?? 0),
+      newlyInterested: Number(interestedRow?.n ?? 0),
+    },
+    series,
+  };
+}
+
 export async function listAllIncomingMessages(userId: number, limit = 100): Promise<WhatsAppMessage[]> {
   const safe = Math.min(Math.max(limit, 1), 500);
   const rows = await sql<Record<string, unknown>[]>`

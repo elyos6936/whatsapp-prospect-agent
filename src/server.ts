@@ -461,7 +461,10 @@ app.delete<{ Params: { id: string } }>("/api/threads/:id", async (request, reply
   return { ok: true };
 });
 
-app.get<{ Params: { id: string } }>("/api/threads/:id/campaign", async (request, reply) => {
+app.get<{
+  Params: { id: string };
+  Querystring: { from?: string; to?: string; range?: string };
+}>("/api/threads/:id/campaign", async (request, reply) => {
   const userId = requireUserId(request);
   const threadId = Number(request.params.id);
   if (!Number.isFinite(threadId)) {
@@ -491,6 +494,24 @@ app.get<{ Params: { id: string } }>("/api/threads/:id/campaign", async (request,
   const messagesHandled = Number(auto.stats.messagesHandled) || 0;
   const responseRate = contacted > 0 ? Math.round((replied / contacted) * 100) : null;
   const bilan = await getDailyBilan(userId).catch(() => null);
+
+  const { resolveCampaignAnalyticsWindow, getCampaignAnalytics } = await import("./db.js");
+  const window = resolveCampaignAnalyticsWindow({
+    range: request.query.range,
+    from: request.query.from,
+    to: request.query.to,
+    campaignCreatedAt: auto.created_at,
+  });
+  const analytics = await getCampaignAnalytics(
+    userId,
+    thread.automation_id,
+    window.from,
+    window.toExclusive
+  ).catch((err) => {
+    console.error("campaign analytics:", err);
+    return null;
+  });
+
   return {
     thread_id: threadId,
     detail,
@@ -503,11 +524,14 @@ app.get<{ Params: { id: string } }>("/api/threads/:id/campaign", async (request,
       stopped,
       messagesSent,
       messagesHandled,
+      /** Personnes distinctes ayant écrit (lifetime) — pas messagesHandled. */
+      discussing: analytics?.summary.discussingLifetime ?? 0,
       responseRatePercent: responseRate,
       conversions: Number(auto.stats.conversions) || 0,
       lastActionAt: auto.stats.lastActionAt ?? null,
       report: typeof auto.stats.report === "string" ? auto.stats.report : null,
     },
+    analytics,
     today: bilan ? { date: bilan.date, incoming: bilan.incoming, outgoing: bilan.outgoing } : null,
   };
 });

@@ -278,12 +278,46 @@ export async function deleteThread(threadId: number): Promise<void> {
   await request(`/api/threads/${threadId}`, { method: 'DELETE' });
 }
 
-export async function fetchThreadCampaign(threadId: number): Promise<{
+export async function fetchThreadCampaign(
+  threadId: number,
+  opts?: { range?: string; from?: string; to?: string },
+): Promise<{
   detail: AutomationDetail;
   stats: Record<string, number | string | null>;
+  analytics?: CampaignAnalytics | null;
 }> {
-  return request(`/api/threads/${threadId}/campaign`);
+  const params = new URLSearchParams();
+  if (opts?.range) params.set('range', opts.range);
+  if (opts?.from) params.set('from', opts.from);
+  if (opts?.to) params.set('to', opts.to);
+  const qs = params.toString();
+  return request(`/api/threads/${threadId}/campaign${qs ? `?${qs}` : ''}`);
 }
+
+export type CampaignAnalyticsDay = {
+  date: string;
+  discussing: number;
+  newlyReached: number;
+  newlyAnswered: number;
+  newlyInterested: number;
+  inboundMessages: number;
+  outboundMessages: number;
+};
+
+export type CampaignAnalytics = {
+  from: string;
+  to: string;
+  summary: {
+    discussing: number;
+    discussingLifetime: number;
+    inboundMessages: number;
+    outboundMessages: number;
+    newlyReached: number;
+    newlyAnswered: number;
+    newlyInterested: number;
+  };
+  series: CampaignAnalyticsDay[];
+};
 
 /** Transcrit un enregistrement audio en texte (dictée vocale de l'input de chat). */
 export async function transcribeChatAudio(blob: Blob): Promise<string> {

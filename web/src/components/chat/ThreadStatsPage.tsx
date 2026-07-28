@@ -1,8 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { RefreshCw } from 'lucide-react';
+import { CalendarRange, RefreshCw } from 'lucide-react';
 import { CampaignCharts } from '@/components/automation/CampaignCharts';
+import { CampaignTemporalCharts } from '@/components/automation/CampaignTemporalCharts';
 import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
-import { fetchThreadCampaign, type AutomationDetail } from '@/lib/api';
+import {
+  fetchThreadCampaign,
+  type AutomationDetail,
+  type CampaignAnalytics,
+} from '@/lib/api';
 import { goalAwareStatCards, outreachMetrics, TARGET_META, TARGET_ORDER } from '@/lib/campaign-metrics';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +17,14 @@ const TYPE_LABELS: Record<string, string> = {
   keyword_sales: 'Vente / support mots-clés',
   custom_followup: 'Suivi personnalisé',
 };
+
+const RANGE_OPTIONS: Array<{ id: string; label: string }> = [
+  { id: '7d', label: '7 jours' },
+  { id: '30d', label: '30 jours' },
+  { id: '90d', label: '90 jours' },
+  { id: 'all', label: 'Tout' },
+  { id: 'custom', label: 'Perso' },
+];
 
 function fmtTime(iso?: string): string {
   if (!iso) return '—';
@@ -29,15 +42,12 @@ function isReadableJournalMessage(message: string): boolean {
   if (/"error"\s*:|"stack"\s*:|"errno"\s*:|"code"\s*:\s*"E/.test(t)) return false;
   if (/at\s+\S+\s+\([^)]+:\d+:\d+\)/.test(t)) return false;
   if (/TypeError:|ReferenceError:|ECONNREFUSED|ETIMEDOUT/i.test(t) && t.includes('{')) return false;
-  // Trop de JSON / dumps : plus de 2 guillemets de clés JSON typiques
   if ((t.match(/"[a-zA-Z0-9_]+"\s*:/g) ?? []).length >= 3) return false;
   return true;
 }
 
-/** Raccourcit un message d’erreur trop technique pour l’affichage. */
 function softenJournalMessage(message: string): string {
   const t = message.trim();
-  // « Échec … : {json…} » → garder le préfixe humain
   const colonJson = t.match(/^(Échec[^:]*:\s*)(\{[\s\S]+)$/i);
   if (colonJson) return `${colonJson[1].trim()} problème technique — réessayez plus tard.`;
   if (t.length > 220) return `${t.slice(0, 200).trim()}…`;
@@ -52,41 +62,60 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [detail, setDetail] = useState<AutomationDetail | null>(null);
+  const [analytics, setAnalytics] = useState<CampaignAnalytics | null>(null);
+  const [topStats, setTopStats] = useState<Record<string, number | string | null>>({});
+  const [range, setRange] = useState('30d');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchThreadCampaign(threadId);
+      const opts =
+        range === 'custom' && customFrom && customTo
+          ? { range: 'custom', from: customFrom, to: customTo }
+          : { range };
+      const data = await fetchThreadCampaign(threadId, opts);
       setDetail(data.detail);
+      setAnalytics(data.analytics ?? null);
+      setTopStats(data.stats ?? {});
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Impossible de charger les stats');
       setDetail(null);
+      setAnalytics(null);
     } finally {
       setLoading(false);
     }
-  }, [threadId]);
+  }, [threadId, range, customFrom, customTo]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
   const a = detail?.automation;
-  const stats = a?.stats ?? {};
+  const stats = {
+    ...(a?.stats ?? {}),
+    discussing: Number(topStats.discussing ?? analytics?.summary.discussingLifetime ?? 0),
+  } as Record<string, number | string | undefined>;
   const targets = detail?.targets ?? [];
   const logs = detail?.logs ?? [];
-  const metrics = outreachMetrics(stats as Record<string, number>);
+  const metrics = outreachMetrics(stats);
   const config = (a?.config ?? {}) as {
     closingGoal?: string;
     productName?: string;
     mode?: string;
   };
+  const periodFiltered = range !== 'all';
   const goalPack = a
     ? goalAwareStatCards({
         type: a.type,
         closingGoal: config.closingGoal,
         productName: config.productName || a.name,
-        stats: stats as Record<string, number>,
+        stats,
+        period: analytics?.summary ?? null,
+        periodFiltered,
       })
     : null;
   const counts = TARGET_ORDER.reduce<Record<string, number>>((acc, s) => {
@@ -95,26 +124,100 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
   }, {});
   const totalTargets = targets.length;
   const isOutbound = a?.type === 'group_prospect' || a?.type === 'contact_prospect';
+  const rangeLabel =
+    range === 'custom' && customFrom && customTo
+      ? `${customFrom} → ${customTo}`
+      : RANGE_OPTIONS.find((o) => o.id === range)?.label ?? range;
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar">
       <div className="brand-radial">
         <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6">
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h1 className="font-serif text-2xl font-light text-text-100">Statistiques</h1>
               <p className="mt-1 text-sm text-text-400">
                 Indicateurs adaptés à l’objectif de cette campagne uniquement.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void load()}
-              className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
-            >
-              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
-              Actualiser
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => setFilterOpen((o) => !o)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
+                >
+                  <CalendarRange className="h-4 w-4" />
+                  {rangeLabel}
+                </button>
+                {filterOpen && (
+                  <div className="absolute right-0 z-20 mt-2 w-64 rounded-xl border border-black/10 bg-bg-0 p-3 shadow-lg">
+                    <p className="mb-2 text-xs font-medium text-text-500">Période</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {RANGE_OPTIONS.map((opt) => (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          onClick={() => {
+                            setRange(opt.id);
+                            if (opt.id !== 'custom') setFilterOpen(false);
+                          }}
+                          className={cn(
+                            'rounded-lg px-2.5 py-1 text-xs transition',
+                            range === opt.id
+                              ? 'bg-brand text-white'
+                              : 'bg-bg-200 text-text-300 hover:bg-bg-300',
+                          )}
+                        >
+                          {opt.label}
+                        </button>
+                      ))}
+                    </div>
+                    {range === 'custom' && (
+                      <div className="mt-3 space-y-2">
+                        <label className="block text-xs text-text-500">
+                          Du
+                          <input
+                            type="date"
+                            value={customFrom}
+                            onChange={(e) => setCustomFrom(e.target.value)}
+                            className="mt-1 w-full rounded-lg border border-black/10 bg-bg-0 px-2 py-1.5 text-sm text-text-200"
+                          />
+                        </label>
+                        <label className="block text-xs text-text-500">
+                          Au
+                          <input
+                            type="date"
+                            value={customTo}
+                            onChange={(e) => setCustomTo(e.target.value)}
+                            className="mt-1 w-full rounded-lg border border-black/10 bg-bg-0 px-2 py-1.5 text-sm text-text-200"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={!customFrom || !customTo}
+                          onClick={() => {
+                            setFilterOpen(false);
+                            void load();
+                          }}
+                          className="w-full rounded-lg bg-brand px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
+                        >
+                          Appliquer
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => void load()}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-black/10 px-3 py-2 text-sm text-text-300 transition hover:bg-bg-200"
+              >
+                <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />
+                Actualiser
+              </button>
+            </div>
           </div>
 
           {error && <p className="mt-4 text-sm text-red-400">{error}</p>}
@@ -138,6 +241,11 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
                     {goalPack.title}
                     <span className="text-text-500"> — {goalPack.subtitle}</span>
                   </p>
+                  {analytics && (
+                    <p className="mt-1 text-xs text-text-500">
+                      Fenêtre : {analytics.from} → {analytics.to}
+                    </p>
+                  )}
                 </div>
                 <CampaignStatusToggle
                   automationId={a.id}
@@ -164,6 +272,13 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
                   </div>
                 ))}
               </div>
+
+              {analytics && analytics.series.length > 0 && (
+                <CampaignTemporalCharts
+                  series={analytics.series}
+                  mode={isOutbound ? 'outbound' : 'inbound'}
+                />
+              )}
 
               {isOutbound && totalTargets > 0 && (
                 <CampaignCharts

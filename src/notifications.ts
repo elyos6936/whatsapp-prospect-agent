@@ -1140,13 +1140,27 @@ async function ingestInboundMessage(
 
   try {
     // Aligne le pointeur AVANT le tag automation_id (sinon l'entrant part sur une ancienne campagne).
+    let automationId: number | null = null;
     const outbound = await findActiveOutboundCampaign(userId, chatId).catch(() => null);
     if (outbound) {
-      await setConversationCampaignId(userId, chatId, outbound.automation.id).catch(() => {});
+      automationId = outbound.automation.id;
+      await setConversationCampaignId(userId, chatId, automationId).catch(() => {});
+    } else {
+      // Closing entrant : taguer dès le message déclencheur (stats « personnes en discussion »)
+      const { findMatchingInboundClosingCampaign, findOngoingClosingConversation } =
+        await import("./campaign-gating.js");
+      const inbound =
+        (await findMatchingInboundClosingCampaign(userId, text).catch(() => null)) ||
+        (await findOngoingClosingConversation(userId, chatId).catch(() => null));
+      if (inbound) {
+        automationId = inbound.id;
+        await setConversationCampaignId(userId, chatId, automationId).catch(() => {});
+      } else {
+        const contact = await getContact(userId, chatId).catch(() => null);
+        automationId = contact?.conversation_campaign_id ?? null;
+      }
     }
 
-    const contact = await getContact(userId, chatId).catch(() => null);
-    const automationId = contact?.conversation_campaign_id ?? null;
     await saveWhatsAppMessage(userId, {
       contactPhone: chatId,
       direction: "entrant",
