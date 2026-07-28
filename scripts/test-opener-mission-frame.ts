@@ -36,7 +36,7 @@ import {
   shouldBlockDuplicateSimulation,
 } from "../src/simulation-gate.js";
 import { SYSTEM_PROMPT } from "../src/persona.js";
-import { buildBriefingNudge, type BriefingAssessment } from "../src/campaign-briefing.js";
+import { buildBriefingNudge, type BriefingAssessment, hasStickersQuestionAsked, hasThirdPartyQuestionAsked } from "../src/campaign-briefing.js";
 import { WHATSAPP_REPLY_PROMPT } from "../src/whatsapp-reply.js";
 import { config } from "../src/config.js";
 import type { Automation } from "../src/db.js";
@@ -350,8 +350,11 @@ console.log("\n=== G) contrats prompts ===");
     readyForDraft: true,
     questionsAsked: 6,
     missing: [],
+    isInboundClosing: false,
     openerDirectionCollected: false,
     openerVariantsProposed: false,
+    stickersQuestionAsked: false,
+    thirdPartyQuestionAsked: false,
   };
 
   const nudgeStickers =
@@ -360,6 +363,36 @@ console.log("\n=== G) contrats prompts ===");
   assert(
     "briefing ready → pas variantes avant 1er message",
     !/exactement 5 variantes/i.test(nudgeStickers)
+  );
+
+  // Régression e-commerce : parler de livreur/WhatsApp dans le brief NE DOIT PAS
+  // compter comme « question tiers posée ».
+  const histEcommerceFalsePositive: AgentMessage[] = [
+    msg(
+      "user",
+      "Je vends des chaussures, objectif livraison. Mon livreur appelle le client sur WhatsApp."
+    ),
+    msg(
+      "assistant",
+      "Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non)"
+    ),
+    msg("user", "non"),
+  ];
+  const readyAfterStickers: BriefingAssessment = {
+    ...readyBase,
+    stickersQuestionAsked: true,
+    thirdPartyQuestionAsked: false,
+  };
+  const nudgeTiers =
+    buildBriefingNudge(readyAfterStickers, histEcommerceFalsePositive, "non") || "";
+  assert("e-com livreur+WhatsApp → encore question tiers", /tiers|livreur|associ/i.test(nudgeTiers));
+  assert(
+    "e-com : pas de faux positif tiers",
+    !hasThirdPartyQuestionAsked(histEcommerceFalsePositive)
+  );
+  assert(
+    "e-com : stickers bien détectés (assistant)",
+    hasStickersQuestionAsked(histEcommerceFalsePositive)
   );
 
   const histStickersTiers: AgentMessage[] = [
@@ -371,8 +404,13 @@ console.log("\n=== G) contrats prompts ===");
     ),
     msg("user", "non merci"),
   ];
+  const readyStickersTiers: BriefingAssessment = {
+    ...readyBase,
+    stickersQuestionAsked: true,
+    thirdPartyQuestionAsked: true,
+  };
   const nudgeAskOpener =
-    buildBriefingNudge(readyBase, histStickersTiers, "non") || "";
+    buildBriefingNudge(readyStickersTiers, histStickersTiers, "non") || "";
   assert("briefing ready → question 1er message", /premier message/i.test(nudgeAskOpener));
   assert(
     "briefing ready → interdit variantes sans angle",
@@ -388,7 +426,7 @@ console.log("\n=== G) contrats prompts ===");
     msg("user", "Je veux quelque chose de direct qui parle de formation WhatsApp sans vendre tout de suite."),
   ];
   const readyWithDirection: BriefingAssessment = {
-    ...readyBase,
+    ...readyStickersTiers,
     openerDirectionCollected: true,
   };
   const nudgeVariants =
@@ -396,6 +434,17 @@ console.log("\n=== G) contrats prompts ===");
   assert("briefing avec angle → 5 variantes", /5 variantes/i.test(nudgeVariants));
   assert("briefing avec angle → ab_variants", /ab_variants/i.test(nudgeVariants));
 
+  // Closing entrant : après stickers+tiers → brouillon, PAS de 5 variantes opener
+  const readyInbound: BriefingAssessment = {
+    ...readyStickersTiers,
+    isInboundClosing: true,
+    openerDirectionCollected: true,
+    openerVariantsProposed: true,
+  };
+  const nudgeInbound =
+    buildBriefingNudge(readyInbound, histStickersTiers, "non") || "";
+  assert("inbound → pas d'opener variantes", /closing entrant|keyword_sales|pas de 5 variantes/i.test(nudgeInbound));
+  assert("inbound → create draft", /create_automation|brouillon/i.test(nudgeInbound));
   assert(
     "reply prompt: réactions vides interdites",
     /Ah super/i.test(WHATSAPP_REPLY_PROMPT)

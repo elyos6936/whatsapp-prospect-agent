@@ -46,10 +46,16 @@ export type BriefingAssessment = {
   questionsAsked: number;
   missing: string[];
   readyForDraft: boolean;
+  /** Closing entrant / support : pas d'opener sortant → pas de 5 variantes. */
+  isInboundClosing: boolean;
   /** L'utilisateur a indiqué l'angle / le ton souhaité pour le 1er message (après question dédiée). */
   openerDirectionCollected: boolean;
   /** Les 5 variantes ont été proposées dans le chat. */
   openerVariantsProposed: boolean;
+  /** L'agent a posé la question stickers (messages assistant uniquement). */
+  stickersQuestionAsked: boolean;
+  /** L'agent a posé la question notification tiers (messages assistant uniquement). */
+  thirdPartyQuestionAsked: boolean;
 };
 
 const OPENER_DIRECTION_ASK_RE =
@@ -104,12 +110,31 @@ export function hasProposedOpenerVariants(history: AgentMessage[]): boolean {
     .some((m) => m.role === "assistant" && OPENER_VARIANTS_PROPOSED_RE.test(m.content));
 }
 
-function hasStickersQuestionAsked(blob: string): boolean {
-  return /\bsticker/i.test(blob);
+/**
+ * Stickers / tiers : ne regarder QUE les messages assistant.
+ * Sinon un brief e-commerce (« mon livreur… WhatsApp ») matchait à tort
+ * et sautait la question notification tiers.
+ */
+const STICKERS_ASK_RE =
+  /\bstickers?\b.{0,120}\?(?:.|$)|veux.{0,40}\bstickers?\b|ajoute.{0,40}\bstickers?\b/i;
+
+const THIRD_PARTY_ASK_RE =
+  /\b(pr[eé]venir|notifier|pr[eé]vienne|notifie).{0,80}\b(tiers|quelqu.?un d.?autre|livreur|associ[eé]|commercial)\b|\b(tiers|livreur|associ[eé]|commercial).{0,80}\b(pr[eé]venir|notifier|automatiquement)\b|\bthird.party\b/i;
+
+export function hasStickersQuestionAsked(history: AgentMessage[]): boolean {
+  return history.some((m) => m.role === "assistant" && STICKERS_ASK_RE.test(m.content));
 }
 
-function hasThirdPartyQuestionAsked(blob: string): boolean {
-  return /\btiers\b|pr[ée]venir\s+automatiquement|third.party|livreur.*whatsapp/i.test(blob);
+export function hasThirdPartyQuestionAsked(history: AgentMessage[]): boolean {
+  return history.some((m) => m.role === "assistant" && THIRD_PARTY_ASK_RE.test(m.content));
+}
+
+/** Closing entrant / keyword_sales / support — le prospect écrit en premier. */
+export function isInboundClosingFlow(history: AgentMessage[], userMessage: string): boolean {
+  const blob = conversationBlob(history, userMessage);
+  return /\b(keyword_sales|inbound_closing|closing\s+entrant|support\s*client|d[eé]clencheur|mot[- ]?cl[eé]|quand\s+(quelqu|un\s+prospect|un\s+client)\s+[eé]crit|r[eé]pond(?:re|s)?\s+(uniquement\s+)?quand)\b/i.test(
+    blob
+  );
 }
 
 function conversationBlob(history: AgentMessage[], userMessage: string): string {
@@ -162,8 +187,11 @@ export function assessCampaignBriefing(
       questionsAsked: 0,
       missing: [],
       readyForDraft: false,
+      isInboundClosing: false,
       openerDirectionCollected: false,
       openerVariantsProposed: false,
+      stickersQuestionAsked: false,
+      thirdPartyQuestionAsked: false,
     };
   }
 
@@ -256,16 +284,27 @@ export function assessCampaignBriefing(
       m.includes("présentation")
   );
   const readyForDraft = questionsAsked >= 6 && criticalMissing.length === 0;
-  const openerDirectionCollected = hasUserProvidedOpenerDirection(history, userMessage);
-  const openerVariantsProposed = hasProposedOpenerVariants(history);
+  const inbound = isInboundClosingFlow(history, userMessage);
+  const stickersQuestionAsked = hasStickersQuestionAsked(history);
+  const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
+  // Closing entrant : pas d'opener sortant → ces étapes sont N/A (considérées OK).
+  const openerDirectionCollected = inbound
+    ? true
+    : hasUserProvidedOpenerDirection(history, userMessage);
+  const openerVariantsProposed = inbound
+    ? true
+    : hasProposedOpenerVariants(history);
 
   return {
     inCampaignFlow: true,
     questionsAsked,
     missing,
     readyForDraft,
+    isInboundClosing: inbound,
     openerDirectionCollected,
     openerVariantsProposed,
+    stickersQuestionAsked,
+    thirdPartyQuestionAsked,
   };
 }
 
@@ -293,25 +332,34 @@ export function buildThreadCampaignBlockNudge(
 export function buildBriefingNudge(
   assessment: BriefingAssessment,
   history: AgentMessage[],
-  userMessage: string
+  _userMessage: string
 ): string | null {
   if (!assessment.inCampaignFlow) return null;
   if (assessment.readyForDraft) {
-    const blob = conversationBlob(history, userMessage);
-
-    if (!hasStickersQuestionAsked(blob)) {
+    if (!assessment.stickersQuestionAsked) {
       return (
         "Briefing campagne : éléments essentiels réunis (≥6 questions). " +
         "Pose UNE question — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) » — puis ARRÊTE-TOI. " +
-        "INTERDIT : résumer + proposer des variantes de 1er message dans le même message."
+        "INTERDIT : résumer + proposer des variantes / brouillon dans le même message."
       );
     }
 
-    if (!hasThirdPartyQuestionAsked(blob)) {
+    if (!assessment.thirdPartyQuestionAsked) {
       return (
-        "Briefing campagne : pose UNE question optionnelle — « Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, commercial…) sur WhatsApp ? (oui/non) ». " +
+        "Briefing campagne : pose UNE question OBLIGATOIRE — « Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial…) sur WhatsApp ? (oui/non) ». " +
         "Si oui : récupère numéro + rôle + infos (une question à la fois). " +
-        "INTERDIT : proposer des variantes de 1er message avant d'avoir posé la question sur le premier message souhaité."
+        "INTERDIT : create_automation / simulation / variantes tant que cette question n'est pas posée. " +
+        "Ne considère PAS qu'elle est posée juste parce que le brief parle de livraison ou de livreur."
+      );
+    }
+
+    // Closing entrant : pas d'opener sortant — brouillon après stickers + tiers.
+    if (assessment.isInboundClosing) {
+      return (
+        "Campagne closing entrant / support : stickers + notification tiers couverts. " +
+        "Pas de 5 variantes d'opener (le prospect écrit en premier). " +
+        "Crée le brouillon (create_automation draft keyword_sales / inbound_closing) avec trigger_phrases, " +
+        "puis propose une simulation (show_campaign_simulation)."
       );
     }
 

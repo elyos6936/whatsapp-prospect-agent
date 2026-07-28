@@ -604,7 +604,39 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             continue;
           }
 
-          if (!briefing.openerDirectionCollected) {
+          if (!briefing.stickersQuestionAsked) {
+            const block = JSON.stringify({
+              error:
+                "INTERDIT de créer le brouillon avant d'avoir posé la question stickers (oui/non).",
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
+
+          if (!briefing.thirdPartyQuestionAsked) {
+            const block = JSON.stringify({
+              error:
+                "INTERDIT de créer le brouillon avant d'avoir demandé si l'utilisateur veut prévenir un tiers (livreur, associé, commercial…) à la conversion. " +
+                "Pose la question oui/non — ne saute pas cette étape même si le brief parle déjà de livraison.",
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
+
+          // Closing entrant : pas d'opener sortant → skip variantes.
+          if (!briefing.isInboundClosing && !briefing.openerDirectionCollected) {
             const block = JSON.stringify({
               error:
                 "INTERDIT de créer le brouillon avant que l'utilisateur ait indiqué comment il veut aborder le premier message. " +
@@ -620,7 +652,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             continue;
           }
 
-          if (!briefing.openerVariantsProposed) {
+          if (!briefing.isInboundClosing && !briefing.openerVariantsProposed) {
             const block = JSON.stringify({
               error:
                 "INTERDIT de créer le brouillon avant d'avoir proposé les 5 variantes d'accroche dans le chat et d'avoir obtenu le choix de l'utilisateur.",
