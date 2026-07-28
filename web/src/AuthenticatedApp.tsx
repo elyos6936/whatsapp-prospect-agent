@@ -287,7 +287,37 @@ export default function AuthenticatedApp() {
         });
         const { plan } = extractPlanFromText(result.reply);
         if (plan?.nodes?.length) {
-          openStrategy(plan);
+          setStrategyPlan(plan);
+          // N'auto-ouvre que pour une vraie révélation (brouillon / fil de simu),
+          // pas pour un simple update collé dans le chat.
+          const isSimThread = (result.reply.match(/→/g) || []).length >= 2;
+          const isDraftReveal =
+            /brouillon|simulation à droite|est prêt|ouvre la \*\*simulation\*\*/i.test(
+              result.reply,
+            );
+          if (isSimThread || isDraftReveal) {
+            openStrategy(plan);
+          }
+        } else if (activeThreadIdRef.current === threadIdAtSend) {
+          // Modif silencieuse : rafraîchir le plan API sans rouvrir le panneau
+          void (async () => {
+            try {
+              const data = await fetchThreadCampaign(threadIdAtSend);
+              const vp = (
+                data.detail.automation.config as
+                  | { visualPlan?: AutomationVisualPlan }
+                  | undefined
+              )?.visualPlan;
+              if (vp?.nodes?.length) {
+                setStrategyPlan({
+                  ...vp,
+                  automationId: vp.automationId ?? data.detail.automation.id,
+                });
+              }
+            } catch {
+              /* ignore */
+            }
+          })();
         }
         void refreshUser();
         void refreshThreads(threadIdAtSend);

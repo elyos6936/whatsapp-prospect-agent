@@ -10,9 +10,14 @@ import {
   assessCampaignBriefing,
   buildBriefingNudge,
   buildThreadCampaignBlockNudge,
-  wantsCampaignSimulation,
 } from "./campaign-briefing.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
+import {
+  hasSimulationThread,
+  recentHistoryHasSimulation,
+  resolveSimulationTurnMode,
+  shouldBlockDuplicateSimulation,
+} from "./simulation-gate.js";
 import {
   formatVerticalContactList,
   formatVerticalGroupList,
@@ -154,27 +159,6 @@ function isDanglingAnnouncement(text: string): boolean {
   return /[:：]$/u.test(t);
 }
 
-/** Vrai contenu de simulation (fil Toi → / Prospect → ou messages entre guillemets). */
-function hasSimulationThread(text: string): boolean {
-  const arrowTurns = (text.match(/→/g) || []).length;
-  if (arrowTurns >= 2) return true;
-  if (/(^|\n)\s*(toi|moi)\s*→/im.test(text) && /(^|\n)\s*\S{2,}\s*→/im.test(text)) return true;
-  const quotes = text.match(/[«"][^»"\n]{12,}[»"]/g);
-  return Boolean(quotes && quotes.length >= 2);
-}
-
-const SIMULATION_ADJUSTMENT_FOOTER =
-  /Qu'est-ce que tu veux (ajuster|changer)|ce qui te convient|simulation courte/i;
-
-function recentHistoryHasSimulation(history: AgentMessage[]): boolean {
-  for (let i = history.length - 1; i >= 0 && i >= history.length - 8; i--) {
-    const m = history[i];
-    if (m?.role !== "assistant") continue;
-    if (hasSimulationThread(m.content) || SIMULATION_ADJUSTMENT_FOOTER.test(m.content)) return true;
-  }
-  return false;
-}
-
 /** L'utilisateur a explicitement demandé la liste du carnet WhatsApp. */
 function userExplicitlyAskedContactBook(msg: string): boolean {
   const t = msg.trim().toLowerCase();
@@ -190,53 +174,6 @@ function userExplicitlyAskedContactBook(msg: string): boolean {
     !/\b(du|de|dans)\s+(?:le\s+)?groupe\b/i.test(t)
   );
 }
-function isSimulationApproval(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t) return false;
-  if (/\b(modifie|change|ajuste|autre|recommence|refais|retire|enlève|enleve|moins|plus court|plus long)\b/i.test(t)) {
-    return false;
-  }
-  return (
-    /^(c'est bon|c bon|cest bon|ok\.?|parfait\.?|nickel\.?|top\.?|validé\.?|validé|ca me va|ça me va|good|yes|oui\.?)(\s|$|pour|,)/i.test(
-      t
-    ) ||
-    /\b(c'est bon pour moi|ca me convient|ça me convient|rien à changer|pas de changement|comme ça|comme ca)\b/i.test(
-      t
-    )
-  );
-}
-
-function isExplicitActivationConfirm(text: string): boolean {
-  const t = text.trim().toLowerCase();
-  if (!t) return false;
-  if (/\b(non|pas maintenant|plus tard|attends|attendre)\b/i.test(t)) return false;
-  return (
-    /^(oui\.?|ok\.?|yes\.?|vas-?y\.?|go\.?)(\s|$)/i.test(t) ||
-    /\b(lance|lancer|active|activer|active[rz]?|démarre|demarre|go)\b/i.test(t)
-  );
-}
-
-/** L'assistant a déjà demandé si on active la campagne (ou s’il y a d’autres modifs). */
-function recentAssistantAskedActivationConfirm(history: AgentMessage[]): boolean {
-  for (let i = history.length - 1; i >= 0 && i >= history.length - 8; i--) {
-    const m = history[i];
-    if (m.role !== "assistant") continue;
-    if (
-      /veux-tu activer|voulez-vous activer|activer.*maintenant|je (l[’'])?active|tu veux que je l[’']active|autres? modifi|modifications? à faire|je lance|lancer (la )?(campagne|automatisation)/i.test(
-        m.content
-      )
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function userWantsSimulationChange(text: string): boolean {
-  return /\b(modifie|change|ajuste|autre|recommence|refais|ton|accroche|message|relance|plus court|plus long|moins agressif|moins direct)\b/i.test(
-    text
-  );
-}
 
 const ACTIVATION_AFTER_SIMULATION_NUDGE =
   "L'utilisateur a VALIDÉ la simulation (contenu OK). INTERDIT de rappeler show_campaign_simulation. " +
@@ -244,7 +181,8 @@ const ACTIVATION_AFTER_SIMULATION_NUDGE =
   "Étape suivante : dans CE chat, demande clairement s’il veut **activer maintenant** " +
   "ou s’il a encore des **modifications** (accroche, ton, relances…). " +
   "N'appelle activate_automation QUE si l'utilisateur répond clairement oui / lance / active / vas-y. " +
-  "S’il veut des modifs → ajuste via update_automation_config / re-simule, sans re-demander de « Valider » pour rien. " +
+  "S’il veut des modifs → update_automation_config en silence, confirme brièvement, " +
+  "dis qu’il peut **repartir Valider / tester à droite** — INTERDIT de régénérer une simulation. " +
   "Il peut aussi cliquer **Lancer** dans l'en-tête. Activer = simulation déjà validée.";
 
 const CONFIRM_ACTIVATE_NOW_NUDGE =
@@ -263,6 +201,17 @@ const FORCE_SIMULATION_NUDGE =
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
   "la simulation s'affiche dans ce chat et à droite — aucun envoi WhatsApp réel.";
 
+/** Après une simu déjà là : modifs / questions = pas de nouveau fil ni de fenêtre. */
+const SILENT_TWEAK_AFTER_SIM_NUDGE =
+  "Une simulation a DÉJÀ été montrée. L'utilisateur demande une modification ou pose une question. " +
+  "INTERDIT d'appeler show_campaign_simulation. INTERDIT d'écrire un fil Toi → / Prospect →. " +
+  "INTERDIT de coller un planDisplay / fence de plan dans ta réponse. " +
+  "Si modif (ton, accroche, prix, relances, vouvoiement…) → applique via update_automation_config " +
+  "(et initial_message / conversation_guide si besoin), puis confirme en 1–2 phrases courtes : " +
+  "ce qui a changé + « tu peux repartir tester / Valider dans la simulation à droite ». " +
+  "Si question / préoccupation → réponds clairement, sans outil de simulation. " +
+  "Ne rouvre / ne renvoie PAS la fenêtre de simulation.";
+
 /** Outils d'envoi réel — bloqués pendant une demande de simulation. */
 const OUTBOUND_SEND_TOOLS = new Set([
   "send_whatsapp_message",
@@ -279,12 +228,6 @@ const OUTBOUND_SEND_TOOLS = new Set([
   "schedule_whatsapp_message",
   "message_all_group_members",
 ]);
-
-function shouldBlockDuplicateSimulation(history: AgentMessage[], userMessage: string): boolean {
-  if (!recentHistoryHasSimulation(history)) return false;
-  if (userWantsSimulationChange(userMessage)) return false;
-  return true;
-}
 
 /**
  * Détecte une annonce de simulation / aperçu de conversation SANS le fil.
@@ -476,9 +419,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
   const briefing = assessCampaignBriefing(history, userMessage);
   const hasSimAlready = recentHistoryHasSimulation(history);
-  const forceSim =
-    wantsCampaignSimulation(userMessage, history) &&
-    (!hasSimAlready || userWantsSimulationChange(userMessage));
+  const turnMode = resolveSimulationTurnMode(history, userMessage);
+  const forceSim = turnMode === "force_sim";
+  const silentTweakAfterSim = turnMode === "silent_tweak";
 
   // Chemin fiable : simu sans tools / sans tool_choice (DeepSeek v4 thinking = 400 sinon).
   if (forceSim) {
@@ -499,15 +442,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
   if (forceSim) {
     messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
-  } else if (
-    hasSimAlready &&
-    recentAssistantAskedActivationConfirm(history) &&
-    isExplicitActivationConfirm(userMessage)
-  ) {
+  } else if (silentTweakAfterSim) {
+    messages.push({ role: "system", content: SILENT_TWEAK_AFTER_SIM_NUDGE });
+  } else if (turnMode === "activation_confirm") {
     messages.push({ role: "system", content: CONFIRM_ACTIVATE_NOW_NUDGE });
-  } else if (isSimulationApproval(userMessage) && hasSimAlready) {
+  } else if (turnMode === "activation_nudge") {
     messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
-  } else if (!hasSimAlready) {
+  } else if (!recentHistoryHasSimulation(history)) {
     const nudge = buildBriefingNudge(briefing);
     if (nudge) messages.push({ role: "system", content: nudge });
   }
@@ -630,15 +571,21 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           shouldBlockDuplicateSimulation(history, userMessage)
         ) {
           result = JSON.stringify({
-            error:
-              "Simulation déjà affichée. Ne la répète pas : résume et demande dans ce chat s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
+            error: silentTweakAfterSim
+              ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler) et confirme brièvement : l'utilisateur peut repartir Valider à droite."
+              : "Simulation déjà affichée. Ne la répète pas : résume et demande dans ce chat s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
           });
           messages.push({
             role: "tool",
             tool_call_id: toolCall.id,
             content: result,
           });
-          messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
+          messages.push({
+            role: "system",
+            content: silentTweakAfterSim
+              ? SILENT_TWEAK_AFTER_SIM_NUDGE
+              : ACTIVATION_AFTER_SIMULATION_NUDGE,
+          });
           continue;
         }
 
@@ -723,11 +670,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           }
         }
 
-        // Après create/update : forcer l'affichage du plan graphique (sans toucher persona)
-        if (
-          toolCall.function.name === "create_automation" ||
-          toolCall.function.name === "update_automation_config"
-        ) {
+        // Après create : afficher le plan (ouvre la simu à droite).
+        // Après update : NE PAS coller planDisplay — laisse l'IA confirmer brièvement
+        // sans re-spammer la fenêtre de simulation.
+        if (toolCall.function.name === "create_automation") {
           try {
             const parsed = JSON.parse(result) as {
               success?: boolean;

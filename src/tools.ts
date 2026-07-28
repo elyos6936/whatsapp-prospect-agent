@@ -1734,7 +1734,10 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "show_campaign_simulation",
       description:
-        "OBLIGATOIRE dès que l'utilisateur accepte une simulation. Affiche un fil de 6 ou 7 messages dans le chat agent — aucun envoi WhatsApp. Le 1er message « toi » = accroche A.I.D.A. Attention (sans prix/lien). Après affichage, demande TOUJOURS ce qu'il veut changer ou garder. Ne jamais annoncer « Voici comment… : » sans cet outil.",
+        "À appeler quand l'utilisateur accepte/demande une simulation (1ʳᵉ fois), ou demande EXPLICITEMENT de la refaire. " +
+        "INTERDIT après une simu déjà montrée si l'utilisateur ne fait qu'une modif (ton, accroche…) ou pose une question — dans ce cas update_automation_config + confirmation courte. " +
+        "Affiche un fil de 6 ou 7 messages dans le chat agent — aucun envoi WhatsApp. Le 1er message « toi » = accroche A.I.D.A. Attention (sans prix/lien). " +
+        "Après affichage, demande ce qu'il veut changer ou garder. Ne jamais annoncer « Voici comment… : » sans cet outil.",
       parameters: {
         type: "object",
         properties: {
@@ -4242,13 +4245,12 @@ export async function executeTool(
         automationId: id,
         config: updated?.config,
         plan,
-        planDisplay: plan
-          ? formatPlanDisplay(
-              plan,
-              `« ${detail.automation.name} » mis à jour. Relance la **simulation** à droite pour vérifier les réponses.`
-            )
-          : undefined,
-        message: `Campagne « ${detail.automation.name} » mise à jour${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}.`,
+        // Pas de planDisplay : évite de re-coller le fence / rouvrir la simulation à chaque tweak.
+        message:
+          `Campagne « ${detail.automation.name} » mise à jour` +
+          `${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}. ` +
+          `Confirme brièvement le changement à l'utilisateur et dis qu'il peut repartir tester / Valider ` +
+          `dans la simulation à droite — SANS rappeler show_campaign_simulation ni coller un plan.`,
       });
     }
 
