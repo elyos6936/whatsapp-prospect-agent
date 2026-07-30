@@ -542,6 +542,19 @@ table.data a {
   margin-top: 12px;
 }
 
+.actions-page-nav {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.actions-help {
+  color: var(--text-500);
+  font-size: 13px;
+  margin-top: 0;
+}
+
 .msg-list {
   display: flex;
   flex-direction: column;

@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ActivityChart, type ActivityPoint } from "./ActivityChart";
 import { api, ApiError } from "./api";
@@ -42,7 +42,7 @@ type Detail = {
   activitySeries: ActivityPoint[];
 };
 
-type Tab = "compte" | "campagnes" | "actions";
+type Tab = "compte" | "campagnes";
 
 const CAMPAGNE_STATUT: Record<string, string> = {
   active: "Active",
@@ -64,13 +64,6 @@ export function UserDetailPage() {
   const [tab, setTab] = useState<Tab>("compte");
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [flash, setFlash] = useState<string | null>(null);
-  const [confirm, setConfirm] = useState<{
-    title: string;
-    body: string;
-    run: () => Promise<void>;
-  } | null>(null);
 
   const reload = useCallback(() => {
     if (!Number.isFinite(userId)) return;
@@ -85,21 +78,6 @@ export function UserDetailPage() {
   useEffect(() => {
     reload();
   }, [reload]);
-
-  async function runAction(label: string, fn: () => Promise<unknown>) {
-    setBusy(true);
-    setFlash(null);
-    try {
-      await fn();
-      setFlash(label);
-      reload();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Action échouée");
-    } finally {
-      setBusy(false);
-      setConfirm(null);
-    }
-  }
 
   if (!Number.isFinite(userId)) {
     return <div className="content error-inline">Identifiant invalide</div>;
@@ -123,18 +101,6 @@ export function UserDetailPage() {
       </header>
       <div className="content">
         {error ? <div className="error-banner">{error}</div> : null}
-        {flash ? (
-          <div
-            className="error-banner"
-            style={{
-              background: "#ecfdf5",
-              borderColor: "#a7f3d0",
-              color: "#047857",
-            }}
-          >
-            {flash}
-          </div>
-        ) : null}
         {!detail && !error ? <div className="loading">Chargement…</div> : null}
         {detail ? (
           <>
@@ -143,7 +109,6 @@ export function UserDetailPage() {
                 [
                   ["compte", "Compte"],
                   ["campagnes", "Campagnes"],
-                  ["actions", "Actions"],
                 ] as const
               ).map(([key, label]) => (
                 <button
@@ -159,66 +124,9 @@ export function UserDetailPage() {
 
             {tab === "compte" ? <CompteTab detail={detail} /> : null}
             {tab === "campagnes" ? <CampagnesTab detail={detail} /> : null}
-            {tab === "actions" ? (
-              <ActionsTab
-                detail={detail}
-                busy={busy}
-                onConfirm={(c) => {
-                  if (!c) {
-                    setConfirm(null);
-                    return;
-                  }
-                  setConfirm({
-                    title: c.title,
-                    body: c.body,
-                    run: async () => {
-                      await runAction(c.title, c.run);
-                    },
-                  });
-                }}
-                onSaveSubscription={async (body) => {
-                  await runAction("Abonnement mis à jour", () =>
-                    api(`/api/admin/users/${userId}/subscription`, {
-                      method: "PATCH",
-                      body: JSON.stringify(body),
-                    })
-                  );
-                }}
-                onSaveOutreach={async (body) => {
-                  await runAction("Niveau mis à jour", () =>
-                    api(`/api/admin/users/${userId}/outreach`, {
-                      method: "PATCH",
-                      body: JSON.stringify(body),
-                    })
-                  );
-                }}
-              />
-            ) : null}
           </>
         ) : null}
       </div>
-
-      {confirm ? (
-        <div className="modal-backdrop" role="presentation">
-          <div className="modal" role="dialog">
-            <h3>{confirm.title}</h3>
-            <p>{confirm.body}</p>
-            <div className="modal-actions">
-              <button className="btn btn-ghost" type="button" onClick={() => setConfirm(null)}>
-                Annuler
-              </button>
-              <button
-                className="btn btn-danger"
-                type="button"
-                disabled={busy}
-                onClick={() => void confirm.run()}
-              >
-                Confirmer
-              </button>
-            </div>
-          </div>
-        </div>
-      ) : null}
     </>
   );
 }
@@ -320,6 +228,20 @@ function CompteTab({ detail }: { detail: Detail }) {
           <div className="v">{detail.messages.derniers7j}</div>
         </div>
       </div>
+      <div className="detail-card">
+        <h3>Actions admin</h3>
+        <p className="actions-help">
+          Les actions sont maintenant separees en deux pages pour plus de clarte.
+        </p>
+        <div className="actions-row">
+          <Link className="btn btn-primary" to={`/users/${u.id}/subscription`}>
+            Ouvrir Abonnement
+          </Link>
+          <Link className="btn btn-ghost" to={`/users/${u.id}/account-management`}>
+            Ouvrir Gestion compte
+          </Link>
+        </div>
+      </div>
     </div>
     </>
   );
@@ -356,242 +278,6 @@ function CampagnesTab({ detail }: { detail: Detail }) {
             ))}
           </tbody>
         </table>
-      </div>
-    </div>
-  );
-}
-
-function ActionsTab({
-  detail,
-  busy,
-  onConfirm,
-  onSaveSubscription,
-  onSaveOutreach,
-}: {
-  detail: Detail;
-  busy: boolean;
-  onConfirm: (c: { title: string; body: string; run: () => Promise<unknown> } | null) => void;
-  onSaveSubscription: (body: Record<string, unknown>) => Promise<void>;
-  onSaveOutreach: (body: Record<string, unknown>) => Promise<void>;
-}) {
-  const userId = detail.user.id;
-  const [status, setStatus] = useState(detail.user.subscriptionStatus);
-  const [level, setLevel] = useState(String(detail.user.outreachLevel));
-  const [totalSent, setTotalSent] = useState(String(detail.user.totalMessagesSent));
-
-  useEffect(() => {
-    setStatus(detail.user.subscriptionStatus);
-    setLevel(String(detail.user.outreachLevel));
-    setTotalSent(String(detail.user.totalMessagesSent));
-  }, [detail]);
-
-  function onSub(e: FormEvent) {
-    e.preventDefault();
-    void onSaveSubscription({
-      status,
-      outreachLevel: Number(level),
-    });
-  }
-
-  function onOut(e: FormEvent) {
-    e.preventDefault();
-    void onSaveOutreach({
-      outreachLevel: Number(level),
-      totalMessagesSent: Number(totalSent),
-    });
-  }
-
-  return (
-    <div className="grid-2">
-      <form className="detail-card" onSubmit={onSub}>
-        <h3>Abonnement</h3>
-        <div className="field">
-          <label htmlFor="st">Statut</label>
-          <select id="st" value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="active">Actif</option>
-            <option value="trial">Essai</option>
-            <option value="expired">Expiré</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="lv">Niveau</label>
-          <select id="lv" value={level} onChange={(e) => setLevel(e.target.value)}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={String(n)}>
-                Niveau {n}
-              </option>
-            ))}
-          </select>
-        </div>
-        <button className="btn btn-primary" type="submit" disabled={busy}>
-          Enregistrer
-        </button>
-      </form>
-
-      <form className="detail-card" onSubmit={onOut}>
-        <h3>Compteur lifetime</h3>
-        <div className="field">
-          <label htmlFor="tot">Messages envoyés (total)</label>
-          <input
-            id="tot"
-            type="number"
-            min={0}
-            value={totalSent}
-            onChange={(e) => setTotalSent(e.target.value)}
-          />
-        </div>
-        <button className="btn btn-primary" type="submit" disabled={busy}>
-          Mettre à jour
-        </button>
-      </form>
-
-      <div className="detail-card">
-        <h3>1) Contrôle des envois</h3>
-        <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
-          Actions rapides sur l’activité WhatsApp. Confirmation obligatoire.
-        </p>
-        <div className="actions-row">
-          <button
-            className="btn btn-warn"
-            type="button"
-            disabled={busy || Boolean(detail.user.deletedAt)}
-            onClick={() =>
-              onConfirm({
-                title: "Mettre les campagnes en pause",
-                body: "Toutes les campagnes actives de ce compte seront mises en pause.",
-                run: () =>
-                  api(`/api/admin/users/${userId}/pause-automations`, { method: "POST" }),
-              })
-            }
-          >
-            Pause des campagnes
-          </button>
-          <button
-            className="btn btn-danger"
-            type="button"
-            disabled={busy || Boolean(detail.user.deletedAt)}
-            onClick={() =>
-              onConfirm({
-                title: "Couper tous les envois",
-                body: "Mise en pause des campagnes, annulation des envois en attente, et réponses auto désactivées.",
-                run: () => api(`/api/admin/users/${userId}/stop-outbound`, { method: "POST" }),
-              })
-            }
-          >
-            Couper tous les envois
-          </button>
-          <button
-            className="btn btn-ghost"
-            type="button"
-            disabled={busy || Boolean(detail.user.deletedAt)}
-            onClick={() =>
-              onConfirm({
-                title: detail.autoReply ? "Couper les réponses auto" : "Activer les réponses auto",
-                body: detail.autoReply
-                  ? "Le compte ne répondra plus automatiquement."
-                  : "Le compte pourra répondre automatiquement.",
-                run: () =>
-                  api(`/api/admin/users/${userId}/set-auto-reply`, {
-                    method: "POST",
-                    body: JSON.stringify({ enabled: !detail.autoReply }),
-                  }),
-              })
-            }
-          >
-            {detail.autoReply ? "Désactiver réponses auto" : "Activer réponses auto"}
-          </button>
-        </div>
-      </div>
-
-      <div className="detail-card">
-        <h3>2) État du compte</h3>
-        <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
-          Suspendre bloque la connexion client + stoppe l’activité (réversible).
-        </p>
-        <div className="actions-row">
-          {detail.user.deletedAt ? (
-            <span style={{ color: "var(--text-500)", fontSize: 13 }}>
-              Compte soft-supprimé le {formatDate(detail.user.deletedAt)}.
-            </span>
-          ) : detail.user.accountStatus === "suspended" ? (
-            <button
-              className="btn btn-primary"
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                onConfirm({
-                  title: "Réactiver le compte",
-                  body: "Le compte pourra à nouveau se connecter. Les campagnes restent en pause jusqu’à reprise manuelle.",
-                  run: () => api(`/api/admin/users/${userId}/unsuspend`, { method: "POST" }),
-                })
-              }
-            >
-              Réactiver (unsuspend)
-            </button>
-          ) : (
-            <button
-              className="btn btn-warn"
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                onConfirm({
-                  title: "Suspendre le compte",
-                  body: "Login client bloqué, campagnes en pause, file annulée, réponses auto coupées. Réversible.",
-                  run: () =>
-                    api(`/api/admin/users/${userId}/suspend`, {
-                      method: "POST",
-                      body: JSON.stringify({ reason: "Suspendu par admin" }),
-                    }),
-                })
-              }
-            >
-              Suspendre
-            </button>
-          )}
-          {!detail.user.deletedAt ? (
-            <button
-              className="btn btn-ghost"
-              type="button"
-              disabled={busy}
-              onClick={() =>
-                onConfirm({
-                  title: "Soft-supprimer le compte",
-                  body: "Anonymise l’email, coupe toute activité, bloque la connexion. Pas de suppression physique des données.",
-                  run: () => api(`/api/admin/users/${userId}/soft-delete`, { method: "POST" }),
-                })
-              }
-            >
-              Soft-supprimer
-            </button>
-          ) : null}
-        </div>
-        <p style={{ color: "var(--text-500)", fontSize: 12, marginTop: 10 }}>
-          Soft-delete = le compte reste en base mais devient inutilisable (email anonymisé, connexion bloquée,
-          activité stoppée). Utile pour archivage / conformité.
-        </p>
-      </div>
-
-      <div className="detail-card" style={{ borderColor: "#fecaca", background: "#fffafa" }}>
-        <h3>3) Suppression définitive (DB)</h3>
-        <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
-          Efface réellement le compte et ses données liées de la base. Action irréversible.
-        </p>
-        <div className="actions-row">
-          <button
-            className="btn btn-danger"
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              onConfirm({
-                title: "Supprimer définitivement le compte",
-                body: "Suppression physique irréversible: compte + données liées. Cette action ne peut pas être annulée.",
-                run: () => api(`/api/admin/users/${userId}`, { method: "DELETE" }),
-              })
-            }
-          >
-            Supprimer définitivement
-          </button>
-        </div>
       </div>
     </div>
   );

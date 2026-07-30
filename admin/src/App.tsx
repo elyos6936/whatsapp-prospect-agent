@@ -4,7 +4,9 @@ import { AuditPage } from "./AuditPage";
 import { LoginPage } from "./LoginPage";
 import { OverviewPage } from "./OverviewPage";
 import { Shell } from "./Shell";
+import { UserAccountManagementPage } from "./UserAccountManagementPage";
 import { UserDetailPage } from "./UserDetailPage";
+import { UserSubscriptionActionsPage } from "./UserSubscriptionActionsPage";
 import { UsersPage } from "./UsersPage";
 
 function RequireAuth({ children }: { children: React.ReactNode }) {
@@ -30,6 +32,8 @@ export function App() {
           <Route index element={<OverviewPage />} />
           <Route path="users" element={<UsersPage />} />
           <Route path="users/:id" element={<UserDetailPage />} />
+          <Route path="users/:id/subscription" element={<UserSubscriptionActionsPage />} />
+          <Route path="users/:id/account-management" element={<UserAccountManagementPage />} />
           <Route path="audit" element={<AuditPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
