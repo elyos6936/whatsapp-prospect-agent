@@ -414,6 +414,35 @@ export async function saveBusinessProfile(body: {
   });
 }
 
+export async function createMoneyFusionCheckout(body: {
+  planId: 'starter' | 'pro' | 'business';
+  billingPeriod: 'monthly' | 'annual';
+  customerPhone: string;
+}): Promise<{ ok: true; checkoutUrl: string; token: string }> {
+  return request('/api/billing/moneyfusion/checkout', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function verifyMoneyFusionPayment(token?: string): Promise<{
+  ok: true;
+  payment: {
+    token: string;
+    checkoutUrl: string;
+    planId: 'starter' | 'pro' | 'business';
+    billingPeriod: 'monthly' | 'annual';
+    amountEur: number;
+    customerPhone: string;
+    status: 'pending' | 'paid' | 'cancelled' | 'failed';
+    paidAt: string | null;
+    updatedAt: string;
+  };
+}> {
+  const qs = token ? `?token=${encodeURIComponent(token)}` : '';
+  return request(`/api/billing/moneyfusion/verify${qs}`);
+}
+
 export type IntegrationStatus = {
   provider: string;
   connected: boolean;

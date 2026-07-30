@@ -7,9 +7,11 @@ import {
   Unplug,
 } from 'lucide-react';
 import {
+  createMoneyFusionCheckout,
   disconnectWhatsApp,
   fetchSettings,
   setAutoReply,
+  verifyMoneyFusionPayment,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { cn } from '@/lib/utils';
@@ -105,7 +107,10 @@ function clearIntegrationQueryParams() {
     if (
       !url.searchParams.has('settings') &&
       !url.searchParams.has('typeform') &&
-      !url.searchParams.has('google')
+      !url.searchParams.has('google') &&
+      !url.searchParams.has('provider') &&
+      !url.searchParams.has('token') &&
+      !url.searchParams.has('tokenPay')
     ) {
       return;
     }
@@ -113,9 +118,22 @@ function clearIntegrationQueryParams() {
     url.searchParams.delete('typeform');
     url.searchParams.delete('google');
     url.searchParams.delete('message');
+    url.searchParams.delete('provider');
+    url.searchParams.delete('token');
+    url.searchParams.delete('tokenPay');
     window.history.replaceState({}, '', url.pathname + url.search + url.hash);
   } catch {
     /* ignore */
+  }
+}
+
+function readMoneyFusionReturnToken(): string | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('provider') !== 'moneyfusion') return null;
+    return params.get('token') || params.get('tokenPay');
+  } catch {
+    return null;
   }
 }
 
@@ -133,6 +151,7 @@ export function SettingsPage() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingPlan, setBillingPlan] = useState<PlanId>('pro');
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>('monthly');
+  const [billingPhone, setBillingPhone] = useState('');
 
   const [disconnecting, setDisconnecting] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -159,14 +178,48 @@ export function SettingsPage() {
 
   useEffect(() => {
     // Nettoyer l’URL après lecture du flash OAuth
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('provider') === 'moneyfusion') return;
     if (
       typeformFlash ||
       googleFlash ||
-      new URLSearchParams(window.location.search).get('settings')
+      params.get('settings')
     ) {
       clearIntegrationQueryParams();
     }
   }, [typeformFlash, googleFlash]);
+
+  useEffect(() => {
+    const token = readMoneyFusionReturnToken();
+    if (!token) return;
+    setTab('billing');
+    setBillingBusy(true);
+    setBillingNote('Verification du paiement MoneyFusion en cours...');
+    void verifyMoneyFusionPayment(token)
+      .then((res) => {
+        if (res.payment.status === 'paid') {
+          setBillingNote('Paiement confirme. Ton abonnement est maintenant actif.');
+          void refreshUser();
+          return;
+        }
+        if (res.payment.status === 'pending') {
+          setBillingNote('Paiement en attente de confirmation. Reessaye dans quelques secondes.');
+          return;
+        }
+        if (res.payment.status === 'cancelled') {
+          setBillingNote('Paiement annule. Tu peux relancer le paiement.');
+          return;
+        }
+        setBillingNote('Paiement non valide. Verifie puis relance.');
+      })
+      .catch((err) => {
+        setBillingNote(err instanceof Error ? err.message : 'Impossible de verifier le paiement.');
+      })
+      .finally(() => {
+        setBillingBusy(false);
+        clearIntegrationQueryParams();
+      });
+  }, [refreshUser]);
 
   const toggleAutoReply = useCallback(async () => {
     const next = !autoReplyOn;
@@ -403,14 +456,29 @@ export function SettingsPage() {
                 type="button"
                 disabled={billingBusy}
                 onClick={() => {
+                  const cleanPhone = billingPhone.trim();
+                  if (cleanPhone.replace(/\D/g, '').length < 8) {
+                    setBillingNote('Entre un numero valide (minimum 8 chiffres) pour payer.');
+                    return;
+                  }
                   setBillingBusy(true);
                   setBillingNote(null);
-                  window.setTimeout(() => {
-                    setBillingBusy(false);
-                    setBillingNote(
-                      'Le paiement sera bientôt disponible. L’API de paiement sera branchée ici.',
-                    );
-                  }, 450);
+                  void createMoneyFusionCheckout({
+                    planId: billingPlan,
+                    billingPeriod,
+                    customerPhone: cleanPhone,
+                  })
+                    .then((res) => {
+                      window.location.href = res.checkoutUrl;
+                    })
+                    .catch((err) => {
+                      setBillingNote(
+                        err instanceof Error ? err.message : 'Impossible de demarrer le paiement.',
+                      );
+                    })
+                    .finally(() => {
+                      setBillingBusy(false);
+                    });
                 }}
                 className="inline-flex w-full max-w-full items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-60"
               >
@@ -421,6 +489,19 @@ export function SettingsPage() {
                     : `Continuer — ${formatEuro(planPrice(getPlan(billingPlan), billingPeriod))}${periodSuffix(billingPeriod)}`}
                 </span>
               </button>
+
+              <label className="block">
+                <span className="mb-1 block text-xs text-text-400">
+                  Numero Mobile Money (MoneyFusion)
+                </span>
+                <input
+                  type="tel"
+                  value={billingPhone}
+                  onChange={(e) => setBillingPhone(e.target.value)}
+                  placeholder="Ex: 0700000000"
+                  className="w-full rounded-xl border border-black/10 bg-bg-0 px-3 py-2 text-sm text-text-100 outline-none transition focus:border-brand"
+                />
+              </label>
 
               {billingNote && (
                 <p className="break-words rounded-xl border border-brand/20 bg-brand/5 px-3 py-2.5 text-xs leading-relaxed text-text-400">

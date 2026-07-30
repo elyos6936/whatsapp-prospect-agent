@@ -183,6 +183,12 @@ export const config = {
   adminPassword: process.env.ADMIN_PASSWORD?.trim() || "",
   /** Optionnel : bcrypt hash ; prioritaire sur ADMIN_PASSWORD si défini. */
   adminPasswordHash: process.env.ADMIN_PASSWORD_HASH?.trim() || "",
+  /** URL API MoneyFusion (lien application généré dans leur console). */
+  moneyFusionApiUrl: process.env.MONEYFUSION_API_URL?.trim() || "",
+  /** URL de vérification d'un paiement : `${base}/{token}`. */
+  moneyFusionVerifyBaseUrl:
+    (process.env.MONEYFUSION_VERIFY_BASE_URL?.trim() ||
+      "https://www.pay.moneyfusion.net/paiementNotif").replace(/\/$/, ""),
 } as const;
 
 /**

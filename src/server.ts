@@ -51,6 +51,7 @@ import { registerEvolutionRoutes } from "./evolution-routes.js";
 import { registerAutomationRoutes } from "./automation-routes.js";
 import { registerFeatureRoutes } from "./feature-routes.js";
 import { registerIntegrationRoutes } from "./integration-routes.js";
+import { registerBillingRoutes } from "./billing-routes.js";
 import { startAutomationEngine } from "./automation-engine.js";
 import { processSendQueue } from "./send-queue.js";
 import { processDueSequences } from "./sequences.js";
@@ -702,6 +703,7 @@ await registerEvolutionRoutes(app);
 await registerAutomationRoutes(app);
 await registerFeatureRoutes(app);
 await registerIntegrationRoutes(app);
+await registerBillingRoutes(app);
 
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });

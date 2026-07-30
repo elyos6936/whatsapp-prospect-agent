@@ -8,6 +8,7 @@ const PUBLIC_PREFIXES = [
   "/api/auth/",
   "/api/admin/auth/login",
   "/api/evolution/webhook",
+  "/api/billing/moneyfusion/webhook",
   "/api/integrations/typeform/callback",
   "/api/integrations/google/callback",
 ];
