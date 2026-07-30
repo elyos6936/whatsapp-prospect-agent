@@ -16,11 +16,21 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "🚀 Déploiement Klanvio → $SSH:$APP_DIR"
 
+# Build panneau ops (artefacts → public/ops)
+echo "📦 Build admin /ops…"
+(
+  cd "$ROOT_DIR/admin"
+  npm install
+  npm run build
+)
+
 rsync -avz --delete \
   --exclude node_modules \
+  --exclude admin/node_modules \
   --exclude data \
   --exclude .env \
   --exclude .git \
+  --exclude web/node_modules \
   "$ROOT_DIR/" "$SSH:$APP_DIR/"
 
 ssh "$SSH" bash -s <<EOF
@@ -37,7 +47,9 @@ fi
 pm2 startOrReload deploy/hostinger/ecosystem.config.cjs
 pm2 save
 echo "✅ Klanvio API sur le port 3001"
+echo "📌 Ops UI : \$PUBLIC_URL/ops (ADMIN_EMAIL / ADMIN_PASSWORD dans .env)"
 EOF
 
 echo "📌 Configurez Nginx (deploy/hostinger/nginx-klanvio.conf) puis certbot si HTTPS requis."
-echo "📌 Netlify: KLANVIO_API_URL=https://klanvio-api.srv1820011.hstgr.cloud"
+echo "📌 Ops : https://api.klanvio.com/ops — variables ADMIN_EMAIL + ADMIN_PASSWORD"
+echo "📌 Netlify/Vercel: ne doit PAS exposer /ops"

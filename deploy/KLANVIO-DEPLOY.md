@@ -237,6 +237,20 @@ Vérifiez `CORS_ORIGINS` dans le `.env` du VPS (doit inclure `https://www.klanvi
 
 ---
 
+## Panneau ops (Hostinger uniquement)
+
+UI privée : **`https://api.klanvio.com/ops`** (ou `https://klanvio-api.srv1820011.hstgr.cloud/ops`).
+
+- **Pas** sur `www.klanvio.com` / Vercel
+- Auth séparée via `.env` Hostinger : `ADMIN_EMAIL` + `ADMIN_PASSWORD` (ou `ADMIN_PASSWORD_HASH`)
+- JWT admin 8h, journal `admin_audit_log`
+- Build local avant deploy : `cd admin && npm install && npm run build` → `public/ops/`
+- `npm run deploy:hostinger` build l’admin automatiquement
+
+Après premier deploy : renseigner `ADMIN_*` dans `/opt/klanvio/.env`, `pm2 reload`, recharger nginx si besoin.
+
+---
+
 ## Commandes utiles
 
 ```powershell
@@ -252,4 +266,7 @@ npm run deploy:netlify
 
 # Backend (Linux / Git Bash)
 npm run deploy:hostinger
+
+# Panneau ops (build seul)
+npm run build:ops
 ```

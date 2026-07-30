@@ -178,6 +178,11 @@ export const config = {
   envOpenAiKey: resolveLlmApiKey(),
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),
   envEvolutionApiKey: process.env.EVOLUTION_API_KEY?.trim() || "",
+  /** Compte ops Hostinger — séparé des comptes clients. */
+  adminEmail: process.env.ADMIN_EMAIL?.trim().toLowerCase() || "",
+  adminPassword: process.env.ADMIN_PASSWORD?.trim() || "",
+  /** Optionnel : bcrypt hash ; prioritaire sur ADMIN_PASSWORD si défini. */
+  adminPasswordHash: process.env.ADMIN_PASSWORD_HASH?.trim() || "",
 } as const;
 
 /**

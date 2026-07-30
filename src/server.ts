@@ -46,6 +46,7 @@ import { startNotificationPoller, getWhatsappPollHealth, handleEvolutionWebhook,
 import { startScheduler } from "./scheduler.js";
 import { registerAuth, requireUserId } from "./auth.js";
 import { registerAuthRoutes } from "./auth-routes.js";
+import { registerAdminRoutes } from "./admin-routes.js";
 import { registerEvolutionRoutes } from "./evolution-routes.js";
 import { registerAutomationRoutes } from "./automation-routes.js";
 import { registerFeatureRoutes } from "./feature-routes.js";
@@ -108,11 +109,37 @@ await app.register(fastifyStatic, {
 
 await registerAuth(app);
 await registerAuthRoutes(app);
+await registerAdminRoutes(app);
 
 app.get("/", async (_request, reply) => {
   return reply.sendFile("index.html");
 });
 
+/** SPA ops — fallback index pour /ops et /ops/* (hors assets). */
+app.get("/ops", async (_request, reply) => {
+  reply.header("X-Robots-Tag", "noindex, nofollow");
+  return reply.sendFile("ops/index.html");
+});
+app.get("/ops/", async (_request, reply) => {
+  reply.header("X-Robots-Tag", "noindex, nofollow");
+  return reply.sendFile("ops/index.html");
+});
+app.get("/ops/*", async (request, reply) => {
+  reply.header("X-Robots-Tag", "noindex, nofollow");
+  const urlPath = (request.url.split("?")[0] ?? "").replace(/^\/ops\/?/, "");
+  if (urlPath && /\.[a-zA-Z0-9]+$/.test(urlPath)) {
+    return reply.callNotFound();
+  }
+  return reply.sendFile("ops/index.html");
+});
+
+app.addHook("onSend", async (request, reply, payload) => {
+  const path = request.url.split("?")[0] ?? "";
+  if (path.startsWith("/ops") || path.startsWith("/api/admin")) {
+    reply.header("X-Robots-Tag", "noindex, nofollow");
+  }
+  return payload;
+});
 app.get("/api/health", async () => {
   return {
     ok: true,
