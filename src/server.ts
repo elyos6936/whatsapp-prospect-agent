@@ -115,7 +115,7 @@ app.get("/", async (_request, reply) => {
   return reply.sendFile("index.html");
 });
 
-/** SPA ops — fallback index pour /ops et /ops/* (hors assets). */
+/** SPA ops — fallback index pour /ops et /ops/* ; assets servis explicitement (sinon 404). */
 app.get("/ops", async (_request, reply) => {
   reply.header("X-Robots-Tag", "noindex, nofollow");
   return reply.sendFile("ops/index.html");
@@ -127,8 +127,9 @@ app.get("/ops/", async (_request, reply) => {
 app.get("/ops/*", async (request, reply) => {
   reply.header("X-Robots-Tag", "noindex, nofollow");
   const urlPath = (request.url.split("?")[0] ?? "").replace(/^\/ops\/?/, "");
-  if (urlPath && /\.[a-zA-Z0-9]+$/.test(urlPath)) {
-    return reply.callNotFound();
+  // La route catch-all prime sur @fastify/static : il faut servir les fichiers ici.
+  if (urlPath && !urlPath.includes("..") && /\.[a-zA-Z0-9]+$/.test(urlPath)) {
+    return reply.sendFile(`ops/${urlPath}`);
   }
   return reply.sendFile("ops/index.html");
 });
