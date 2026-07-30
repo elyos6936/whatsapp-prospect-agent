@@ -242,12 +242,23 @@ Vérifiez `CORS_ORIGINS` dans le `.env` du VPS (doit inclure `https://www.klanvi
 UI privée : **`https://api.klanvio.com/ops`** (ou `https://klanvio-api.srv1820011.hstgr.cloud/ops`).
 
 - **Pas** sur `www.klanvio.com` / Vercel
-- Auth séparée via `.env` Hostinger : `ADMIN_EMAIL` + `ADMIN_PASSWORD` (ou `ADMIN_PASSWORD_HASH`)
+- Auth **uniquement** via le `.env` du process API sur le VPS (`/opt/klanvio/.env`) — pas via un autre panel (Railway, etc.)
 - JWT admin 8h, journal `admin_audit_log`
-- Build local avant deploy : `cd admin && npm install && npm run build` → `public/ops/`
+- Build : `npm run build:ops` → `public/ops/`
 - `npm run deploy:hostinger` build l’admin automatiquement
 
-Après premier deploy : renseigner `ADMIN_*` dans `/opt/klanvio/.env`, `pm2 reload`, recharger nginx si besoin.
+```bash
+# Sur le VPS
+cd /opt/klanvio
+nano .env   # ajouter (guillemets si caractères spéciaux) :
+# ADMIN_EMAIL=admin@klanvio.com
+# ADMIN_PASSWORD='votre-mot-de-passe'
+pm2 startOrReload deploy/hostinger/ecosystem.config.cjs --update-env
+# ou :
+pm2 reload klanvio-api --update-env
+```
+
+Vérifier que le process voit les vars : `pm2 env <id> | grep ADMIN` (sans afficher le mot de passe en chat).
 
 ---
 

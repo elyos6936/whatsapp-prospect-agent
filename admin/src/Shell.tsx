@@ -1,6 +1,8 @@
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "./auth";
 
+const LOGO = "https://www.klanvio.com/brand/logo-icon.png";
+
 export function Shell() {
   const { email, logout } = useAuth();
   const navigate = useNavigate();
@@ -9,8 +11,11 @@ export function Shell() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <strong>Klanvio Ops</strong>
-          <span>Hostinger · privé</span>
+          <img src={LOGO} alt="" width={28} height={28} />
+          <div>
+            <strong>Klanvio Ops</strong>
+            <span>Console privée</span>
+          </div>
         </div>
         <nav className="nav">
           <NavLink to="/" end>

@@ -3,6 +3,8 @@ import { Navigate } from "react-router-dom";
 import { ApiError } from "./api";
 import { useAuth } from "./auth";
 
+const LOGO = "https://www.klanvio.com/brand/logo-icon.png";
+
 export function LoginPage() {
   const { email, loading, login } = useAuth();
   const [mail, setMail] = useState("");
@@ -28,8 +30,11 @@ export function LoginPage() {
   return (
     <div className="login-page">
       <form className="login-card" onSubmit={onSubmit}>
-        <h1>Klanvio Ops</h1>
-        <p className="sub">Console privée — accès Hostinger uniquement</p>
+        <div className="login-brand">
+          <img src={LOGO} alt="" width={28} height={28} />
+          <h1>Klanvio Ops</h1>
+        </div>
+        <p className="sub">Console privée — API Hostinger uniquement</p>
         {error ? <div className="error-banner">{error}</div> : null}
         <div className="field">
           <label htmlFor="email">Email</label>

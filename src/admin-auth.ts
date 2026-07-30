@@ -1,8 +1,10 @@
 /**
  * Auth panneau ops (/ops) — compte séparé via env, JWT role=admin.
  */
+import fs from "node:fs";
+import path from "node:path";
+import dotenv from "dotenv";
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { config } from "./config.js";
 import { verifyPassword } from "./auth.js";
 
 export const ADMIN_JWT_ROLE = "admin";
@@ -19,22 +21,68 @@ declare module "fastify" {
   }
 }
 
+function readAdminFromEnvFile(envPath: string): {
+  email?: string;
+  password?: string;
+  passwordHash?: string;
+} {
+  try {
+    if (!fs.existsSync(envPath)) return {};
+    const parsed = dotenv.parse(fs.readFileSync(envPath));
+    return {
+      email: parsed.ADMIN_EMAIL?.trim().toLowerCase() || undefined,
+      password: parsed.ADMIN_PASSWORD?.trim() || undefined,
+      passwordHash: parsed.ADMIN_PASSWORD_HASH?.trim() || undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/** process.env d’abord, sinon parse `/opt/klanvio/.env` (sans écraser le reste du process). */
+function resolveAdminSecrets(): {
+  email: string;
+  password: string;
+  passwordHash: string;
+} {
+  let email = process.env.ADMIN_EMAIL?.trim().toLowerCase() || "";
+  let password = process.env.ADMIN_PASSWORD?.trim() || "";
+  let passwordHash = process.env.ADMIN_PASSWORD_HASH?.trim() || "";
+
+  if (!email || !(password || passwordHash)) {
+    for (const envPath of [
+      path.resolve(process.cwd(), ".env"),
+      "/opt/klanvio/.env",
+    ]) {
+      const fromFile = readAdminFromEnvFile(envPath);
+      email = email || fromFile.email || "";
+      password = password || fromFile.password || "";
+      passwordHash = passwordHash || fromFile.passwordHash || "";
+      if (email && (password || passwordHash)) break;
+    }
+  }
+
+  return { email, password, passwordHash };
+}
+
 export function isAdminConfigured(): boolean {
-  if (!config.adminEmail) return false;
-  return Boolean(config.adminPasswordHash || config.adminPassword);
+  const s = resolveAdminSecrets();
+  if (!s.email) return false;
+  return Boolean(s.passwordHash || s.password);
 }
 
 export async function verifyAdminCredentials(
   email: string,
   password: string
 ): Promise<boolean> {
-  if (!isAdminConfigured()) return false;
+  const s = resolveAdminSecrets();
+  if (!s.email || !(s.passwordHash || s.password)) return false;
   const normalized = email.trim().toLowerCase();
-  if (normalized !== config.adminEmail) return false;
-  if (config.adminPasswordHash) {
-    return verifyPassword(password, config.adminPasswordHash);
+  if (normalized !== s.email) return false;
+  if (s.passwordHash) {
+    return verifyPassword(password, s.passwordHash);
   }
-  const expected = config.adminPassword;
+  const expected = s.password;
   if (password.length !== expected.length) {
     await new Promise((r) => setTimeout(r, 40));
     return false;
@@ -44,6 +92,10 @@ export async function verifyAdminCredentials(
     if (password.charCodeAt(i) !== expected.charCodeAt(i)) ok = false;
   }
   return ok;
+}
+
+export function adminActorEmail(): string {
+  return resolveAdminSecrets().email || "ops";
 }
 
 export function registerAdminJwtHelpers(app: FastifyInstance): void {
@@ -74,7 +126,7 @@ export async function requireAdmin(
       return;
     }
     request.isAdmin = true;
-    request.adminActor = String(payload.email || config.adminEmail || "ops");
+    request.adminActor = String(payload.email || adminActorEmail());
   } catch {
     await reply.status(401).send({ error: "Token admin invalide ou expiré." });
   }

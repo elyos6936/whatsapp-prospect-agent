@@ -58,7 +58,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       if (!isAdminConfigured()) {
         return reply.status(503).send({
-          error: "Panneau ops non configuré (ADMIN_EMAIL / ADMIN_PASSWORD).",
+          error:
+            "ADMIN_EMAIL / ADMIN_PASSWORD absents du process API. Sur le VPS Hostinger, ajoute-les dans /opt/klanvio/.env (mot de passe entre guillemets si caractères spéciaux), puis : pm2 reload klanvio-api --update-env",
         });
       }
 
