@@ -32,9 +32,9 @@ export function LoginPage() {
       <form className="login-card" onSubmit={onSubmit}>
         <div className="login-brand">
           <img src={LOGO} alt="" width={28} height={28} />
-          <h1>Klanvio Ops</h1>
+          <h1>Administration</h1>
         </div>
-        <p className="sub">Console privée — API Hostinger uniquement</p>
+        <p className="sub">Espace privé Klanvio — séparé de l’application</p>
         {error ? <div className="error-banner">{error}</div> : null}
         <div className="field">
           <label htmlFor="email">Email</label>

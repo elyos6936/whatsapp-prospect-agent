@@ -19,6 +19,20 @@ import {
   type SubscriptionStatus,
 } from "./outreach-level.js";
 import { testEvolutionConnection } from "./evolutionapi.js";
+import { config } from "./config.js";
+
+/** Jour calendaire dans le fuseau app (évite les « 0 aujourd’hui » dus à UTC Supabase). */
+function isLocalDay(column: string) {
+  // `column` vient uniquement du code ops (jamais d’entrée utilisateur).
+  const tz = config.timezone.replace(/'/g, "''");
+  return sql.unsafe(
+    `(${column} AT TIME ZONE '${tz}')::date = (NOW() AT TIME ZONE '${tz}')::date`
+  );
+}
+
+function outboundLifetime(counter: number, fromMessages: number, fromQueue = 0): number {
+  return Math.max(counter, fromMessages, fromQueue);
+}
 
 let auditSchemaReady = false;
 
@@ -80,34 +94,38 @@ export async function getAdminOverview() {
     FROM users
   `;
 
-  const [msg24] = await sql<{
+  const [msgToday] = await sql<{
     entrant: number;
     sortant: number;
-    sortant_quota: number;
+    lifetime_sortant: number;
   }[]>`
     SELECT
-      COUNT(*) FILTER (WHERE direction = 'entrant')::int AS entrant,
-      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant,
       COUNT(*) FILTER (
-        WHERE direction = 'sortant' AND COALESCE(counts_toward_quota, 1) = 1
-      )::int AS sortant_quota
+        WHERE direction = 'entrant' AND ${isLocalDay("created_at")}
+      )::int AS entrant,
+      COUNT(*) FILTER (
+        WHERE direction = 'sortant' AND ${isLocalDay("created_at")}
+      )::int AS sortant,
+      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS lifetime_sortant
     FROM messages
-    WHERE created_at >= NOW() - INTERVAL '24 hours'
   `;
 
-  const [msg7] = await sql<{
-    entrant: number;
-    sortant: number;
-    sortant_quota: number;
-  }[]>`
+  const [msg7] = await sql<{ entrant: number; sortant: number }[]>`
     SELECT
       COUNT(*) FILTER (WHERE direction = 'entrant')::int AS entrant,
-      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant,
-      COUNT(*) FILTER (
-        WHERE direction = 'sortant' AND COALESCE(counts_toward_quota, 1) = 1
-      )::int AS sortant_quota
+      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant
     FROM messages
     WHERE created_at >= NOW() - INTERVAL '7 days'
+  `;
+
+  const [queueSent] = await sql<{ lifetime: number; today: number }[]>`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'sent')::int AS lifetime,
+      COUNT(*) FILTER (
+        WHERE status = 'sent'
+          AND ${isLocalDay("COALESCE(sent_at, send_at)")}
+      )::int AS today
+    FROM send_queue
   `;
 
   const [campaigns] = await sql<{
@@ -124,22 +142,6 @@ export async function getAdminOverview() {
     FROM automations
   `;
 
-  const [queue] = await sql<{
-    pending: number;
-    processing: number;
-    failed: number;
-    sent_24h: number;
-  }[]>`
-    SELECT
-      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
-      COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
-      COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
-      COUNT(*) FILTER (
-        WHERE status = 'sent' AND COALESCE(sent_at, send_at) >= NOW() - INTERVAL '24 hours'
-      )::int AS sent_24h
-    FROM send_queue
-  `;
-
   let errors24h = 0;
   try {
     const [errRow] = await sql<{ n: number }[]>`
@@ -153,16 +155,6 @@ export async function getAdminOverview() {
     errors24h = 0;
   }
 
-  let sequencesActive = 0;
-  try {
-    const [seq] = await sql<{ n: number }[]>`
-      SELECT COUNT(*)::int AS n FROM contact_sequences WHERE status = 'active'
-    `;
-    sequencesActive = Number(seq?.n ?? 0);
-  } catch {
-    sequencesActive = 0;
-  }
-
   const recentUsers = await sql<
     { id: number; email: string; name: string; created_at: string }[]
   >`
@@ -173,24 +165,57 @@ export async function getAdminOverview() {
   `;
 
   const topOutbound = await sql<
-    { id: number; email: string; total_messages_sent: number; out_24h: number }[]
+    {
+      id: number;
+      email: string;
+      total_messages_sent: number;
+      msg_lifetime: number;
+      queue_lifetime: number;
+      out_today: number;
+    }[]
   >`
     SELECT
       u.id,
       u.email,
       u.total_messages_sent,
-      COALESCE(m.out_24h, 0)::int AS out_24h
+      COALESCE(m.msg_lifetime, 0)::int AS msg_lifetime,
+      COALESCE(q.queue_lifetime, 0)::int AS queue_lifetime,
+      GREATEST(COALESCE(m.out_today, 0), COALESCE(q.out_today, 0))::int AS out_today
     FROM users u
     LEFT JOIN LATERAL (
-      SELECT COUNT(*)::int AS out_24h
+      SELECT
+        COUNT(*) FILTER (WHERE direction = 'sortant')::int AS msg_lifetime,
+        COUNT(*) FILTER (
+          WHERE direction = 'sortant' AND ${isLocalDay("created_at")}
+        )::int AS out_today
       FROM messages
       WHERE user_id = u.id
-        AND direction = 'sortant'
-        AND created_at >= NOW() - INTERVAL '24 hours'
     ) m ON true
-    ORDER BY u.total_messages_sent DESC, out_24h DESC
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*) FILTER (WHERE status = 'sent')::int AS queue_lifetime,
+        COUNT(*) FILTER (
+          WHERE status = 'sent'
+            AND ${isLocalDay("COALESCE(sent_at, send_at)")}
+        )::int AS out_today
+      FROM send_queue
+      WHERE user_id = u.id
+    ) q ON true
+    ORDER BY GREATEST(
+      u.total_messages_sent,
+      COALESCE(m.msg_lifetime, 0),
+      COALESCE(q.queue_lifetime, 0)
+    ) DESC
     LIMIT 8
   `;
+
+  const lifetimeFromUsers = Number(usersRow?.lifetime_out ?? 0);
+  const lifetimeFromMessages = Number(msgToday?.lifetime_sortant ?? 0);
+  const lifetimeFromQueue = Number(queueSent?.lifetime ?? 0);
+  const todayOut = Math.max(
+    Number(msgToday?.sortant ?? 0),
+    Number(queueSent?.today ?? 0)
+  );
 
   return {
     users: {
@@ -198,17 +223,17 @@ export async function getAdminOverview() {
       active: Number(usersRow?.active ?? 0),
       trial: Number(usersRow?.trial ?? 0),
       expired: Number(usersRow?.expired ?? 0),
-      lifetimeOutbound: Number(usersRow?.lifetime_out ?? 0),
     },
-    messages24h: {
-      entrant: Number(msg24?.entrant ?? 0),
-      sortant: Number(msg24?.sortant ?? 0),
-      sortantQuota: Number(msg24?.sortant_quota ?? 0),
-    },
-    messages7d: {
-      entrant: Number(msg7?.entrant ?? 0),
-      sortant: Number(msg7?.sortant ?? 0),
-      sortantQuota: Number(msg7?.sortant_quota ?? 0),
+    messages: {
+      envoyesAujourdhui: todayOut,
+      recusAujourdhui: Number(msgToday?.entrant ?? 0),
+      envoyes7j: Number(msg7?.sortant ?? 0),
+      recus7j: Number(msg7?.entrant ?? 0),
+      envoyesLifetime: outboundLifetime(
+        lifetimeFromUsers,
+        lifetimeFromMessages,
+        lifetimeFromQueue
+      ),
     },
     campaigns: {
       active: Number(campaigns?.active ?? 0),
@@ -216,14 +241,7 @@ export async function getAdminOverview() {
       paused: Number(campaigns?.paused ?? 0),
       completed: Number(campaigns?.completed ?? 0),
     },
-    queue: {
-      pending: Number(queue?.pending ?? 0),
-      processing: Number(queue?.processing ?? 0),
-      failed: Number(queue?.failed ?? 0),
-      sent24h: Number(queue?.sent_24h ?? 0),
-    },
     errors24h,
-    sequencesActive,
     recentUsers: recentUsers.map((u) => ({
       id: Number(u.id),
       email: u.email,
@@ -233,8 +251,12 @@ export async function getAdminOverview() {
     topOutbound: topOutbound.map((u) => ({
       id: Number(u.id),
       email: u.email,
-      lifetimeSent: Number(u.total_messages_sent ?? 0),
-      out24h: Number(u.out_24h ?? 0),
+      envoyesLifetime: outboundLifetime(
+        Number(u.total_messages_sent ?? 0),
+        Number(u.msg_lifetime ?? 0),
+        Number(u.queue_lifetime ?? 0)
+      ),
+      envoyesAujourdhui: Number(u.out_today ?? 0),
     })),
   };
 }
@@ -246,9 +268,8 @@ export type AdminUserListItem = {
   subscriptionStatus: SubscriptionStatus;
   outreachLevel: number;
   totalMessagesSent: number;
-  messages24h: number;
-  messagesOut24h: number;
-  messagesIn24h: number;
+  messagesTodayOut: number;
+  messagesTodayIn: number;
   activeCampaigns: number;
   onboardingCompleted: boolean;
   createdAt: string;
@@ -278,9 +299,10 @@ export async function listAdminUsers(opts: {
       total_messages_sent: number;
       onboarding_completed: boolean;
       created_at: string;
-      messages_24h: number;
-      messages_out_24h: number;
-      messages_in_24h: number;
+      msg_lifetime: number;
+      queue_lifetime: number;
+      messages_today_out: number;
+      messages_today_in: number;
       active_campaigns: number;
       total_count: number;
     }[]
@@ -305,21 +327,31 @@ export async function listAdminUsers(opts: {
       f.total_messages_sent,
       f.onboarding_completed,
       f.created_at::text,
-      COALESCE(m.messages_24h, 0)::int AS messages_24h,
-      COALESCE(m.messages_out_24h, 0)::int AS messages_out_24h,
-      COALESCE(m.messages_in_24h, 0)::int AS messages_in_24h,
+      COALESCE(m.msg_lifetime, 0)::int AS msg_lifetime,
+      COALESCE(q.queue_lifetime, 0)::int AS queue_lifetime,
+      COALESCE(m.messages_today_out, 0)::int AS messages_today_out,
+      COALESCE(m.messages_today_in, 0)::int AS messages_today_in,
       COALESCE(a.active_campaigns, 0)::int AS active_campaigns,
       c.total_count
     FROM filtered f
     CROSS JOIN counted c
     LEFT JOIN LATERAL (
       SELECT
-        COUNT(*)::int AS messages_24h,
-        COUNT(*) FILTER (WHERE direction = 'sortant')::int AS messages_out_24h,
-        COUNT(*) FILTER (WHERE direction = 'entrant')::int AS messages_in_24h
+        COUNT(*) FILTER (WHERE direction = 'sortant')::int AS msg_lifetime,
+        COUNT(*) FILTER (
+          WHERE direction = 'sortant' AND ${isLocalDay("created_at")}
+        )::int AS messages_today_out,
+        COUNT(*) FILTER (
+          WHERE direction = 'entrant' AND ${isLocalDay("created_at")}
+        )::int AS messages_today_in
       FROM messages
-      WHERE user_id = f.id AND created_at >= NOW() - INTERVAL '24 hours'
+      WHERE user_id = f.id
     ) m ON true
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*) FILTER (WHERE status = 'sent')::int AS queue_lifetime
+      FROM send_queue
+      WHERE user_id = f.id
+    ) q ON true
     LEFT JOIN LATERAL (
       SELECT COUNT(*)::int AS active_campaigns
       FROM automations
@@ -340,10 +372,13 @@ export async function listAdminUsers(opts: {
         ? r.subscription_status
         : "trial") as SubscriptionStatus,
       outreachLevel: Number(r.outreach_level ?? 1),
-      totalMessagesSent: Number(r.total_messages_sent ?? 0),
-      messages24h: Number(r.messages_24h ?? 0),
-      messagesOut24h: Number(r.messages_out_24h ?? 0),
-      messagesIn24h: Number(r.messages_in_24h ?? 0),
+      totalMessagesSent: outboundLifetime(
+        Number(r.total_messages_sent ?? 0),
+        Number(r.msg_lifetime ?? 0),
+        Number(r.queue_lifetime ?? 0)
+      ),
+      messagesTodayOut: Number(r.messages_today_out ?? 0),
+      messagesTodayIn: Number(r.messages_today_in ?? 0),
       activeCampaigns: Number(r.active_campaigns ?? 0),
       onboardingCompleted: Boolean(r.onboarding_completed),
       createdAt: r.created_at,
@@ -381,28 +416,32 @@ export async function getAdminUserDetail(userId: number) {
     total: number;
     entrant: number;
     sortant: number;
-    sortant_quota: number;
-    last_24h: number;
+    out_today: number;
+    in_today: number;
     last_7d: number;
-    out_24h: number;
-    in_24h: number;
   }[]>`
     SELECT
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE direction = 'entrant')::int AS entrant,
       COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant,
       COUNT(*) FILTER (
-        WHERE direction = 'sortant' AND COALESCE(counts_toward_quota, 1) = 1
-      )::int AS sortant_quota,
-      COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h,
-      COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS last_7d,
+        WHERE direction = 'sortant' AND ${isLocalDay("created_at")}
+      )::int AS out_today,
       COUNT(*) FILTER (
-        WHERE direction = 'sortant' AND created_at >= NOW() - INTERVAL '24 hours'
-      )::int AS out_24h,
-      COUNT(*) FILTER (
-        WHERE direction = 'entrant' AND created_at >= NOW() - INTERVAL '24 hours'
-      )::int AS in_24h
+        WHERE direction = 'entrant' AND ${isLocalDay("created_at")}
+      )::int AS in_today,
+      COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS last_7d
     FROM messages
+    WHERE user_id = ${userId}
+  `;
+
+  const [queueStats] = await sql<{ lifetime: number; today: number }[]>`
+    SELECT
+      COUNT(*) FILTER (WHERE status = 'sent')::int AS lifetime,
+      COUNT(*) FILTER (
+        WHERE status = 'sent' AND ${isLocalDay("COALESCE(sent_at, send_at)")}
+      )::int AS today
+    FROM send_queue
     WHERE user_id = ${userId}
   `;
 
@@ -424,42 +463,6 @@ export async function getAdminUserDetail(userId: number) {
     LIMIT 50
   `;
 
-  const [queue] = await sql<{
-    pending: number;
-    processing: number;
-    failed: number;
-    sent_24h: number;
-  }[]>`
-    SELECT
-      COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
-      COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
-      COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
-      COUNT(*) FILTER (
-        WHERE status = 'sent' AND COALESCE(sent_at, send_at) >= NOW() - INTERVAL '24 hours'
-      )::int AS sent_24h
-    FROM send_queue
-    WHERE user_id = ${userId}
-  `;
-
-  let recentLogs: Array<{
-    id: number;
-    automation_id: number;
-    level: string;
-    message: string;
-    created_at: string;
-  }> = [];
-  try {
-    recentLogs = await sql`
-      SELECT id, automation_id, level, message, created_at::text
-      FROM automation_logs
-      WHERE user_id = ${userId}
-      ORDER BY id DESC
-      LIMIT 30
-    `;
-  } catch {
-    recentLogs = [];
-  }
-
   let whatsapp: { connected: boolean; message: string } = {
     connected: false,
     message: "Non vérifié",
@@ -469,7 +472,7 @@ export async function getAdminUserDetail(userId: number) {
       testEvolutionConnection(userId),
       new Promise<{ connected: boolean; message: string }>((resolve) =>
         setTimeout(
-          () => resolve({ connected: false, message: "Timeout Evolution (3s)" }),
+          () => resolve({ connected: false, message: "Délai dépassé (3s)" }),
           3000
         )
       ),
@@ -484,29 +487,26 @@ export async function getAdminUserDetail(userId: number) {
 
   const autoReply = await isAutoReplyEnabled(userId).catch(() => false);
 
-  let sequencesActive = 0;
-  try {
-    const [seq] = await sql<{ n: number }[]>`
-      SELECT COUNT(*)::int AS n
-      FROM contact_sequences
-      WHERE user_id = ${userId} AND status = 'active'
-    `;
-    sequencesActive = Number(seq?.n ?? 0);
-  } catch {
-    sequencesActive = 0;
-  }
+  const sortant = outboundLifetime(
+    Number(user.total_messages_sent ?? 0),
+    Number(msgStats?.sortant ?? 0),
+    Number(queueStats?.lifetime ?? 0)
+  );
+  const serialized = serializeUser(user);
+  serialized.totalMessagesSent = sortant;
 
   return {
-    user: serializeUser(user),
+    user: serialized,
     messages: {
       total: Number(msgStats?.total ?? 0),
       entrant: Number(msgStats?.entrant ?? 0),
-      sortant: Number(msgStats?.sortant ?? 0),
-      sortantQuota: Number(msgStats?.sortant_quota ?? 0),
-      last_24h: Number(msgStats?.last_24h ?? 0),
-      last_7d: Number(msgStats?.last_7d ?? 0),
-      out24h: Number(msgStats?.out_24h ?? 0),
-      in24h: Number(msgStats?.in_24h ?? 0),
+      sortant,
+      envoyesAujourdhui: Math.max(
+        Number(msgStats?.out_today ?? 0),
+        Number(queueStats?.today ?? 0)
+      ),
+      recusAujourdhui: Number(msgStats?.in_today ?? 0),
+      derniers7j: Number(msgStats?.last_7d ?? 0),
     },
     campaigns: campaigns.map((c) => {
       let stats: Record<string, unknown> = {};
@@ -525,114 +525,18 @@ export async function getAdminUserDetail(userId: number) {
         updatedAt: c.updated_at,
       };
     }),
-    queue: {
-      pending: Number(queue?.pending ?? 0),
-      processing: Number(queue?.processing ?? 0),
-      failed: Number(queue?.failed ?? 0),
-      sent24h: Number(queue?.sent_24h ?? 0),
-    },
-    recentLogs: recentLogs.map((l) => ({
-      id: Number(l.id),
-      automationId: Number(l.automation_id),
-      level: l.level,
-      message: l.message,
-      createdAt: l.created_at,
-    })),
     whatsapp,
     autoReply,
-    sequencesActive,
   };
 }
 
-export async function listAdminUserMessages(
-  userId: number,
-  opts: { limit?: number; offset?: number; direction?: string }
-) {
-  const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
-  const offset = Math.max(opts.offset ?? 0, 0);
-  const direction = opts.direction === "entrant" || opts.direction === "sortant" ? opts.direction : "";
-
-  const rows = await sql<
-    {
-      id: number;
-      contact_phone: string;
-      direction: string;
-      body: string;
-      sender_name: string | null;
-      automation_id: number | null;
-      created_at: string;
-      total_count: number;
-    }[]
-  >`
-    WITH filtered AS (
-      SELECT *
-      FROM messages
-      WHERE user_id = ${userId}
-        AND (${direction} = '' OR direction = ${direction})
-    ),
-    counted AS (SELECT COUNT(*)::int AS total_count FROM filtered)
-    SELECT
-      f.id,
-      f.contact_phone,
-      f.direction,
-      f.body,
-      f.sender_name,
-      f.automation_id,
-      f.created_at::text,
-      c.total_count
-    FROM filtered f
-    CROSS JOIN counted c
-    ORDER BY f.id DESC
-    LIMIT ${limit} OFFSET ${offset}
-  `;
-
-  return {
-    total: rows[0] ? Number(rows[0].total_count) : 0,
-    items: rows.map((r) => ({
-      id: Number(r.id),
-      contactPhone: r.contact_phone,
-      direction: r.direction,
-      body: r.body,
-      senderName: r.sender_name,
-      automationId: r.automation_id != null ? Number(r.automation_id) : null,
-      createdAt: r.created_at,
-    })),
-  };
+/** @deprecated Contenu conversations — non exposé. */
+export async function listAdminUserMessages(): Promise<{ items: never[]; total: number }> {
+  return { items: [], total: 0 };
 }
 
-export async function listAdminUserActivity(userId: number, limit = 40) {
-  const lim = Math.min(Math.max(limit, 1), 100);
-  const agent = await sql<
-    { id: number; role: string; content: string; created_at: string; kind: string }[]
-  >`
-    SELECT id, role, LEFT(content, 400) AS content, created_at::text, 'agent' AS kind
-    FROM agent_conversation
-    WHERE user_id = ${userId}
-    ORDER BY id DESC
-    LIMIT ${lim}
-  `;
-  const logs = await sql<
-    { id: number; role: string; content: string; created_at: string; kind: string }[]
-  >`
-    SELECT id, level AS role, LEFT(message, 400) AS content, created_at::text, 'automation_log' AS kind
-    FROM automation_logs
-    WHERE user_id = ${userId}
-    ORDER BY id DESC
-    LIMIT ${lim}
-  `;
-
-  const merged = [...agent, ...logs]
-    .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
-    .slice(0, lim)
-    .map((r) => ({
-      id: Number(r.id),
-      kind: r.kind,
-      role: r.role,
-      content: r.content,
-      createdAt: r.created_at,
-    }));
-
-  return { items: merged };
+export async function listAdminUserActivity(): Promise<{ items: never[] }> {
+  return { items: [] };
 }
 
 export async function listAdminAudit(opts: {

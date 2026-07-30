@@ -9,12 +9,17 @@ type UserRow = {
   subscriptionStatus: string;
   outreachLevel: number;
   totalMessagesSent: number;
-  messages24h: number;
-  messagesOut24h: number;
-  messagesIn24h: number;
+  messagesTodayOut: number;
+  messagesTodayIn: number;
   activeCampaigns: number;
   onboardingCompleted: boolean;
   createdAt: string;
+};
+
+const STATUS_FR: Record<string, string> = {
+  active: "Actif",
+  trial: "Essai",
+  expired: "Expiré",
 };
 
 export function UsersPage() {
@@ -49,16 +54,16 @@ export function UsersPage() {
   return (
     <>
       <header className="topbar">
-        <h1>Utilisateurs</h1>
-        <span style={{ color: "var(--muted)" }}>{total} au total</span>
+        <h1>Comptes</h1>
+        <span style={{ color: "var(--text-500)" }}>{total} au total</span>
       </header>
       <div className="content">
         <div className="panel">
           <div className="panel-head">
-            <h2>Liste</h2>
+            <h2>Liste des comptes</h2>
             <div className="filters">
               <input
-                placeholder="Recherche email / nom"
+                placeholder="Rechercher email ou nom"
                 value={q}
                 onChange={(e) => {
                   setOffset(0);
@@ -72,10 +77,10 @@ export function UsersPage() {
                   setStatus(e.target.value);
                 }}
               >
-                <option value="">Tous statuts</option>
-                <option value="active">active</option>
-                <option value="trial">trial</option>
-                <option value="expired">expired</option>
+                <option value="">Tous les statuts</option>
+                <option value="active">Actif</option>
+                <option value="trial">Essai</option>
+                <option value="expired">Expiré</option>
               </select>
               <select
                 value={level}
@@ -84,10 +89,10 @@ export function UsersPage() {
                   setLevel(e.target.value);
                 }}
               >
-                <option value="">Tous niveaux</option>
+                <option value="">Tous les niveaux</option>
                 {[1, 2, 3, 4, 5].map((n) => (
                   <option key={n} value={String(n)}>
-                    Niv. {n}
+                    Niveau {n}
                   </option>
                 ))}
               </select>
@@ -96,7 +101,7 @@ export function UsersPage() {
           {error ? <div className="error-inline">{error}</div> : null}
           {loading ? <div className="loading">Chargement…</div> : null}
           {!loading && !error && items.length === 0 ? (
-            <div className="empty">Aucun utilisateur</div>
+            <div className="empty">Aucun compte</div>
           ) : null}
           {!loading && items.length > 0 ? (
             <>
@@ -104,14 +109,14 @@ export function UsersPage() {
                 <table className="data">
                   <thead>
                     <tr>
-                      <th>ID</th>
-                      <th>Email</th>
+                      <th>N°</th>
+                      <th>Compte</th>
                       <th>Statut</th>
-                      <th>Niv.</th>
-                      <th>Msgs life</th>
-                      <th>24h out/in</th>
-                      <th>Camp. actives</th>
-                      <th>Onboard</th>
+                      <th>Niveau</th>
+                      <th>Envoyés</th>
+                      <th>Aujourd’hui</th>
+                      <th>Campagnes</th>
+                      <th>Onboarding</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -123,19 +128,19 @@ export function UsersPage() {
                         <td>
                           <Link to={`/users/${u.id}`}>{u.email}</Link>
                           {u.name ? (
-                            <div style={{ color: "var(--muted)", fontSize: 11 }}>{u.name}</div>
+                            <div style={{ color: "var(--text-500)", fontSize: 11 }}>{u.name}</div>
                           ) : null}
                         </td>
                         <td>
                           <StatusBadge status={u.subscriptionStatus} />
                         </td>
-                        <td>{u.outreachLevel}</td>
+                        <td>{u.outreachLevel}/5</td>
                         <td>{u.totalMessagesSent}</td>
                         <td>
-                          {u.messagesOut24h}/{u.messagesIn24h}
+                          {u.messagesTodayOut} env. · {u.messagesTodayIn} reçus
                         </td>
                         <td>{u.activeCampaigns}</td>
-                        <td>{u.onboardingCompleted ? "oui" : "non"}</td>
+                        <td>{u.onboardingCompleted ? "Oui" : "Non"}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -173,5 +178,5 @@ export function UsersPage() {
 export function StatusBadge({ status }: { status: string }) {
   const cls =
     status === "active" ? "badge-active" : status === "expired" ? "badge-expired" : "badge-trial";
-  return <span className={`badge ${cls}`}>{status}</span>;
+  return <span className={`badge ${cls}`}>{STATUS_FR[status] ?? status}</span>;
 }

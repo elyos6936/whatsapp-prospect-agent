@@ -12,6 +12,15 @@ type AuditRow = {
   ip: string | null;
 };
 
+const ACTION_FR: Record<string, string> = {
+  "admin.login": "Connexion admin",
+  "user.subscription_update": "Abonnement modifié",
+  "user.outreach_update": "Niveau / compteur modifié",
+  "user.pause_automations": "Campagnes en pause",
+  "user.stop_outbound": "Envois coupés",
+  "user.set_auto_reply": "Réponses auto modifiées",
+};
+
 export function AuditPage() {
   const [items, setItems] = useState<AuditRow[]>([]);
   const [total, setTotal] = useState(0);
@@ -37,8 +46,8 @@ export function AuditPage() {
   return (
     <>
       <header className="topbar">
-        <h1>Journal d’audit</h1>
-        <span style={{ color: "var(--muted)" }}>{total} événements</span>
+        <h1>Journal</h1>
+        <span style={{ color: "var(--text-500)" }}>{total} événements</span>
       </header>
       <div className="content">
         <div className="panel">
@@ -52,11 +61,10 @@ export function AuditPage() {
                   <thead>
                     <tr>
                       <th>Quand</th>
-                      <th>Acteur</th>
+                      <th>Auteur</th>
                       <th>Action</th>
-                      <th>User</th>
+                      <th>Compte cible</th>
                       <th>IP</th>
-                      <th>Payload</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -64,9 +72,7 @@ export function AuditPage() {
                       <tr key={row.id}>
                         <td>{formatDate(row.createdAt)}</td>
                         <td>{row.actor}</td>
-                        <td>
-                          <code style={{ fontFamily: "var(--mono)", fontSize: 12 }}>{row.action}</code>
-                        </td>
+                        <td>{ACTION_FR[row.action] ?? row.action}</td>
                         <td>
                           {row.targetUserId != null ? (
                             <Link to={`/users/${row.targetUserId}`}>#{row.targetUserId}</Link>
@@ -75,18 +81,6 @@ export function AuditPage() {
                           )}
                         </td>
                         <td>{row.ip || "—"}</td>
-                        <td
-                          style={{
-                            maxWidth: 280,
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                            fontFamily: "var(--mono)",
-                            fontSize: 11,
-                          }}
-                          title={JSON.stringify(row.payload)}
-                        >
-                          {JSON.stringify(row.payload)}
-                        </td>
                       </tr>
                     ))}
                   </tbody>

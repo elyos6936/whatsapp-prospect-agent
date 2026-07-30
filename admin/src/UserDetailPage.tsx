@@ -21,11 +21,9 @@ type Detail = {
     total: number;
     entrant: number;
     sortant: number;
-    sortantQuota: number;
-    last_24h: number;
-    last_7d: number;
-    out24h: number;
-    in24h: number;
+    envoyesAujourdhui: number;
+    recusAujourdhui: number;
+    derniers7j: number;
   };
   campaigns: Array<{
     id: number;
@@ -34,20 +32,25 @@ type Detail = {
     status: string;
     stats: Record<string, unknown>;
   }>;
-  queue: { pending: number; processing: number; failed: number; sent24h: number };
-  recentLogs: Array<{
-    id: number;
-    automationId: number;
-    level: string;
-    message: string;
-    createdAt: string;
-  }>;
   whatsapp: { connected: boolean; message: string };
   autoReply: boolean;
-  sequencesActive: number;
 };
 
-type Tab = "compte" | "campagnes" | "messages" | "file" | "actions";
+type Tab = "compte" | "campagnes" | "actions";
+
+const CAMPAGNE_STATUT: Record<string, string> = {
+  active: "Active",
+  draft: "Brouillon",
+  paused: "En pause",
+  completed: "Terminée",
+  failed: "Échouée",
+};
+
+const CAMPAGNE_TYPE: Record<string, string> = {
+  group_prospect: "Prospection groupe",
+  contact_prospect: "Prospection contacts",
+  keyword_sales: "Closing entrant",
+};
 
 export function UserDetailPage() {
   const { id } = useParams();
@@ -93,17 +96,17 @@ export function UserDetailPage() {
   }
 
   if (!Number.isFinite(userId)) {
-    return <div className="content error-inline">ID invalide</div>;
+    return <div className="content error-inline">Identifiant invalide</div>;
   }
 
   return (
     <>
       <header className="topbar">
         <div>
-          <div style={{ color: "var(--muted)", fontSize: 12, marginBottom: 2 }}>
-            <Link to="/users">Utilisateurs</Link> / #{userId}
+          <div style={{ color: "var(--text-500)", fontSize: 12, marginBottom: 2 }}>
+            <Link to="/users">Comptes</Link> / #{userId}
           </div>
-          <h1>{detail?.user.email ?? `User #${userId}`}</h1>
+          <h1>{detail?.user.email ?? `Compte #${userId}`}</h1>
         </div>
         {detail ? <StatusBadge status={detail.user.subscriptionStatus} /> : null}
       </header>
@@ -113,9 +116,9 @@ export function UserDetailPage() {
           <div
             className="error-banner"
             style={{
-              background: "rgba(34,197,94,0.12)",
-              borderColor: "rgba(34,197,94,0.35)",
-              color: "#86efac",
+              background: "#ecfdf5",
+              borderColor: "#a7f3d0",
+              color: "#047857",
             }}
           >
             {flash}
@@ -129,8 +132,6 @@ export function UserDetailPage() {
                 [
                   ["compte", "Compte"],
                   ["campagnes", "Campagnes"],
-                  ["messages", "Messages"],
-                  ["file", "File"],
                   ["actions", "Actions"],
                 ] as const
               ).map(([key, label]) => (
@@ -147,8 +148,6 @@ export function UserDetailPage() {
 
             {tab === "compte" ? <CompteTab detail={detail} /> : null}
             {tab === "campagnes" ? <CampagnesTab detail={detail} /> : null}
-            {tab === "messages" ? <MessagesTab userId={userId} /> : null}
-            {tab === "file" ? <FileTab detail={detail} /> : null}
             {tab === "actions" ? (
               <ActionsTab
                 detail={detail}
@@ -175,7 +174,7 @@ export function UserDetailPage() {
                   );
                 }}
                 onSaveOutreach={async (body) => {
-                  await runAction("Outreach mis à jour", () =>
+                  await runAction("Niveau mis à jour", () =>
                     api(`/api/admin/users/${userId}/outreach`, {
                       method: "PATCH",
                       body: JSON.stringify(body),
@@ -189,8 +188,8 @@ export function UserDetailPage() {
       </div>
 
       {confirm ? (
-        <div className="modal-backdrop">
-          <div className="modal">
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog">
             <h3>{confirm.title}</h3>
             <p>{confirm.body}</p>
             <div className="modal-actions">
@@ -225,15 +224,15 @@ function CompteTab({ detail }: { detail: Detail }) {
           <div className="k">Nom</div>
           <div className="v">{u.name || "—"}</div>
           <div className="k">Onboarding</div>
-          <div className="v">{u.onboardingCompleted ? "oui" : "non"}</div>
-          <div className="k">Créé</div>
+          <div className="v">{u.onboardingCompleted ? "Terminé" : "En cours"}</div>
+          <div className="k">Inscription</div>
           <div className="v">{formatDate(u.createdAt)}</div>
         </div>
       </div>
       <div className="detail-card">
-        <h3>Business</h3>
+        <h3>Activité business</h3>
         <div className="kv">
-          <div className="k">Proprio</div>
+          <div className="k">Propriétaire</div>
           <div className="v">{u.business.ownerName || "—"}</div>
           <div className="k">Offre</div>
           <div className="v">{u.business.offer || "—"}</div>
@@ -242,7 +241,7 @@ function CompteTab({ detail }: { detail: Detail }) {
         </div>
       </div>
       <div className="detail-card">
-        <h3>Niveau & quotas</h3>
+        <h3>Abonnement & niveau</h3>
         <div className="kv">
           <div className="k">Statut</div>
           <div className="v">
@@ -250,50 +249,44 @@ function CompteTab({ detail }: { detail: Detail }) {
           </div>
           <div className="k">Niveau</div>
           <div className="v">{u.outreachLevel} / 5</div>
-          <div className="k">Msgs life</div>
+          <div className="k">Messages envoyés</div>
           <div className="v">{u.totalMessagesSent}</div>
           <div className="k">Essai utilisé</div>
           <div className="v">{u.trialConversationsUsed}</div>
-          <div className="k">Cap jour out</div>
+          <div className="k">Plafond jour sortant</div>
           <div className="v">{u.dailyCaps.outbound}</div>
-          <div className="k">Cap jour in</div>
+          <div className="k">Plafond jour entrant</div>
           <div className="v">{u.dailyCaps.inbound}</div>
         </div>
       </div>
       <div className="detail-card">
-        <h3>WhatsApp & auto-reply</h3>
+        <h3>WhatsApp</h3>
         <div className="kv">
-          <div className="k">WA</div>
+          <div className="k">Connexion</div>
           <div className="v">
             <span className={`badge ${detail.whatsapp.connected ? "badge-ok" : "badge-off"}`}>
-              {detail.whatsapp.connected ? "connecté" : "déconnecté"}
+              {detail.whatsapp.connected ? "Connecté" : "Déconnecté"}
             </span>
           </div>
           <div className="k">Détail</div>
           <div className="v">{detail.whatsapp.message}</div>
-          <div className="k">Auto-reply</div>
-          <div className="v">{detail.autoReply ? "ON" : "OFF"}</div>
-          <div className="k">Séquences</div>
-          <div className="v">{detail.sequencesActive} actives</div>
+          <div className="k">Réponses auto</div>
+          <div className="v">{detail.autoReply ? "Activées" : "Désactivées"}</div>
         </div>
       </div>
       <div className="detail-card">
-        <h3>Messages (table locale)</h3>
+        <h3>Volumes (compteurs)</h3>
         <div className="kv">
-          <div className="k">Total</div>
-          <div className="v">{detail.messages.total}</div>
-          <div className="k">Sortants</div>
+          <div className="k">Envoyés (total)</div>
           <div className="v">{detail.messages.sortant}</div>
-          <div className="k">Dont quota</div>
-          <div className="v">{detail.messages.sortantQuota}</div>
-          <div className="k">Entrants</div>
+          <div className="k">Reçus (total)</div>
           <div className="v">{detail.messages.entrant}</div>
-          <div className="k">Out / in 24h</div>
-          <div className="v">
-            {detail.messages.out24h} / {detail.messages.in24h}
-          </div>
-          <div className="k">7j</div>
-          <div className="v">{detail.messages.last_7d}</div>
+          <div className="k">Envoyés aujourd’hui</div>
+          <div className="v">{detail.messages.envoyesAujourdhui}</div>
+          <div className="k">Reçus aujourd’hui</div>
+          <div className="v">{detail.messages.recusAujourdhui}</div>
+          <div className="k">Activité 7 derniers jours</div>
+          <div className="v">{detail.messages.derniers7j}</div>
         </div>
       </div>
     </div>
@@ -308,13 +301,13 @@ function CampagnesTab({ detail }: { detail: Detail }) {
         <table className="data">
           <thead>
             <tr>
-              <th>ID</th>
+              <th>N°</th>
               <th>Nom</th>
               <th>Type</th>
               <th>Statut</th>
-              <th>Contacted</th>
-              <th>Replied</th>
-              <th>Conv.</th>
+              <th>Contactés</th>
+              <th>Réponses</th>
+              <th>Intéressés</th>
             </tr>
           </thead>
           <tbody>
@@ -322,107 +315,15 @@ function CampagnesTab({ detail }: { detail: Detail }) {
               <tr key={c.id}>
                 <td>#{c.id}</td>
                 <td>{c.name}</td>
-                <td>{c.type}</td>
-                <td>
-                  <span className="badge badge-muted">{c.status}</span>
-                </td>
+                <td>{CAMPAGNE_TYPE[c.type] ?? c.type}</td>
+                <td>{CAMPAGNE_STATUT[c.status] ?? c.status}</td>
                 <td>{num(c.stats.contacted)}</td>
                 <td>{num(c.stats.replied)}</td>
-                <td>{num(c.stats.conversions)}</td>
+                <td>{num(c.stats.interested)}</td>
               </tr>
             ))}
           </tbody>
         </table>
-      </div>
-    </div>
-  );
-}
-
-function MessagesTab({ userId }: { userId: number }) {
-  const [items, setItems] = useState<
-    Array<{
-      id: number;
-      contactPhone: string;
-      direction: string;
-      body: string;
-      senderName: string | null;
-      createdAt: string;
-    }>
-  >([]);
-  const [direction, setDirection] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const params = new URLSearchParams({ limit: "40" });
-    if (direction) params.set("direction", direction);
-    api<{ items: typeof items }>(`/api/admin/users/${userId}/messages?${params}`)
-      .then((res) => {
-        setItems(res.items);
-        setError(null);
-      })
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Erreur"));
-  }, [userId, direction]);
-
-  return (
-    <div className="panel">
-      <div className="panel-head">
-        <h2>Historique WhatsApp</h2>
-        <select value={direction} onChange={(e) => setDirection(e.target.value)}>
-          <option value="">Tous</option>
-          <option value="sortant">Sortants</option>
-          <option value="entrant">Entrants</option>
-        </select>
-      </div>
-      {error ? <div className="error-inline">{error}</div> : null}
-      <div className="msg-list" style={{ padding: 12 }}>
-        {items.length === 0 ? <div className="empty">Aucun message</div> : null}
-        {items.map((m) => (
-          <div className="msg-item" key={m.id}>
-            <div className="meta">
-              <span className="badge badge-muted">{m.direction}</span>
-              <span>{m.contactPhone}</span>
-              <span>{m.senderName || ""}</span>
-              <span>{formatDate(m.createdAt)}</span>
-            </div>
-            <div className="body">{m.body}</div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function FileTab({ detail }: { detail: Detail }) {
-  return (
-    <div className="grid-2">
-      <div className="detail-card">
-        <h3>Send queue</h3>
-        <div className="kv">
-          <div className="k">Pending</div>
-          <div className="v">{detail.queue.pending}</div>
-          <div className="k">Processing</div>
-          <div className="v">{detail.queue.processing}</div>
-          <div className="k">Failed</div>
-          <div className="v">{detail.queue.failed}</div>
-          <div className="k">Sent 24h</div>
-          <div className="v">{detail.queue.sent24h}</div>
-        </div>
-      </div>
-      <div className="detail-card">
-        <h3>Derniers logs auto</h3>
-        <div className="msg-list">
-          {detail.recentLogs.length === 0 ? <div className="empty">Aucun log</div> : null}
-          {detail.recentLogs.slice(0, 12).map((l) => (
-            <div className="msg-item" key={l.id}>
-              <div className="meta">
-                <span>{l.level}</span>
-                <span>camp. #{l.automationId}</span>
-                <span>{formatDate(l.createdAt)}</span>
-              </div>
-              <div className="body">{l.message}</div>
-            </div>
-          ))}
-        </div>
       </div>
     </div>
   );
@@ -437,105 +338,86 @@ function ActionsTab({
 }: {
   detail: Detail;
   busy: boolean;
-  onConfirm: (
-    c: { title: string; body: string; run: () => Promise<unknown> } | null
-  ) => void;
+  onConfirm: (c: { title: string; body: string; run: () => Promise<unknown> } | null) => void;
   onSaveSubscription: (body: Record<string, unknown>) => Promise<void>;
   onSaveOutreach: (body: Record<string, unknown>) => Promise<void>;
 }) {
-  const u = detail.user;
-  const [status, setStatus] = useState(u.subscriptionStatus);
-  const [level, setLevel] = useState(String(u.outreachLevel));
-  const [totalSent, setTotalSent] = useState(String(u.totalMessagesSent));
-  const [resetTrial, setResetTrial] = useState(false);
+  const userId = detail.user.id;
+  const [status, setStatus] = useState(detail.user.subscriptionStatus);
+  const [level, setLevel] = useState(String(detail.user.outreachLevel));
+  const [totalSent, setTotalSent] = useState(String(detail.user.totalMessagesSent));
 
   useEffect(() => {
-    setStatus(u.subscriptionStatus);
-    setLevel(String(u.outreachLevel));
-    setTotalSent(String(u.totalMessagesSent));
-  }, [u]);
+    setStatus(detail.user.subscriptionStatus);
+    setLevel(String(detail.user.outreachLevel));
+    setTotalSent(String(detail.user.totalMessagesSent));
+  }, [detail]);
 
-  async function saveSub(e: FormEvent) {
+  function onSub(e: FormEvent) {
     e.preventDefault();
-    await onSaveSubscription({
+    void onSaveSubscription({
       status,
       outreachLevel: Number(level),
-      resetTrial: resetTrial || undefined,
     });
   }
 
-  async function saveOutreach(e: FormEvent) {
+  function onOut(e: FormEvent) {
     e.preventDefault();
-    await onSaveOutreach({
+    void onSaveOutreach({
       outreachLevel: Number(level),
       totalMessagesSent: Number(totalSent),
     });
   }
 
-  const userId = u.id;
-
   return (
     <div className="grid-2">
-      <form className="detail-card" onSubmit={saveSub}>
+      <form className="detail-card" onSubmit={onSub}>
         <h3>Abonnement</h3>
         <div className="field">
-          <label>Statut</label>
-          <select value={status} onChange={(e) => setStatus(e.target.value)}>
-            <option value="active">active</option>
-            <option value="trial">trial</option>
-            <option value="expired">expired</option>
+          <label htmlFor="st">Statut</label>
+          <select id="st" value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="active">Actif</option>
+            <option value="trial">Essai</option>
+            <option value="expired">Expiré</option>
           </select>
         </div>
         <div className="field">
-          <label>Niveau</label>
-          <select value={level} onChange={(e) => setLevel(e.target.value)}>
+          <label htmlFor="lv">Niveau</label>
+          <select id="lv" value={level} onChange={(e) => setLevel(e.target.value)}>
             {[1, 2, 3, 4, 5].map((n) => (
               <option key={n} value={String(n)}>
-                {n}
+                Niveau {n}
               </option>
             ))}
           </select>
         </div>
-        <label style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--muted)" }}>
-          <input
-            type="checkbox"
-            checked={resetTrial}
-            onChange={(e) => setResetTrial(e.target.checked)}
-          />
-          Remettre trial_conversations_used à 0
-        </label>
-        <div className="actions-row">
-          <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: "auto" }}>
-            Enregistrer abonnement
-          </button>
-        </div>
+        <button className="btn btn-primary" type="submit" disabled={busy}>
+          Enregistrer
+        </button>
       </form>
 
-      <form className="detail-card" onSubmit={saveOutreach}>
-        <h3>Compteurs outreach</h3>
+      <form className="detail-card" onSubmit={onOut}>
+        <h3>Compteur lifetime</h3>
         <div className="field">
-          <label>total_messages_sent</label>
-          <input value={totalSent} onChange={(e) => setTotalSent(e.target.value)} />
+          <label htmlFor="tot">Messages envoyés (total)</label>
+          <input
+            id="tot"
+            type="number"
+            min={0}
+            value={totalSent}
+            onChange={(e) => setTotalSent(e.target.value)}
+          />
         </div>
-        <div className="field">
-          <label>outreach_level</label>
-          <select value={level} onChange={(e) => setLevel(e.target.value)}>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={String(n)}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="actions-row">
-          <button className="btn btn-primary" type="submit" disabled={busy} style={{ width: "auto" }}>
-            Enregistrer compteurs
-          </button>
-        </div>
+        <button className="btn btn-primary" type="submit" disabled={busy}>
+          Mettre à jour
+        </button>
       </form>
 
       <div className="detail-card">
-        <h3>Actions dangereuses</h3>
+        <h3>Actions de sécurité</h3>
+        <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
+          Ces actions bloquent l’activité sortante du compte. Confirmation obligatoire.
+        </p>
         <div className="actions-row">
           <button
             className="btn btn-warn"
@@ -543,31 +425,14 @@ function ActionsTab({
             disabled={busy}
             onClick={() =>
               onConfirm({
-                title: "Pause campagnes",
-                body: "Mettre en pause toutes les campagnes actives de cet utilisateur ?",
-                run: async () => {
-                  await api(`/api/admin/users/${userId}/pause-automations`, { method: "POST" });
-                },
+                title: "Mettre les campagnes en pause",
+                body: "Toutes les campagnes actives de ce compte seront mises en pause.",
+                run: () =>
+                  api(`/api/admin/users/${userId}/pause-automations`, { method: "POST" }),
               })
             }
           >
-            Pause campagnes
-          </button>
-          <button
-            className="btn btn-warn"
-            type="button"
-            disabled={busy}
-            onClick={() =>
-              onConfirm({
-                title: "Annuler la file",
-                body: "Annuler tous les envois pending/processing ?",
-                run: async () => {
-                  await api(`/api/admin/users/${userId}/cancel-queue`, { method: "POST" });
-                },
-              })
-            }
-          >
-            Annuler file
+            Pause des campagnes
           </button>
           <button
             className="btn btn-danger"
@@ -575,15 +440,13 @@ function ActionsTab({
             disabled={busy}
             onClick={() =>
               onConfirm({
-                title: "Stop outbound",
-                body: "Pause campagnes + cancel file + auto-reply OFF. Continuer ?",
-                run: async () => {
-                  await api(`/api/admin/users/${userId}/stop-outbound`, { method: "POST" });
-                },
+                title: "Couper tous les envois",
+                body: "Mise en pause des campagnes, annulation des envois en attente, et réponses auto désactivées.",
+                run: () => api(`/api/admin/users/${userId}/stop-outbound`, { method: "POST" }),
               })
             }
           >
-            Stop outbound
+            Couper tous les envois
           </button>
           <button
             className="btn btn-ghost"
@@ -591,18 +454,19 @@ function ActionsTab({
             disabled={busy}
             onClick={() =>
               onConfirm({
-                title: detail.autoReply ? "Couper auto-reply" : "Activer auto-reply",
-                body: `Passer auto-reply global à ${detail.autoReply ? "OFF" : "ON"} ?`,
-                run: async () => {
-                  await api(`/api/admin/users/${userId}/set-auto-reply`, {
+                title: detail.autoReply ? "Couper les réponses auto" : "Activer les réponses auto",
+                body: detail.autoReply
+                  ? "Le compte ne répondra plus automatiquement."
+                  : "Le compte pourra répondre automatiquement.",
+                run: () =>
+                  api(`/api/admin/users/${userId}/set-auto-reply`, {
                     method: "POST",
                     body: JSON.stringify({ enabled: !detail.autoReply }),
-                  });
-                },
+                  }),
               })
             }
           >
-            Auto-reply {detail.autoReply ? "OFF" : "ON"}
+            {detail.autoReply ? "Désactiver réponses auto" : "Activer réponses auto"}
           </button>
         </div>
       </div>
@@ -611,7 +475,9 @@ function ActionsTab({
 }
 
 function num(v: unknown): string {
-  return v == null ? "—" : String(v);
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "string" && v.trim()) return v;
+  return "—";
 }
 
 function formatDate(iso: string): string {

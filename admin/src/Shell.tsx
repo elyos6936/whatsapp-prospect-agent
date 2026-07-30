@@ -13,19 +13,24 @@ export function Shell() {
         <div className="brand">
           <img src={LOGO} alt="" width={28} height={28} />
           <div>
-            <strong>Klanvio Ops</strong>
-            <span>Console privée</span>
+            <strong>Klanvio</strong>
+            <span>Administration</span>
           </div>
         </div>
+
         <nav className="nav">
+          <p className="nav-group">Pilotage</p>
           <NavLink to="/" end>
-            Vue d’ensemble
+            Tableau de bord
           </NavLink>
-          <NavLink to="/users">Utilisateurs</NavLink>
-          <NavLink to="/audit">Audit</NavLink>
+          <NavLink to="/users">Comptes</NavLink>
+
+          <p className="nav-group">Contrôle</p>
+          <NavLink to="/audit">Journal</NavLink>
         </nav>
+
         <div className="sidebar-foot">
-          <div>{email}</div>
+          <div className="sidebar-email">{email}</div>
           <button
             className="btn btn-ghost"
             style={{ marginTop: 8, width: "100%" }}

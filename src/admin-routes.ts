@@ -9,7 +9,6 @@ import {
   verifyAdminCredentials,
 } from "./admin-auth.js";
 import {
-  adminCancelQueue,
   adminStopOutbound,
   adminUpdateOutreach,
   adminUpdateSubscription,
@@ -17,8 +16,6 @@ import {
   getAdminOverview,
   getAdminUserDetail,
   listAdminAudit,
-  listAdminUserActivity,
-  listAdminUserMessages,
   listAdminUsers,
   writeAdminAudit,
 } from "./admin-service.js";
@@ -152,29 +149,6 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
   );
 
   app.get<{
-    Params: { id: string };
-    Querystring: { limit?: string; offset?: string; direction?: string };
-  }>("/api/admin/users/:id/messages", { preHandler: requireAdmin }, async (request, reply) => {
-    const id = Number(request.params.id);
-    if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
-    return listAdminUserMessages(id, {
-      limit: request.query.limit ? Number(request.query.limit) : 50,
-      offset: request.query.offset ? Number(request.query.offset) : 0,
-      direction: request.query.direction,
-    });
-  });
-
-  app.get<{ Params: { id: string }; Querystring: { limit?: string } }>(
-    "/api/admin/users/:id/activity",
-    { preHandler: requireAdmin },
-    async (request, reply) => {
-      const id = Number(request.params.id);
-      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
-      return listAdminUserActivity(id, request.query.limit ? Number(request.query.limit) : 40);
-    }
-  );
-
-  app.get<{
     Querystring: { limit?: string; offset?: string; targetUserId?: string };
   }>("/api/admin/audit", { preHandler: requireAdmin }, async (request) => {
     const target = request.query.targetUserId
@@ -245,24 +219,6 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         payload: { paused },
       });
       return { ok: true, paused };
-    }
-  );
-
-  app.post<{ Params: { id: string } }>(
-    "/api/admin/users/:id/cancel-queue",
-    { preHandler: requireAdmin },
-    async (request, reply) => {
-      const id = Number(request.params.id);
-      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
-      const cancelled = await adminCancelQueue(id);
-      const meta = actorMeta(request);
-      await writeAdminAudit({
-        ...meta,
-        action: "user.cancel_queue",
-        targetUserId: id,
-        payload: { cancelled },
-      });
-      return { ok: true, cancelled };
     }
   );
 
