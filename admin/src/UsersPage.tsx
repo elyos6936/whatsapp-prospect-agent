@@ -7,6 +7,8 @@ type UserRow = {
   email: string;
   name: string;
   subscriptionStatus: string;
+  accountStatus: string;
+  deletedAt: string | null;
   outreachLevel: number;
   totalMessagesSent: number;
   messagesTodayOut: number;
@@ -112,6 +114,7 @@ export function UsersPage() {
                       <th>N°</th>
                       <th>Compte</th>
                       <th>Statut</th>
+                      <th>Compte</th>
                       <th>Niveau</th>
                       <th>Envoyés</th>
                       <th>Aujourd’hui</th>
@@ -133,6 +136,15 @@ export function UsersPage() {
                         </td>
                         <td>
                           <StatusBadge status={u.subscriptionStatus} />
+                        </td>
+                        <td>
+                          {u.deletedAt ? (
+                            <span className="badge badge-expired">Supprimé</span>
+                          ) : u.accountStatus === "suspended" ? (
+                            <span className="badge badge-expired">Suspendu</span>
+                          ) : (
+                            <span className="badge badge-ok">OK</span>
+                          )}
                         </td>
                         <td>{u.outreachLevel}/5</td>
                         <td>{u.totalMessagesSent}</td>

@@ -7,6 +7,8 @@ import {
   type SubscriptionStatus,
 } from "./outreach-level.js";
 
+export type AccountStatus = "active" | "suspended";
+
 export interface UserRecord {
   id: number;
   email: string;
@@ -24,6 +26,10 @@ export interface UserRecord {
   trial_conversations_used: number;
   last_weekly_report_week: string | null;
   last_reported_outreach_level: number | null;
+  account_status: AccountStatus;
+  suspended_at: string | null;
+  suspended_reason: string | null;
+  deleted_at: string | null;
   created_at: string;
 }
 
@@ -33,6 +39,8 @@ function mapUser(row: Record<string, unknown>): UserRecord {
   const statusRaw = String(row.subscription_status ?? "active");
   const status: SubscriptionStatus =
     statusRaw === "active" || statusRaw === "expired" ? statusRaw : "trial";
+  const accountRaw = String(row.account_status ?? "active");
+  const accountStatus: AccountStatus = accountRaw === "suspended" ? "suspended" : "active";
   return {
     id: Number(row.id),
     email: String(row.email),
@@ -54,8 +62,24 @@ function mapUser(row: Record<string, unknown>): UserRecord {
       row.last_reported_outreach_level != null
         ? Number(row.last_reported_outreach_level)
         : null,
+    account_status: accountStatus,
+    suspended_at: row.suspended_at != null ? String(row.suspended_at) : null,
+    suspended_reason: row.suspended_reason != null ? String(row.suspended_reason) : null,
+    deleted_at: row.deleted_at != null ? String(row.deleted_at) : null,
     created_at: String(row.created_at ?? ""),
   };
+}
+
+/** Accès client autorisé ? (pas suspendu, pas soft-deleted). */
+export function getAccountAccessBlock(user: UserRecord | null): string | null {
+  if (!user) return "Utilisateur introuvable.";
+  if (user.deleted_at) return "Ce compte a été supprimé.";
+  if (user.account_status !== "active") {
+    return user.suspended_reason?.trim()
+      ? `Compte suspendu : ${user.suspended_reason.trim()}`
+      : "Compte suspendu.";
+  }
+  return null;
 }
 
 export function publicUser(user: UserRecord) {
@@ -70,6 +94,7 @@ export function publicUser(user: UserRecord) {
     outreach_level: user.outreach_level,
     total_messages_sent: user.total_messages_sent,
     trial_conversations_used: user.trial_conversations_used,
+    account_status: user.account_status,
     business: {
       ownerName: user.business_owner_name,
       offer: user.business_offer,
@@ -110,6 +135,22 @@ export async function ensureUserOutreachSchema(): Promise<void> {
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS last_reported_outreach_level INTEGER
   `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS account_status TEXT NOT NULL DEFAULT 'active'
+  `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS suspended_at TIMESTAMPTZ
+  `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS suspended_reason TEXT
+  `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
+  `;
   schemaReady = true;
 }
 
@@ -133,7 +174,8 @@ export async function createUser(input: {
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
   `;
   return mapUser(rows[0]);
 }
@@ -162,7 +204,8 @@ export async function createGoogleUser(input: {
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
   `;
   return mapUser(rows[0]);
 }
@@ -182,7 +225,8 @@ export async function linkGoogleAccount(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
   `;
   return mapUser(rows[0]);
 }
@@ -197,7 +241,8 @@ export async function getUserByEmail(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE email = ${email.trim().toLowerCase()}
   `;
   if (!rows.length) return null;
@@ -216,7 +261,8 @@ export async function getUserByGoogleSub(googleSub: string): Promise<UserRecord 
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE google_sub = ${googleSub}
   `;
   return rows.length ? mapUser(rows[0]) : null;
@@ -230,7 +276,8 @@ export async function getUserById(id: number): Promise<UserRecord | null> {
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE id = ${id}
   `;
   return rows.length ? mapUser(rows[0]) : null;
@@ -241,13 +288,23 @@ export async function userIdFromInstanceName(instance: string): Promise<number |
 }
 
 export async function listUserIds(): Promise<number[]> {
-  const rows = await sql<{ id: number }[]>`SELECT id FROM users ORDER BY id`;
+  await ensureUserOutreachSchema();
+  const rows = await sql<{ id: number }[]>`
+    SELECT id FROM users
+    WHERE deleted_at IS NULL AND account_status = 'active'
+    ORDER BY id
+  `;
   return rows.map((r) => Number(r.id));
 }
 
 export async function listActiveUserIds(): Promise<number[]> {
+  await ensureUserOutreachSchema();
   const rows = await sql<{ id: number }[]>`
-    SELECT id FROM users WHERE onboarding_completed = true ORDER BY id
+    SELECT id FROM users
+    WHERE onboarding_completed = true
+      AND deleted_at IS NULL
+      AND account_status = 'active'
+    ORDER BY id
   `;
   return rows.map((r) => Number(r.id));
 }
@@ -275,7 +332,8 @@ export async function completeOnboarding(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
   `;
   return mapUser(rows[0]);
 }
@@ -303,7 +361,8 @@ export async function markGoogleContactsPromptDone(userId: number): Promise<User
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
   `;
   return rows.length ? mapUser(rows[0]) : null;
 }
@@ -363,7 +422,8 @@ export async function setSubscriptionStatus(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
-      last_weekly_report_week, last_reported_outreach_level, created_at
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
   `;
   return rows.length ? mapUser(rows[0]) : null;
 }

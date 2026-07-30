@@ -15,25 +15,36 @@ type AuditRow = {
 const ACTION_FR: Record<string, string> = {
   "admin.login": "Connexion admin",
   "user.subscription_update": "Abonnement modifié",
+  "user.subscription.update": "Abonnement modifié",
   "user.outreach_update": "Niveau / compteur modifié",
+  "user.outreach.update": "Niveau / compteur modifié",
   "user.pause_automations": "Campagnes en pause",
   "user.stop_outbound": "Envois coupés",
   "user.set_auto_reply": "Réponses auto modifiées",
+  "user.suspend": "Compte suspendu",
+  "user.unsuspend": "Compte réactivé",
+  "user.soft_delete": "Compte soft-supprimé",
 };
 
 export function AuditPage() {
   const [items, setItems] = useState<AuditRow[]>([]);
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
+  const [targetUserId, setTargetUserId] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const limit = 50;
 
   useEffect(() => {
     setLoading(true);
-    api<{ items: AuditRow[]; total: number }>(
-      `/api/admin/audit?limit=${limit}&offset=${offset}`
-    )
+    const params = new URLSearchParams();
+    params.set("limit", String(limit));
+    params.set("offset", String(offset));
+    const tid = targetUserId.trim();
+    if (tid && Number.isFinite(Number(tid))) {
+      params.set("targetUserId", tid);
+    }
+    api<{ items: AuditRow[]; total: number }>(`/api/admin/audit?${params}`)
       .then((res) => {
         setItems(res.items);
         setTotal(res.total);
@@ -41,7 +52,7 @@ export function AuditPage() {
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Erreur"))
       .finally(() => setLoading(false));
-  }, [offset]);
+  }, [offset, targetUserId]);
 
   return (
     <>
@@ -51,6 +62,20 @@ export function AuditPage() {
       </header>
       <div className="content">
         <div className="panel">
+          <div className="panel-head">
+            <h2>Événements admin</h2>
+            <div className="filters">
+              <input
+                placeholder="Filtrer n° compte (ex. 12)"
+                value={targetUserId}
+                onChange={(e) => {
+                  setOffset(0);
+                  setTargetUserId(e.target.value.replace(/[^\d]/g, ""));
+                }}
+                inputMode="numeric"
+              />
+            </div>
+          </div>
           {error ? <div className="error-inline">{error}</div> : null}
           {loading ? <div className="loading">Chargement…</div> : null}
           {!loading && items.length === 0 ? <div className="empty">Aucun événement</div> : null}

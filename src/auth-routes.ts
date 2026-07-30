@@ -12,6 +12,7 @@ import {
   completeOnboarding,
   markGoogleContactsPromptDone,
   publicUser,
+  getAccountAccessBlock,
 } from "./users.js";
 
 let googleClient: OAuth2Client | null = null;
@@ -129,6 +130,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       }
 
       const { password_hash: _, ...user } = row;
+      const block = getAccountAccessBlock(user);
+      if (block) {
+        return reply.status(403).send({ error: block, code: "account_blocked" });
+      }
       const token = app.signUserToken(user.id);
       return { token, user: publicUser(user) };
     },
@@ -167,9 +172,20 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       let user = await getUserByGoogleSub(googleSub);
       if (!user) {
         const byEmail = await getUserByEmail(email);
-        user = byEmail
-          ? await linkGoogleAccount(byEmail.id, { googleSub, avatarUrl })
-          : await createGoogleUser({ email, name, googleSub, avatarUrl });
+        if (byEmail) {
+          const blockExisting = getAccountAccessBlock(byEmail);
+          if (blockExisting) {
+            return reply.status(403).send({ error: blockExisting, code: "account_blocked" });
+          }
+          user = await linkGoogleAccount(byEmail.id, { googleSub, avatarUrl });
+        } else {
+          user = await createGoogleUser({ email, name, googleSub, avatarUrl });
+        }
+      }
+
+      const block = getAccountAccessBlock(user);
+      if (block) {
+        return reply.status(403).send({ error: block, code: "account_blocked" });
       }
 
       const token = app.signUserToken(user.id);

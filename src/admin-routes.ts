@@ -9,7 +9,10 @@ import {
   verifyAdminCredentials,
 } from "./admin-auth.js";
 import {
+  adminSoftDeleteUser,
   adminStopOutbound,
+  adminSuspendUser,
+  adminUnsuspendUser,
   adminUpdateOutreach,
   adminUpdateSubscription,
   ensureAdminAuditSchema,
@@ -21,6 +24,7 @@ import {
 } from "./admin-service.js";
 import { pauseAllActiveAutomations, setAutoReplyEnabled } from "./db.js";
 import type { SubscriptionStatus } from "./outreach-level.js";
+import { ensureUserOutreachSchema } from "./users.js";
 
 /** Rate-limit login : max 8 tentatives / 15 min / IP. */
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
@@ -46,6 +50,9 @@ function actorMeta(request: FastifyRequest) {
 }
 
 export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
+  await ensureUserOutreachSchema().catch((err) => {
+    console.warn("[admin] user schema:", err instanceof Error ? err.message : err);
+  });
   await ensureAdminAuditSchema().catch((err) => {
     console.warn("[admin] audit schema:", err instanceof Error ? err.message : err);
   });
@@ -256,6 +263,69 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         payload: { enabled },
       });
       return { ok: true, enabled };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: { reason?: string } }>(
+    "/api/admin/users/:id/suspend",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      const result = await adminSuspendUser(id, request.body?.reason);
+      if (!result) {
+        return reply.status(404).send({ error: "Utilisateur introuvable ou déjà supprimé." });
+      }
+      const meta = actorMeta(request);
+      await writeAdminAudit({
+        ...meta,
+        action: "user.suspend",
+        targetUserId: id,
+        payload: { reason: request.body?.reason ?? null, outbound: result.outbound },
+      });
+      return { ok: true, user: result.user, ...result.outbound };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/api/admin/users/:id/unsuspend",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      const user = await adminUnsuspendUser(id);
+      if (!user) {
+        return reply.status(404).send({ error: "Utilisateur introuvable ou supprimé." });
+      }
+      const meta = actorMeta(request);
+      await writeAdminAudit({
+        ...meta,
+        action: "user.unsuspend",
+        targetUserId: id,
+        payload: {},
+      });
+      return { ok: true, user };
+    }
+  );
+
+  app.post<{ Params: { id: string } }>(
+    "/api/admin/users/:id/soft-delete",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      const result = await adminSoftDeleteUser(id);
+      if (!result) {
+        return reply.status(404).send({ error: "Utilisateur introuvable ou déjà soft-supprimé." });
+      }
+      const meta = actorMeta(request);
+      await writeAdminAudit({
+        ...meta,
+        action: "user.soft_delete",
+        targetUserId: id,
+        payload: { outbound: result.outbound },
+      });
+      return { ok: true, user: result.user, ...result.outbound };
     }
   );
 }

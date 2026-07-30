@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { ActivityChart, type ActivityPoint } from "./ActivityChart";
 import { api, ApiError } from "./api";
 import { StatusBadge } from "./UsersPage";
 
@@ -15,6 +16,10 @@ type Detail = {
     totalMessagesSent: number;
     trialConversationsUsed: number;
     dailyCaps: { inbound: number; outbound: number };
+    accountStatus: "active" | "suspended";
+    suspendedAt: string | null;
+    suspendedReason: string | null;
+    deletedAt: string | null;
     createdAt: string;
   };
   messages: {
@@ -34,6 +39,7 @@ type Detail = {
   }>;
   whatsapp: { connected: boolean; message: string };
   autoReply: boolean;
+  activitySeries: ActivityPoint[];
 };
 
 type Tab = "compte" | "campagnes" | "actions";
@@ -109,6 +115,11 @@ export function UserDetailPage() {
           <h1>{detail?.user.email ?? `Compte #${userId}`}</h1>
         </div>
         {detail ? <StatusBadge status={detail.user.subscriptionStatus} /> : null}
+        {detail?.user.deletedAt ? (
+          <span className="badge badge-expired">Supprimé</span>
+        ) : detail?.user.accountStatus === "suspended" ? (
+          <span className="badge badge-expired">Suspendu</span>
+        ) : null}
       </header>
       <div className="content">
         {error ? <div className="error-banner">{error}</div> : null}
@@ -215,7 +226,13 @@ export function UserDetailPage() {
 function CompteTab({ detail }: { detail: Detail }) {
   const u = detail.user;
   return (
-    <div className="grid-2">
+    <>
+      <ActivityChart
+        data={detail.activitySeries ?? []}
+        title="Progression messages"
+        subtitle={`30 derniers jours — niveau actuel ${u.outreachLevel}/5 · ${u.totalMessagesSent} envoyés lifetime`}
+      />
+      <div className="grid-2">
       <div className="detail-card">
         <h3>Profil</h3>
         <div className="kv">
@@ -227,6 +244,20 @@ function CompteTab({ detail }: { detail: Detail }) {
           <div className="v">{u.onboardingCompleted ? "Terminé" : "En cours"}</div>
           <div className="k">Inscription</div>
           <div className="v">{formatDate(u.createdAt)}</div>
+          <div className="k">Compte</div>
+          <div className="v">
+            {u.deletedAt
+              ? "Soft-supprimé"
+              : u.accountStatus === "suspended"
+                ? "Suspendu"
+                : "Actif"}
+          </div>
+          {u.suspendedReason ? (
+            <>
+              <div className="k">Motif suspension</div>
+              <div className="v">{u.suspendedReason}</div>
+            </>
+          ) : null}
         </div>
       </div>
       <div className="detail-card">
@@ -290,6 +321,7 @@ function CompteTab({ detail }: { detail: Detail }) {
         </div>
       </div>
     </div>
+    </>
   );
 }
 
@@ -422,7 +454,7 @@ function ActionsTab({
           <button
             className="btn btn-warn"
             type="button"
-            disabled={busy}
+            disabled={busy || Boolean(detail.user.deletedAt)}
             onClick={() =>
               onConfirm({
                 title: "Mettre les campagnes en pause",
@@ -437,7 +469,7 @@ function ActionsTab({
           <button
             className="btn btn-danger"
             type="button"
-            disabled={busy}
+            disabled={busy || Boolean(detail.user.deletedAt)}
             onClick={() =>
               onConfirm({
                 title: "Couper tous les envois",
@@ -451,7 +483,7 @@ function ActionsTab({
           <button
             className="btn btn-ghost"
             type="button"
-            disabled={busy}
+            disabled={busy || Boolean(detail.user.deletedAt)}
             onClick={() =>
               onConfirm({
                 title: detail.autoReply ? "Couper les réponses auto" : "Activer les réponses auto",
@@ -468,6 +500,71 @@ function ActionsTab({
           >
             {detail.autoReply ? "Désactiver réponses auto" : "Activer réponses auto"}
           </button>
+        </div>
+      </div>
+
+      <div className="detail-card">
+        <h3>Compte (suspendre / supprimer)</h3>
+        <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
+          Suspendre bloque la connexion client et coupe l’activité. Supprimer = soft-delete
+          (email anonymisé), irréversible depuis ce panneau.
+        </p>
+        <div className="actions-row">
+          {detail.user.deletedAt ? (
+            <span style={{ color: "var(--text-500)", fontSize: 13 }}>
+              Compte soft-supprimé le {formatDate(detail.user.deletedAt)}.
+            </span>
+          ) : detail.user.accountStatus === "suspended" ? (
+            <button
+              className="btn btn-primary"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                onConfirm({
+                  title: "Réactiver le compte",
+                  body: "Le compte pourra à nouveau se connecter. Les campagnes restent en pause jusqu’à reprise manuelle.",
+                  run: () => api(`/api/admin/users/${userId}/unsuspend`, { method: "POST" }),
+                })
+              }
+            >
+              Réactiver (unsuspend)
+            </button>
+          ) : (
+            <button
+              className="btn btn-warn"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                onConfirm({
+                  title: "Suspendre le compte",
+                  body: "Login client bloqué, campagnes en pause, file annulée, réponses auto coupées. Réversible.",
+                  run: () =>
+                    api(`/api/admin/users/${userId}/suspend`, {
+                      method: "POST",
+                      body: JSON.stringify({ reason: "Suspendu par admin" }),
+                    }),
+                })
+              }
+            >
+              Suspendre
+            </button>
+          )}
+          {!detail.user.deletedAt ? (
+            <button
+              className="btn btn-danger"
+              type="button"
+              disabled={busy}
+              onClick={() =>
+                onConfirm({
+                  title: "Soft-supprimer le compte",
+                  body: "Anonymise l’email, coupe toute activité, bloque la connexion. Pas de suppression physique des données.",
+                  run: () => api(`/api/admin/users/${userId}/soft-delete`, { method: "POST" }),
+                })
+              }
+            >
+              Soft-supprimer
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
+import { ActivityChart, type ActivityPoint } from "./ActivityChart";
 import { api, ApiError } from "./api";
 
 type Overview = {
@@ -20,6 +21,7 @@ type Overview = {
     envoyesLifetime: number;
     envoyesAujourdhui: number;
   }>;
+  activitySeries: ActivityPoint[];
 };
 
 export function OverviewPage() {
@@ -76,6 +78,12 @@ export function OverviewPage() {
                 <div className="value">{data.errors24h}</div>
               </div>
             </div>
+
+            <ActivityChart
+              data={data.activitySeries ?? []}
+              title="Activité messages"
+              subtitle="30 derniers jours — envoyés vs reçus (plateforme)"
+            />
 
             <div className="grid-2" style={{ marginBottom: 20 }}>
               <div className="panel">

@@ -258,6 +258,7 @@ export async function getAdminOverview() {
       ),
       envoyesAujourdhui: Number(u.out_today ?? 0),
     })),
+    activitySeries: await getMessageActivitySeries({ days: 30 }),
   };
 }
 
@@ -266,6 +267,8 @@ export type AdminUserListItem = {
   email: string;
   name: string;
   subscriptionStatus: SubscriptionStatus;
+  accountStatus: "active" | "suspended";
+  deletedAt: string | null;
   outreachLevel: number;
   totalMessagesSent: number;
   messagesTodayOut: number;
@@ -295,6 +298,8 @@ export async function listAdminUsers(opts: {
       email: string;
       name: string;
       subscription_status: string;
+      account_status: string;
+      deleted_at: string | null;
       outreach_level: number;
       total_messages_sent: number;
       onboarding_completed: boolean;
@@ -323,6 +328,8 @@ export async function listAdminUsers(opts: {
       f.email,
       f.name,
       f.subscription_status,
+      f.account_status,
+      f.deleted_at::text,
       f.outreach_level,
       f.total_messages_sent,
       f.onboarding_completed,
@@ -371,6 +378,8 @@ export async function listAdminUsers(opts: {
       subscriptionStatus: (r.subscription_status === "active" || r.subscription_status === "expired"
         ? r.subscription_status
         : "trial") as SubscriptionStatus,
+      accountStatus: r.account_status === "suspended" ? "suspended" : "active",
+      deletedAt: r.deleted_at,
       outreachLevel: Number(r.outreach_level ?? 1),
       totalMessagesSent: outboundLifetime(
         Number(r.total_messages_sent ?? 0),
@@ -404,6 +413,10 @@ function serializeUser(user: UserRecord) {
     totalMessagesSent: user.total_messages_sent,
     trialConversationsUsed: user.trial_conversations_used,
     dailyCaps: caps,
+    accountStatus: user.account_status,
+    suspendedAt: user.suspended_at,
+    suspendedReason: user.suspended_reason,
+    deletedAt: user.deleted_at,
     createdAt: user.created_at,
   };
 }
@@ -527,6 +540,7 @@ export async function getAdminUserDetail(userId: number) {
     }),
     whatsapp,
     autoReply,
+    activitySeries: await getMessageActivitySeries({ days: 30, userId }),
   };
 }
 
@@ -674,4 +688,108 @@ export async function adminStopOutbound(userId: number): Promise<{
     WHERE user_id = ${userId} AND status = 'active'
   `;
   return { paused, queueCancelled };
+}
+
+export async function adminSuspendUser(
+  userId: number,
+  reason?: string
+): Promise<{ user: UserRecord; outbound: { paused: number; queueCancelled: number } } | null> {
+  const user = await getUserById(userId);
+  if (!user || user.deleted_at) return null;
+
+  const outbound = await adminStopOutbound(userId);
+  const reasonClean = reason?.trim() || null;
+  await sql`
+    UPDATE users SET
+      account_status = 'suspended',
+      suspended_at = NOW(),
+      suspended_reason = ${reasonClean}
+    WHERE id = ${userId}
+  `;
+  const updated = await getUserById(userId);
+  if (!updated) return null;
+  return { user: updated, outbound };
+}
+
+export async function adminUnsuspendUser(userId: number): Promise<UserRecord | null> {
+  const user = await getUserById(userId);
+  if (!user || user.deleted_at) return null;
+
+  await sql`
+    UPDATE users SET
+      account_status = 'active',
+      suspended_at = NULL,
+      suspended_reason = NULL
+    WHERE id = ${userId}
+  `;
+  return getUserById(userId);
+}
+
+export async function adminSoftDeleteUser(
+  userId: number
+): Promise<{ user: UserRecord; outbound: { paused: number; queueCancelled: number } } | null> {
+  const user = await getUserById(userId);
+  if (!user || user.deleted_at) return null;
+
+  const outbound = await adminStopOutbound(userId);
+  const anonEmail = `deleted+${userId}@deleted.klanvio.invalid`;
+  await sql`
+    UPDATE users SET
+      account_status = 'suspended',
+      suspended_at = COALESCE(suspended_at, NOW()),
+      suspended_reason = COALESCE(suspended_reason, 'Compte soft-supprimé'),
+      deleted_at = NOW(),
+      email = ${anonEmail},
+      name = '',
+      avatar_url = '',
+      google_sub = NULL,
+      password_hash = NULL
+    WHERE id = ${userId}
+  `;
+  const updated = await getUserById(userId);
+  if (!updated) return null;
+  return { user: updated, outbound };
+}
+
+/** Série journalière messages (envoyés / reçus) sur N jours — fuseau app. */
+export async function getMessageActivitySeries(opts: {
+  days: number;
+  userId?: number;
+}): Promise<Array<{ date: string; envoyes: number; recus: number }>> {
+  const days = Math.min(Math.max(opts.days, 7), 90);
+  const userId = opts.userId ?? null;
+
+  const rows = await sql<{ d: string; envoyes: number; recus: number }[]>`
+    WITH days AS (
+      SELECT generate_series(
+        ((NOW() AT TIME ZONE ${config.timezone})::date - (${days}::int - 1)),
+        (NOW() AT TIME ZONE ${config.timezone})::date,
+        INTERVAL '1 day'
+      )::date AS d
+    ),
+    agg AS (
+      SELECT
+        (created_at AT TIME ZONE ${config.timezone})::date AS d,
+        COUNT(*) FILTER (WHERE direction = 'sortant')::int AS envoyes,
+        COUNT(*) FILTER (WHERE direction = 'entrant')::int AS recus
+      FROM messages
+      WHERE created_at >= ((NOW() AT TIME ZONE ${config.timezone})::date - (${days}::int - 1))::timestamp
+          AT TIME ZONE ${config.timezone}
+        AND (${userId}::int IS NULL OR user_id = ${userId})
+      GROUP BY 1
+    )
+    SELECT
+      to_char(days.d, 'YYYY-MM-DD') AS d,
+      COALESCE(agg.envoyes, 0)::int AS envoyes,
+      COALESCE(agg.recus, 0)::int AS recus
+    FROM days
+    LEFT JOIN agg ON agg.d = days.d
+    ORDER BY days.d
+  `;
+
+  return rows.map((r) => ({
+    date: r.d,
+    envoyes: Number(r.envoyes ?? 0),
+    recus: Number(r.recus ?? 0),
+  }));
 }

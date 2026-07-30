@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import bcrypt from "bcryptjs";
 import { config } from "./config.js";
 import { registerAdminJwtHelpers } from "./admin-auth.js";
+import { getAccountAccessBlock, getUserById } from "./users.js";
 
 const PUBLIC_PREFIXES = [
   "/api/auth/",
@@ -75,6 +76,11 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
       const userId = Number(payload.sub);
       if (!Number.isFinite(userId) || userId < 1) {
         return reply.status(401).send({ error: "Token invalide." });
+      }
+      const user = await getUserById(userId);
+      const block = getAccountAccessBlock(user);
+      if (block) {
+        return reply.status(403).send({ error: block, code: "account_blocked" });
       }
       request.userId = userId;
     } catch {
