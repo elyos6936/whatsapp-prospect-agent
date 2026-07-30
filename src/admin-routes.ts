@@ -9,6 +9,7 @@ import {
   verifyAdminCredentials,
 } from "./admin-auth.js";
 import {
+  adminHardDeleteUser,
   adminSoftDeleteUser,
   adminStopOutbound,
   adminSuspendUser,
@@ -326,6 +327,27 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         payload: { outbound: result.outbound },
       });
       return { ok: true, user: result.user, ...result.outbound };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    "/api/admin/users/:id",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      const result = await adminHardDeleteUser(id);
+      if (!result) {
+        return reply.status(404).send({ error: "Utilisateur introuvable." });
+      }
+      const meta = actorMeta(request);
+      await writeAdminAudit({
+        ...meta,
+        action: "user.hard_delete",
+        targetUserId: id,
+        payload: { outbound: result.outbound },
+      });
+      return { ok: true, ...result };
     }
   );
 }

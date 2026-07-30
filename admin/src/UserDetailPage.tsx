@@ -446,9 +446,9 @@ function ActionsTab({
       </form>
 
       <div className="detail-card">
-        <h3>Actions de sécurité</h3>
+        <h3>1) Contrôle des envois</h3>
         <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
-          Ces actions bloquent l’activité sortante du compte. Confirmation obligatoire.
+          Actions rapides sur l’activité WhatsApp. Confirmation obligatoire.
         </p>
         <div className="actions-row">
           <button
@@ -504,10 +504,9 @@ function ActionsTab({
       </div>
 
       <div className="detail-card">
-        <h3>Compte (suspendre / supprimer)</h3>
+        <h3>2) État du compte</h3>
         <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
-          Suspendre bloque la connexion client et coupe l’activité. Supprimer = soft-delete
-          (email anonymisé), irréversible depuis ce panneau.
+          Suspendre bloque la connexion client + stoppe l’activité (réversible).
         </p>
         <div className="actions-row">
           {detail.user.deletedAt ? (
@@ -551,7 +550,7 @@ function ActionsTab({
           )}
           {!detail.user.deletedAt ? (
             <button
-              className="btn btn-danger"
+              className="btn btn-ghost"
               type="button"
               disabled={busy}
               onClick={() =>
@@ -565,6 +564,33 @@ function ActionsTab({
               Soft-supprimer
             </button>
           ) : null}
+        </div>
+        <p style={{ color: "var(--text-500)", fontSize: 12, marginTop: 10 }}>
+          Soft-delete = le compte reste en base mais devient inutilisable (email anonymisé, connexion bloquée,
+          activité stoppée). Utile pour archivage / conformité.
+        </p>
+      </div>
+
+      <div className="detail-card" style={{ borderColor: "#fecaca", background: "#fffafa" }}>
+        <h3>3) Suppression définitive (DB)</h3>
+        <p style={{ color: "var(--text-500)", fontSize: 13, marginTop: 0 }}>
+          Efface réellement le compte et ses données liées de la base. Action irréversible.
+        </p>
+        <div className="actions-row">
+          <button
+            className="btn btn-danger"
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              onConfirm({
+                title: "Supprimer définitivement le compte",
+                body: "Suppression physique irréversible: compte + données liées. Cette action ne peut pas être annulée.",
+                run: () => api(`/api/admin/users/${userId}`, { method: "DELETE" }),
+              })
+            }
+          >
+            Supprimer définitivement
+          </button>
         </div>
       </div>
     </div>

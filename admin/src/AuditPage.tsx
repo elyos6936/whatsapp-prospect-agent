@@ -24,6 +24,7 @@ const ACTION_FR: Record<string, string> = {
   "user.suspend": "Compte suspendu",
   "user.unsuspend": "Compte réactivé",
   "user.soft_delete": "Compte soft-supprimé",
+  "user.hard_delete": "Compte supprimé définitivement",
 };
 
 export function AuditPage() {

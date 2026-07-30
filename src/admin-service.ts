@@ -751,6 +751,62 @@ export async function adminSoftDeleteUser(
   return { user: updated, outbound };
 }
 
+/**
+ * Suppression physique complète d'un compte.
+ * - coupe d'abord toute activité sortante
+ * - purge les données liées dans les tables multi-tenant
+ * - supprime enfin la ligne users
+ */
+export async function adminHardDeleteUser(
+  userId: number
+): Promise<{ deleted: boolean; outbound: { paused: number; queueCancelled: number } } | null> {
+  const user = await getUserById(userId);
+  if (!user) return null;
+
+  const outbound = await adminStopOutbound(userId);
+
+  await sql.begin(async (tx) => {
+    const deleteByUserIfExists = async (table: string) => {
+      const [exists] = await tx<{ ok: boolean }[]>`
+        SELECT to_regclass(${table}) IS NOT NULL AS ok
+      `;
+      if (!exists?.ok) return;
+      await tx.unsafe(`DELETE FROM ${table} WHERE user_id = $1`, [userId]);
+    };
+
+    const [auditExists] = await tx<{ ok: boolean }[]>`
+      SELECT to_regclass('admin_audit_log') IS NOT NULL AS ok
+    `;
+    if (auditExists?.ok) {
+      await tx`DELETE FROM admin_audit_log WHERE target_user_id = ${userId}`;
+    }
+
+    await deleteByUserIfExists("automation_targets");
+    await deleteByUserIfExists("automation_logs");
+    await deleteByUserIfExists("contact_sequences");
+    await deleteByUserIfExists("send_queue");
+    await deleteByUserIfExists("messages");
+    await deleteByUserIfExists("automations");
+    await deleteByUserIfExists("blocked_contacts");
+    await deleteByUserIfExists("contacts");
+    await deleteByUserIfExists("settings");
+    await deleteByUserIfExists("group_reply_rules");
+    await deleteByUserIfExists("handoff_events");
+    await deleteByUserIfExists("user_integrations");
+    await deleteByUserIfExists("user_connected_sheets");
+    await deleteByUserIfExists("google_contacts_sync_state");
+    await deleteByUserIfExists("contact_automation_state");
+    await deleteByUserIfExists("agent_conversation");
+    await deleteByUserIfExists("agent_threads");
+    const res = await tx`DELETE FROM users WHERE id = ${userId}`;
+    if (Number(res.count) === 0) {
+      throw new Error("Suppression impossible: utilisateur introuvable.");
+    }
+  });
+
+  return { deleted: true, outbound };
+}
+
 /** Série journalière messages (envoyés / reçus) sur N jours — fuseau app. */
 export async function getMessageActivitySeries(opts: {
   days: number;
