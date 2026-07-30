@@ -242,23 +242,17 @@ Vérifiez `CORS_ORIGINS` dans le `.env` du VPS (doit inclure `https://www.klanvi
 UI privée : **`https://api.klanvio.com/ops`** (ou `https://klanvio-api.srv1820011.hstgr.cloud/ops`).
 
 - **Pas** sur `www.klanvio.com` / Vercel
-- Auth **uniquement** via le `.env` du process API sur le VPS (`/opt/klanvio/.env`) — pas via un autre panel (Railway, etc.)
+- Auth via **Docker Hostinger** : vars `ADMIN_EMAIL` / `ADMIN_PASSWORD` dans le panel **Environment**, **et** mappées dans `docker-compose.yml` → `environment:` (sinon le conteneur ne les reçoit pas)
 - JWT admin 8h, journal `admin_audit_log`
 - Build : `npm run build:ops` → `public/ops/`
-- `npm run deploy:hostinger` build l’admin automatiquement
 
 ```bash
-# Sur le VPS
-cd /opt/klanvio
-nano .env   # ajouter (guillemets si caractères spéciaux) :
-# ADMIN_EMAIL=admin@klanvio.com
-# ADMIN_PASSWORD='votre-mot-de-passe'
-pm2 startOrReload deploy/hostinger/ecosystem.config.cjs --update-env
-# ou :
-pm2 reload klanvio-api --update-env
+# Après git pull sur le VPS (ou redeploy Docker Manager)
+cd /docker/klanvio   # ou le dossier compose Hostinger
+docker compose up -d --build klanvio-api
+# Vérifier (sans afficher le secret) :
+docker exec klanvio-api printenv ADMIN_EMAIL
 ```
-
-Vérifier que le process voit les vars : `pm2 env <id> | grep ADMIN` (sans afficher le mot de passe en chat).
 
 ---
 

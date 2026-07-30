@@ -59,7 +59,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       if (!isAdminConfigured()) {
         return reply.status(503).send({
           error:
-            "ADMIN_EMAIL / ADMIN_PASSWORD absents du process API. Sur le VPS Hostinger, ajoute-les dans /opt/klanvio/.env (mot de passe entre guillemets si caractères spéciaux), puis : pm2 reload klanvio-api --update-env",
+            "ADMIN_EMAIL / ADMIN_PASSWORD absents du conteneur. Vérifie qu’ils sont dans docker-compose.yml (environment) + panel Hostinger Environment, puis redéploie le service klanvio-api.",
         });
       }
 
