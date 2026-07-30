@@ -85,12 +85,18 @@ export function UserAccountManagementPage() {
         {!detail && !error ? <div className="loading">Chargement...</div> : null}
         {detail ? (
           <>
-            <div className="actions-page-nav">
-              <Link to={`/users/${userId}`} className="btn btn-ghost">
-                Retour fiche compte
+            <div className="tabs">
+              <Link to={`/users/${userId}`} className="tab-link">
+                Compte
               </Link>
-              <Link to={`/users/${userId}/subscription`} className="btn btn-ghost">
-                Aller a abonnement
+              <Link to={`/users/${userId}?tab=campagnes`} className="tab-link">
+                Campagnes
+              </Link>
+              <Link to={`/users/${userId}/subscription`} className="tab-link">
+                Abonnement
+              </Link>
+              <Link to={`/users/${userId}/account-management`} className="tab-link active">
+                Gestion compte
               </Link>
             </div>
             <div className="grid-2">

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { ActivityChart, type ActivityPoint } from "./ActivityChart";
 import { api, ApiError } from "./api";
 import { StatusBadge } from "./UsersPage";
@@ -61,7 +61,10 @@ const CAMPAGNE_TYPE: Record<string, string> = {
 export function UserDetailPage() {
   const { id } = useParams();
   const userId = Number(id);
-  const [tab, setTab] = useState<Tab>("compte");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedTab = searchParams.get("tab");
+  const initialTab: Tab = requestedTab === "campagnes" ? "campagnes" : "compte";
+  const [tab, setTab] = useState<Tab>(initialTab);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -78,6 +81,11 @@ export function UserDetailPage() {
   useEffect(() => {
     reload();
   }, [reload]);
+
+  useEffect(() => {
+    const next: Tab = requestedTab === "campagnes" ? "campagnes" : "compte";
+    setTab(next);
+  }, [requestedTab]);
 
   if (!Number.isFinite(userId)) {
     return <div className="content error-inline">Identifiant invalide</div>;
@@ -115,11 +123,20 @@ export function UserDetailPage() {
                   key={key}
                   type="button"
                   className={tab === key ? "active" : ""}
-                  onClick={() => setTab(key)}
+                  onClick={() => {
+                    setTab(key);
+                    setSearchParams(key === "campagnes" ? { tab: "campagnes" } : {});
+                  }}
                 >
                   {label}
                 </button>
               ))}
+              <Link to={`/users/${userId}/subscription`} className="tab-link">
+                Abonnement
+              </Link>
+              <Link to={`/users/${userId}/account-management`} className="tab-link">
+                Gestion compte
+              </Link>
             </div>
 
             {tab === "compte" ? <CompteTab detail={detail} /> : null}
@@ -226,20 +243,6 @@ function CompteTab({ detail }: { detail: Detail }) {
           <div className="v">{detail.messages.recusAujourdhui}</div>
           <div className="k">Activité 7 derniers jours</div>
           <div className="v">{detail.messages.derniers7j}</div>
-        </div>
-      </div>
-      <div className="detail-card">
-        <h3>Actions admin</h3>
-        <p className="actions-help">
-          Les actions sont maintenant separees en deux pages pour plus de clarte.
-        </p>
-        <div className="actions-row">
-          <Link className="btn btn-primary" to={`/users/${u.id}/subscription`}>
-            Ouvrir Abonnement
-          </Link>
-          <Link className="btn btn-ghost" to={`/users/${u.id}/account-management`}>
-            Ouvrir Gestion compte
-          </Link>
         </div>
       </div>
     </div>

@@ -498,6 +498,20 @@ table.data a {
   border-bottom-color: var(--brand);
 }
 
+.tabs .tab-link {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-500);
+  padding: 10px 14px;
+  border-bottom: 2px solid transparent;
+  font-weight: 600;
+}
+
+.tabs .tab-link.active {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
