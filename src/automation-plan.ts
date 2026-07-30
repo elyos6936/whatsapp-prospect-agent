@@ -178,6 +178,17 @@ export function buildAutomationVisualPlan(
 
   // Premier message / première réponse
   if (auto.type === "keyword_sales") {
+    const gap = Math.max(60, Math.floor(cfg.inboundWaveGapMinutes ?? 120));
+    const batch = Math.min(100, Math.max(1, Math.floor(cfg.inboundBatchSize ?? 50)));
+    add({
+      id: "inbound_pace",
+      label: "Vagues anti-blocage",
+      subtitle: `${batch} réponses / vague · ${gap} min entre vagues · 1–2 min entre envois`,
+      kind: "delay",
+    });
+    pushEdge(edges, last, "inbound_pace");
+    last = "inbound_pace";
+
     add({
       id: "open",
       label: "Première réponse IA",

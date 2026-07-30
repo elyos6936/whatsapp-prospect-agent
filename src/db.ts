@@ -2509,6 +2509,17 @@ export interface AutomationConfig {
   mediaType?: "image" | "document" | "audio";
   quietHoursStart?: number;
   quietHoursEnd?: number;
+  /**
+   * Closing entrant : taille d'une vague de réponses (défaut 50).
+   * Les réponses sont mises en file (send_queue) et espacées.
+   */
+  inboundBatchSize?: number;
+  /** Minutes entre le début de deux vagues (min 60, défaut 120). */
+  inboundWaveGapMinutes?: number;
+  /** Délai min entre deux envois dans une vague (secondes, défaut 60). */
+  inboundIntraMinSeconds?: number;
+  /** Délai max entre deux envois dans une vague (secondes, défaut 120). */
+  inboundIntraMaxSeconds?: number;
   /** ISO ou datetime locale : ne pas démarrer les openers avant cette date. */
   scheduledStartAt?: string;
   /** Plan graphique (nodes/edges) pour la carte visuelle — généré côté serveur. */

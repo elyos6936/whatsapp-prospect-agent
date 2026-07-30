@@ -1483,6 +1483,15 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description:
               "Heure (0-23) de fin des heures calmes. Ex. activité 9h-18h → quiet_hours_end=9",
           },
+          inbound_wave_gap_minutes: {
+            type: "number",
+            description:
+              "Closing entrant uniquement : minutes entre le début de deux vagues de 50 réponses (minimum 60, recommandé 120).",
+          },
+          inbound_batch_size: {
+            type: "number",
+            description: "Closing entrant : taille d'une vague (défaut 50, max 100).",
+          },
           scheduled_start_at: {
             type: "string",
             description:
@@ -1659,6 +1668,11 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
           quiet_hours_start: { type: "number" },
           quiet_hours_end: { type: "number" },
+          inbound_wave_gap_minutes: {
+            type: "number",
+            description: "Closing entrant : minutes entre vagues (min 60)",
+          },
+          inbound_batch_size: { type: "number" },
           scheduled_start_at: { type: "string" },
           ab_variants: {
             type: "array",
@@ -2062,7 +2076,31 @@ function buildAutomationConfigFromArgs(
     config.quietHoursEnd = Math.round(qEnd);
   } else if (isOutbound) {
     config.quietHoursEnd = 20;
+  } else if (type === "keyword_sales") {
+    // Closing entrant : défaut 8h–19h (quiet 19→8)
+    config.quietHoursStart = config.quietHoursStart ?? 19;
+    config.quietHoursEnd = 8;
   }
+  if (type === "keyword_sales" && config.quietHoursStart == null) {
+    config.quietHoursStart = 19;
+  }
+  if (type === "keyword_sales" && config.quietHoursEnd == null) {
+    config.quietHoursEnd = 8;
+  }
+
+  const waveGap = args.inbound_wave_gap_minutes != null ? Number(args.inbound_wave_gap_minutes) : NaN;
+  if (Number.isFinite(waveGap)) {
+    config.inboundWaveGapMinutes = Math.max(60, Math.round(waveGap));
+  } else if (type === "keyword_sales") {
+    config.inboundWaveGapMinutes = 120;
+  }
+  const batchSize = args.inbound_batch_size != null ? Number(args.inbound_batch_size) : NaN;
+  if (Number.isFinite(batchSize)) {
+    config.inboundBatchSize = Math.min(100, Math.max(1, Math.round(batchSize)));
+  } else if (type === "keyword_sales") {
+    config.inboundBatchSize = 50;
+  }
+
   if (args.scheduled_start_at) {
     const raw = String(args.scheduled_start_at).trim();
     if (raw) config.scheduledStartAt = raw;
@@ -4248,6 +4286,12 @@ export async function executeTool(
       }
       if (args.quiet_hours_end != null && Number.isFinite(Number(args.quiet_hours_end))) {
         merged.quietHoursEnd = Math.round(Number(args.quiet_hours_end));
+      }
+      if (args.inbound_wave_gap_minutes != null && Number.isFinite(Number(args.inbound_wave_gap_minutes))) {
+        merged.inboundWaveGapMinutes = Math.max(60, Math.round(Number(args.inbound_wave_gap_minutes)));
+      }
+      if (args.inbound_batch_size != null && Number.isFinite(Number(args.inbound_batch_size))) {
+        merged.inboundBatchSize = Math.min(100, Math.max(1, Math.round(Number(args.inbound_batch_size))));
       }
       if (args.scheduled_start_at != null) {
         const raw = String(args.scheduled_start_at).trim();

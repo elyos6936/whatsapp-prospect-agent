@@ -142,6 +142,12 @@ export async function activateAutomationCore(
     if (!safeConfig.relance?.enabled && !safeConfig.sequenceSteps?.length) {
       safeConfig.relance = defaultRelanceConfig();
     }
+  } else if (auto.type === "keyword_sales" || auto.config.mode === "inbound_closing") {
+    // Closing entrant : défaut plage 8h–19h, vagues de 50 / gap 2h
+    if (safeConfig.quietHoursStart == null) safeConfig.quietHoursStart = 19;
+    if (safeConfig.quietHoursEnd == null) safeConfig.quietHoursEnd = 8;
+    if (safeConfig.inboundBatchSize == null) safeConfig.inboundBatchSize = 50;
+    if (safeConfig.inboundWaveGapMinutes == null) safeConfig.inboundWaveGapMinutes = 120;
   }
   // Activer = simulation considérée validée (pas de double validation).
   if (!safeConfig.simulationValidatedAt) {

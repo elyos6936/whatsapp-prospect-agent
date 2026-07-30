@@ -38,7 +38,10 @@ import {
   incrementMessagesHandled,
   stopAutomationTargetForContact,
   setConversationCampaignId,
+  enqueueSend,
+  cancelPendingSendQueueForRecipient,
 } from "./db.js";
+import { computeInboundReplySendAtIso, INBOUND_REPLY_AB_VARIANT } from "./inbound-reply-batch.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
 import {
   scoreIncomingMessage,
@@ -1048,6 +1051,64 @@ async function runAutoReply(
         allowEmojis: activeCampaign?.config.stickersEnabled === true,
         automationId: activeCampaign?.id,
       });
+    }
+
+    // Closing entrant : file par vagues (sauf STOP/objectif déjà gérés en immédiat plus haut,
+    // et sauf confirmation RDV chaude où on envoie tout de suite).
+    const inboundPaced =
+      !!activeCampaign &&
+      !gate.outboundCampaign &&
+      !pendingAppointmentClose &&
+      (activeCampaign.type === "keyword_sales" ||
+        activeCampaign.config.mode === "inbound_closing");
+
+    if (inboundPaced && activeCampaign) {
+      try {
+        await cancelPendingSendQueueForRecipient(userId, chatId);
+        const sendAt = await computeInboundReplySendAtIso(
+          userId,
+          activeCampaign.id,
+          activeCampaign.config
+        );
+        const queued = await enqueueSend(userId, {
+          recipient: chatId,
+          recipientLabel: senderName,
+          message: reply,
+          priority: 6,
+          sendAt,
+          automationId: activeCampaign.id,
+          abVariant: INBOUND_REPLY_AB_VARIANT,
+        });
+        await addAutomationLog(
+          userId,
+          activeCampaign.id,
+          "info",
+          `Réponse planifiée pour ${senderName} à ${sendAt} (vague anti-blocage #${queued.id}).`
+        );
+        console.log(
+          `📥 Réponse entrante mise en file → ${senderName} à ${sendAt} (queue #${queued.id})`
+        );
+      } catch (err) {
+        console.error(`❌ File réponse entrante échouée pour ${senderName}:`, err);
+        // Fallback immédiat pour ne pas perdre la réponse
+        try {
+          const typingMs = clampPresenceMs(
+            ANTI_BAN.presenceMinMs +
+              Math.floor(Math.random() * (ANTI_BAN.presenceMaxMs - ANTI_BAN.presenceMinMs + 1))
+          );
+          await sendWhatsAppPresence(userId, chatId, "composing", typingMs);
+        } catch {
+          /* best effort */
+        }
+        const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+          enableAutoReply: false,
+          outboundProfile: "auto_reply",
+          automationId: activeCampaign.id,
+        });
+        await incrementMessagesHandled(userId, activeCampaign.id);
+        console.log(`✅ Réponse (fallback immédiat) → ${senderName} (${sent.idMessage})`);
+      }
+      return;
     }
 
     // Présence « écrit… » juste avant l'envoi (rythme commercial humain).

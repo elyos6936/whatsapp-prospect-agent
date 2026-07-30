@@ -13,10 +13,12 @@ import {
   markQueueSent,
   rescheduleSendQueueItem,
   saveAgentMessage,
+  incrementMessagesHandled,
   type QueueItem,
 } from "./db.js";
 import { chatIdToDisplay, sendWhatsAppMedia, sendWhatsAppMessage } from "./evolutionapi.js";
 import { shouldBlockOutboundWhileAwaitingReply } from "./outbound-safety.js";
+import { INBOUND_REPLY_AB_VARIANT } from "./inbound-reply-batch.js";
 import { listActiveUserIds } from "./users.js";
 
 const DEFAULT_QUIET_START = 22;
@@ -131,8 +133,34 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       continue;
     }
 
+    const isInboundReply = item.ab_variant === INBOUND_REPLY_AB_VARIANT;
     // Opener campagne = toujours un nouveau fil (époque fraîche juste avant envoi)
-    const isCampaignOpener = item.automation_id != null && item.sequence_id == null;
+    const isCampaignOpener =
+      item.automation_id != null && item.sequence_id == null && !isInboundReply;
+
+    // Skip si le prospect a déjà reçu une réponse entre-temps (closing entrant)
+    if (isInboundReply) {
+      const { isAwaitingProspectReply } = await import("./outbound-safety.js");
+      const alreadyReplied = await isAwaitingProspectReply(
+        userId,
+        item.recipient,
+        item.automation_id
+      );
+      if (alreadyReplied) {
+        const label = item.recipient_label || chatIdToDisplay(item.recipient);
+        await markQueueCancelled(userId, item.id, "Déjà répondu — doublon évité");
+        console.warn(`⏭️ Queue #${item.id} ignorée (${label}) — réponse déjà partie`);
+        if (item.automation_id) {
+          await addAutomationLog(
+            userId,
+            item.automation_id,
+            "info",
+            `Doublon évité pour ${label} — une réponse était déjà partie.`
+          );
+        }
+        continue;
+      }
+    }
 
     // Garde-fou : opener déjà en base (autre worker a envoyé entre-temps)
     if (isCampaignOpener) {
@@ -190,21 +218,24 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
     }
 
     // Sécurité : jamais 2 sortants d'affilée sans réponse — scopé à la campagne
-    const gate = await shouldBlockOutboundWhileAwaitingReply(userId, item);
-    if (gate.block) {
-      await markQueueFailed(userId, item.id, gate.reason || "En attente de réponse");
-      console.warn(
-        `🛑 Queue #${item.id} bloquée (${chatIdToDisplay(item.recipient)}): ${gate.reason}`
-      );
-      if (item.automation_id) {
-        await addAutomationLog(
-          userId,
-          item.automation_id,
-          "warning",
-          `Envoi bloqué pour ${item.recipient_label || chatIdToDisplay(item.recipient)} — un message est déjà parti, on attend la réponse.`
+    // (les réponses closing entrant sont déjà filtrées plus haut via skip-if-replied)
+    if (!isInboundReply) {
+      const gate = await shouldBlockOutboundWhileAwaitingReply(userId, item);
+      if (gate.block) {
+        await markQueueFailed(userId, item.id, gate.reason || "En attente de réponse");
+        console.warn(
+          `🛑 Queue #${item.id} bloquée (${chatIdToDisplay(item.recipient)}): ${gate.reason}`
         );
+        if (item.automation_id) {
+          await addAutomationLog(
+            userId,
+            item.automation_id,
+            "warning",
+            `Envoi bloqué pour ${item.recipient_label || chatIdToDisplay(item.recipient)} — un message est déjà parti, on attend la réponse.`
+          );
+        }
+        continue;
       }
-      continue;
     }
 
     try {
@@ -233,7 +264,9 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       } else if (item.message) {
         // Conserver / renforcer auto_reply pour les envois de campagne
         let outboundGap: import("./anti-ban.js").OutboundGapOpts | undefined;
-        if (item.automation_id != null) {
+        if (isInboundReply) {
+          outboundGap = { profile: "auto_reply" };
+        } else if (item.automation_id != null) {
           try {
             const auto = await getAutomation(userId, item.automation_id);
             const total =
@@ -250,10 +283,21 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
         }
         await sendWhatsAppMessage(userId, item.recipient, item.message, {
           enableAutoReply: item.automation_id != null,
-          outboundProfile: item.automation_id != null ? "campaign" : undefined,
+          outboundProfile: isInboundReply
+            ? "auto_reply"
+            : item.automation_id != null
+              ? "campaign"
+              : undefined,
           outboundGap,
           automationId: item.automation_id,
         });
+        if (isInboundReply && item.automation_id != null) {
+          try {
+            await incrementMessagesHandled(userId, item.automation_id);
+          } catch {
+            /* best effort */
+          }
+        }
       } else {
         await markQueueFailed(userId, item.id, "Message ou média manquant");
         continue;

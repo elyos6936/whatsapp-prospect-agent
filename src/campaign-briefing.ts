@@ -56,6 +56,11 @@ export type BriefingAssessment = {
   stickersQuestionAsked: boolean;
   /** L'agent a posé la question notification tiers (messages assistant uniquement). */
   thirdPartyQuestionAsked: boolean;
+  /**
+   * Closing entrant : question pacing (vagues / plage horaire) posée.
+   * Pour les campagnes sortantes : toujours true (N/A).
+   */
+  inboundPacingAsked: boolean;
 };
 
 const OPENER_DIRECTION_ASK_RE =
@@ -121,12 +126,20 @@ const STICKERS_ASK_RE =
 const THIRD_PARTY_ASK_RE =
   /\b(pr[eé]venir|notifier|pr[eé]vienne|notifie).{0,80}\b(tiers|quelqu.?un d.?autre|livreur|associ[eé]|commercial)\b|\b(tiers|livreur|associ[eé]|commercial).{0,80}\b(pr[eé]venir|notifier|automatiquement)\b|\bthird.party\b/i;
 
+/** Question pacing vagues / plage — assistant uniquement (closing entrant). */
+const INBOUND_PACING_ASK_RE =
+  /\b(vagues?|lots?)\b.{0,80}\b(50|r[eé]ponses?|entrants?)\b|\banti[- ]?blocage\b.{0,60}\bwhats?app\b|\bd[eé]lai.{0,40}(entre|vague|lot)\b|\bplage.{0,30}(envoi|horaire)\b.{0,40}\d{1,2}\s*h/i;
+
 export function hasStickersQuestionAsked(history: AgentMessage[]): boolean {
   return history.some((m) => m.role === "assistant" && STICKERS_ASK_RE.test(m.content));
 }
 
 export function hasThirdPartyQuestionAsked(history: AgentMessage[]): boolean {
   return history.some((m) => m.role === "assistant" && THIRD_PARTY_ASK_RE.test(m.content));
+}
+
+export function hasInboundPacingQuestionAsked(history: AgentMessage[]): boolean {
+  return history.some((m) => m.role === "assistant" && INBOUND_PACING_ASK_RE.test(m.content));
 }
 
 /** Closing entrant / keyword_sales / support — le prospect écrit en premier. */
@@ -192,6 +205,7 @@ export function assessCampaignBriefing(
       openerVariantsProposed: false,
       stickersQuestionAsked: false,
       thirdPartyQuestionAsked: false,
+      inboundPacingAsked: true,
     };
   }
 
@@ -294,6 +308,7 @@ export function assessCampaignBriefing(
   const openerVariantsProposed = inbound
     ? true
     : hasProposedOpenerVariants(history);
+  const inboundPacingAsked = inbound ? hasInboundPacingQuestionAsked(history) : true;
 
   return {
     inCampaignFlow: true,
@@ -305,6 +320,7 @@ export function assessCampaignBriefing(
     openerVariantsProposed,
     stickersQuestionAsked,
     thirdPartyQuestionAsked,
+    inboundPacingAsked,
   };
 }
 
@@ -353,12 +369,25 @@ export function buildBriefingNudge(
       );
     }
 
-    // Closing entrant : pas d'opener sortant — brouillon après stickers + tiers.
+    // Closing entrant : pacing anti-blocage WhatsApp (vagues + plage).
+    if (assessment.isInboundClosing && !assessment.inboundPacingAsked) {
+      return (
+        "Closing entrant : pose UNE question courte (anti-blocage WhatsApp) — " +
+        "« Pour éviter les blocages, je réponds par vagues de 50 (1–2 min entre chaque). " +
+        "Délai entre deux vagues ? (minimum 1 h, recommandé 2 h) " +
+        "Et plage d'envoi ? (ex. 8h–19h — après 19h on reporte au lendemain). » " +
+        "Puis ARRÊTE-TOI. Enregistre la réponse via quiet_hours_start/end + inbound_wave_gap_minutes dans create_automation. " +
+        "INTERDIT : create_automation tant que cette question n'est pas posée."
+      );
+    }
+
+    // Closing entrant : pas d'opener sortant — brouillon après stickers + tiers + pacing.
     if (assessment.isInboundClosing) {
       return (
-        "Campagne closing entrant / support : stickers + notification tiers couverts. " +
+        "Campagne closing entrant / support : stickers + notification tiers + pacing vagues couverts. " +
         "Pas de 5 variantes d'opener (le prospect écrit en premier). " +
         "Crée le brouillon (create_automation draft keyword_sales / inbound_closing) avec trigger_phrases, " +
+        "quiet_hours (plage) et inbound_wave_gap_minutes (≥60), " +
         "puis propose une simulation (show_campaign_simulation)."
       );
     }

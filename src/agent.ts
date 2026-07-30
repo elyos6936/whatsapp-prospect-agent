@@ -635,6 +635,22 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             continue;
           }
 
+          if (briefing.isInboundClosing && !briefing.inboundPacingAsked) {
+            const block = JSON.stringify({
+              error:
+                "INTERDIT de créer le brouillon closing entrant avant d'avoir posé la question anti-blocage : " +
+                "délai entre vagues de 50 réponses (min 1 h) + plage d'envoi (ex. 8h–19h).",
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
+
           // Closing entrant : pas d'opener sortant → skip variantes.
           if (!briefing.isInboundClosing && !briefing.openerDirectionCollected) {
             const block = JSON.stringify({
