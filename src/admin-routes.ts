@@ -138,9 +138,16 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     async (request, reply) => {
       const id = Number(request.params.id);
       if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
-      const detail = await getAdminUserDetail(id);
-      if (!detail) return reply.status(404).send({ error: "Utilisateur introuvable." });
-      return detail;
+      try {
+        const detail = await getAdminUserDetail(id);
+        if (!detail) return reply.status(404).send({ error: "Utilisateur introuvable." });
+        return detail;
+      } catch (err) {
+        request.log.error(err);
+        return reply.status(500).send({
+          error: err instanceof Error ? err.message : "Erreur fiche utilisateur",
+        });
+      }
     }
   );
 

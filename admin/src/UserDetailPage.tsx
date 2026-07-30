@@ -21,8 +21,11 @@ type Detail = {
     total: number;
     entrant: number;
     sortant: number;
+    sortantQuota: number;
     last_24h: number;
     last_7d: number;
+    out24h: number;
+    in24h: number;
   };
   campaigns: Array<{
     id: number;
@@ -31,7 +34,7 @@ type Detail = {
     status: string;
     stats: Record<string, unknown>;
   }>;
-  queue: { pending: number; processing: number; failed: number };
+  queue: { pending: number; processing: number; failed: number; sent24h: number };
   recentLogs: Array<{
     id: number;
     automationId: number;
@@ -41,6 +44,7 @@ type Detail = {
   }>;
   whatsapp: { connected: boolean; message: string };
   autoReply: boolean;
+  sequencesActive: number;
 };
 
 type Tab = "compte" | "campagnes" | "messages" | "file" | "actions";
@@ -269,19 +273,25 @@ function CompteTab({ detail }: { detail: Detail }) {
           <div className="v">{detail.whatsapp.message}</div>
           <div className="k">Auto-reply</div>
           <div className="v">{detail.autoReply ? "ON" : "OFF"}</div>
+          <div className="k">Séquences</div>
+          <div className="v">{detail.sequencesActive} actives</div>
         </div>
       </div>
       <div className="detail-card">
-        <h3>Messages</h3>
+        <h3>Messages (table locale)</h3>
         <div className="kv">
           <div className="k">Total</div>
           <div className="v">{detail.messages.total}</div>
           <div className="k">Sortants</div>
           <div className="v">{detail.messages.sortant}</div>
+          <div className="k">Dont quota</div>
+          <div className="v">{detail.messages.sortantQuota}</div>
           <div className="k">Entrants</div>
           <div className="v">{detail.messages.entrant}</div>
-          <div className="k">24h</div>
-          <div className="v">{detail.messages.last_24h}</div>
+          <div className="k">Out / in 24h</div>
+          <div className="v">
+            {detail.messages.out24h} / {detail.messages.in24h}
+          </div>
           <div className="k">7j</div>
           <div className="v">{detail.messages.last_7d}</div>
         </div>
@@ -394,6 +404,8 @@ function FileTab({ detail }: { detail: Detail }) {
           <div className="v">{detail.queue.processing}</div>
           <div className="k">Failed</div>
           <div className="v">{detail.queue.failed}</div>
+          <div className="k">Sent 24h</div>
+          <div className="v">{detail.queue.sent24h}</div>
         </div>
       </div>
       <div className="detail-card">

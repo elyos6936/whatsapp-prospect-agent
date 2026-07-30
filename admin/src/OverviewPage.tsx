@@ -3,12 +3,21 @@ import { Link } from "react-router-dom";
 import { api, ApiError } from "./api";
 
 type Overview = {
-  users: { total: number; active: number; trial: number; expired: number };
-  messages24h: { entrant: number; sortant: number };
-  messages7d: { entrant: number; sortant: number };
-  campaigns: { active: number; draft: number; paused: number };
-  queue: { pending: number; processing: number };
+  users: {
+    total: number;
+    active: number;
+    trial: number;
+    expired: number;
+    lifetimeOutbound: number;
+  };
+  messages24h: { entrant: number; sortant: number; sortantQuota: number };
+  messages7d: { entrant: number; sortant: number; sortantQuota: number };
+  campaigns: { active: number; draft: number; paused: number; completed: number };
+  queue: { pending: number; processing: number; failed: number; sent24h: number };
+  errors24h: number;
+  sequencesActive: number;
   recentUsers: Array<{ id: number; email: string; name: string; createdAt: string }>;
+  topOutbound: Array<{ id: number; email: string; lifetimeSent: number; out24h: number }>;
 };
 
 export function OverviewPage() {
@@ -49,6 +58,14 @@ export function OverviewPage() {
                 <div className="value">{data.messages24h.entrant}</div>
               </div>
               <div className="kpi">
+                <div className="label">Out quota 24h</div>
+                <div className="value">{data.messages24h.sortantQuota}</div>
+              </div>
+              <div className="kpi">
+                <div className="label">File sent 24h</div>
+                <div className="value">{data.queue.sent24h}</div>
+              </div>
+              <div className="kpi">
                 <div className="label">Campagnes actives</div>
                 <div className="value">{data.campaigns.active}</div>
               </div>
@@ -57,8 +74,20 @@ export function OverviewPage() {
                 <div className="value">{data.queue.pending}</div>
               </div>
               <div className="kpi">
-                <div className="label">File processing</div>
-                <div className="value">{data.queue.processing}</div>
+                <div className="label">File failed</div>
+                <div className="value">{data.queue.failed}</div>
+              </div>
+              <div className="kpi">
+                <div className="label">Erreurs logs 24h</div>
+                <div className="value">{data.errors24h}</div>
+              </div>
+              <div className="kpi">
+                <div className="label">Séquences actives</div>
+                <div className="value">{data.sequencesActive}</div>
+              </div>
+              <div className="kpi">
+                <div className="label">Lifetime out (Σ)</div>
+                <div className="value">{data.users.lifetimeOutbound}</div>
               </div>
               <div className="kpi">
                 <div className="label">Msgs 7j out</div>
@@ -66,35 +95,63 @@ export function OverviewPage() {
               </div>
             </div>
 
-            <div className="panel">
-              <div className="panel-head">
-                <h2>Derniers inscrits</h2>
-              </div>
-              <div className="table-wrap">
-                <table className="data">
-                  <thead>
-                    <tr>
-                      <th>ID</th>
-                      <th>Email</th>
-                      <th>Nom</th>
-                      <th>Créé</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.recentUsers.map((u) => (
-                      <tr key={u.id}>
-                        <td>
-                          <Link to={`/users/${u.id}`}>#{u.id}</Link>
-                        </td>
-                        <td>
-                          <Link to={`/users/${u.id}`}>{u.email}</Link>
-                        </td>
-                        <td>{u.name || "—"}</td>
-                        <td>{formatDate(u.createdAt)}</td>
+            <div className="grid-2" style={{ marginBottom: 20 }}>
+              <div className="panel">
+                <div className="panel-head">
+                  <h2>Top volume lifetime</h2>
+                </div>
+                <div className="table-wrap">
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th>User</th>
+                        <th>Lifetime</th>
+                        <th>Out 24h</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {data.topOutbound.map((u) => (
+                        <tr key={u.id}>
+                          <td>
+                            <Link to={`/users/${u.id}`}>{u.email}</Link>
+                          </td>
+                          <td>{u.lifetimeSent}</td>
+                          <td>{u.out24h}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div className="panel">
+                <div className="panel-head">
+                  <h2>Derniers inscrits</h2>
+                </div>
+                <div className="table-wrap">
+                  <table className="data">
+                    <thead>
+                      <tr>
+                        <th>ID</th>
+                        <th>Email</th>
+                        <th>Créé</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.recentUsers.map((u) => (
+                        <tr key={u.id}>
+                          <td>
+                            <Link to={`/users/${u.id}`}>#{u.id}</Link>
+                          </td>
+                          <td>
+                            <Link to={`/users/${u.id}`}>{u.email}</Link>
+                          </td>
+                          <td>{formatDate(u.createdAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </>

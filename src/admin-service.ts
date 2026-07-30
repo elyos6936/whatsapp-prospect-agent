@@ -69,45 +69,99 @@ export async function getAdminOverview() {
     active: number;
     trial: number;
     expired: number;
+    lifetime_out: number;
   }[]>`
     SELECT
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE subscription_status = 'active')::int AS active,
       COUNT(*) FILTER (WHERE subscription_status = 'trial')::int AS trial,
-      COUNT(*) FILTER (WHERE subscription_status = 'expired')::int AS expired
+      COUNT(*) FILTER (WHERE subscription_status = 'expired')::int AS expired,
+      COALESCE(SUM(total_messages_sent), 0)::int AS lifetime_out
     FROM users
   `;
 
-  const [msg24] = await sql<{ entrant: number; sortant: number }[]>`
+  const [msg24] = await sql<{
+    entrant: number;
+    sortant: number;
+    sortant_quota: number;
+  }[]>`
     SELECT
       COUNT(*) FILTER (WHERE direction = 'entrant')::int AS entrant,
-      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant
+      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant,
+      COUNT(*) FILTER (
+        WHERE direction = 'sortant' AND COALESCE(counts_toward_quota, 1) = 1
+      )::int AS sortant_quota
     FROM messages
     WHERE created_at >= NOW() - INTERVAL '24 hours'
   `;
 
-  const [msg7] = await sql<{ entrant: number; sortant: number }[]>`
+  const [msg7] = await sql<{
+    entrant: number;
+    sortant: number;
+    sortant_quota: number;
+  }[]>`
     SELECT
       COUNT(*) FILTER (WHERE direction = 'entrant')::int AS entrant,
-      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant
+      COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant,
+      COUNT(*) FILTER (
+        WHERE direction = 'sortant' AND COALESCE(counts_toward_quota, 1) = 1
+      )::int AS sortant_quota
     FROM messages
     WHERE created_at >= NOW() - INTERVAL '7 days'
   `;
 
-  const [campaigns] = await sql<{ active: number; draft: number; paused: number }[]>`
+  const [campaigns] = await sql<{
+    active: number;
+    draft: number;
+    paused: number;
+    completed: number;
+  }[]>`
     SELECT
       COUNT(*) FILTER (WHERE status = 'active')::int AS active,
       COUNT(*) FILTER (WHERE status = 'draft')::int AS draft,
-      COUNT(*) FILTER (WHERE status = 'paused')::int AS paused
+      COUNT(*) FILTER (WHERE status = 'paused')::int AS paused,
+      COUNT(*) FILTER (WHERE status = 'completed')::int AS completed
     FROM automations
   `;
 
-  const [queue] = await sql<{ pending: number; processing: number }[]>`
+  const [queue] = await sql<{
+    pending: number;
+    processing: number;
+    failed: number;
+    sent_24h: number;
+  }[]>`
     SELECT
       COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
-      COUNT(*) FILTER (WHERE status = 'processing')::int AS processing
+      COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
+      COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+      COUNT(*) FILTER (
+        WHERE status = 'sent' AND COALESCE(sent_at, send_at) >= NOW() - INTERVAL '24 hours'
+      )::int AS sent_24h
     FROM send_queue
   `;
+
+  let errors24h = 0;
+  try {
+    const [errRow] = await sql<{ n: number }[]>`
+      SELECT COUNT(*)::int AS n
+      FROM automation_logs
+      WHERE created_at >= NOW() - INTERVAL '24 hours'
+        AND lower(level) IN ('error', 'err', 'fatal')
+    `;
+    errors24h = Number(errRow?.n ?? 0);
+  } catch {
+    errors24h = 0;
+  }
+
+  let sequencesActive = 0;
+  try {
+    const [seq] = await sql<{ n: number }[]>`
+      SELECT COUNT(*)::int AS n FROM contact_sequences WHERE status = 'active'
+    `;
+    sequencesActive = Number(seq?.n ?? 0);
+  } catch {
+    sequencesActive = 0;
+  }
 
   const recentUsers = await sql<
     { id: number; email: string; name: string; created_at: string }[]
@@ -118,17 +172,69 @@ export async function getAdminOverview() {
     LIMIT 8
   `;
 
+  const topOutbound = await sql<
+    { id: number; email: string; total_messages_sent: number; out_24h: number }[]
+  >`
+    SELECT
+      u.id,
+      u.email,
+      u.total_messages_sent,
+      COALESCE(m.out_24h, 0)::int AS out_24h
+    FROM users u
+    LEFT JOIN LATERAL (
+      SELECT COUNT(*)::int AS out_24h
+      FROM messages
+      WHERE user_id = u.id
+        AND direction = 'sortant'
+        AND created_at >= NOW() - INTERVAL '24 hours'
+    ) m ON true
+    ORDER BY u.total_messages_sent DESC, out_24h DESC
+    LIMIT 8
+  `;
+
   return {
-    users: usersRow ?? { total: 0, active: 0, trial: 0, expired: 0 },
-    messages24h: msg24 ?? { entrant: 0, sortant: 0 },
-    messages7d: msg7 ?? { entrant: 0, sortant: 0 },
-    campaigns: campaigns ?? { active: 0, draft: 0, paused: 0 },
-    queue: queue ?? { pending: 0, processing: 0 },
+    users: {
+      total: Number(usersRow?.total ?? 0),
+      active: Number(usersRow?.active ?? 0),
+      trial: Number(usersRow?.trial ?? 0),
+      expired: Number(usersRow?.expired ?? 0),
+      lifetimeOutbound: Number(usersRow?.lifetime_out ?? 0),
+    },
+    messages24h: {
+      entrant: Number(msg24?.entrant ?? 0),
+      sortant: Number(msg24?.sortant ?? 0),
+      sortantQuota: Number(msg24?.sortant_quota ?? 0),
+    },
+    messages7d: {
+      entrant: Number(msg7?.entrant ?? 0),
+      sortant: Number(msg7?.sortant ?? 0),
+      sortantQuota: Number(msg7?.sortant_quota ?? 0),
+    },
+    campaigns: {
+      active: Number(campaigns?.active ?? 0),
+      draft: Number(campaigns?.draft ?? 0),
+      paused: Number(campaigns?.paused ?? 0),
+      completed: Number(campaigns?.completed ?? 0),
+    },
+    queue: {
+      pending: Number(queue?.pending ?? 0),
+      processing: Number(queue?.processing ?? 0),
+      failed: Number(queue?.failed ?? 0),
+      sent24h: Number(queue?.sent_24h ?? 0),
+    },
+    errors24h,
+    sequencesActive,
     recentUsers: recentUsers.map((u) => ({
       id: Number(u.id),
       email: u.email,
       name: u.name || "",
       createdAt: u.created_at,
+    })),
+    topOutbound: topOutbound.map((u) => ({
+      id: Number(u.id),
+      email: u.email,
+      lifetimeSent: Number(u.total_messages_sent ?? 0),
+      out24h: Number(u.out_24h ?? 0),
     })),
   };
 }
@@ -275,15 +381,27 @@ export async function getAdminUserDetail(userId: number) {
     total: number;
     entrant: number;
     sortant: number;
+    sortant_quota: number;
     last_24h: number;
     last_7d: number;
+    out_24h: number;
+    in_24h: number;
   }[]>`
     SELECT
       COUNT(*)::int AS total,
       COUNT(*) FILTER (WHERE direction = 'entrant')::int AS entrant,
       COUNT(*) FILTER (WHERE direction = 'sortant')::int AS sortant,
+      COUNT(*) FILTER (
+        WHERE direction = 'sortant' AND COALESCE(counts_toward_quota, 1) = 1
+      )::int AS sortant_quota,
       COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours')::int AS last_24h,
-      COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS last_7d
+      COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')::int AS last_7d,
+      COUNT(*) FILTER (
+        WHERE direction = 'sortant' AND created_at >= NOW() - INTERVAL '24 hours'
+      )::int AS out_24h,
+      COUNT(*) FILTER (
+        WHERE direction = 'entrant' AND created_at >= NOW() - INTERVAL '24 hours'
+      )::int AS in_24h
     FROM messages
     WHERE user_id = ${userId}
   `;
@@ -294,43 +412,68 @@ export async function getAdminUserDetail(userId: number) {
       name: string;
       type: string;
       status: string;
-      stats: unknown;
+      stats_json: string;
       created_at: string;
       updated_at: string;
     }[]
   >`
-    SELECT id, name, type, status, stats, created_at::text, updated_at::text
+    SELECT id, name, type, status, stats_json, created_at::text, updated_at::text
     FROM automations
     WHERE user_id = ${userId}
     ORDER BY id DESC
     LIMIT 50
   `;
 
-  const [queue] = await sql<{ pending: number; processing: number; failed: number }[]>`
+  const [queue] = await sql<{
+    pending: number;
+    processing: number;
+    failed: number;
+    sent_24h: number;
+  }[]>`
     SELECT
       COUNT(*) FILTER (WHERE status = 'pending')::int AS pending,
       COUNT(*) FILTER (WHERE status = 'processing')::int AS processing,
-      COUNT(*) FILTER (WHERE status = 'failed')::int AS failed
+      COUNT(*) FILTER (WHERE status = 'failed')::int AS failed,
+      COUNT(*) FILTER (
+        WHERE status = 'sent' AND COALESCE(sent_at, send_at) >= NOW() - INTERVAL '24 hours'
+      )::int AS sent_24h
     FROM send_queue
     WHERE user_id = ${userId}
   `;
 
-  const recentLogs = await sql<
-    { id: number; automation_id: number; level: string; message: string; created_at: string }[]
-  >`
-    SELECT id, automation_id, level, message, created_at::text
-    FROM automation_logs
-    WHERE user_id = ${userId}
-    ORDER BY id DESC
-    LIMIT 30
-  `;
+  let recentLogs: Array<{
+    id: number;
+    automation_id: number;
+    level: string;
+    message: string;
+    created_at: string;
+  }> = [];
+  try {
+    recentLogs = await sql`
+      SELECT id, automation_id, level, message, created_at::text
+      FROM automation_logs
+      WHERE user_id = ${userId}
+      ORDER BY id DESC
+      LIMIT 30
+    `;
+  } catch {
+    recentLogs = [];
+  }
 
   let whatsapp: { connected: boolean; message: string } = {
     connected: false,
     message: "Non vérifié",
   };
   try {
-    const state = await testEvolutionConnection(userId);
+    const state = await Promise.race([
+      testEvolutionConnection(userId),
+      new Promise<{ connected: boolean; message: string }>((resolve) =>
+        setTimeout(
+          () => resolve({ connected: false, message: "Timeout Evolution (3s)" }),
+          3000
+        )
+      ),
+    ]);
     whatsapp = { connected: state.connected, message: state.message };
   } catch (err) {
     whatsapp = {
@@ -339,27 +482,55 @@ export async function getAdminUserDetail(userId: number) {
     };
   }
 
-  const autoReply = await isAutoReplyEnabled(userId);
+  const autoReply = await isAutoReplyEnabled(userId).catch(() => false);
+
+  let sequencesActive = 0;
+  try {
+    const [seq] = await sql<{ n: number }[]>`
+      SELECT COUNT(*)::int AS n
+      FROM contact_sequences
+      WHERE user_id = ${userId} AND status = 'active'
+    `;
+    sequencesActive = Number(seq?.n ?? 0);
+  } catch {
+    sequencesActive = 0;
+  }
 
   return {
     user: serializeUser(user),
-    messages: msgStats ?? {
-      total: 0,
-      entrant: 0,
-      sortant: 0,
-      last_24h: 0,
-      last_7d: 0,
+    messages: {
+      total: Number(msgStats?.total ?? 0),
+      entrant: Number(msgStats?.entrant ?? 0),
+      sortant: Number(msgStats?.sortant ?? 0),
+      sortantQuota: Number(msgStats?.sortant_quota ?? 0),
+      last_24h: Number(msgStats?.last_24h ?? 0),
+      last_7d: Number(msgStats?.last_7d ?? 0),
+      out24h: Number(msgStats?.out_24h ?? 0),
+      in24h: Number(msgStats?.in_24h ?? 0),
     },
-    campaigns: campaigns.map((c) => ({
-      id: Number(c.id),
-      name: c.name,
-      type: c.type,
-      status: c.status,
-      stats: c.stats ?? {},
-      createdAt: c.created_at,
-      updatedAt: c.updated_at,
-    })),
-    queue: queue ?? { pending: 0, processing: 0, failed: 0 },
+    campaigns: campaigns.map((c) => {
+      let stats: Record<string, unknown> = {};
+      try {
+        stats = JSON.parse(c.stats_json || "{}") as Record<string, unknown>;
+      } catch {
+        stats = {};
+      }
+      return {
+        id: Number(c.id),
+        name: c.name,
+        type: c.type,
+        status: c.status,
+        stats,
+        createdAt: c.created_at,
+        updatedAt: c.updated_at,
+      };
+    }),
+    queue: {
+      pending: Number(queue?.pending ?? 0),
+      processing: Number(queue?.processing ?? 0),
+      failed: Number(queue?.failed ?? 0),
+      sent24h: Number(queue?.sent_24h ?? 0),
+    },
     recentLogs: recentLogs.map((l) => ({
       id: Number(l.id),
       automationId: Number(l.automation_id),
@@ -369,6 +540,7 @@ export async function getAdminUserDetail(userId: number) {
     })),
     whatsapp,
     autoReply,
+    sequencesActive,
   };
 }
 
