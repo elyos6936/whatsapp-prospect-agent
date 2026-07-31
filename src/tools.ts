@@ -1524,6 +1524,12 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description:
               "Consignes / infos à transmettre au tiers (adresse, produit, créneau, ton…). Message généré dynamiquement par l'IA.",
           },
+          handoff_keywords: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Mots/phrases qui stoppent l'IA et passent la main à l'humain (messages entrants). [] si l'utilisateur a dit non / aucun.",
+          },
           quiet_hours_start: {
             type: "number",
             description:
@@ -1716,6 +1722,12 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           third_party_context: {
             type: "string",
             description: "Consignes / infos à transmettre au tiers",
+          },
+          handoff_keywords: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Mots/phrases qui stoppent l'IA et passent la main à l'humain. [] pour désactiver.",
           },
           quiet_hours_start: { type: "number" },
           quiet_hours_end: { type: "number" },
@@ -2097,6 +2109,9 @@ function buildAutomationConfigFromArgs(
     // Stickers/emojis OFF par défaut — uniquement si l'utilisateur a dit oui
     stickersEnabled: args.stickers_enabled === true,
     thirdPartyNotification: parseThirdPartyNotificationArgs(args),
+    handoffKeywords: Array.isArray(args.handoff_keywords)
+      ? args.handoff_keywords.map(String).map((s) => s.trim()).filter(Boolean)
+      : undefined,
     abVariants: Array.isArray(args.ab_variants)
       ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
           id: v.id || `v${i + 1}`,
@@ -4452,6 +4467,12 @@ export async function executeTool(
       }
       if (args.stickers_enabled != null) {
         merged.stickersEnabled = args.stickers_enabled === true;
+      }
+      if (Array.isArray(args.handoff_keywords)) {
+        merged.handoffKeywords = args.handoff_keywords
+          .map(String)
+          .map((s) => s.trim())
+          .filter(Boolean);
       }
       const thirdParty = parseThirdPartyNotificationArgs(args);
       if (thirdParty) {

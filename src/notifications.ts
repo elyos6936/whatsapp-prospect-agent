@@ -52,7 +52,7 @@ import {
 } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
-import { maybeCreateHandoff } from "./handoff.js";
+import { createKeywordHandoff, findMatchingHandoffKeyword, KEYWORD_HANDOFF_PROSPECT_REPLY, maybeCreateHandoff } from "./handoff.js";
 import { passesReplyGate, findActiveOutboundCampaign } from "./campaign-gating.js";
 import {
   detectInboundMedia,
@@ -696,6 +696,9 @@ function buildActiveCampaignContext(auto: Automation): string {
       ? `Lien à envoyer au prospect (URL réelle) : ${cfg.closingLink}`
       : "",
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
+    cfg.handoffKeywords?.length
+      ? `Mots-clés handoff humain (si le prospect les écrit, l'IA s'arrête) : ${cfg.handoffKeywords.join(", ")}`
+      : "",
     "",
     `PARCOURS CONVERSATION (obligatoire — même mission partout, seuls les mots varient) :`,
     `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair OU objectif atteint.`,
@@ -832,6 +835,17 @@ async function runAutoReply(
 
   const activeCampaign = gate.outboundCampaign ?? gate.inboundCampaign;
 
+  // Handoff humain déjà en cours → l'IA ne répond plus
+  try {
+    const existing = await getContact(userId, chatId);
+    if (existing?.handoff_status === "pending") {
+      console.log(`📩 ${senderName} (pas de réponse — handoff humain en cours): ${text.slice(0, 40)}`);
+      return;
+    }
+  } catch {
+    /* ignore */
+  }
+
   // Nouveau fil entrant : respecter plafond jour / essai (sans toucher aux fils ouverts)
   try {
     const { classifyNewConversationKind, canStartNewConversation, ensureDefaultAgentThread, saveAgentMessage } =
@@ -950,6 +964,50 @@ async function runAutoReply(
       const scoring = await scoreIncomingMessage(userId, text, chatId);
       await recordAutomationEngagement(userId, chatId, text, scoring.interested);
       void refreshContactMemory(userId, chatId, activeCampaign?.id).catch(() => {});
+
+      // Mots-clés handoff configurés → stop IA + passer la main
+      const matchedHandoffKw = findMatchingHandoffKeyword(
+        text,
+        activeCampaign?.config.handoffKeywords
+      );
+      if (matchedHandoffKw && activeCampaign) {
+        await createKeywordHandoff(userId, {
+          chatId,
+          senderName,
+          incomingText: text,
+          matchedKeyword: matchedHandoffKw,
+          campaignName: activeCampaign.name,
+        });
+        await cancelPendingSendQueueForRecipient(userId, chatId).catch(() => {});
+        await saveAgentMessageForAutomation(
+          userId,
+          activeCampaign.id,
+          "assistant",
+          `🙋 Handoff humain — ${senderName} (${chatIdToDisplay(chatId)}) a écrit « ${matchedHandoffKw} ». ` +
+            `Campagne « ${activeCampaign.name} ». L'IA a arrêté ; reprenez la conversation depuis WhatsApp.`
+        );
+        reply = KEYWORD_HANDOFF_PROSPECT_REPLY;
+        console.log(
+          `🙋 Handoff mot-clé « ${matchedHandoffKw} » → ${senderName} (IA stoppée)`
+        );
+        // Envoi immédiat du court message, puis return (pas de génération LLM)
+        try {
+          const typingMs = clampPresenceMs(
+            ANTI_BAN.presenceMinMs +
+              Math.floor(Math.random() * (ANTI_BAN.presenceMaxMs - ANTI_BAN.presenceMinMs + 1))
+          );
+          await sendWhatsAppPresence(userId, chatId, "composing", typingMs);
+        } catch {
+          /* best effort */
+        }
+        const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+          enableAutoReply: false,
+          outboundProfile: "auto_reply",
+          automationId: activeCampaign.id,
+        });
+        console.log(`✅ Handoff notifié prospect → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+        return;
+      }
 
       if (scoring.interested) {
         try {

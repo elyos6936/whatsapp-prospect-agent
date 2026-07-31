@@ -2492,6 +2492,11 @@ export interface AutomationConfig {
   conversationGuide?: string;
   keywords?: string[];
   triggerPhrases?: string[];
+  /**
+   * Mots/phrases qui stoppent l'IA et passent la main à l'humain
+   * (messages entrants). Vide / absent = pas de stop par mot-clé.
+   */
+  handoffKeywords?: string[];
   productName?: string;
   price?: string;
   salesScript?: string;

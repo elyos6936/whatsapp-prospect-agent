@@ -277,13 +277,16 @@ export function buildAutomationVisualPlan(
   });
   pushEdge(edges, last, "goal", "conversion");
 
-  if (cfg.stopOnDissatisfaction || cfg.stopOnUnknownQuestion) {
+  if (cfg.stopOnDissatisfaction || cfg.stopOnUnknownQuestion || (cfg.handoffKeywords?.length ?? 0) > 0) {
     add({
       id: "stop",
       label: "Arrêt auto",
       subtitle: [
         cfg.stopOnDissatisfaction ? "mécontentement" : null,
         cfg.stopOnUnknownQuestion ? "question hors cadre" : null,
+        cfg.handoffKeywords?.length
+          ? `handoff: ${cfg.handoffKeywords.slice(0, 3).join(", ")}${cfg.handoffKeywords.length > 3 ? "…" : ""}`
+          : null,
       ]
         .filter(Boolean)
         .join(" · "),

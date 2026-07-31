@@ -57,6 +57,8 @@ export type BriefingAssessment = {
   stickersQuestionAsked: boolean;
   /** L'agent a posé la question notification tiers (messages assistant uniquement). */
   thirdPartyQuestionAsked: boolean;
+  /** L'agent a posé la question mots-clés handoff humain. */
+  handoffKeywordsQuestionAsked: boolean;
   /**
    * Closing entrant : pacing vagues géré en arrière-plan (défauts système).
    * Toujours true — on ne pose plus la question à l'utilisateur.
@@ -127,6 +129,10 @@ const STICKERS_ASK_RE =
 const THIRD_PARTY_ASK_RE =
   /\b(pr[eé]venir|notifier|pr[eé]vienne|notifie).{0,80}\b(tiers|quelqu.?un d.?autre|livreur|associ[eé]|commercial)\b|\b(tiers|livreur|associ[eé]|commercial).{0,80}\b(pr[eé]venir|notifier|automatiquement)\b|\bthird.party\b/i;
 
+/** Question mots-clés → passer la main à l'humain (assistant uniquement). */
+const HANDOFF_KEYWORDS_ASK_RE =
+  /\b(passer\s+la\s+main|intervenir?\s+(en\s+)?humain|handoff|mots?\s*cl[eé]s?.{0,60}(stop|arr[eê]t|humain|passer)|arr[eê]ter?.{0,40}(conversation|r[eé]pondre).{0,40}humain|humain.{0,40}(mots?\s*cl[eé]|phrases?))\b/i;
+
 /** Question pacing vagues / plage — assistant uniquement (closing entrant). */
 const INBOUND_PACING_ASK_RE =
   /\b(vagues?|lots?)\b.{0,80}\b(50|r[eé]ponses?|entrants?)\b|\banti[- ]?blocage\b.{0,60}\bwhats?app\b|\bd[eé]lai.{0,40}(entre|vague|lot)\b|\bplage.{0,30}(envoi|horaire)\b.{0,40}\d{1,2}\s*h/i;
@@ -137,6 +143,10 @@ export function hasStickersQuestionAsked(history: AgentMessage[]): boolean {
 
 export function hasThirdPartyQuestionAsked(history: AgentMessage[]): boolean {
   return history.some((m) => m.role === "assistant" && THIRD_PARTY_ASK_RE.test(m.content));
+}
+
+export function hasHandoffKeywordsQuestionAsked(history: AgentMessage[]): boolean {
+  return history.some((m) => m.role === "assistant" && HANDOFF_KEYWORDS_ASK_RE.test(m.content));
 }
 
 export function hasInboundPacingQuestionAsked(history: AgentMessage[]): boolean {
@@ -225,6 +235,7 @@ export function assessCampaignBriefing(
       openerVariantsProposed: false,
       stickersQuestionAsked: false,
       thirdPartyQuestionAsked: false,
+      handoffKeywordsQuestionAsked: false,
       inboundPacingAsked: true,
     };
   }
@@ -337,6 +348,7 @@ export function assessCampaignBriefing(
   const stickersQuestionAsked =
     memory != null || hasStickersQuestionAsked(history);
   const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
+  const handoffKeywordsQuestionAsked = hasHandoffKeywordsQuestionAsked(history);
   const openerDirectionCollected = inbound
     ? true
     : hasUserProvidedOpenerDirection(history, userMessage);
@@ -355,6 +367,7 @@ export function assessCampaignBriefing(
     openerVariantsProposed,
     stickersQuestionAsked,
     thirdPartyQuestionAsked,
+    handoffKeywordsQuestionAsked,
     inboundPacingAsked,
   };
 }
@@ -404,13 +417,23 @@ export function buildBriefingNudge(
       );
     }
 
+    if (!assessment.handoffKeywordsQuestionAsked) {
+      return (
+        "Briefing campagne : pose UNE question OBLIGATOIRE — « Y a-t-il des mots ou phrases pour lesquels je dois **arrêter** de répondre et te **passer la main** " +
+        "(ex. remboursement, plainte, parler à un humain) ? Liste-les, ou dis « non » s'il n'y en a pas. » " +
+        "Puis ARRÊTE-TOI. INTERDIT create_automation / simulation / variantes tant que cette question n'est pas posée. " +
+        "Quand tu créeras le brouillon : passe `handoff_keywords` (tableau de strings, ou [] si non)."
+      );
+    }
+
     // Closing entrant : pacing vagues + délais gérés en arrière-plan (pas de question user).
     if (assessment.isInboundClosing) {
       return (
-        "Campagne closing entrant / support : stickers + notification tiers couverts. " +
+        "Campagne closing entrant / support : stickers + notification tiers + mots-clés handoff couverts. " +
         "Pacing vagues / délais / plage = défauts système (ne PAS demander à l'utilisateur). " +
         "Pas de 5 variantes d'opener (le prospect écrit en premier). " +
         "Crée le brouillon (create_automation draft keyword_sales / inbound_closing) avec trigger_phrases " +
+        "et handoff_keywords (ou [] si aucun), " +
         "(les défauts inbound_wave_gap_minutes / quiet_hours / batch seront appliqués automatiquement), " +
         "puis propose une simulation (show_campaign_simulation)."
       );
@@ -443,7 +466,8 @@ export function buildBriefingNudge(
 
     return (
       "Les 5 variantes ont été proposées — attends le choix ou la validation de l'utilisateur. " +
-      "Puis create_automation draft avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes. " +
+      "Puis create_automation draft avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes, " +
+      "et handoff_keywords (liste fournie, ou [] si non). " +
       "Propose ensuite la simulation (6-7 messages via show_campaign_simulation)."
     );
   }
