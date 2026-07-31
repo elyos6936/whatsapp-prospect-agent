@@ -116,7 +116,7 @@ export default function AuthenticatedApp() {
   }, []);
 
   const handleCreateThread = useCallback(
-    async (title: string, description: string, purpose: 'prospection' | 'support') => {
+    async (title: string, description: string, purpose: 'prospection' | 'support' | 'groupes') => {
       setCreatingThread(true);
       try {
         const thread = await createThread(title, description, purpose);

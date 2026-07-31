@@ -262,6 +262,35 @@ export function UserAccountManagementPage() {
                 </div>
               </div>
 
+              <div className="detail-card">
+                <h3>Mémoires de campagne</h3>
+                <p className="actions-help">
+                  Supprime toutes les mémoires de ce compte et détache les automatisations. Les
+                  campagnes et l&apos;historique agent restent.
+                </p>
+                <div className="actions-row">
+                  <button
+                    className="btn btn-warn"
+                    type="button"
+                    disabled={busy || Boolean(detail.user.deletedAt)}
+                    onClick={() =>
+                      setConfirm({
+                        title: "Supprimer les mémoires de campagne",
+                        body: "Toutes les mémoires de ce compte seront effacées. Les fils ne seront plus liés à une mémoire. Irreversible.",
+                        run: async () =>
+                          runAction("Mémoires de campagne supprimées", () =>
+                            api(`/api/admin/users/${userId}/campaign-memories`, {
+                              method: "DELETE",
+                            })
+                          ),
+                      })
+                    }
+                  >
+                    Supprimer les mémoires
+                  </button>
+                </div>
+              </div>
+
               <div className="detail-card" style={{ borderColor: "#fecaca", background: "#fffafa" }}>
                 <h3>Suppression definitive</h3>
                 <p className="actions-help">

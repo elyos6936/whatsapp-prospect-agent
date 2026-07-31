@@ -23,6 +23,8 @@ import {
   listPersonalContacts,
   listWhatsAppChats,
   listWhatsAppGroups,
+  listAdminWhatsAppGroups,
+  assertUserIsGroupAdmin,
   listWhatsAppChannels,
   markChatRead,
   markChatUnread,
@@ -178,9 +180,20 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "list_whatsapp_groups",
       description:
-        "Liste les groupes WhatsApp (noms + IDs @g.us). UNIQUEMENT si l'utilisateur demande explicitement la liste (« liste mes groupes »). " +
-        "Pour envoyer / agir dans un groupe nommé, passe le nom à send_whatsapp_message (ou l'outil concerné) — ne liste pas tous les groupes.",
-      parameters: { type: "object", properties: {}, additionalProperties: false },
+        "Liste les groupes WhatsApp (noms + IDs @g.us). " +
+        "Pour diffusion groupes (fil Groupes) : passe admin_only=true — uniquement les groupes où le compte est admin. " +
+        "Sinon : UNIQUEMENT si l'utilisateur demande explicitement la liste (« liste mes groupes »).",
+      parameters: {
+        type: "object",
+        properties: {
+          admin_only: {
+            type: "boolean",
+            description:
+              "Si true : uniquement les groupes où le compte WhatsApp connecté est administrateur.",
+          },
+        },
+        additionalProperties: false,
+      },
     },
   },
   {
@@ -1468,12 +1481,24 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           name: { type: "string", description: "Nom court de la campagne" },
           type: {
             type: "string",
-            enum: ["group_prospect", "contact_prospect", "keyword_sales", "custom_followup"],
+            enum: [
+              "group_prospect",
+              "contact_prospect",
+              "keyword_sales",
+              "custom_followup",
+              "group_broadcast",
+            ],
             description:
-              "group_prospect = prospection sortante d'un groupe ; contact_prospect = prospection d'un ou plusieurs contacts précis (hors groupe) ; keyword_sales = support / closing entrant (phrases déclencheurs OU compte entier via inbound_catch_all)",
+              "group_prospect = DM membres d'un groupe ; contact_prospect = DM contacts ; keyword_sales = support entrant ; group_broadcast = publier dans des groupes (admin only)",
           },
           summary: { type: "string", description: "Résumé en une phrase" },
           group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom) — group_prospect" },
+          group_ids: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "group_broadcast : un ou plusieurs groupes (@g.us ou noms) où le compte est administrateur.",
+          },
           contacts: {
             type: "array",
             items: { type: "string" },
@@ -2075,6 +2100,7 @@ function buildAutomationConfigFromArgs(
     : [];
 
   const isOutbound = type === "group_prospect" || type === "contact_prospect";
+  const isGroupBroadcast = type === "group_broadcast";
   const clampSeconds = (v: unknown): number | undefined => {
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0) return undefined;
@@ -2085,18 +2111,28 @@ function buildAutomationConfigFromArgs(
   const scaled = recommendOutboundGaps(prospectCount);
 
   const config: AutomationConfig = {
-    mode: isOutbound ? "outbound_prospect" : type === "keyword_sales" ? "inbound_closing" : undefined,
+    mode: isOutbound
+      ? "outbound_prospect"
+      : type === "keyword_sales"
+        ? "inbound_closing"
+        : isGroupBroadcast
+          ? "group_broadcast"
+          : undefined,
     initialMessage: args.initial_message ? String(args.initial_message) : undefined,
     maxMembers: args.max_members ? Number(args.max_members) : 30,
     maxPerDay:
       args.max_per_day != null && Number.isFinite(Number(args.max_per_day)) && Number(args.max_per_day) > 0
         ? Math.round(Number(args.max_per_day))
-        : isOutbound
+        : isOutbound || isGroupBroadcast
           ? ANTI_BAN.defaultCampaignMaxPerDay
           : undefined,
-    minDelaySeconds: clampSeconds(args.min_delay_seconds) ?? (isOutbound ? scaled.minDelaySeconds : undefined),
-    maxDelaySeconds: clampSeconds(args.max_delay_seconds) ?? (isOutbound ? scaled.maxDelaySeconds : undefined),
-    enableAutoReply: true, // Toujours ON — désactivation = pause / désactiver la campagne
+    minDelaySeconds:
+      clampSeconds(args.min_delay_seconds) ??
+      (isOutbound || isGroupBroadcast ? scaled.minDelaySeconds : undefined),
+    maxDelaySeconds:
+      clampSeconds(args.max_delay_seconds) ??
+      (isOutbound || isGroupBroadcast ? scaled.maxDelaySeconds : undefined),
+    enableAutoReply: !isGroupBroadcast, // diffusion groupe : pas d'auto-reply sur le @g.us
     conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
     triggerPhrases,
     keywords: triggerPhrases,
@@ -2252,27 +2288,35 @@ export async function executeTool(
     }
 
     case "list_whatsapp_groups": {
-      const groups = await listWhatsAppGroups(userId);
+      const adminOnly = args.admin_only === true;
+      const groups = adminOnly
+        ? await listAdminWhatsAppGroups(userId)
+        : await listWhatsAppGroups(userId);
       const mapped = groups.map((g) => ({
           id: g.id,
           name: g.name,
           type: "groupe",
+          ...(adminOnly ? { isAdmin: true as const } : {}),
       }));
       const cap = 40;
       const sliced = mapped.slice(0, cap);
       return JSON.stringify({
         count: mapped.length,
+        adminOnly,
         groups: sliced,
         truncated: mapped.length > cap,
-        // display pour le chemin outil si catalogue demandé (early-return agent)
         display: formatVerticalGroupList(sliced.map((g) => ({ name: g.name, id: g.id }))),
         hint:
           mapped.length === 0
-            ? "Aucun groupe trouvé — vérifiez que WhatsApp est connecté."
-            : "N'affiche PAS ces groupes à l'utilisateur sauf s'il a demandé explicitement la liste. " +
-              "Si demandé : présente le champ display tel quel (liste verticale). " +
-              "Pour agir sur un groupe nommé / lister ses membres, utilise get_group_members — " +
-              "PAS ce catalogue.",
+            ? adminOnly
+              ? "Aucun groupe où vous êtes administrateur. Vous ne pouvez diffuser que dans les groupes que vous administrez."
+              : "Aucun groupe trouvé — vérifiez que WhatsApp est connecté."
+            : adminOnly
+              ? "Groupes où le compte est admin uniquement. Présente le champ display. Pour créer une diffusion : create_automation(type=group_broadcast, group_ids=[…], initial_message=…)."
+              : "N'affiche PAS ces groupes à l'utilisateur sauf s'il a demandé explicitement la liste. " +
+                "Si demandé : présente le champ display tel quel (liste verticale). " +
+                "Pour agir sur un groupe nommé / lister ses membres, utilise get_group_members — " +
+                "PAS ce catalogue.",
       });
     }
 
@@ -4010,7 +4054,7 @@ export async function executeTool(
 
     case "create_automation": {
       const type = String(args.type ?? "") as AutomationType;
-      if (!["group_prospect", "contact_prospect", "keyword_sales", "custom_followup"].includes(type)) {
+      if (!["group_prospect", "contact_prospect", "keyword_sales", "custom_followup", "group_broadcast"].includes(type)) {
         return JSON.stringify({ error: "type invalide." });
       }
 
@@ -4020,18 +4064,25 @@ export async function executeTool(
         return JSON.stringify({
           error:
             "Ce fil est en mode Support client : utilise uniquement type=keyword_sales (mode inbound_closing). " +
-            "Pas de prospection sortante (contact_prospect / group_prospect) ici. " +
+            "Pas de prospection sortante (contact_prospect / group_prospect) ni group_broadcast ici. " +
             "Pour tout le compte WhatsApp : inbound_catch_all=true. Pour des phrases exactes : trigger_phrases.",
         });
       }
       if (
         threadPurpose === "prospection" &&
-        (type === "keyword_sales" || type === "custom_followup")
+        (type === "keyword_sales" || type === "custom_followup" || type === "group_broadcast")
       ) {
         return JSON.stringify({
           error:
             "Ce fil est en mode Prospection : utilise type=contact_prospect ou group_prospect. " +
-            "Pour du support / messages entrants, crée une nouvelle automatisation en mode Support client.",
+            "Pour du support, crée une nouvelle automatisation Support. Pour publier dans des groupes : Nouvelle automatisation → Groupes WhatsApp.",
+        });
+      }
+      if (threadPurpose === "groupes" && type !== "group_broadcast") {
+        return JSON.stringify({
+          error:
+            "Ce fil est en mode Groupes WhatsApp : utilise uniquement type=group_broadcast. " +
+            "Pour prospecter des membres en DM ou du support, crée une nouvelle automatisation avec le bon type.",
         });
       }
 
@@ -4158,7 +4209,11 @@ export async function executeTool(
           error: "initial_message contient des crochets. Remplace-les par de vraies valeurs.",
         });
       }
-      if (config.initialMessage && !isValidAttentionOpener(config.initialMessage)) {
+      if (
+        type !== "group_broadcast" &&
+        config.initialMessage &&
+        !isValidAttentionOpener(config.initialMessage)
+      ) {
         return JSON.stringify({
           error: formatAttentionOpenerError("initial_message", config.initialMessage),
         });
@@ -4388,6 +4443,56 @@ export async function executeTool(
         const matched = groups.find((g) => g.id === groupId);
         config.groupId = groupId;
         config.groupName = matched?.name ?? String(args.group_id);
+      }
+
+      if (type === "group_broadcast") {
+        if (!args.initial_message) {
+          return JSON.stringify({
+            error: "group_broadcast requiert initial_message (texte à publier dans les groupes).",
+          });
+        }
+        const rawGroups = Array.isArray(args.group_ids)
+          ? args.group_ids.map(String).filter(Boolean)
+          : args.group_id
+            ? [String(args.group_id)]
+            : [];
+        if (!rawGroups.length) {
+          return JSON.stringify({
+            error:
+              "group_broadcast requiert group_ids (un ou plusieurs groupes où vous êtes admin). Utilise list_whatsapp_groups(admin_only=true).",
+          });
+        }
+        try {
+          await requireEvolutionConnected(userId, "la création d'une diffusion groupes");
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          return JSON.stringify({ error: msg });
+        }
+        const resolved: Array<{ id: string; label?: string }> = [];
+        const failed: string[] = [];
+        for (const raw of rawGroups) {
+          try {
+            const gid = await resolveGroupId(userId, raw);
+            await assertUserIsGroupAdmin(userId, gid);
+            const groups = await listWhatsAppGroups(userId);
+            const matched = groups.find((g) => g.id === gid);
+            resolved.push({ id: gid, label: matched?.name ?? raw });
+          } catch (err) {
+            failed.push(`${raw} (${err instanceof Error ? err.message : "erreur"})`);
+          }
+        }
+        if (!resolved.length) {
+          return JSON.stringify({
+            error: `Aucun groupe admin résolu. ${failed.join(" · ")}`,
+          });
+        }
+        config.groupTargets = resolved;
+        config.mode = "group_broadcast";
+        config.enableAutoReply = false;
+        return await persistDraft(config, {
+          resolvedCount: resolved.length,
+          unresolved: failed,
+        });
       }
 
       if (type === "keyword_sales") {

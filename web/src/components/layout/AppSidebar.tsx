@@ -232,6 +232,8 @@ function ThreadList({
           const purposeLabel =
             thread.purpose === 'support'
               ? 'Support'
+              : thread.purpose === 'groupes'
+                ? 'Groupes'
               : thread.purpose === 'prospection'
                 ? 'Prospection'
                 : null;

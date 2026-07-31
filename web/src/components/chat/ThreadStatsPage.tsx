@@ -16,6 +16,7 @@ const TYPE_LABELS: Record<string, string> = {
   contact_prospect: 'Prospection contacts',
   keyword_sales: 'Vente / support mots-clés',
   custom_followup: 'Suivi personnalisé',
+  group_broadcast: 'Diffusion groupes',
 };
 
 const RANGE_OPTIONS: Array<{ id: string; label: string }> = [
@@ -123,7 +124,10 @@ export function ThreadStatsPage({ threadId }: ThreadStatsPageProps) {
     return acc;
   }, {});
   const totalTargets = targets.length;
-  const isOutbound = a?.type === 'group_prospect' || a?.type === 'contact_prospect';
+  const isOutbound =
+    a?.type === 'group_prospect' ||
+    a?.type === 'contact_prospect' ||
+    a?.type === 'group_broadcast';
   const rangeLabel =
     range === 'custom' && customFrom && customTo
       ? `${customFrom} → ${customTo}`

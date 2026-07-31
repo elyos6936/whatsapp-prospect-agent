@@ -226,11 +226,11 @@ export async function ensureAgentThreadsSchema(): Promise<void> {
 }
 
 /** Intention du fil choisie à la création — force le briefing / type de campagne. */
-export type AgentThreadPurpose = "prospection" | "support";
+export type AgentThreadPurpose = "prospection" | "support" | "groupes";
 
 export function normalizeThreadPurpose(raw: unknown): AgentThreadPurpose | null {
   const v = String(raw ?? "").trim().toLowerCase();
-  if (v === "prospection" || v === "support") return v;
+  if (v === "prospection" || v === "support" || v === "groupes") return v;
   return null;
 }
 
@@ -2478,6 +2478,7 @@ export const AUTOMATION_TYPES = [
   "contact_prospect",
   "keyword_sales",
   "custom_followup",
+  "group_broadcast",
 ] as const;
 export type AutomationType = (typeof AUTOMATION_TYPES)[number];
 export const AUTOMATION_STATUSES = ["draft", "active", "paused", "completed", "failed"] as const;
@@ -2494,10 +2495,12 @@ export const TARGET_STATUSES = [
 export type TargetStatus = (typeof TARGET_STATUSES)[number];
 
 export interface AutomationConfig {
-  mode?: "outbound_prospect" | "inbound_closing";
+  mode?: "outbound_prospect" | "inbound_closing" | "group_broadcast";
   origin?: string;
   groupId?: string;
   groupName?: string;
+  /** Diffusions : plusieurs groupes (@g.us) où le compte est admin. */
+  groupTargets?: Array<{ id: string; label?: string }>;
   contactTargets?: Array<{ id: string; label?: string }>;
   initialMessage?: string;
   maxMembers?: number;
@@ -2939,15 +2942,22 @@ export async function resumeAutomation(userId: number, id: number): Promise<Auto
   const existingTargets = await listAutomationTargets(userId, id, { limit: 1 });
   if (
     existingTargets.length === 0 &&
-    (updated.type === "group_prospect" || updated.type === "contact_prospect")
+    (updated.type === "group_prospect" ||
+      updated.type === "contact_prospect" ||
+      updated.type === "group_broadcast")
   ) {
-    const { bootstrapGroupProspectTargets, bootstrapContactProspectTargets } =
-      await import("./automation-engine.js");
+    const {
+      bootstrapGroupProspectTargets,
+      bootstrapContactProspectTargets,
+      bootstrapGroupBroadcastTargets,
+    } = await import("./automation-engine.js");
     const { requireEvolutionConnected } = await import("./evolutionapi.js");
     try {
       await requireEvolutionConnected(userId, "la reprise de la campagne");
       if (updated.type === "group_prospect") {
         await bootstrapGroupProspectTargets(userId, id);
+      } else if (updated.type === "group_broadcast") {
+        await bootstrapGroupBroadcastTargets(userId, id);
       } else {
         await bootstrapContactProspectTargets(userId, id);
       }

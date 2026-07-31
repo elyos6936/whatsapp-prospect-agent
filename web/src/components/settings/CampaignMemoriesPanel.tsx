@@ -176,11 +176,25 @@ export function CampaignMemoriesPanel() {
             <Brain className="h-4 w-4" />
           </div>
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold text-text-100">Mémoires de campagne</h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-sm font-semibold text-text-100">Mémoires de campagne</h2>
+              {!loading ? (
+                <span
+                  className={cn(
+                    'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums',
+                    memories.length >= max
+                      ? 'bg-amber-500/15 text-amber-800'
+                      : 'bg-brand/10 text-brand',
+                  )}
+                >
+                  {memories.length}/{max}
+                </span>
+              ) : null}
+            </div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-text-400">
-              Une case d&apos;instructions (phrases à tirets) : comportement de l&apos;agent,
-              produits/services, prix, liens… Connecte une mémoire à chaque automatisation via le
-              bouton <strong>Mémoire</strong> dans le chat.
+              {loading
+                ? 'Chargement…'
+                : `${memories.length} créée${memories.length === 1 ? '' : 's'} · ${Math.max(0, max - memories.length)} disponible${max - memories.length === 1 ? '' : 's'} (max ${max}). Une case d'instructions (phrases à tirets) : comportement, produits, prix, liens… Connecte une mémoire via le bouton Mémoire dans le chat.`}
             </p>
           </div>
         </div>
@@ -316,8 +330,9 @@ export function CampaignMemoriesPanel() {
             )}
           >
             <Plus className="h-4 w-4" />
-            Créer une mémoire
-            {memories.length >= max ? ` (max ${max})` : null}
+            {memories.length >= max
+              ? `Limite atteinte (${memories.length}/${max})`
+              : `Créer une mémoire (${memories.length}/${max})`}
           </button>
         </>
       )}

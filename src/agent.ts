@@ -243,6 +243,18 @@ async function buildBusinessContext(
           `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Support. Pour du support entrant → ` +
           `**Nouvelle automatisation** → **Support client**.`
       );
+    } else if (thread?.purpose === "groupes") {
+      lines.push(
+        `## TYPE DE FIL — GROUPES WHATSAPP (OBLIGATOIRE)\n` +
+          `Ce fil est destiné à **publier des messages dans des groupes** où le compte est **administrateur**.\n` +
+          `- create_automation UNIQUEMENT avec type=\`group_broadcast\` (mode \`group_broadcast\`).\n` +
+          `- list_whatsapp_groups avec admin_only=true — INTERDIT de proposer un groupe où l'utilisateur n'est pas admin.\n` +
+          `- Avant tout envoi / activation : vérifier l'admin (assert / liste admin only).\n` +
+          `- Brief court : message à publier, quels groupes (parmi ceux où il est admin), rythme éventuel.\n` +
+          `- INTERDIT : contact_prospect, group_prospect (DM membres), keyword_sales / inbound.\n` +
+          `- Stats = messages envoyés vs restants (une cible = un groupe).\n` +
+          `- Pour prospecter des membres en DM ou du support → **Nouvelle automatisation** avec le bon type.`
+      );
     }
 
     // Liste compte (noms) — pour orienter, PAS pour modifier depuis un autre fil
@@ -254,6 +266,7 @@ async function buildBusinessContext(
           contact_prospect: "prospection contacts",
           keyword_sales: "support / closing entrant",
           custom_followup: "suivi",
+          group_broadcast: "diffusion groupes",
         };
         const linesAuto = allAutos.map((a) => {
           const linkedHere = thread?.automation_id === a.id ? " ← CE FIL" : "";

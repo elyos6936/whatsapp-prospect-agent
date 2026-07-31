@@ -212,12 +212,28 @@ export function ThreadMemoryModal({
             <Brain className="h-4 w-4" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 id="thread-memory-title" className="text-sm font-semibold text-text-100">
-              Mémoire de cette automatisation
-            </h2>
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 id="thread-memory-title" className="text-sm font-semibold text-text-100">
+                Mémoire de cette automatisation
+              </h2>
+              {!loading ? (
+                <span
+                  className={cn(
+                    'inline-flex items-center rounded-md px-2 py-0.5 text-[11px] font-semibold tabular-nums',
+                    memories.length >= max
+                      ? 'bg-amber-500/15 text-amber-800'
+                      : 'bg-brand/10 text-brand',
+                  )}
+                  title={`${memories.length} mémoire${memories.length === 1 ? '' : 's'} créée${memories.length === 1 ? '' : 's'} sur ${max} maximum`}
+                >
+                  {memories.length}/{max}
+                </span>
+              ) : null}
+            </div>
             <p className="mt-0.5 text-[12px] leading-relaxed text-text-400">
-              Choisis, crée ou modifie une mémoire. Sans mémoire liée, l&apos;agent ne lance pas la
-              campagne.
+              {loading
+                ? 'Chargement des mémoires…'
+                : `${memories.length} créée${memories.length === 1 ? '' : 's'} · ${Math.max(0, max - memories.length)} disponible${max - memories.length === 1 ? '' : 's'} (max ${max}). Choisis, crée ou modifie une mémoire.`}
             </p>
           </div>
           <button
@@ -239,7 +255,9 @@ export function ThreadMemoryModal({
           ) : formMode ? (
             <div className="space-y-3">
               <p className="text-xs font-medium text-text-300">
-                {editingId != null ? 'Modifier la mémoire' : 'Nouvelle mémoire'}
+                {editingId != null
+                  ? 'Modifier la mémoire'
+                  : `Nouvelle mémoire (${memories.length + 1}/${max})`}
               </p>
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-text-400">Nom</label>
@@ -378,8 +396,9 @@ export function ThreadMemoryModal({
                 className="mt-3 inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-black/10 bg-bg-100 px-3 py-2.5 text-sm text-text-200 transition hover:border-brand/30 hover:text-brand disabled:opacity-50"
               >
                 <Plus className="h-4 w-4" />
-                Créer une nouvelle mémoire
-                {memories.length >= max ? ` (max ${max})` : null}
+                {memories.length >= max
+                  ? `Limite atteinte (${memories.length}/${max})`
+                  : `Créer une nouvelle mémoire (${memories.length}/${max})`}
               </button>
             </>
           )}

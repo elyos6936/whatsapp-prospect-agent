@@ -786,6 +786,34 @@ export async function adminClearAgentHistory(userId?: number): Promise<{
 }
 
 /**
+ * Supprime toutes les mémoires de campagne d'un compte (et détache les fils).
+ */
+export async function adminClearCampaignMemories(userId: number): Promise<{
+  deletedMemories: number;
+  userId: number;
+}> {
+  const user = await getUserById(userId);
+  if (!user) {
+    throw new Error("Utilisateur introuvable.");
+  }
+
+  await sql`
+    UPDATE agent_threads
+    SET campaign_memory_id = NULL, updated_at = NOW()
+    WHERE user_id = ${userId} AND campaign_memory_id IS NOT NULL
+  `;
+
+  const res = await sql`
+    DELETE FROM campaign_memories WHERE user_id = ${userId}
+  `;
+
+  return {
+    deletedMemories: Number(res.count ?? 0),
+    userId,
+  };
+}
+
+/**
  * Suppression physique complète d'un compte.
  * - coupe d'abord toute activité sortante
  * - purge les données liées dans les tables multi-tenant

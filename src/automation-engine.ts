@@ -118,14 +118,18 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
         const added =
           auto.type === "contact_prospect"
             ? await bootstrapContactProspectTargets(userId, auto.id)
-            : await bootstrapGroupProspectTargets(userId, auto.id);
+            : auto.type === "group_broadcast"
+              ? await bootstrapGroupBroadcastTargets(userId, auto.id)
+              : await bootstrapGroupProspectTargets(userId, auto.id);
         if (added === 0) {
           await failAutomationNoTargets(
             userId,
             auto.id,
             auto.type === "contact_prospect"
               ? "Aucun contact chargé — vérifiez la connexion WhatsApp et la liste de contacts."
-              : "Aucun membre chargé — vérifiez la connexion WhatsApp et le groupe."
+              : auto.type === "group_broadcast"
+                ? "Aucun groupe chargé — vérifiez que vous êtes admin des groupes choisis."
+                : "Aucun membre chargé — vérifiez la connexion WhatsApp et le groupe."
           );
         }
       } catch (err) {
@@ -181,10 +185,14 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   }
 
   const shouldPersonalize =
-    auto.config.mode === "outbound_prospect" ||
-    auto.type === "group_prospect" ||
-    auto.type === "contact_prospect" ||
-    auto.config.personalizeMessages === true;
+    auto.type !== "group_broadcast" &&
+    (auto.config.mode === "outbound_prospect" ||
+      auto.type === "group_prospect" ||
+      auto.type === "contact_prospect" ||
+      auto.config.personalizeMessages === true);
+
+  const isGroupBroadcast =
+    auto.type === "group_broadcast" || auto.config.mode === "group_broadcast";
 
   if (shouldPersonalize) {
     try {
@@ -213,8 +221,10 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   }
 
   try {
-    // Nouvelle campagne (id différent) → oubli mémoire + historique pré-campagne
-    await beginFreshCampaignConversation(userId, target.target_id, auto.id);
+    if (!isGroupBroadcast) {
+      // Nouvelle campagne (id différent) → oubli mémoire + historique pré-campagne
+      await beginFreshCampaignConversation(userId, target.target_id, auto.id);
+    }
 
     // Google Contacts : nom WA si besoin ; cache hit = quasi instantané
     const { resolveWhatsAppDisplayName, isPhoneLikeLabel } = await import("./evolutionapi.js");
@@ -222,7 +232,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       target.target_label && !isPhoneLikeLabel(target.target_label)
         ? target.target_label
         : null;
-    if (!googleName) {
+    if (!isGroupBroadcast && !googleName) {
       const waName = await resolveWhatsAppDisplayName(
         userId,
         target.target_id,
@@ -231,23 +241,30 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       if (waName && !isPhoneLikeLabel(waName)) googleName = waName;
     }
 
-    if (googleName && googleName !== target.target_label) {
+    if (!isGroupBroadcast && googleName && googleName !== target.target_label) {
       void updateAutomationTargetLabel(userId, auto.id, target.target_id, googleName).catch(
         () => null,
       );
     }
 
-    const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
-    // Ne bloque jamais l'envoi si Google est lent : timeout 4s max
-    await Promise.race([
-      ensureGoogleContactBeforeSend(userId, {
-        phone: target.target_id,
-        name: googleName ?? target.target_label,
-      }),
-      new Promise<{ synced: false; reason: string }>((resolve) =>
-        setTimeout(() => resolve({ synced: false, reason: "timeout" }), 4000),
-      ),
-    ]).catch(() => null);
+    if (!isGroupBroadcast) {
+      const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
+      // Ne bloque jamais l'envoi si Google est lent : timeout 4s max
+      await Promise.race([
+        ensureGoogleContactBeforeSend(userId, {
+          phone: target.target_id,
+          name: googleName ?? target.target_label,
+        }),
+        new Promise<{ synced: false; reason: string }>((resolve) =>
+          setTimeout(() => resolve({ synced: false, reason: "timeout" }), 4000),
+        ),
+      ]).catch(() => null);
+    }
+
+    if (isGroupBroadcast) {
+      const { assertUserIsGroupAdmin } = await import("./evolutionapi.js");
+      await assertUserIsGroupAdmin(userId, target.target_id);
+    }
 
     const priority = shouldPersonalize ? 7 : 6;
     await enqueueSend(userId, {
@@ -261,14 +278,16 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       abVariant: ab.variantId,
     });
 
-    // Campagne active = auto-reply OBLIGATOIRE (réponses UNIQUEMENT si le prospect écrit)
-    await setContactAutoReply(userId, target.target_id, true);
-    await saveContact(userId, {
-      phone: target.target_id,
-      name: googleName ?? target.target_label ?? undefined,
-      status: "en_conversation",
-      autoReply: true,
-    });
+    if (!isGroupBroadcast) {
+      // Campagne active = auto-reply OBLIGATOIRE (réponses UNIQUEMENT si le prospect écrit)
+      await setContactAutoReply(userId, target.target_id, true);
+      await saveContact(userId, {
+        phone: target.target_id,
+        name: googleName ?? target.target_label ?? undefined,
+        status: "en_conversation",
+        autoReply: true,
+      });
+    }
 
     // PAS de séquence / relance auto au moment de l'opener.
     // Règle produit : 1 seul premier message → attendre la réponse → auto-reply.
@@ -283,7 +302,9 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       userId,
       auto.id,
       "success",
-      `Message programmé pour ${label}${ab.variantId !== "default" ? ` [A/B ${ab.variantId}]` : ""}`
+      isGroupBroadcast
+        ? `Message programmé dans le groupe « ${label} »`
+        : `Message programmé pour ${label}${ab.variantId !== "default" ? ` [A/B ${ab.variantId}]` : ""}`
     );
 
     const stats = (await getAutomation(userId, auto.id))?.stats ?? {};
@@ -727,6 +748,61 @@ export async function bootstrapContactProspectTargets(
 
   await updateAutomationStats(userId, automationId, {
     report: `Prospection lancée sur ${added} contact(s).`,
+    lastActionAt: new Date().toISOString(),
+  });
+  return added;
+}
+
+export async function bootstrapGroupBroadcastTargets(
+  userId: number,
+  automationId: number
+): Promise<number> {
+  const auto = await getAutomation(userId, automationId);
+  if (!auto || auto.type !== "group_broadcast") return 0;
+
+  const targets = auto.config.groupTargets ?? [];
+  if (!targets.length) {
+    await failAutomationNoTargets(
+      userId,
+      automationId,
+      "Aucun groupe configuré — choisissez des groupes où vous êtes administrateur."
+    );
+  }
+
+  const { assertUserIsGroupAdmin, requireEvolutionConnected } = await import("./evolutionapi.js");
+  await requireEvolutionConnected(userId, "le chargement des groupes de diffusion");
+
+  const eligible: Array<{ targetId: string; targetLabel?: string }> = [];
+  for (const g of targets) {
+    try {
+      await assertUserIsGroupAdmin(userId, g.id);
+      eligible.push({ targetId: g.id, targetLabel: g.label || g.id });
+    } catch (err) {
+      await addAutomationLog(
+        userId,
+        automationId,
+        "warning",
+        `Groupe exclu (pas admin) : ${g.label || g.id} — ${err instanceof Error ? err.message : err}`
+      );
+    }
+  }
+
+  if (!eligible.length) {
+    await failAutomationNoTargets(
+      userId,
+      automationId,
+      "Aucun groupe éligible : vous devez être administrateur des groupes choisis."
+    );
+  }
+
+  const added = await addAutomationTargets(userId, automationId, eligible);
+  await addAutomationLog(
+    userId,
+    automationId,
+    "info",
+    `${added} groupe(s) en file de diffusion (messages restants = groupes en attente).`
+  );
+  await updateAutomationStats(userId, automationId, {
     lastActionAt: new Date().toISOString(),
   });
   return added;

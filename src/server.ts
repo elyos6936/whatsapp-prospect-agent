@@ -475,7 +475,7 @@ app.post<{ Body: { title?: string; description?: string; purpose?: string } }>(
     const purpose = normalizeThreadPurpose(request.body?.purpose);
     if (request.body?.purpose != null && String(request.body.purpose).trim() && !purpose) {
       return reply.status(400).send({
-        error: "Le champ « purpose » doit valoir « prospection » ou « support ».",
+        error: "Le champ « purpose » doit valoir « prospection », « support » ou « groupes ».",
       });
     }
     const thread = await createAgentThread(

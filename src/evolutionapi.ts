@@ -803,6 +803,63 @@ export async function listWhatsAppGroups(
   );
 }
 
+function participantIdsMatch(a: string, b: string): boolean {
+  const na = chatIdToNumber(normalizeGroupParticipantId(a));
+  const nb = chatIdToNumber(normalizeGroupParticipantId(b));
+  return Boolean(na && nb && na === nb);
+}
+
+/**
+ * Groupes où le compte WhatsApp connecté est administrateur (ou super-admin).
+ * Utilisé pour les diffusions dans les groupes (pas de post si non-admin).
+ */
+export async function listAdminWhatsAppGroups(
+  userId: number
+): Promise<Array<{ id: string; name: string; type: string; isAdmin: true }>> {
+  const all = await listWhatsAppGroups(userId);
+  const ownerId = await getConnectedOwnerId(userId);
+  if (!ownerId) {
+    throw new EvolutionApiError(
+      "Impossible d'identifier le compte WhatsApp connecté. Reconnectez WhatsApp puis réessayez."
+    );
+  }
+
+  const out: Array<{ id: string; name: string; type: string; isAdmin: true }> = [];
+  // Limiter le fan-out : max 40 groupes inspectés
+  for (const g of all.slice(0, 40)) {
+    try {
+      const members = await getGroupMembers(userId, g.id);
+      const adminHit = members.participants.some(
+        (p) => participantIdsMatch(p.id, ownerId) && Boolean(p.isAdmin)
+      );
+      if (adminHit) {
+        out.push({ id: g.id, name: g.name, type: "group", isAdmin: true });
+      }
+    } catch {
+      /* ignore groups we can't inspect */
+    }
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name, "fr", { sensitivity: "base" }));
+  return out;
+}
+
+/** Vérifie que le compte connecté est admin du groupe (sinon throw). */
+export async function assertUserIsGroupAdmin(userId: number, groupId: string): Promise<void> {
+  const ownerId = await getConnectedOwnerId(userId);
+  if (!ownerId) {
+    throw new EvolutionApiError("Compte WhatsApp non identifiable — reconnectez WhatsApp.");
+  }
+  const members = await getGroupMembers(userId, groupId);
+  const ok = members.participants.some(
+    (p) => participantIdsMatch(p.id, ownerId) && Boolean(p.isAdmin)
+  );
+  if (!ok) {
+    throw new EvolutionApiError(
+      `Vous n'êtes pas administrateur de ce groupe. Seuls les groupes où vous êtes admin peuvent recevoir une diffusion.`
+    );
+  }
+}
+
 export async function listWhatsAppChannels(userId: number): Promise<Array<{ id: string; name: string; type: string }>> {
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
@@ -965,6 +1022,7 @@ export async function getGroupMembers(userId: number, groupId: string): Promise<
         id?: string;
         name?: string;
         isAdmin?: boolean;
+        isSuperAdmin?: boolean;
         admin?: string | null;
       };
       const phone = typeof row.phoneNumber === "string" ? row.phoneNumber.trim() : "";
@@ -976,7 +1034,7 @@ export async function getGroupMembers(userId: number, groupId: string): Promise<
     return {
         id: normalizeGroupParticipantId(preferred),
         name: pickReadableName(row.name) || undefined,
-        isAdmin: Boolean(row.isAdmin || row.admin),
+        isAdmin: Boolean(row.isAdmin || row.isSuperAdmin || row.admin),
       };
     })
     .filter((p) => p.id);

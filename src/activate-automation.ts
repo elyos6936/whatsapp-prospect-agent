@@ -120,7 +120,9 @@ export async function activateAutomationCore(
   const isOutbound =
     auto.type === "group_prospect" ||
     auto.type === "contact_prospect" ||
-    auto.config.mode === "outbound_prospect";
+    auto.type === "group_broadcast" ||
+    auto.config.mode === "outbound_prospect" ||
+    auto.config.mode === "group_broadcast";
   if (isOutbound) {
     try {
       await requireEvolutionConnected(userId, "l'activation de la campagne");
@@ -133,14 +135,21 @@ export async function activateAutomationCore(
     }
   }
 
-  let safeConfig: AutomationConfig = { ...auto.config, enableAutoReply: true };
+  let safeConfig: AutomationConfig = {
+    ...auto.config,
+    enableAutoReply: auto.type === "group_broadcast" ? false : true,
+  };
   if (isOutbound) {
     if (!safeConfig.maxPerDay || safeConfig.maxPerDay <= 0) {
       safeConfig.maxPerDay = ANTI_BAN.defaultCampaignMaxPerDay;
     }
     if (safeConfig.quietHoursStart == null) safeConfig.quietHoursStart = 9;
     if (safeConfig.quietHoursEnd == null) safeConfig.quietHoursEnd = 20;
-    if (!safeConfig.relance?.enabled && !safeConfig.sequenceSteps?.length) {
+    if (
+      auto.type !== "group_broadcast" &&
+      !safeConfig.relance?.enabled &&
+      !safeConfig.sequenceSteps?.length
+    ) {
       safeConfig.relance = defaultRelanceConfig();
     }
   } else if (auto.type === "keyword_sales" || auto.config.mode === "inbound_closing") {
@@ -184,6 +193,18 @@ export async function activateAutomationCore(
       }
       await updateAutomationStatus(userId, id, "active");
       targetsAdded = await bootstrapContactProspectTargets(userId, id);
+      await resumeAutomationMessaging(userId, id);
+    } else if (auto.type === "group_broadcast") {
+      if (!auto.config.initialMessage || !auto.config.groupTargets?.length) {
+        return {
+          ok: false,
+          error: "Message ou groupes manquants (groupes où vous êtes admin).",
+          automationId: id,
+        };
+      }
+      await updateAutomationStatus(userId, id, "active");
+      const { bootstrapGroupBroadcastTargets } = await import("./automation-engine.js");
+      targetsAdded = await bootstrapGroupBroadcastTargets(userId, id);
       await resumeAutomationMessaging(userId, id);
     } else {
       await updateAutomationStatus(userId, id, "active");

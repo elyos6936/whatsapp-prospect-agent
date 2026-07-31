@@ -251,7 +251,7 @@ export async function clearHistory(threadId: number): Promise<void> {
   await request(`/api/history?thread_id=${threadId}`, { method: 'DELETE' });
 }
 
-export type ThreadPurpose = 'prospection' | 'support';
+export type ThreadPurpose = 'prospection' | 'support' | 'groupes';
 
 export interface AgentThreadSummary {
   id: number;

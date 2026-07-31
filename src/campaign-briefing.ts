@@ -168,10 +168,10 @@ export function hasInboundPacingQuestionAsked(history: AgentMessage[]): boolean 
 export function isInboundClosingFlow(
   history: AgentMessage[],
   userMessage: string,
-  purpose?: "prospection" | "support" | null
+  purpose?: "prospection" | "support" | "groupes" | null
 ): boolean {
   if (purpose === "support") return true;
-  if (purpose === "prospection") return false;
+  if (purpose === "prospection" || purpose === "groupes") return false;
   const blob = conversationBlob(history, userMessage);
   return /\b(keyword_sales|inbound_closing|closing\s+entrant|support\s*client|d[eé]clencheur|mot[- ]?cl[eé]|quand\s+(quelqu|un\s+prospect|un\s+client)\s+[eé]crit|r[eé]pond(?:re|s)?\s+(uniquement\s+)?quand)\b/i.test(
     blob
@@ -185,10 +185,10 @@ function conversationBlob(history: AgentMessage[], userMessage: string): string 
 
 function countBriefingQuestions(
   history: AgentMessage[],
-  purpose?: "prospection" | "support" | null
+  purpose?: "prospection" | "support" | "groupes" | null
 ): number {
   let campaignStart = -1;
-  if (purpose === "prospection" || purpose === "support") {
+  if (purpose === "prospection" || purpose === "support" || purpose === "groupes") {
     campaignStart = 0;
   } else {
     for (let i = 0; i < history.length; i++) {
@@ -220,10 +220,11 @@ function countBriefingQuestions(
 export function assessCampaignBriefing(
   history: AgentMessage[],
   userMessage: string,
-  purpose?: "prospection" | "support" | null,
+  purpose?: "prospection" | "support" | "groupes" | null,
   memory?: CampaignMemory | null
 ): BriefingAssessment {
-  const purposeForced = purpose === "prospection" || purpose === "support";
+  const purposeForced =
+    purpose === "prospection" || purpose === "support" || purpose === "groupes";
   const inFlow =
     purposeForced ||
     isCampaignIntent(userMessage) ||
@@ -429,7 +430,7 @@ export function buildMissingMemoryNudge(
   hasLinkedMemory: boolean,
   _userMessage: string,
   _history: AgentMessage[],
-  _purpose?: "prospection" | "support" | null
+  _purpose?: "prospection" | "support" | "groupes" | null
 ): string | null {
   if (hasLinkedMemory) return null;
   return (

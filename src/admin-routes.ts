@@ -10,6 +10,7 @@ import {
 } from "./admin-auth.js";
 import {
   adminClearAgentHistory,
+  adminClearCampaignMemories,
   adminHardDeleteUser,
   adminSoftDeleteUser,
   adminStopOutbound,
@@ -350,6 +351,30 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       } catch (err) {
         return reply.status(404).send({
           error: err instanceof Error ? err.message : "Impossible de vider l'historique.",
+        });
+      }
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    "/api/admin/users/:id/campaign-memories",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      try {
+        const result = await adminClearCampaignMemories(id);
+        const meta = actorMeta(request);
+        await writeAdminAudit({
+          ...meta,
+          action: "user.clear_campaign_memories",
+          targetUserId: id,
+          payload: { deletedMemories: result.deletedMemories },
+        });
+        return { ok: true, ...result };
+      } catch (err) {
+        return reply.status(404).send({
+          error: err instanceof Error ? err.message : "Impossible de supprimer les mémoires.",
         });
       }
     }

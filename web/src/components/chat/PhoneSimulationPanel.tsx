@@ -274,7 +274,9 @@ export function PhoneSimulationPanel({
 
   const helpLine = isSupport
     ? 'Tapez comme un client pour tester la réponse. Aucun envoi WhatsApp réel.'
-    : 'Aperçu du premier contact et des échanges. Testez sans envoyer sur WhatsApp.';
+    : purpose === 'groupes'
+      ? 'Aperçu d’un message publié dans un groupe. Aucun envoi WhatsApp réel.'
+      : 'Aperçu du premier contact et des échanges. Testez sans envoyer sur WhatsApp.';
 
   const canClear = phoneBubbles.length > 0;
 

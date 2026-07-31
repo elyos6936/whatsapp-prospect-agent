@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Headphones, Megaphone } from 'lucide-react';
+import { Headphones, Megaphone, UsersRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-export type ThreadPurpose = 'prospection' | 'support';
+export type ThreadPurpose = 'prospection' | 'support' | 'groupes';
 
 type NewAutomationModalProps = {
   open: boolean;
@@ -11,7 +11,7 @@ type NewAutomationModalProps = {
   onCancel: () => void;
 };
 
-/** Popup centrée : type (prospection / support) + nom + description avant création. */
+/** Popup centrée : type + nom + description avant création. */
 export function NewAutomationModal({
   open,
   busy = false,
@@ -41,7 +41,20 @@ export function NewAutomationModal({
   if (!open) return null;
 
   const canSubmit = purpose != null && title.trim().length >= 2 && !busy;
-  const isSupport = purpose === 'support';
+
+  const namePlaceholder =
+    purpose === 'support'
+      ? 'Ex. Florelle Bio — Support intéressés'
+      : purpose === 'groupes'
+        ? 'Ex. Florelle Bio — Annonces communauté'
+        : 'Ex. Florelle Bio — Prospection groupe';
+
+  const descPlaceholder =
+    purpose === 'support'
+      ? 'Ex. Répondre quand quelqu’un écrit « je suis intéressé » et closer la vente.'
+      : purpose === 'groupes'
+        ? 'Ex. Publier des annonces dans les groupes WhatsApp où je suis admin.'
+        : 'Ex. Prospecter les membres du groupe et proposer la cure minceur naturelle.';
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="presentation">
@@ -56,13 +69,14 @@ export function NewAutomationModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-auto-title"
-        className="relative z-10 w-full max-w-[440px] rounded-2xl border border-black/[0.08] bg-bg-0 p-5 shadow-2xl sm:p-6"
+        className="relative z-10 w-full max-w-[520px] rounded-2xl border border-black/[0.08] bg-bg-0 p-5 shadow-2xl sm:p-6"
       >
         <h2 id="new-auto-title" className="text-lg font-semibold text-text-100">
           Nouvelle automatisation
         </h2>
         <p className="mt-1.5 text-sm text-text-400">
-          Choisissez d&apos;abord le type — l&apos;agent ne mélangera plus prospection et support.
+          Choisissez d&apos;abord le type — l&apos;agent ne mélangera pas prospection, support et
+          groupes.
         </p>
 
         <form
@@ -75,7 +89,7 @@ export function NewAutomationModal({
         >
           <div>
             <p className="mb-1.5 block text-xs font-medium text-text-400">Type</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
               <button
                 type="button"
                 disabled={busy}
@@ -122,6 +136,29 @@ export function NewAutomationModal({
                   Réponses entrantes : phrases déclencheurs ou tout le compte WhatsApp.
                 </span>
               </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setPurpose('groupes')}
+                className={cn(
+                  'flex flex-col items-start gap-1 rounded-xl border px-3 py-3 text-left transition',
+                  purpose === 'groupes'
+                    ? 'border-brand bg-brand/[0.06] ring-1 ring-brand/20'
+                    : 'border-black/10 bg-bg-100 hover:border-black/15',
+                  busy && 'opacity-60',
+                )}
+              >
+                <UsersRound
+                  className={cn(
+                    'h-4 w-4',
+                    purpose === 'groupes' ? 'text-brand' : 'text-text-400',
+                  )}
+                />
+                <span className="text-sm font-semibold text-text-100">Groupes WhatsApp</span>
+                <span className="text-[11px] leading-snug text-text-500">
+                  Publier des messages dans les groupes où vous êtes administrateur.
+                </span>
+              </button>
             </div>
           </div>
 
@@ -134,11 +171,7 @@ export function NewAutomationModal({
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder={
-                isSupport
-                  ? 'Ex. Florelle Bio — Support intéressés'
-                  : 'Ex. Florelle Bio — Prospection groupe'
-              }
+              placeholder={namePlaceholder}
               maxLength={80}
               autoFocus
               disabled={busy}
@@ -153,11 +186,7 @@ export function NewAutomationModal({
               id="auto-desc"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder={
-                isSupport
-                  ? 'Ex. Répondre quand quelqu’un écrit « je suis intéressé » et closer la vente.'
-                  : 'Ex. Prospecter les membres du groupe et proposer la cure minceur naturelle.'
-              }
+              placeholder={descPlaceholder}
               rows={3}
               maxLength={280}
               disabled={busy}

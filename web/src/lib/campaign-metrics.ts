@@ -94,6 +94,7 @@ export function goalAwareStatCards(input: {
   const type = input.type;
   const isOutbound = type === 'group_prospect' || type === 'contact_prospect';
   const isInbound = type === 'keyword_sales';
+  const isGroupBroadcast = type === 'group_broadcast';
   const productHint = input.productName?.trim();
   const discussing =
     input.periodFiltered && input.period?.discussing != null
@@ -106,6 +107,47 @@ export function goalAwareStatCards(input: {
         );
   const inboundMsgs = Number(input.period?.inboundMessages ?? handled);
   const periodHint = input.periodFiltered ? 'sur la période' : undefined;
+
+  if (isGroupBroadcast) {
+    const total = Number(input.stats?.targetsTotal ?? 0);
+    const sent =
+      Number(input.stats?.messagesSent ?? 0) ||
+      metrics.reached ||
+      Number(input.stats?.outboundUsed ?? 0);
+    const remaining = Math.max(0, metrics.pending);
+    return {
+      title: 'Diffusion groupes WhatsApp',
+      subtitle: 'Messages publiés dans les groupes (admin) — envoyés vs restants',
+      funnelLabels: ['Groupes', 'Envoyés', 'Restants', 'Erreurs'],
+      cards: [
+        {
+          key: 'total',
+          label: 'Groupes ciblés',
+          value: total || sent + remaining,
+        },
+        {
+          key: 'sent',
+          label: 'Messages envoyés',
+          value: sent,
+          accent: 'success',
+          hint: periodHint,
+        },
+        {
+          key: 'remaining',
+          label: 'Messages restants',
+          value: remaining,
+          accent: remaining > 0 ? 'warn' : 'default',
+          hint: 'Groupes encore en file',
+        },
+        {
+          key: 'errors',
+          label: 'Erreurs',
+          value: metrics.errors,
+          accent: metrics.errors > 0 ? 'warn' : 'default',
+        },
+      ],
+    };
+  }
 
   if (goal === 'appointment' || /\brdv|rendez/.test(productHint || '')) {
     return {
