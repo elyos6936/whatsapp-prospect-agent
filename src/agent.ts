@@ -7,6 +7,7 @@ import {
   getAutomation,
   getOutreachQuotaSnapshot,
   getRecentAgentMessages,
+  listAutomations,
   type AgentMessage,
   type AppSettings,
 } from "./db.js";
@@ -213,7 +214,10 @@ async function buildBusinessContext(
           `- INTERDIT : contact_prospect, group_prospect, premier message de contact sortant, 5 variantes d'accroche.\n` +
           `- Questions utiles : produit/service, phrase(s) déclencheur exacte(s), infos à donner, objectif (vente/RDV/lien), présentation, stickers, notif tiers.\n` +
           `- INTERDIT de demander délais entre messages, vagues de 50, gap entre vagues ou plage anti-blocage — défauts système automatiques.\n` +
-          `- Commence le brief par une question ouverte sur le produit / ce que tu dois répondre — PAS « quel premier message envoyer ».`
+          `- Commence le brief par une question ouverte sur le produit / ce que tu dois répondre — PAS « quel premier message envoyer ».\n` +
+          `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Prospection. Le purpose est fixé. ` +
+          `Si l'utilisateur veut prospecter (groupes / contacts) → dis-lui clairement d'ouvrir **Nouvelle automatisation** ` +
+          `dans la barre latérale et de choisir **Prospection**.`
       );
     } else if (thread?.purpose === "prospection") {
       lines.push(
@@ -221,9 +225,44 @@ async function buildBusinessContext(
           `Ce fil a été créé en mode **Prospection**. Vous contactez les prospects en premier.\n` +
           `- create_automation UNIQUEMENT avec type=\`contact_prospect\` ou \`group_prospect\` (mode \`outbound_prospect\`).\n` +
           `- INTERDIT : keyword_sales / inbound_closing / questions « phrase déclencheur » comme flux principal.\n` +
-          `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, puis 5 variantes d'accroche.`
+          `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, puis 5 variantes d'accroche.\n` +
+          `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Support. Pour du support entrant → ` +
+          `**Nouvelle automatisation** → **Support client**.`
       );
     }
+
+    // Liste compte (noms) — pour orienter, PAS pour modifier depuis un autre fil
+    try {
+      const allAutos = await listAutomations(userId, { limit: 30 });
+      if (allAutos.length > 0) {
+        const typeLabel: Record<string, string> = {
+          group_prospect: "prospection groupe",
+          contact_prospect: "prospection contacts",
+          keyword_sales: "support / closing entrant",
+          custom_followup: "suivi",
+        };
+        const linesAuto = allAutos.map((a) => {
+          const linkedHere = thread?.automation_id === a.id ? " ← CE FIL" : "";
+          return `- « ${a.name} » [${a.status}] ${typeLabel[a.type] ?? a.type}${linkedHere} (id interne ${a.id})`;
+        });
+        lines.push(
+          `## Campagnes existantes (compte)\n` +
+            `${linesAuto.join("\n")}\n\n` +
+            `Règles :\n` +
+            `- Tu peux **citer les noms + statuts** à l'utilisateur (liste verticale). N'affiche PAS les id numériques.\n` +
+            `- Tu ne peux **modifier / activer** que la campagne marquée « CE FIL » (ou après create_automation sur ce fil).\n` +
+            `- Campagne d'un **autre** fil → invite à l'ouvrir dans la barre latérale (même nom). ` +
+            `INTERDIT de dire que tu la modifies depuis ici.`
+        );
+      } else {
+        lines.push(
+          `## Campagnes existantes (compte)\nAucune campagne sur ce compte pour l'instant.`
+        );
+      }
+    } catch {
+      /* ignore */
+    }
+
     if (thread?.description?.trim()) {
       lines.push(
         `## Objectif de cette automatisation\n${thread.description.trim()}\n\n` +
@@ -237,7 +276,8 @@ async function buildBusinessContext(
           `## Campagne de ce fil (unique)\n` +
             `« ${auto.name} » [${auto.status}] type=${auto.type}\n\n` +
             `Ce fil ne gère qu'UNE automatisation. Pour une nouvelle campagne → l'utilisateur doit cliquer « Nouvelle automatisation » dans la barre latérale.\n` +
-            `Modifications → update_automation_config (ne cite JAMAIS d'identifiant numérique de campagne à l'utilisateur).`
+            `Modifications → update_automation_config (ne cite JAMAIS d'identifiant numérique de campagne à l'utilisateur).\n` +
+            `« Lancer / activer » → activate_automation sur CETTE campagne.`
         );
         if (auto.config.initialMessage?.trim()) {
           const variants = (auto.config.abVariants ?? [])
@@ -258,7 +298,13 @@ async function buildBusinessContext(
       }
     } else {
       lines.push(
-        `## Fil vide\nAucune campagne liée à ce fil. Tu peux en créer une via create_automation après le briefing complet.`
+        `## Fil vide\n` +
+          `Aucune campagne liée à ce fil.\n` +
+          `- « Lancer une campagne » / « nouvelle » → briefing puis create_automation (type compatible avec le purpose du fil).\n` +
+          `- « Une existante » / « modifier » → si des campagnes apparaissent ci-dessus : liste-les par **nom**, ` +
+          `explique qu'elles vivent dans **leur fil** de la barre latérale, et invite à ouvrir le bon fil. ` +
+          `Ne propose PAS de les modifier ici. Ne dis PAS « donne-moi son numéro ».\n` +
+          `- **INTERDIT** de prétendre changer le mode Support ↔ Prospection de ce fil.`
       );
     }
   } catch {
