@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Brain, Check, Plus, X } from 'lucide-react';
+import { Brain, Check, Pencil, Plus, X } from 'lucide-react';
 import {
   createCampaignMemoryApi,
   fetchCampaignMemories,
   setThreadCampaignMemoryApi,
+  updateCampaignMemoryApi,
   type CampaignMemoryDto,
   type CampaignMemoryInput,
 } from '@/lib/api';
@@ -56,6 +57,7 @@ export function ThreadMemoryModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<number | null>(null);
   const [name, setName] = useState('');
   const [instructions, setInstructions] = useState('');
 
@@ -77,6 +79,7 @@ export function ThreadMemoryModal({
   useEffect(() => {
     if (!open) return;
     setCreating(false);
+    setEditingId(null);
     setError('');
     void load();
   }, [open, load]);
@@ -112,7 +115,22 @@ export function ThreadMemoryModal({
       memories.length === 0 ? 1 : Math.max(...memories.map((m) => m.id), 0) + 1;
     setName(`${base} ${nextId}`);
     setInstructions(template || FALLBACK_TEMPLATE);
+    setEditingId(null);
     setCreating(true);
+    setError('');
+  }
+
+  function startEdit(m: CampaignMemoryDto) {
+    setName(m.name);
+    setInstructions(m.instructions || '');
+    setEditingId(m.id);
+    setCreating(false);
+    setError('');
+  }
+
+  function backToList() {
+    setCreating(false);
+    setEditingId(null);
     setError('');
   }
 
@@ -143,6 +161,37 @@ export function ThreadMemoryModal({
     }
   }
 
+  async function saveEdit() {
+    if (editingId == null) return;
+    if (name.trim().length < 2) {
+      setError('Donne un nom à la mémoire (min. 2 caractères).');
+      return;
+    }
+    if (instructions.trim().length < 10) {
+      setError('Ajoute des instructions pour l’agent.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    const body: CampaignMemoryInput = {
+      name: name.trim(),
+      instructions: instructions.replace(/\r\n/g, '\n').trim(),
+    };
+    try {
+      await updateCampaignMemoryApi(editingId, body);
+      await onLinked();
+      await load();
+      backToList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Mise à jour impossible.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const linked = memories.find((m) => m.id === linkedMemoryId) ?? null;
+  const formMode = creating || editingId != null;
+
   return (
     <div className="fixed inset-0 z-[80] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4">
       <button
@@ -167,8 +216,8 @@ export function ThreadMemoryModal({
               Mémoire de cette automatisation
             </h2>
             <p className="mt-0.5 text-[12px] leading-relaxed text-text-400">
-              Choisis ou crée une mémoire (instructions libres). Sans mémoire liée, l&apos;agent ne
-              lance pas la campagne.
+              Choisis, crée ou modifie une mémoire. Sans mémoire liée, l&apos;agent ne lance pas la
+              campagne.
             </p>
           </div>
           <button
@@ -187,9 +236,11 @@ export function ThreadMemoryModal({
 
           {loading ? (
             <p className="py-8 text-center text-sm text-text-400">Chargement…</p>
-          ) : creating ? (
+          ) : formMode ? (
             <div className="space-y-3">
-              <p className="text-xs font-medium text-text-300">Nouvelle mémoire</p>
+              <p className="text-xs font-medium text-text-300">
+                {editingId != null ? 'Modifier la mémoire' : 'Nouvelle mémoire'}
+              </p>
               <div>
                 <label className="mb-1 block text-[11px] font-medium text-text-400">Nom</label>
                 <input
@@ -216,7 +267,7 @@ export function ThreadMemoryModal({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => setCreating(false)}
+                  onClick={backToList}
                   className="rounded-xl border border-black/10 px-3 py-2 text-sm text-text-400 transition hover:bg-bg-200"
                 >
                   Retour
@@ -224,10 +275,14 @@ export function ThreadMemoryModal({
                 <button
                   type="button"
                   disabled={busy}
-                  onClick={() => void saveCreate()}
+                  onClick={() => void (editingId != null ? saveEdit() : saveCreate())}
                   className="flex-1 rounded-xl bg-brand px-3 py-2 text-sm font-medium text-white transition hover:opacity-90 disabled:opacity-50"
                 >
-                  {busy ? 'Enregistrement…' : 'Créer et connecter'}
+                  {busy
+                    ? 'Enregistrement…'
+                    : editingId != null
+                      ? 'Enregistrer'
+                      : 'Créer et connecter'}
                 </button>
               </div>
             </div>
@@ -246,17 +301,37 @@ export function ThreadMemoryModal({
             </div>
           ) : (
             <>
+              {linked ? (
+                <div className="mb-3 flex items-center gap-2 rounded-xl border border-brand/25 bg-brand/5 px-3 py-2.5">
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-text-100">{linked.name}</p>
+                    <p className="truncate text-[11px] text-text-500">
+                      {previewLine(linked.instructions)}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={() => startEdit(linked)}
+                    className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-brand/30 bg-bg-0 px-2.5 py-1.5 text-xs font-semibold text-brand transition hover:bg-brand/10 disabled:opacity-50"
+                  >
+                    <Pencil className="h-3 w-3" />
+                    Modifier
+                  </button>
+                </div>
+              ) : null}
+
               <ul className="divide-y divide-black/5 rounded-xl border border-black/10 bg-bg-100/60">
                 {memories.map((m) => {
                   const selected = linkedMemoryId === m.id;
                   return (
-                    <li key={m.id}>
+                    <li key={m.id} className="flex items-stretch">
                       <button
                         type="button"
                         disabled={busy}
                         onClick={() => void selectMemory(m.id)}
                         className={cn(
-                          'flex w-full items-start gap-3 px-3.5 py-3 text-left transition hover:bg-bg-200/80 disabled:opacity-50',
+                          'flex min-w-0 flex-1 items-start gap-3 px-3.5 py-3 text-left transition hover:bg-bg-200/80 disabled:opacity-50',
                           selected && 'bg-brand/5',
                         )}
                       >
@@ -276,6 +351,21 @@ export function ThreadMemoryModal({
                           </p>
                         </div>
                       </button>
+                      <div className="flex items-center pr-2">
+                        <button
+                          type="button"
+                          disabled={busy}
+                          title="Modifier"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            startEdit(m);
+                          }}
+                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-[11px] font-medium text-text-400 transition hover:bg-bg-200 hover:text-brand disabled:opacity-50"
+                        >
+                          <Pencil className="h-3 w-3" />
+                          Modifier
+                        </button>
+                      </div>
                     </li>
                   );
                 })}

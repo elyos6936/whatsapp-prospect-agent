@@ -286,21 +286,20 @@ export function PhoneSimulationPanel({
       )}
       aria-label="Aperçu simulation WhatsApp"
     >
-      <div className="flex h-full w-[min(38vw,360px)] flex-col items-center px-5">
-        <div className="flex w-full shrink-0 flex-col items-center pt-8 pb-4">
-          <p className="max-w-[300px] text-center text-[13px] font-medium leading-relaxed text-text-300">
+      <div className="flex h-full w-[min(48vw,440px)] flex-col items-center px-3">
+        <div className="flex w-full shrink-0 flex-col items-center pt-4 pb-2">
+          <p className="max-w-[340px] text-center text-[13px] font-medium leading-relaxed text-text-300">
             {helpLine}
           </p>
         </div>
 
-        <div className="flex min-h-0 w-full flex-1 items-center justify-center py-6">
+        <div className="flex min-h-0 w-full flex-1 items-center justify-center py-2">
           <div
             className="relative h-full max-h-full shrink-0"
             style={{
               aspectRatio: `${IPHONE_W} / ${IPHONE_H}`,
               maxWidth: '100%',
               width: 'auto',
-              filter: 'drop-shadow(0 22px 40px rgba(15, 23, 42, 0.28))',
             }}
           >
             {/* Contenu WhatsApp dans l’écran du mockup */}
@@ -438,7 +437,7 @@ export function PhoneSimulationPanel({
           </div>
         </div>
 
-        <div className="flex w-full shrink-0 flex-col items-center gap-3 pt-4 pb-8">
+        <div className="flex w-full shrink-0 flex-col items-center gap-2 pt-2 pb-4">
           <button
             type="button"
             onClick={handleClearDiscussion}

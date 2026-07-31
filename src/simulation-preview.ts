@@ -14,7 +14,7 @@ export type SimPreviewTurn = {
   text: string;
 };
 
-const MAX_TURNS = 7;
+const MAX_TURNS = 20;
 
 async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
@@ -74,7 +74,7 @@ export async function replyInSimulationPreview(
       history: history.slice(0, MAX_TURNS),
       done: true,
       feedbackPrompt:
-        "Fin de la simulation (max 7 messages).\n\nDis-moi ce qui va / ce qu'il faut changer (ton, accroche, CTA…), puis on recommence ici. Si c'est bon, valide dans le chat du milieu.",
+        "Fin de la simulation (max 20 messages).\n\nDis-moi ce qui va / ce qu'il faut changer (ton, accroche, CTA…), puis on recommence ici. Si c'est bon, valide dans le chat du milieu.",
     };
   }
 
@@ -136,7 +136,7 @@ export async function replyInSimulationPreview(
     history,
     done,
     feedbackPrompt: done
-      ? "Fin de la simulation (max 7 messages). Dis dans le chat ce qu'il faut changer, ou « c'est bon »."
+      ? "Fin de la simulation (max 20 messages). Dis dans le chat ce qu'il faut changer, ou « c'est bon »."
       : null,
   };
 }
