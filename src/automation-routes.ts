@@ -17,7 +17,6 @@ import {
   updateAutomationConfig,
   updateAutomationStatus,
   pauseAutomation,
-  resumeAutomation,
   haltAutomationMessaging,
   pauseOtherActiveAutomations,
   type AutomationStatus,
@@ -62,22 +61,25 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
       }
       let updated;
       try {
-        updated =
-          status === "paused"
-            ? await pauseAutomation(userId, id)
-            : status === "active"
-              ? await resumeAutomation(userId, id)
-              : await (async () => {
-                  const cur = await getAutomation(userId, id);
-                  if (cur) {
-                    await haltAutomationMessaging(userId, id);
-                    await updateAutomationConfig(userId, id, {
-                      ...cur.config,
-                      enableAutoReply: false,
-                    });
-                  }
-                  return updateAutomationStatus(userId, id, status);
-                })();
+        if (status === "paused") {
+          updated = await pauseAutomation(userId, id);
+        } else if (status === "active") {
+          const result = await activateAutomationCore(userId, id, { source: "simulation_ui" });
+          if (!result.ok) {
+            return reply.status(400).send({ error: result.error });
+          }
+          updated = await getAutomation(userId, id);
+        } else {
+          const cur = await getAutomation(userId, id);
+          if (cur) {
+            await haltAutomationMessaging(userId, id);
+            await updateAutomationConfig(userId, id, {
+              ...cur.config,
+              enableAutoReply: false,
+            });
+          }
+          updated = await updateAutomationStatus(userId, id, status);
+        }
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         return reply.status(400).send({ error: msg });

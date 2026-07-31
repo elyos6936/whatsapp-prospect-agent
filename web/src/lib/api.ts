@@ -841,6 +841,8 @@ export async function postSimulationPreview(input: {
   prospectMessage: string;
   guide?: string;
   offer?: string;
+  /** outbound = prospection (opener first) ; inbound = support (prospect first) */
+  mode?: 'outbound' | 'inbound';
 }): Promise<{
   reply: string;
   history: Array<{ role: 'you' | 'prospect'; text: string }>;

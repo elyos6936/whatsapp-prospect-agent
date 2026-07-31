@@ -350,10 +350,12 @@ export function formatMemoryForAgent(memory: CampaignMemory): string {
   const body = memory.instructions.trim() || legacyFieldsToInstructions(memory);
   return (
     `## Mémoire active — « ${memory.name} » (liée à CE fil uniquement)\n` +
-    `Ces instructions sont la source de vérité pour CETTE automatisation.\n` +
-    `Applique-les pour le style, la présentation, les produits/services et le comportement.\n` +
-    `INTERDIT de reposer ce qui est déjà couvert ci-dessous.\n` +
-    `Pose uniquement les questions encore manquantes et pertinentes pour lancer.\n\n` +
+    `SOURCE DE VÉRITÉ pour cette automatisation. Tu DOIS rester fidèle à chaque ligne.\n` +
+    `- Applique style, présentation, produit/service, prix, liens, horaires, comportement.\n` +
+    `- INTERDIT d'inventer une autre offre, un autre prix, un autre angle, un autre nom.\n` +
+    `- INTERDIT de reposer ce qui est déjà écrit ici.\n` +
+    `- Les faits confirmés ensuite dans CE chat complètent ces règles ; si l'utilisateur corrige explicitement → suis-le.\n` +
+    `- Exécute ce que l'utilisateur demande ; ne divague pas hors de cette mémoire + du fil.\n\n` +
     `${body}\n\n` +
     `Si l'utilisateur veut changer de mémoire → bouton Mémoire ou set_campaign_memory.`
   );

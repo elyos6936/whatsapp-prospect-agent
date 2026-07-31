@@ -43,6 +43,7 @@ export async function replyInSimulationPreview(
     prospectMessage: string;
     guide?: string;
     offer?: string;
+    mode?: "outbound" | "inbound";
   }
 ): Promise<{
   reply: string;
@@ -55,11 +56,14 @@ export async function replyInSimulationPreview(
     throw new Error("Message prospect requis.");
   }
 
+  const mode = input.mode === "inbound" ? "inbound" : "outbound";
   const opener = sanitizeOutboundWhatsAppText(String(input.opener ?? "").trim()) ||
-    "Bonjour ! Je me permets de vous écrire rapidement 🙂";
+    (mode === "outbound"
+      ? "Bonjour ! Je me permets de vous écrire rapidement 🙂"
+      : "");
 
   let history: SimPreviewTurn[] = Array.isArray(input.history) ? [...input.history] : [];
-  if (history.length === 0) {
+  if (history.length === 0 && mode === "outbound" && opener) {
     history.push({ role: "you", text: opener });
   }
   history.push({ role: "prospect", text: prospectMessage });
@@ -85,11 +89,18 @@ export async function replyInSimulationPreview(
 
   const client = await getOpenAiClient(userId);
   const system =
-    "Tu es le commercial WhatsApp de l'utilisateur (simulation). " +
-    "Relis TOUT l'historique et réponds de façon personnelle et pertinente, comme un vrai commercial. " +
-    "Réponds en UN seul message court, naturel, sans crochets [], sans markdown. " +
-    "Style WhatsApp humain. Ne propose pas d'envoyer un vrai message WhatsApp. " +
-    "Pas de prix+lien dans le même message si c'est encore tôt dans la conversation.\n" +
+    mode === "inbound"
+      ? "Tu es l'agent support WhatsApp de l'utilisateur (simulation). " +
+        "Le prospect / client a écrit en premier. Réponds utilement, fidèle au guide. " +
+        "Réponds en UN seul message court, naturel, sans crochets [], sans markdown. " +
+        "Style WhatsApp humain. Ne propose pas d'envoyer un vrai message WhatsApp.\n"
+      : "Tu es le commercial WhatsApp de l'utilisateur (simulation). " +
+        "Relis TOUT l'historique et réponds de façon personnelle et pertinente, comme un vrai commercial. " +
+        "Réponds en UN seul message court, naturel, sans crochets [], sans markdown. " +
+        "Style WhatsApp humain. Ne propose pas d'envoyer un vrai message WhatsApp. " +
+        "Pas de prix+lien dans le même message si c'est encore tôt dans la conversation.\n";
+  const systemFull =
+    system +
     (offer ? `Offre: ${offer}\n` : "") +
     (price ? `Prix (si demandé): ${price}\n` : "") +
     (guide ? `Guide conversation: ${guide}\n` : "");
@@ -98,7 +109,7 @@ export async function replyInSimulationPreview(
     client.chat.completions.create({
       model: config.openaiModel,
       messages: [
-        { role: "system", content: system },
+        { role: "system", content: systemFull },
         {
           role: "user",
           content:
@@ -120,13 +131,12 @@ export async function replyInSimulationPreview(
 
   history.push({ role: "you", text: reply });
   const done = history.length >= MAX_TURNS;
-
   return {
     reply,
     history,
     done,
     feedbackPrompt: done
-      ? "Fin de la simulation (max 7 messages).\n\nDis-moi ce qui va / ce qu'il faut changer, puis on recommence. Si c'est bon, valide dans le chat du milieu."
+      ? "Fin de la simulation (max 7 messages). Dis dans le chat ce qu'il faut changer, ou « c'est bon »."
       : null,
   };
 }

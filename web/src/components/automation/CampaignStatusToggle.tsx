@@ -14,7 +14,7 @@ type CampaignStatusToggleProps = {
 
 /**
  * Active / met en pause une campagne (évite deux campagnes actives en parallèle).
- * Brouillon → lancement complet (bootstrap). Pause → reprise. Active → pause.
+ * Brouillon → lancement complet (bootstrap). Pause / échouée → reprise. Active → pause.
  */
 export function CampaignStatusToggle({
   automationId,
@@ -25,12 +25,18 @@ export function CampaignStatusToggle({
 }: CampaignStatusToggleProps) {
   const [busy, setBusy] = useState(false);
 
-  if (status !== 'active' && status !== 'paused' && status !== 'draft') {
+  if (status !== 'active' && status !== 'paused' && status !== 'draft' && status !== 'failed') {
     return null;
   }
 
   const isActive = status === 'active';
-  const label = isActive ? 'Désactiver' : status === 'draft' ? 'Lancer' : 'Réactiver';
+  const label = isActive
+    ? 'Désactiver'
+    : status === 'draft'
+      ? 'Lancer'
+      : status === 'failed'
+        ? 'Relancer'
+        : 'Réactiver';
 
   const handleClick = async (e?: MouseEvent) => {
     e?.stopPropagation();
@@ -40,7 +46,7 @@ export function CampaignStatusToggle({
       if (isActive) {
         await updateAutomationStatus(automationId, 'paused');
       } else {
-        // draft ou paused → activation complète (bootstrap cibles + vérif WhatsApp)
+        // draft / paused / failed → activation complète (bootstrap cibles + vérif WhatsApp)
         const result = await validateSimulationAndLaunch(automationId);
         if (result.message) {
           /* statut rafraîchi via onUpdated */
@@ -63,14 +69,18 @@ export function CampaignStatusToggle({
         title={
           isActive
             ? 'Désactiver la campagne (stoppe envois et réponses auto)'
-            : 'Activer la campagne'
+            : status === 'failed'
+              ? 'Relancer la campagne après échec'
+              : 'Activer la campagne'
         }
         aria-label={label}
         className={cn(
           'rounded-md p-1 transition disabled:opacity-50',
           isActive
             ? 'text-amber-600 hover:bg-amber-500/15 hover:text-amber-700'
-            : 'text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700',
+            : status === 'failed'
+              ? 'text-red-500 hover:bg-red-500/15 hover:text-red-600'
+              : 'text-emerald-600 hover:bg-emerald-500/15 hover:text-emerald-700',
           className,
         )}
       >
@@ -87,7 +97,9 @@ export function CampaignStatusToggle({
       title={
         isActive
           ? 'Stoppe les envois et les réponses automatiques'
-          : 'Relance les envois et les réponses automatiques'
+          : status === 'failed'
+            ? 'Relance la campagne après un échec'
+            : 'Relance les envois et les réponses automatiques'
       }
       className={cn(
         'inline-flex items-center gap-1.5 rounded-xl px-4 py-2 text-sm font-semibold shadow-sm transition disabled:opacity-50',

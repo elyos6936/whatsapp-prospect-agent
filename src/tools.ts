@@ -94,7 +94,6 @@ import {
   setContactAutoReply,
   updateAutomationStatus,
   pauseAutomation,
-  resumeAutomation,
   updateAutomationConfig,
   updateAutomationMeta,
   findReusableAutomation,
@@ -1672,7 +1671,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "activate_automation",
       description:
-        "Lance une campagne en brouillon/pause UNIQUEMENT quand l'utilisateur est prêt (après simulation / confirmation explicite). " +
+        "Lance une campagne en brouillon/pause/échouée UNIQUEMENT quand l'utilisateur est prêt (après simulation / confirmation explicite). " +
         "Si une autre campagne est active, elle passe automatiquement en pause. " +
         "Ne pas appeler juste après create_automation si une campagne tourne déjà — laisser le brouillon et attendre le feu vert.",
       parameters: {
@@ -4421,6 +4420,14 @@ export async function executeTool(
           error: `La campagne #${id} n'appartient pas à ce fil. Utilisez « Nouvelle automatisation » pour en créer une autre.`,
         });
       }
+      const memForActivate = await getLinkedCampaignMemory(userId, threadId);
+      if (!memForActivate) {
+        return JSON.stringify({
+          error:
+            "Aucune mémoire connectée à ce fil. Demande de cliquer sur Mémoire avant d'activer.",
+          code: "memory_required",
+        });
+      }
       const { activateAutomationCore } = await import("./activate-automation.js");
       const result = await activateAutomationCore(userId, id, { source: "agent" });
       if (!result.ok) {
@@ -4733,7 +4740,13 @@ export async function executeTool(
       if (status === "paused") {
         updated = await pauseAutomation(userId, id);
       } else if (status === "active") {
-        updated = await resumeAutomation(userId, id);
+        // Via le core d'activation (gère aussi failed / bootstrap), pas un simple flip de statut
+        const { activateAutomationCore } = await import("./activate-automation.js");
+        const result = await activateAutomationCore(userId, id, { source: "agent" });
+        if (!result.ok) {
+          return JSON.stringify({ error: result.error, automationId: result.automationId ?? id });
+        }
+        updated = await getAutomation(userId, id);
       } else {
         // completed = coupe aussi auto-reply + file
         await haltAutomationMessaging(userId, id);

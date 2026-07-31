@@ -686,6 +686,7 @@ app.post<{
     prospectMessage?: string;
     guide?: string;
     offer?: string;
+    mode?: string;
   };
 }>("/api/simulation/preview", async (request, reply) => {
   const userId = requireUserId(request);
@@ -697,12 +698,14 @@ app.post<{
           .filter((t) => t && (t.role === "you" || t.role === "prospect") && t.text)
           .map((t) => ({ role: t.role as "you" | "prospect", text: String(t.text) }))
       : [];
+    const mode = body.mode === "inbound" ? "inbound" : "outbound";
     const result = await replyInSimulationPreview(userId, {
       opener: String(body.opener ?? ""),
       history,
       prospectMessage: String(body.prospectMessage ?? ""),
       guide: body.guide ? String(body.guide) : undefined,
       offer: body.offer ? String(body.offer) : undefined,
+      mode,
     });
     return result;
   } catch (err) {

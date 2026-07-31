@@ -26,6 +26,7 @@ import type { OverlayView } from '@/lib/navigation';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { NewAutomationModal } from '@/components/ui/NewAutomationModal';
+import { PhoneSimulationPanel } from '@/components/chat/PhoneSimulationPanel';
 
 export default function AuthenticatedApp() {
   const { user, refreshUser } = useAuth();
@@ -305,6 +306,15 @@ export default function AuthenticatedApp() {
           />
         )}
       </div>
+
+      {overlayView == null && waConnected && (
+        <PhoneSimulationPanel
+          threadId={activeThreadId}
+          purpose={activeThread?.purpose ?? null}
+          automationId={activeThread?.automation_id ?? null}
+          messages={messages}
+        />
+      )}
     </div>
 
     <NewAutomationModal

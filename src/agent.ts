@@ -48,6 +48,12 @@ import {
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
 const MAX_TOOL_ROUNDS = 12;
 const CHAT_HISTORY_LIMIT = 24;
+
+const MEMORY_REQUIRED_REPLY =
+  "Avant de continuer, connecte une **mémoire** à cette automatisation.\n\n" +
+  "👉 Clique sur le bouton **Mémoire** (à côté du micro ou en haut du chat), " +
+  "choisis ou crée une mémoire avec tes instructions, puis renvoie ton message.\n\n" +
+  "Sans mémoire liée à ce fil, je ne peux ni briefer ni lancer de campagne.";
 const CHAT_MAX_TOKENS = 1100;
 
 /**
@@ -412,6 +418,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
+  // Garde-fou serveur : sans mémoire liée, pas de brief / proposition LLM
+  const linkedMemoryEarly = await getLinkedCampaignMemory(userId, threadId).catch(() => null);
+  if (!linkedMemoryEarly) {
+    return MEMORY_REQUIRED_REPLY;
+  }
+
   const client = await getOpenAiClient(userId);
   const [settings, history, thread] = await Promise.all([
     getAppSettings(userId),
@@ -445,6 +457,19 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   );
   if (memoryNudge) {
     messages.push({ role: "system", content: memoryNudge });
+  }
+
+  // Rappel tour-par-tour : fidélité mémoire + chat + exécution exacte
+  if (linkedMemory) {
+    messages.push({
+      role: "system",
+      content:
+        `## Rappel tour — fidélité & exécution\n` +
+        `Mémoire liée : « ${linkedMemory.name} ». Respecte-la à la lettre.\n` +
+        `Demande utilisateur (ce tour) : exécute EXACTEMENT ce qu'il demande. ` +
+        `Utilise les faits déjà donnés dans ce fil. Ne change pas de sujet. ` +
+        `Ne propose pas d'alternative non demandée. Une question max si une info critique manque, sinon agis.`,
+    });
   }
 
   const activeMemory = linkedMemory;

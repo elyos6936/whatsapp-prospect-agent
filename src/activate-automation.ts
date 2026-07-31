@@ -33,7 +33,7 @@ export type ActivateAutomationResult =
   | { ok: false; error: string; automationId?: number };
 
 /**
- * Active une automatisation (draft/paused → active) + bootstrap cibles.
+ * Active une automatisation (draft/paused/failed → active) + bootstrap cibles.
  * Si d'autres campagnes sont actives, elles passent automatiquement en pause.
  * Utilisé par l'outil agent et le bouton « Lancer » / activation UI.
  * Activer une campagne implique que la simulation est considérée validée.
@@ -62,7 +62,8 @@ export async function activateAutomationCore(
       message: `« ${detail.automation.name} » est déjà active.`,
     };
   }
-  if (!["draft", "paused"].includes(detail.automation.status)) {
+  // failed = souvent un plantage après pause/activation (ex. message manquant, 0 cible) — on doit pouvoir relancer
+  if (!["draft", "paused", "failed"].includes(detail.automation.status)) {
     return {
       ok: false,
       error: `Impossible d'activer depuis le statut « ${detail.automation.status} ».`,
@@ -220,7 +221,7 @@ export async function activateAutomationCore(
 }
 
 export function automationIsDraftOrPaused(auto: Automation): boolean {
-  return auto.status === "draft" || auto.status === "paused";
+  return auto.status === "draft" || auto.status === "paused" || auto.status === "failed";
 }
 
 /** Indique s'il existe déjà une campagne active (hors id optionnel). */
