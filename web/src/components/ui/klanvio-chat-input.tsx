@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { ArrowUp, Loader2, Mic, Plus, Square, X } from 'lucide-react';
+import { ArrowUp, Brain, Loader2, Mic, Plus, Square, X } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import {
   CHAT_ACCEPT,
@@ -30,6 +30,10 @@ export interface KlanvioChatInputProps {
   className?: string;
   /** Focus le champ dès le montage (changement de fil). */
   autoFocus?: boolean;
+  /** Ouvre le sélecteur de mémoire pour ce fil. */
+  onOpenMemory?: () => void;
+  memoryLinked?: boolean;
+  memoryName?: string | null;
 }
 
 export type KlanvioChatInputHandle = {
@@ -47,6 +51,9 @@ export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatIn
       hideHint = false,
       className,
       autoFocus = false,
+      onOpenMemory,
+      memoryLinked = false,
+      memoryName = null,
     },
     ref,
   ) {
@@ -397,6 +404,30 @@ export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatIn
                 <Mic className="h-4 w-4" />
               )}
             </button>
+
+            {onOpenMemory ? (
+              <button
+                type="button"
+                disabled={locked}
+                onClick={onOpenMemory}
+                title={
+                  memoryLinked
+                    ? `Mémoire : ${memoryName || 'connectée'}`
+                    : 'Connecter une mémoire à cette automatisation'
+                }
+                className={cn(
+                  'inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-2 text-xs font-medium transition disabled:opacity-40',
+                  memoryLinked
+                    ? 'bg-brand/10 text-brand hover:bg-brand/15'
+                    : 'bg-amber-500/15 text-amber-800 hover:bg-amber-500/25',
+                )}
+              >
+                <Brain className="h-3.5 w-3.5 shrink-0" />
+                <span className="max-w-[6.5rem] truncate">
+                  {memoryLinked ? memoryName || 'Mémoire' : 'Mémoire'}
+                </span>
+              </button>
+            ) : null}
 
             <div className="flex-1" />
 

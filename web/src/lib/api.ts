@@ -261,6 +261,8 @@ export interface AgentThreadSummary {
   automation_id: number | null;
   automation_status?: string | null;
   automation_name?: string | null;
+  campaign_memory_id?: number | null;
+  campaign_memory_name?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -489,6 +491,16 @@ export async function setDefaultCampaignMemoryApi(
 
 export async function deleteCampaignMemoryApi(id: number): Promise<{ ok: true }> {
   return request(`/api/campaign-memories/${id}`, { method: 'DELETE' });
+}
+
+export async function setThreadCampaignMemoryApi(
+  threadId: number,
+  memoryId: number | null,
+): Promise<{ ok: true; thread: AgentThreadSummary }> {
+  return request(`/api/threads/${threadId}/memory`, {
+    method: 'PUT',
+    body: JSON.stringify({ memoryId }),
+  });
 }
 
 export async function createMoneyFusionCheckout(body: {

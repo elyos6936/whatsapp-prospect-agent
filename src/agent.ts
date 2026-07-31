@@ -18,6 +18,7 @@ import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekC
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
+  buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
 } from "./campaign-briefing.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
@@ -35,8 +36,7 @@ import {
 } from "./user-facing.js";
 import {
   formatMemoryForAgent,
-  getThreadCampaignMemoryId,
-  resolveActiveCampaignMemory,
+  getLinkedCampaignMemory,
 } from "./campaign-memory.js";
 import {
   detectQuickGroupMembersIntent,
@@ -320,15 +320,14 @@ async function buildBusinessContext(
   }
 
   try {
-    const threadMemId = await getThreadCampaignMemoryId(userId, threadId);
-    const memory = await resolveActiveCampaignMemory(userId, threadMemId);
+    const memory = await getLinkedCampaignMemory(userId, threadId);
     if (memory) {
       lines.push(formatMemoryForAgent(memory));
     } else {
       lines.push(
-        `## Mémoire campagne\n` +
-          `Aucune mémoire configurée. Tu peux poser présentation / stickers / fenêtre si besoin. ` +
-          `Une fois le brief avancé, mentionne discrètement : « Tu peux fixer ça dans Réglages → Mémoire pour les prochaines fois. »`
+        `## Mémoire campagne — NON CONNECTÉE\n` +
+          `Aucune mémoire n'est liée à CE fil. Ne continue PAS le brief produit et n'appelle PAS create_automation.\n` +
+          `Demande à l'utilisateur de cliquer sur le bouton **Mémoire** en haut du chat pour choisir ou créer une mémoire avant de continuer.`
       );
     }
   } catch {
@@ -437,8 +436,18 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     messages.push({ role: "system", content: threadBlock });
   }
 
-  const threadMemId = await getThreadCampaignMemoryId(userId, threadId).catch(() => null);
-  const activeMemory = await resolveActiveCampaignMemory(userId, threadMemId).catch(() => null);
+  const linkedMemory = await getLinkedCampaignMemory(userId, threadId).catch(() => null);
+  const memoryNudge = buildMissingMemoryNudge(
+    linkedMemory != null,
+    userMessage,
+    history,
+    thread?.purpose ?? null
+  );
+  if (memoryNudge) {
+    messages.push({ role: "system", content: memoryNudge });
+  }
+
+  const activeMemory = linkedMemory;
   const briefing = assessCampaignBriefing(
     history,
     userMessage,

@@ -53,6 +53,12 @@ import { registerFeatureRoutes } from "./feature-routes.js";
 import { registerIntegrationRoutes } from "./integration-routes.js";
 import { registerBillingRoutes } from "./billing-routes.js";
 import { registerCampaignMemoryRoutes } from "./campaign-memory-routes.js";
+import {
+  ensureCampaignMemoriesSchema,
+  getCampaignMemory,
+  getThreadCampaignMemoryId,
+  setThreadCampaignMemory,
+} from "./campaign-memory.js";
 import { startAutomationEngine } from "./automation-engine.js";
 import { processSendQueue } from "./send-queue.js";
 import { processDueSequences } from "./sequences.js";
@@ -452,6 +458,7 @@ app.post<{
 
 app.get("/api/threads", async (request) => {
   const userId = requireUserId(request);
+  await ensureCampaignMemoriesSchema().catch(() => {});
   let threads = await listAgentThreads(userId);
   if (!threads.length) {
     const created = await ensureDefaultAgentThread(userId);
@@ -496,6 +503,77 @@ app.patch<{ Params: { id: string }; Body: { title?: string } }>("/api/threads/:i
     return reply.status(404).send({ error: "Fil introuvable." });
   }
   return { thread };
+});
+
+app.get<{ Params: { id: string } }>("/api/threads/:id/memory", async (request, reply) => {
+  const userId = requireUserId(request);
+  const threadId = Number(request.params.id);
+  if (!Number.isFinite(threadId)) {
+    return reply.status(400).send({ error: "ID invalide." });
+  }
+  await ensureCampaignMemoriesSchema().catch(() => {});
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
+  const memoryId = await getThreadCampaignMemoryId(userId, threadId);
+  const memory = memoryId != null ? await getCampaignMemory(userId, memoryId) : null;
+  return {
+    threadId,
+    campaign_memory_id: memory?.id ?? null,
+    memory: memory
+      ? {
+          id: memory.id,
+          name: memory.name,
+          ownerName: memory.ownerName,
+          introFormula: memory.introFormula,
+          tone: memory.tone,
+          toneNote: memory.toneNote,
+          formality: memory.formality,
+          stickersEnabled: memory.stickersEnabled,
+          emojiLevel: memory.emojiLevel,
+          sendWindowStart: memory.sendWindowStart,
+          sendWindowEnd: memory.sendWindowEnd,
+          isDefault: memory.isDefault,
+          createdAt: memory.createdAt,
+          updatedAt: memory.updatedAt,
+        }
+      : null,
+  };
+});
+
+app.put<{
+  Params: { id: string };
+  Body: { memoryId?: number | null };
+}>("/api/threads/:id/memory", async (request, reply) => {
+  const userId = requireUserId(request);
+  const threadId = Number(request.params.id);
+  if (!Number.isFinite(threadId)) {
+    return reply.status(400).send({ error: "ID invalide." });
+  }
+  const thread = await getAgentThread(userId, threadId);
+  if (!thread) {
+    return reply.status(404).send({ error: "Fil introuvable." });
+  }
+  const raw = request.body?.memoryId;
+  const memoryId =
+    raw === null || raw === undefined
+      ? null
+      : Number.isFinite(Number(raw))
+        ? Number(raw)
+        : NaN;
+  if (raw != null && !Number.isFinite(memoryId as number)) {
+    return reply.status(400).send({ error: "memoryId invalide." });
+  }
+  try {
+    await setThreadCampaignMemory(userId, threadId, memoryId);
+  } catch (err) {
+    return reply.status(400).send({
+      error: err instanceof Error ? err.message : "Impossible de lier la mémoire.",
+    });
+  }
+  const updated = await getAgentThread(userId, threadId);
+  return { ok: true, thread: updated };
 });
 
 app.delete<{ Params: { id: string } }>("/api/threads/:id", async (request, reply) => {

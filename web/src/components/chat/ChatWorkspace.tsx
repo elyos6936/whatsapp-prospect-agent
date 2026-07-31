@@ -19,6 +19,9 @@ interface ChatWorkspaceProps {
   threadId?: number | null;
   /** Intention choisie à la création (prospection / support). */
   threadPurpose?: ThreadPurpose | null;
+  onOpenMemory?: () => void;
+  memoryLinked?: boolean;
+  memoryName?: string | null;
 }
 
 function getGreeting(): string {
@@ -45,6 +48,9 @@ export function ChatWorkspace({
   isFreshSession = true,
   threadId = null,
   threadPurpose = null,
+  onOpenMemory,
+  memoryLinked = false,
+  memoryName = null,
 }: ChatWorkspaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -158,6 +164,9 @@ export function ChatWorkspace({
             disabled={Boolean(isSending)}
             autoFocus
             variant="dock"
+            onOpenMemory={onOpenMemory}
+            memoryLinked={memoryLinked}
+            memoryName={memoryName}
             placeholder={
               isSending
                 ? "L'agent réfléchit…"

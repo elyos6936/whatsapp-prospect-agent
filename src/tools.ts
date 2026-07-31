@@ -157,11 +157,10 @@ import {
 import {
   findCampaignMemoryByName,
   getCampaignMemory,
-  getThreadCampaignMemoryId,
+  getLinkedCampaignMemory,
   listCampaignMemories,
   memoryToQuietHours,
   memoryToneLabel,
-  resolveActiveCampaignMemory,
   setThreadCampaignMemory,
 } from "./campaign-memory.js";
 
@@ -1054,7 +1053,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "get_active_campaign_memory",
-      description: "Renvoie la mémoire active sur ce fil (override fil ou défaut compte).",
+      description:
+        "Renvoie la mémoire explicitement liée à CE fil (pas le défaut compte). Si absente, l'utilisateur doit cliquer Mémoire dans le chat.",
       parameters: { type: "object", properties: {}, additionalProperties: false },
     },
   },
@@ -1063,7 +1063,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "set_campaign_memory",
       description:
-        "Active une mémoire de campagne pour CE fil (par nom ou id). Ex. « utilise la mémoire Support chaleureux ».",
+        "Lie une mémoire de campagne à CE fil (par nom ou id). Ex. « utilise la mémoire Support chaleureux ». Préférer le bouton Mémoire côté UI.",
       parameters: {
         type: "object",
         properties: {
@@ -3801,17 +3801,18 @@ export async function executeTool(
           stickersEnabled: m.stickersEnabled,
           sendWindow: `${m.sendWindowStart}h–${m.sendWindowEnd}h`,
         })),
-        hint: "Cite les noms à l'utilisateur. Pour activer une mémoire sur ce fil → set_campaign_memory.",
+        hint: "Cite les noms. Pour lier une mémoire à CE fil → set_campaign_memory, ou l'utilisateur clique sur Mémoire dans le chat.",
       });
     }
 
     case "get_active_campaign_memory": {
-      const threadMemId = await getThreadCampaignMemoryId(userId, threadId);
-      const mem = await resolveActiveCampaignMemory(userId, threadMemId);
+      const mem = await getLinkedCampaignMemory(userId, threadId);
       if (!mem) {
         return JSON.stringify({
           active: null,
-          message: "Aucune mémoire. L'utilisateur peut en créer dans Réglages → Mémoire.",
+          linkedToThread: false,
+          message:
+            "Aucune mémoire liée à ce fil. Demande à l'utilisateur de cliquer sur le bouton Mémoire en haut du chat pour en choisir ou en créer une avant de continuer.",
         });
       }
       return JSON.stringify({
@@ -3827,6 +3828,7 @@ export async function executeTool(
           emojiLevel: mem.emojiLevel,
           sendWindow: `${mem.sendWindowStart}h–${mem.sendWindowEnd}h`,
         },
+        linkedToThread: true,
       });
     }
 
@@ -4051,6 +4053,16 @@ export async function executeTool(
         });
       }
 
+      // Isolation : une mémoire doit être explicitement liée à ce fil
+      const linkedMem = await getLinkedCampaignMemory(userId, threadId);
+      if (!linkedMem) {
+        return JSON.stringify({
+          error:
+            "Aucune mémoire n'est connectée à cette automatisation. Demande à l'utilisateur de cliquer sur le bouton Mémoire en haut du chat pour en choisir ou en créer une, puis réessaie.",
+          code: "memory_required",
+        });
+      }
+
       if (explicitAutomationId) {
         const belongs = await automationBelongsToThread(userId, threadId, explicitAutomationId);
         if (!belongs) {
@@ -4063,10 +4075,9 @@ export async function executeTool(
       const config = buildAutomationConfigFromArgs(args, type);
       const isOutbound = type === "group_prospect" || type === "contact_prospect";
 
-      // Seed depuis mémoire active (ne remplace pas ce que l'outil a déjà fourni explicitement)
+      // Seed depuis la mémoire liée à ce fil (ne remplace pas ce que l'outil a déjà fourni)
       try {
-        const threadMemId = await getThreadCampaignMemoryId(userId, threadId);
-        const mem = await resolveActiveCampaignMemory(userId, threadMemId);
+        const mem = linkedMem;
         if (mem) {
           if (args.stickers_enabled === undefined) {
             config.stickersEnabled = mem.stickersEnabled;

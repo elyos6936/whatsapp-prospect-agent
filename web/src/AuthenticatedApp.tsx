@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
+import { ThreadMemoryModal } from '@/components/chat/ThreadMemoryModal';
 import { ThreadStatsPage } from '@/components/chat/ThreadStatsPage';
 import { ConnectWhatsAppGate } from '@/components/whatsapp/ConnectWhatsAppGate';
 import { ConnectGoogleContactsGate } from '@/components/whatsapp/ConnectGoogleContactsGate';
@@ -37,6 +38,7 @@ export default function AuthenticatedApp() {
   activeThreadIdRef.current = activeThreadId;
   const [creatingThread, setCreatingThread] = useState(false);
   const [newAutoModalOpen, setNewAutoModalOpen] = useState(false);
+  const [memoryModalOpen, setMemoryModalOpen] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(true);
 
   const chatEnabled = overlayView == null && !!user?.whatsapp?.connected && activeThreadId != null;
@@ -139,6 +141,7 @@ export default function AuthenticatedApp() {
       // Vide immédiatement l'UI du fil précédent (évite de coller le chat A sur B)
       clear();
       setIsSending(false);
+      setMemoryModalOpen(false);
       setActiveThreadId(id);
       setOverlayView(null);
     },
@@ -265,8 +268,13 @@ export default function AuthenticatedApp() {
           automationId={activeThread?.automation_id ?? null}
           campaignStatus={activeThread?.automation_status ?? null}
           outreachLevel={user?.outreach_level ?? null}
+          memoryLinked={Boolean(activeThread?.campaign_memory_id)}
+          memoryName={activeThread?.campaign_memory_name ?? null}
           onGoToChat={() => setOverlayView(null)}
           onOpenSettings={() => setOverlayView('settings')}
+          onOpenMemory={
+            activeThreadId != null ? () => setMemoryModalOpen(true) : undefined
+          }
           onCampaignStatusChange={() => void refreshThreads(activeThreadId)}
           onOpenStats={
             activeThread?.automation_id ? () => setOverlayView('stats') : undefined
@@ -289,6 +297,11 @@ export default function AuthenticatedApp() {
             isSending={isSending}
             onSend={handleSend}
             isFreshSession={messages.length === 0 && !loading && !threadsLoading}
+            onOpenMemory={
+              activeThreadId != null ? () => setMemoryModalOpen(true) : undefined
+            }
+            memoryLinked={Boolean(activeThread?.campaign_memory_id)}
+            memoryName={activeThread?.campaign_memory_name ?? null}
           />
         )}
       </div>
@@ -302,6 +315,17 @@ export default function AuthenticatedApp() {
         void handleCreateThread(title, description, purpose)
       }
     />
+
+    {activeThreadId != null && (
+      <ThreadMemoryModal
+        open={memoryModalOpen}
+        threadId={activeThreadId}
+        threadTitle={activeThread?.title}
+        linkedMemoryId={activeThread?.campaign_memory_id ?? null}
+        onClose={() => setMemoryModalOpen(false)}
+        onLinked={() => refreshThreads(activeThreadId)}
+      />
+    )}
     </>
   );
 }

@@ -233,9 +233,9 @@ export function CampaignMemoriesPanel() {
           <div className="min-w-0">
             <h2 className="text-sm font-semibold text-text-100">Mémoires de campagne</h2>
             <p className="mt-0.5 text-[12px] leading-relaxed text-text-400">
-              Style commun aux campagnes entrantes et sortantes : présentation, ton, stickers,
-              fenêtre d&apos;envoi. L&apos;agent utilise la mémoire par défaut et ne repose plus ces
-              questions.
+              Bibliothèque de styles (présentation, ton, stickers, fenêtre). Connecte une mémoire à
+              chaque automatisation via le bouton <strong>Mémoire</strong> dans le chat — sans lien,
+              l&apos;agent ne lance pas la campagne.
             </p>
           </div>
         </div>

@@ -167,12 +167,12 @@ export function formatMemoryForAgent(memory: CampaignMemory): string {
     `Fenêtre d'envoi : ${memory.sendWindowStart}h–${memory.sendWindowEnd}h`,
   ].filter(Boolean);
   return (
-    `## Mémoire active — « ${memory.name} » (ne PAS re-demander)\n` +
+    `## Mémoire active — « ${memory.name} » (liée à CE fil — ne PAS re-demander)\n` +
     `${lines.join("\n")}\n\n` +
-    `Ces préférences sont déjà fixées (Réglages → Mémoire). ` +
+    `Ces préférences sont déjà fixées pour cette automatisation (bouton Mémoire dans le chat). ` +
     `INTERDIT de reposer : présentation / identité, stickers, ton/style, tutoiement, fenêtre horaire d'envoi.\n` +
     `Continue de briefier uniquement le produit (offre, cible, prix, lien, déclencheurs, accroche, lancement, relances, notif tiers).\n` +
-    `Si l'utilisateur veut changer de mémoire → set_campaign_memory.`
+    `Si l'utilisateur veut changer de mémoire → set_campaign_memory ou bouton Mémoire.`
   );
 }
 
@@ -235,6 +235,19 @@ export async function resolveActiveCampaignMemory(
     if (linked) return linked;
   }
   return getDefaultCampaignMemory(userId);
+}
+
+/**
+ * Mémoire explicitement liée au fil uniquement (pas de fallback défaut compte).
+ * Isolations par automatisation : sans lien → null.
+ */
+export async function getLinkedCampaignMemory(
+  userId: number,
+  threadId: number
+): Promise<CampaignMemory | null> {
+  const threadMemId = await getThreadCampaignMemoryId(userId, threadId);
+  if (threadMemId == null) return null;
+  return getCampaignMemory(userId, threadMemId);
 }
 
 async function clearDefaults(userId: number): Promise<void> {

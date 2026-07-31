@@ -407,6 +407,30 @@ export function buildThreadCampaignBlockNudge(
   return null;
 }
 
+/** Exige une mémoire liée au fil avant de continuer le brief / lancer. */
+export function buildMissingMemoryNudge(
+  hasLinkedMemory: boolean,
+  userMessage: string,
+  history: AgentMessage[],
+  purpose?: "prospection" | "support" | null
+): string | null {
+  if (hasLinkedMemory) return null;
+  const purposeForced = purpose === "prospection" || purpose === "support";
+  const inFlow =
+    purposeForced ||
+    isCampaignIntent(userMessage) ||
+    history.slice(-16).some((m) => m.role === "user" && isCampaignIntent(m.content));
+  if (!inFlow && !isCampaignIntent(userMessage)) return null;
+  return (
+    `## BLOCAGE — mémoire non connectée à ce fil\n` +
+    `Aucune mémoire n'est liée à CETTE automatisation. INTERDIT d'appeler create_automation / update_automation_config / activer une campagne.\n` +
+    `INTERDIT de continuer le briefing produit comme si c'était OK.\n` +
+    `Dis clairement à l'utilisateur (une phrase + instruction) : clique sur le bouton **Mémoire** en haut du chat pour choisir ou créer une mémoire, puis reconnecte-toi ici.\n` +
+    `Ne renvoie PAS vers « Réglages → Mémoire » comme étape principale — le bouton du chat est le bon chemin.\n` +
+    `Une seule question / consigne : brancher la mémoire. Puis attends.`
+  );
+}
+
 export function buildBriefingNudge(
   assessment: BriefingAssessment,
   history: AgentMessage[],
