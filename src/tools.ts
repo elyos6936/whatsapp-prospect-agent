@@ -1470,7 +1470,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "string",
             enum: ["group_prospect", "contact_prospect", "keyword_sales", "custom_followup"],
             description:
-              "group_prospect = prospection sortante d'un groupe ; contact_prospect = prospection d'un ou plusieurs contacts précis (hors groupe) ; keyword_sales = closing entrant sur déclencheur exact",
+              "group_prospect = prospection sortante d'un groupe ; contact_prospect = prospection d'un ou plusieurs contacts précis (hors groupe) ; keyword_sales = support / closing entrant (phrases déclencheurs OU compte entier via inbound_catch_all)",
           },
           summary: { type: "string", description: "Résumé en une phrase" },
           group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom) — group_prospect" },
@@ -1572,7 +1572,12 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "array",
             items: { type: "string" },
             description:
-              "Mots/phrases EXACTS déclencheurs pour keyword_sales (ex. « je suis intéressé par ce produit »)",
+              "Mots/phrases EXACTS déclencheurs pour keyword_sales (ex. « je suis intéressé par ce produit »). Obligatoire SAUF si inbound_catch_all=true (peut être []).",
+          },
+          inbound_catch_all: {
+            type: "boolean",
+            description:
+              "keyword_sales uniquement : true = gérer TOUS les messages privés WhatsApp (compte entier), sans phrase déclencheur. Groupes exclus. false/omit = mode phrases exactes.",
           },
           keywords: {
             type: "array",
@@ -1694,6 +1699,11 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           initial_message: { type: "string" },
           conversation_guide: { type: "string" },
           trigger_phrases: { type: "array", items: { type: "string" } },
+          inbound_catch_all: {
+            type: "boolean",
+            description:
+              "true = gérer tous les messages privés (compte entier) ; false = revenir aux phrases déclencheurs",
+          },
           product_name: { type: "string" },
           price: { type: "string" },
           closing_link: { type: "string", description: "URL réelle (RDV / paiement / landing), sans crochets" },
@@ -2090,6 +2100,7 @@ function buildAutomationConfigFromArgs(
     conversationGuide: args.conversation_guide ? String(args.conversation_guide) : undefined,
     triggerPhrases,
     keywords: triggerPhrases,
+    inboundCatchAll: type === "keyword_sales" && args.inbound_catch_all === true,
     productName: args.product_name ? String(args.product_name) : undefined,
     price: args.price ? String(args.price) : undefined,
     closingLink: args.closing_link ? String(args.closing_link).trim() : undefined,
@@ -4013,7 +4024,8 @@ export async function executeTool(
         return JSON.stringify({
           error:
             "Ce fil est en mode Support client : utilise uniquement type=keyword_sales (mode inbound_closing). " +
-            "Pas de prospection sortante (contact_prospect / group_prospect) ici.",
+            "Pas de prospection sortante (contact_prospect / group_prospect) ici. " +
+            "Pour tout le compte WhatsApp : inbound_catch_all=true. Pour des phrases exactes : trigger_phrases.",
         });
       }
       if (
@@ -4379,11 +4391,19 @@ export async function executeTool(
       }
 
       if (type === "keyword_sales") {
+        const catchAll = config.inboundCatchAll === true;
         const phrases = config.triggerPhrases ?? [];
-        if (!phrases.length) {
+        if (!catchAll && !phrases.length) {
           return JSON.stringify({
-            error: "keyword_sales requiert trigger_phrases (mot/phrase exact).",
+            error:
+              "keyword_sales requiert trigger_phrases (mot/phrase exact), " +
+              "OU inbound_catch_all=true pour gérer tout le compte WhatsApp.",
           });
+        }
+        if (catchAll) {
+          // Catch-all : pas de filtre par phrase (évite faux positifs)
+          config.triggerPhrases = [];
+          config.keywords = [];
         }
       }
 
@@ -4447,6 +4467,13 @@ export async function executeTool(
       if (Array.isArray(args.trigger_phrases)) {
         merged.triggerPhrases = args.trigger_phrases.map(String);
         merged.keywords = merged.triggerPhrases;
+      }
+      if (args.inbound_catch_all === true) {
+        merged.inboundCatchAll = true;
+        merged.triggerPhrases = [];
+        merged.keywords = [];
+      } else if (args.inbound_catch_all === false) {
+        merged.inboundCatchAll = false;
       }
       if (args.product_name) merged.productName = String(args.product_name);
       if (args.price) merged.price = String(args.price);

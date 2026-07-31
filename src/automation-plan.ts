@@ -195,7 +195,7 @@ export function buildAutomationVisualPlan(
       subtitle: clip(cfg.salesScript || cfg.conversationGuide || cfg.initialMessage),
       kind: "message",
     });
-    pushEdge(edges, last, "open", "mot-clé");
+    pushEdge(edges, last, "open", cfg.inboundCatchAll ? "tout message privé" : "mot-clé");
   } else if (auto.type === "group_prospect") {
     add({
       id: "open",

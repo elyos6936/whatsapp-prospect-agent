@@ -6,7 +6,16 @@ import type { AgentMessage } from "./db.js";
 import type { CampaignMemory } from "./campaign-memory.js";
 
 const CAMPAIGN_INTENT_RE =
-  /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
+  /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|g[eè]re[rz]?\s+tout|tous\s+(mes\s+)?messages|compte\s+whatsapp|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
+
+/** L'utilisateur veut que l'IA gère tout le compte WhatsApp (tous les DM). */
+const INBOUND_CATCH_ALL_RE =
+  /\b(tous\s+(mes\s+)?messages|g[eè]re[rz]?\s+tout(\s+(mon\s+)?(compte|whatsapp|les\s+messages))?|compte\s+(whatsapp\s+)?entier|toute\s+la\s+bo[iî]te|toutes?\s+les?\s+(conversations|demandes|discussions)|r[eé]pond(?:re)?\s+[aà]\s+(tout|tous)|sans\s+(mot[- ]?cl[eé]|d[eé]clencheur)|pas\s+de\s+(mot[- ]?cl[eé]|d[eé]clencheur)|inbound_catch_all)\b/i;
+
+export function wantsInboundCatchAll(history: AgentMessage[], userMessage: string): boolean {
+  const blob = conversationBlob(history, userMessage);
+  return INBOUND_CATCH_ALL_RE.test(blob);
+}
 
 const SIMULATION_ACCEPT_RE =
   /\b(simulation|simule[rz]?|simuler|fais\s+(une\s+)?simu|on\s+simule|montre\s+(moi\s+)?(un\s+)?(aper[cç]u|exemple|fil))\b/i;
@@ -49,6 +58,8 @@ export type BriefingAssessment = {
   readyForDraft: boolean;
   /** Closing entrant / support : pas d'opener sortant → pas de 5 variantes. */
   isInboundClosing: boolean;
+  /** Support : gérer tous les messages privés (pas seulement des phrases déclencheurs). */
+  inboundCatchAll: boolean;
   /** L'utilisateur a indiqué l'angle / le ton souhaité pour le 1er message (après question dédiée). */
   openerDirectionCollected: boolean;
   /** Les 5 variantes ont été proposées dans le chat. */
@@ -231,6 +242,7 @@ export function assessCampaignBriefing(
       missing: [],
       readyForDraft: false,
       isInboundClosing: false,
+      inboundCatchAll: false,
       openerDirectionCollected: false,
       openerVariantsProposed: false,
       stickersQuestionAsked: false,
@@ -245,6 +257,7 @@ export function assessCampaignBriefing(
 
   const missing: string[] = [];
   const inbound = isInboundClosingFlow(history, userMessage, purpose);
+  const catchAll = inbound && wantsInboundCatchAll(history, userMessage);
   const memoryCoversIdentity = Boolean(memory?.ownerName?.trim());
   const memoryCoversWindow =
     memory != null &&
@@ -252,23 +265,23 @@ export function assessCampaignBriefing(
     Number.isFinite(memory.sendWindowEnd);
 
   const hasOffer =
-    /\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence)\b/i.test(
+    /\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence|support|messages)\b/i.test(
       blob
-    ) && blob.length > 80;
+    ) && blob.length > 60;
   if (!hasOffer) missing.push("offre / produit ou service précis");
 
   const hasTarget =
-    /\b(cible|prospect|audience|client[e]?s?|groupe|membres|contact|qui\s+(je|on)\s+|s'adresse|qui\s+[eé]crit|d[eé]clencheur)\b/i.test(
+    /\b(cible|prospect|audience|client[e]?s?|groupe|membres|contact|qui\s+(je|on)\s+|s'adresse|qui\s+[eé]crit|d[eé]clencheur|tous\s+(mes\s+)?messages|compte)\b/i.test(
       blob
     );
   if (!hasTarget) {
     missing.push(inbound ? "cible (qui écrit / contexte entrant)" : "cible (qui contacter / qui écrit)");
   }
 
-  if (inbound) {
+  if (inbound && !catchAll) {
     const hasTrigger =
       /d[eé]clencheur|mot[- ]?cl[eé]|phrase\s+exacte|«[^»]{3,}»|"[^"]{3,}"/i.test(blob);
-    if (!hasTrigger) missing.push("phrase(s) déclencheur exacte(s)");
+    if (!hasTrigger) missing.push("phrase(s) déclencheur exacte(s) — ou confirmer « tous les messages »");
   }
 
   const wantsRdv =
@@ -363,6 +376,7 @@ export function assessCampaignBriefing(
     missing,
     readyForDraft,
     isInboundClosing: inbound,
+    inboundCatchAll: catchAll,
     openerDirectionCollected,
     openerVariantsProposed,
     stickersQuestionAsked,
@@ -428,12 +442,24 @@ export function buildBriefingNudge(
 
     // Closing entrant : pacing vagues + délais gérés en arrière-plan (pas de question user).
     if (assessment.isInboundClosing) {
+      if (assessment.inboundCatchAll) {
+        return (
+          "Campagne support COMPTE ENTIER (tous les messages privés) : stickers + notification tiers + mots-clés handoff couverts. " +
+          "Pacing / plage = défauts système (ne PAS demander à l'utilisateur). " +
+          "Pas de 5 variantes d'opener. " +
+          "Crée le brouillon create_automation draft keyword_sales / inbound_closing avec **inbound_catch_all=true**, " +
+          "trigger_phrases=[] (vide), handoff_keywords (ou []), " +
+          "puis propose une simulation (show_campaign_simulation). " +
+          "Explique clairement : l'IA répondra à TOUT message privé WhatsApp (hors groupes), " +
+          "sauf STOP / handoff / contacts bloqués."
+        );
+      }
       return (
-        "Campagne closing entrant / support : stickers + notification tiers + mots-clés handoff couverts. " +
+        "Campagne closing entrant / support (phrases déclencheurs) : stickers + notification tiers + mots-clés handoff couverts. " +
         "Pacing vagues / délais / plage = défauts système (ne PAS demander à l'utilisateur). " +
         "Pas de 5 variantes d'opener (le prospect écrit en premier). " +
         "Crée le brouillon (create_automation draft keyword_sales / inbound_closing) avec trigger_phrases " +
-        "et handoff_keywords (ou [] si aucun), " +
+        "et handoff_keywords (ou [] si aucun), inbound_catch_all=false ou omis, " +
         "(les défauts inbound_wave_gap_minutes / quiet_hours / batch seront appliqués automatiquement), " +
         "puis propose une simulation (show_campaign_simulation)."
       );

@@ -109,7 +109,7 @@ export function ChatWorkspace({
               </h1>
               <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-text-400">
                 {threadPurpose === 'support'
-                  ? `Votre agent ${PLATFORM_NAME} est prêt pour le support client. Décrivez le produit et les phrases déclencheurs — il configurera les réponses entrantes.`
+                  ? `Votre agent ${PLATFORM_NAME} est prêt pour le support. Indiquez si vous voulez des phrases déclencheurs, ou la gestion de tout le compte WhatsApp.`
                   : threadPurpose === 'prospection'
                     ? `Votre agent ${PLATFORM_NAME} est prêt pour la prospection. Indiquez la cible (groupe ou contacts) et l’offre — il guidera le brief.`
                     : `Votre agent ${PLATFORM_NAME} WhatsApp est prêt. Donnez une instruction — il exécute prospection, groupes et réponses automatiques.`}

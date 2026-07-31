@@ -2493,6 +2493,11 @@ export interface AutomationConfig {
   keywords?: string[];
   triggerPhrases?: string[];
   /**
+   * Support / closing entrant : répondre à TOUS les messages privés
+   * (pas seulement les phrases déclencheurs). Groupes / broadcast exclus.
+   */
+  inboundCatchAll?: boolean;
+  /**
    * Mots/phrases qui stoppent l'IA et passent la main à l'humain
    * (messages entrants). Vide / absent = pas de stop par mot-clé.
    */

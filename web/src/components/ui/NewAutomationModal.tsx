@@ -119,7 +119,7 @@ export function NewAutomationModal({
                 />
                 <span className="text-sm font-semibold text-text-100">Support client</span>
                 <span className="text-[11px] leading-snug text-text-500">
-                  Réponses entrantes sur phrases déclencheurs.
+                  Réponses entrantes : phrases déclencheurs ou tout le compte WhatsApp.
                 </span>
               </button>
             </div>

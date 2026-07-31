@@ -215,8 +215,12 @@ async function buildBusinessContext(
         `## TYPE DE FIL — SUPPORT CLIENT (OBLIGATOIRE)\n` +
           `Ce fil a été créé en mode **Support client**. Le client écrit en premier.\n` +
           `- create_automation UNIQUEMENT avec type=\`keyword_sales\` et mode=\`inbound_closing\`.\n` +
+          `- **Deux sous-modes** :\n` +
+          `  1. Phrases déclencheurs : \`trigger_phrases\` non vides, \`inbound_catch_all\` omis/false.\n` +
+          `  2. Compte WhatsApp entier : si l'utilisateur veut gérer **tous** ses messages → \`inbound_catch_all=true\` + \`trigger_phrases=[]\`.\n` +
+          `- INTERDIT de refuser le mode « tous les messages » : c'est une capacité officielle.\n` +
           `- INTERDIT : contact_prospect, group_prospect, premier message de contact sortant, 5 variantes d'accroche.\n` +
-          `- Questions utiles : produit/service, phrase(s) déclencheur exacte(s), infos à donner, objectif (vente/RDV/lien), présentation, stickers, notif tiers.\n` +
+          `- Questions utiles : produit/activité, portée (déclencheurs OU tout le compte), infos à donner, objectif, présentation, stickers, notif tiers, handoff.\n` +
           `- INTERDIT de demander délais entre messages, vagues de 50, gap entre vagues ou plage anti-blocage — défauts système automatiques.\n` +
           `- Commence le brief par une question ouverte sur le produit / ce que tu dois répondre — PAS « quel premier message envoyer ».\n` +
           `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Prospection. Le purpose est fixé. ` +

@@ -37,6 +37,11 @@ function getTriggerPhrases(auto: Automation): string[] {
   return phrases.map((p) => p.trim()).filter(Boolean);
 }
 
+/** Campagne support qui gère tout le compte WhatsApp (tous les DM privés). */
+export function isInboundCatchAllCampaign(auto: Automation): boolean {
+  return isInboundClosingCampaign(auto) && auto.config.inboundCatchAll === true;
+}
+
 /** IDs de contacts déjà enrôlés dans une campagne active (déduplication inter-campagnes). */
 export async function getActiveCampaignTargetIds(
   userId: number,
@@ -108,6 +113,12 @@ export async function findActiveOutboundCampaign(
   return matchOutboundTarget(active, userId, chatId);
 }
 
+/** Première campagne active en mode « tout le compte » (catch-all DM). */
+export async function findCatchAllInboundCampaign(userId: number): Promise<Automation | null> {
+  const active = (await listActiveAutomations(userId)).filter(isInboundCatchAllCampaign);
+  return active[0] ?? null;
+}
+
 /** Campagne e-commerce entrant dont un déclencheur exact correspond au message. */
 export async function findMatchingInboundClosingCampaign(
   userId: number,
@@ -115,6 +126,7 @@ export async function findMatchingInboundClosingCampaign(
 ): Promise<Automation | null> {
   const active = (await listActiveAutomations(userId)).filter(isInboundClosingCampaign);
   for (const auto of active) {
+    if (isInboundCatchAllCampaign(auto)) continue; // traité à part (tous les DM)
     const phrases = getTriggerPhrases(auto);
     if (phrases.length && matchesAnyTriggerPhrase(text, phrases)) {
       return auto;
@@ -170,9 +182,10 @@ export interface ReplyGateResult {
 }
 
 /**
- * Portier à deux régimes :
- * (a) prospect contacté en campagne sortante -> poursuite du fil jusqu'à conversion / refus
- * (b) entrant e-commerce -> déclencheur exact, puis fil engagé
+ * Portier :
+ * (a) prospect contacté en campagne sortante → poursuite du fil
+ * (b) support catch-all → tout message privé (hors groupes / broadcast)
+ * (c) entrant e-commerce → déclencheur exact, puis fil engagé
  */
 export async function passesReplyGate(
   userId: number,
@@ -198,6 +211,23 @@ export async function passesReplyGate(
       allow: true,
       reason: `prospect campagne « ${outbound.automation.name} »`,
       outboundCampaign: outbound.automation,
+    };
+  }
+
+  // Gestion du compte entier : répondre à tout message privé dès l'activation
+  const catchAll = await findCatchAllInboundCampaign(userId);
+  if (catchAll) {
+    try {
+      await beginFreshCampaignConversation(userId, chatId, catchAll.id);
+      await setContactAutoReply(userId, chatId, true);
+      await saveContact(userId, { phone: chatId, status: "en_conversation", autoReply: true });
+    } catch {
+      /* best effort */
+    }
+    return {
+      allow: true,
+      reason: `support compte entier « ${catchAll.name} »`,
+      inboundCampaign: catchAll,
     };
   }
 
