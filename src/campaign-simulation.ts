@@ -142,7 +142,8 @@ export async function generateCampaignSimulationDirect(
     "- Exactement 6 ou 7 turns (JAMAIS plus)\n" +
     "- Alternance toi / prospect (commencer par toi)\n" +
     openerRule +
-    "- Les tours suivants : même pacing / mission (Interest → Desire → Action) ; interdiction des réactions vides (« Ah super ») ; vouvoiement ; pas le prénom du prospect à tout va\n" +
+    "- Les tours suivants : même pacing / mission (Interest → Desire → Action) ; interdiction des réactions vides (« Ah super », « Super. ») ; " +
+    "identité = prénom + pourquoi (pas titre LinkedIn) ; sur oui/ok → question ou détail nouveau ; vouvoiement ; pas le prénom du prospect à tout va\n" +
     "- Textes réels, naturels, sans crochets [ ]\n" +
     "- Inclure prix / lien seulement APRÈS que le prospect a engagé, s'ils sont dans le contexte\n" +
     "- Aucune phrase hors JSON";

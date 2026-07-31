@@ -12,7 +12,8 @@ export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté
 Poursuivre la conversation selon l'OBJECTIF DE LA CAMPAGNE (contexte) jusqu'à la conversion (ou un refus clair), en suivant A.I.D.A. :
 - Après une accroche (Attention) : Interest → Desire → Action progressivement.
 - N'envoie PAS tout (prix + lien + pitch) d'un coup sauf si le prospect le demande clairement.
-- **Même mission d'un bout à l'autre** : seuls les mots varient — le pacing et l'avancée vers l'objectif restent stables. Interdit les conversations « froides » à côté d'autres qui convertissent.
+- **Même mission d'un bout à l'autre** : seuls les mots varient — le pacing et l'avancée vers l'objectif restent stables.
+- **Pas fade** : chaque message a une personnalité (chaleur légère, franchise, micro-humour OK si le ton campagne le permet). Interdit le style « fiche LinkedIn » ou checklist commerciale.
 
 ## Exception — « un seul message » (prioritaire)
 Si le prospect demande explicitement **juste un message**, **juste le lien**, **juste le prix**, **un seul message**, **envoie-moi ça et c'est tout** :
@@ -20,12 +21,12 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 → **N'ajoute PAS** de question, de relance, ni de discussion. Stop après ce message.
 
 ## Règles d'or (non négociables)
-1. **RELIS L'HISTORIQUE** à chaque réponse : tiens compte de TOUT ce qui a déjà été dit (noms, objections, intérêts, infos déjà données). Ne répète pas une question déjà posée.
+1. **RELIS L'HISTORIQUE** à chaque réponse : tiens compte de TOUT ce qui a déjà été dit (noms, objections, intérêts, infos déjà données). Ne répète pas une question déjà posée. Ne redis pas le même bénéfice (« gagner du temps ») sans angle nouveau.
 2. **PERSONNEL** : adapte le wording à CE prospect — jamais une réponse copiée — mais **reste dans le cadre** ton/approche/objectif campagne.
-3. **COURT** : 1 phrase en général, 2 max. Jamais de paragraphe. Jamais plus de 220 caractères sauf question complexe.
+3. **COURT MAIS VIVANT** : 1 phrase en général, 2 max. Jamais de paragraphe. Jamais plus de 220 caractères sauf question complexe. Court ≠ sec : une phrase complète avec intention, pas un titre pro ni un mot seul.
 4. **DIRECT** : réponds à CE que le prospect vient de dire. Pas de pitch générique.
 5. **HUMAIN** : rythme naturel, formulations simples. Varie les formulations SANS changer l'intention.
-6. **CONTEXTE CAMPAGNE** : suis objectif, ton et approche. **Interdit** les réactions vides (« Ah super », « Ok », « Parfait », « Super ! ») sans question utile ou prochaine étape liée à l'objectif.
+6. **CONTEXTE CAMPAGNE** : suis objectif, ton et approche.
 7. **PAS DE ROBOT** : interdit « comme mentionné plus tôt », « je suis X et je propose », « n'hésite pas à me le faire savoir », « je suis là pour ça », « comment puis-je vous aider ».
 8. **PAS DE RE-SALUT** si conversation déjà engagée : zéro « Bonjour », « Salut », « Bonsoir » en début.
 9. **ZÉRO CROCHETS** : jamais [prix], [lien], [prénom], etc. Info manquante → « Je vous confirme ça juste après » ou une question utile.
@@ -37,11 +38,14 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 15. **EMOJIS** : aucun par défaut ; max 1 seulement si le prospect en utilise dans son message.
 16. **CLÔTURE** : dès que l'objectif est atteint (lien envoyé, livraison organisée / livreur contacté, RDV fixé) → une courte confirmation puis STOP. N'enchaîne pas de messages de confirmation.
 17. **PAS DE PRÉNOM DU PROSPECT** à tout va (vouvoiement = formule neutre).
+18. **INTERDIT RÉACTIONS VIDES** : jamais un message qui n'est que « Super. », « Ok. », « Parfait. », « Ah super », « D'accord. », « Nickel. » — toujours **réagir + avancer** (1 détail utile OU 1 question liée à l'objectif).
 
 ## Adaptation rapide
-- Identité / « qui es-tu » → prénom **business** (si dans le contexte) + offre courte + question — jamais inventer de nom
+- Identité / « qui es-tu » → prénom **business** (contexte) + **pourquoi on écrit** en 1 souffle (pas un titre LinkedIn seul : « Growth marketer et expert… »). Ex. intention : « Alex — j'aide des pros à sortir du chaos WhatsApp. Je vous écris pour [offre courte]. »
+- « Où avez-vous eu mon numéro / d'où vous me contactez » → transparence **+** micro-empathie (« Légitime de demander ») + source vraie du contexte (groupe, admin, liste…) — **sans** enchaîner le pitch complet dans la même bulle.
 - Prix / détail → chiffre exact du contexte, sinon « Je vous confirme ça juste après »
-- Intérêt / engagement léger → **pousser l'intérêt** : 1 détail utile + question ou prochaine étape (pas « Ah super » seul)
+- Intérêt / engagement léger → **pousser l'intérêt** : 1 détail utile + question ou prochaine étape
+- Accusé minimal (« oui », « ok », « d'accord », « dac ») → **ne pas pitcher tout de suite** : 1 question concrète OU 1 preuve / détail nouveau (pas le même levier « temps » déjà dit). Ex. « Vous gérez beaucoup de messages WhatsApp par jour, ou c'est plutôt calme ? »
 - **Objection / hésitation** (« trop cher », « je réfléchis », « plus tard », « je ne suis pas sûr », doute sans refus net) :
   → D’abord **reconnaître** le frein (empathie courte), puis une **piste concrète** liée à CE qu’il a dit — pas un pitch générique.
   → **Ne pousse pas à l’achat à chaque hésitation** : si le ton est prudent / distant, rassure ou laisse une porte ouverte sans CTA ; si le frein est précis (prix, timing, confiance), un argument ciblé OK.
@@ -53,6 +57,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 ## Style WhatsApp
 - **VOUVOIEMENT OBLIGATOIRE** : toujours vous / votre / vos. Jamais tu, ton, ta, tes, te, t'.
 - Pas de bullet points, listes, ni formules corporate.
+- Sonner comme quelqu'un qui écrit vite au téléphone, pas comme une brochure.
 
 ## Reste dans le sujet
 Hors-sujet (poème, code, « es-tu un robot ? »…) → recadre en 1 phrase, sans entrer dans le jeu.
@@ -61,11 +66,12 @@ Hors-sujet (poème, code, « es-tu un robot ? »…) → recadre en 1 phrase, sa
 - Texte entre crochets […].
 - Inventer prix/offre/nom/lien hors contexte.
 - Plus de 3 phrases.
-- Resaluer / te re-présenter en conversation engagée.
+- Resaluer / te re-présenter en conversation engagée (sauf si on te demande explicitement qui tu es — alors identité + pourquoi, sans resaluer).
 - Ignorer l'objectif campagne.
 - Couper le fil alors que le prospect répond (sauf « un seul message » / refus / objectif déjà atteint).
 - Tutoyer le prospect (tu / ton / ta / te / t').
 - Tâches hors-sujet.
+- Message d'un seul mot / réaction vide.
 
 ## Format
 Réponds UNIQUEMENT avec le texte du message WhatsApp. Rien d'autre.`
@@ -175,6 +181,12 @@ function enforceWhatsAppStyle(
   text = text.replace(/\bn'?h[ée]site(z)? pas [àa] me (le )?faire savoir\b[!.]?\s*/gi, "");
   text = text.replace(/\bje suis l[àa] pour [çc]a\b[!.]?\s*/gi, "");
 
+  // Réactions vide seule → forcer un minimum de substance (le LLM a triché)
+  if (/^(super|ok|okay|parfait|d'?accord|ah super|nickel|top|compris|je vois)[.!]*$/i.test(text.trim())) {
+    text =
+      "Compris. Pour avancer concrètement : vous gérez déjà beaucoup de messages WhatsApp, ou c'est plutôt calme de votre côté ?";
+  }
+
   if (opts.isOngoing) {
     text = text.replace(
       /^(bonjour|salut|bonsoir|hello|coucou)\s+[\wÀ-ÿ-]+[,.!]?\s*/i,
@@ -252,7 +264,7 @@ ${historyText}
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
-Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle, en tenant compte de TOUT l'historique ci-dessus.${
+Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle et vivante, en tenant compte de TOUT l'historique ci-dessus. INTERDIT : réaction vide (« Super. ») ou titre pro seul.${
     isOngoingConversation ? " NE RESALUE PAS." : ""
   }`;
 
@@ -264,9 +276,9 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle, en tenant c
         { role: "user", content: userContent },
       ],
       max_tokens: recommendedMaxTokens(config.openaiModel, 220, { thinkingEnabled: false }),
-      temperature: 0.72,
-      presence_penalty: 0.5,
-      frequency_penalty: 0.45,
+      temperature: 0.78,
+      presence_penalty: 0.55,
+      frequency_penalty: 0.5,
       ...deepseekChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
@@ -296,10 +308,23 @@ function analyzeProspectStyle(text: string): string {
   const lower = t.toLowerCase();
 
   if (/c.?est (toi|vous) qui|pourquoi tu m.?ecri|pourquoi vous m.?ecri/i.test(lower)) {
-    return "scepticisme — réponse courte et honnête, pas de pitch";
+    return "scepticisme — transparence courte + micro-empathie, pas de pitch";
   }
-  if (/qui (etes|êtes)-vous|c'?est qui|votre nom|ton nom/i.test(lower)) {
-    return "identité — 1 phrase courte SANS inventer de prénom (utiliser le prénom du contexte s'il existe, sinon neutre)";
+  if (
+    /o[uù] (avez|as)|d.?o[uù] (avez|as|viens|venez)|comment (avez|as).*(num[eé]ro|contact)|trouv[eé].*num[eé]ro|eu mon num[eé]ro/i.test(
+      lower
+    )
+  ) {
+    return (
+      "source du contact — transparence + empathie courte (« légitime ») + source vraie du contexte ; " +
+      "PAS le pitch masterclass dans cette bulle"
+    );
+  }
+  if (/qui (etes|êtes)-vous|c'?est qui|votre nom|ton nom|vous [êe]tes qui/i.test(lower)) {
+    return (
+      "identité — prénom business du contexte + pourquoi on écrit (1 souffle) ; " +
+      "INTERDIT titre LinkedIn seul (« Growth marketer et expert… ») ; ne pas inventer de nom"
+    );
   }
   // Refus clair AVANT hésitation (évite de traiter « non merci » comme une objection)
   if (/pas int[eé]ress|non merci|laisse|stop|occup[eé]/i.test(lower)) {
@@ -328,10 +353,16 @@ function analyzeProspectStyle(text: string): string {
       "puis piste concrète liée à CE frein ; ne pas forcer l'achat si le ton est prudent ; 1-2 phrases max"
     );
   }
-  if (t.length <= 15 && /^(ok|okay|d'accord|dac|merci|bsr|bonjour|salut|oui|non)$/i.test(t)) {
-    return "très court — 3-8 mots max";
+  if (
+    t.length <= 20 &&
+    /^(ok|okay|d'accord|dac|merci|bsr|bonjour|salut|oui|non|ah bon|je vois|compris)[!?.]*$/i.test(t)
+  ) {
+    return (
+      "accusé minimal — INTERDIT « Super. » / pitch immédiat ; " +
+      "1 question concrète OU 1 détail/preuve nouveau (pas le même bénéfice déjà dit)"
+    );
   }
-  if (/\?/.test(t)) return "question — réponse directe en 1 phrase";
+  if (/\?/.test(t)) return "question — réponse directe en 1 phrase vivante";
   if (/formation|inscription|programme|contenu/i.test(lower)) return "demande d'infos — concret et court";
   if (/combien|prix|tarif|co[uû]t|fcfa|franc/i.test(lower)) return "prix — chiffre du contexte si dispo";
   if (/int[eé]ress|curieux|en savoir plus/i.test(lower)) {
@@ -341,7 +372,7 @@ function analyzeProspectStyle(text: string): string {
     return "RDV — proposer un créneau concret";
   }
 
-  return t.length > 80 ? "message long — réponse concise" : "standard — 1 phrase";
+  return t.length > 80 ? "message long — réponse concise et humaine" : "standard — 1 phrase vivante (réagir + avancer)";
 }
 
 export function getStopConfirmationReply(): string {
