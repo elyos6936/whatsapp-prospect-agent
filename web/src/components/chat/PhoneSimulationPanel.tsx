@@ -49,7 +49,8 @@ function nowTimeLabel(): string {
 }
 
 function storageKey(threadId: number): string {
-  return `klanvio.phoneSim.v1.${threadId}`;
+  // v2 : invalide les caches pollués par le parseur trop large (Label : valeur)
+  return `klanvio.phoneSim.v2.${threadId}`;
 }
 
 function simKeyOf(bubbles: PhoneBubble[]): string {
@@ -132,13 +133,25 @@ export function PhoneSimulationPanel({
     }
 
     const stored = loadPersisted(threadId);
-    setPhoneBubbles(stored?.bubbles ?? []);
-    setIgnoredSimKey(stored?.ignoredSimKey ?? null);
-    if (stored?.bubbles?.length) {
-      lastAppliedSimKeyRef.current = simKeyOf(stored.bubbles);
+    const bubbles = stored?.bubbles ?? [];
+    if (purpose === 'support') {
+      // Support : écran vide par défaut ; on restaure seulement un vrai test client (prospect présent)
+      const inboundTest = bubbles.some((b) => b.role === 'prospect');
+      setPhoneBubbles(inboundTest ? bubbles : []);
+      setIgnoredSimKey(inboundTest ? stored?.ignoredSimKey ?? null : null);
+      if (inboundTest && bubbles.length) lastAppliedSimKeyRef.current = simKeyOf(bubbles);
+    } else {
+      // Prospection : ignorer un cache pollué (pas d’opener seul, pas de Toi+Prospect)
+      const ok =
+        bubbles.length === 0 ||
+        (bubbles.length === 1 && bubbles[0]?.role === 'you') ||
+        (bubbles.some((b) => b.role === 'you') && bubbles.some((b) => b.role === 'prospect'));
+      setPhoneBubbles(ok ? bubbles : []);
+      setIgnoredSimKey(ok ? stored?.ignoredSimKey ?? null : null);
+      if (ok && bubbles.length) lastAppliedSimKeyRef.current = simKeyOf(bubbles);
     }
     setHydrated(true);
-  }, [threadId]);
+  }, [threadId, purpose]);
 
   // Persister l’échange (sauf si vide + pas d’ignore → on peut nettoyer la clé)
   useEffect(() => {
@@ -195,15 +208,32 @@ export function PhoneSimulationPanel({
     setPhoneBubbles(simBubbles);
   }, [hydrated, currentSimKey, simBubbles, ignoredSimKey]);
 
-  // Prospection : afficher l’opener si écran vide et pas d’effacement volontaire
+  // Prospection / groupes : 1er message sortant seul, tant qu’il n’y a pas de vraie simu.
+  // Support : ne rien coller (messages entrants — écran vide jusqu’au test client).
   useEffect(() => {
     if (!hydrated || isSupport) return;
-    if (phoneBubbles.length > 0) return;
-    if (ignoredSimKey) return;
-    if (!opener.trim()) return;
     if (currentSimKey && currentSimKey !== ignoredSimKey) return;
-    setPhoneBubbles([{ id: 'opener', role: 'you', text: opener }]);
-  }, [hydrated, isSupport, phoneBubbles.length, ignoredSimKey, opener, currentSimKey]);
+    if (ignoredSimKey) return;
+
+    const looksValid =
+      phoneBubbles.length === 0 ||
+      (phoneBubbles.length === 1 && phoneBubbles[0]?.role === 'you') ||
+      (phoneBubbles.some((b) => b.role === 'you') &&
+        phoneBubbles.some((b) => b.role === 'prospect'));
+
+    // Purge un brief agent collé par erreur (ex. listes « Offre : … »)
+    if (!looksValid) {
+      setPhoneBubbles(
+        opener.trim() ? [{ id: 'opener', role: 'you', text: opener.trim() }] : [],
+      );
+      lastAppliedSimKeyRef.current = '';
+      return;
+    }
+
+    if (!opener.trim()) return;
+    if (phoneBubbles.length > 0) return;
+    setPhoneBubbles([{ id: 'opener', role: 'you', text: opener.trim() }]);
+  }, [hydrated, isSupport, phoneBubbles, ignoredSimKey, opener, currentSimKey]);
 
   useEffect(() => {
     const el = scrollRef.current;

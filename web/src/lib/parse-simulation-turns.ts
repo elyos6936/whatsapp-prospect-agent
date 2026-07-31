@@ -9,26 +9,29 @@ export type PhoneBubble = {
 
 const SIM_FENCE_RE = /```klanvio-sim\s*\n([\s\S]*?)```/gi;
 
-/** Ligne de tour : flèche ou deux-points, guillemets optionnels. */
+/**
+ * Tours stricts uniquement :
+ * - Toi|Moi|You → « … »  (ou -> )
+ * - Prospect|Nom → « … »
+ * Les « Offre : … » / listes mémoire de l'agent ne matchent PAS.
+ */
 const YOU_LINE_RE =
-  /^(?:Toi|Moi|You)\s*(?:→|->|:)\s*[«"“]?\s*(.+?)\s*[»"”]?\s*$/i;
+  /^(?:Toi|Moi|You)\s*(?:→|->)\s*[«"“]\s*([\s\S]*?)\s*[»"”]\s*$/i;
 const PROSPECT_LINE_RE =
-  /^(.+?)\s*(?:→|->|:)\s*[«"“]?\s*(.+?)\s*[»"”]?\s*$/;
+  /^(?!Toi\b|Moi\b|You\b)(Prospect(?:\s*\d+)?|[A-ZÀ-ÖØ-Þ][\wÀ-ÖØ-öø-ÿ'’ -]{0,40})\s*(?:→|->)\s*[«"“]\s*([\s\S]*?)\s*[»"”]\s*$/;
 
 function parseTurnLines(block: string): PhoneBubble[] {
   const bubbles: PhoneBubble[] = [];
   const lines = block.split(/\n+/);
   let idx = 0;
   for (const raw of lines) {
-    const line = raw.trim();
-    if (!line || line.startsWith('---') || line.startsWith('*(') || line.startsWith('•')) {
-      continue;
-    }
+    const line = raw.trim().replace(/^[-*•]\s+/, '');
+    if (!line || line.startsWith('---') || line.startsWith('*(')) continue;
     if (/^```/.test(line)) continue;
 
     const you = YOU_LINE_RE.exec(line);
     if (you) {
-      const t = you[1].replace(/^[«"“]\s*/, '').replace(/\s*[»"”]$/, '').trim();
+      const t = you[1].trim();
       if (t) bubbles.push({ id: `sim-${idx++}`, role: 'you', text: t });
       continue;
     }
@@ -36,8 +39,7 @@ function parseTurnLines(block: string): PhoneBubble[] {
     const prospect = PROSPECT_LINE_RE.exec(line);
     if (prospect) {
       const name = prospect[1].trim();
-      if (/^(toi|moi|you)$/i.test(name)) continue;
-      const t = prospect[2].replace(/^[«"“]\s*/, '').replace(/\s*[»"”]$/, '').trim();
+      const t = prospect[2].trim();
       if (t) {
         bubbles.push({
           id: `sim-${idx++}`,
@@ -51,11 +53,19 @@ function parseTurnLines(block: string): PhoneBubble[] {
   return bubbles;
 }
 
+function isValidSimulation(bubbles: PhoneBubble[]): boolean {
+  if (bubbles.length < 2) return false;
+  const hasYou = bubbles.some((b) => b.role === 'you');
+  const hasProspect = bubbles.some((b) => b.role === 'prospect');
+  return hasYou && hasProspect;
+}
+
 /** Extrait les bulles depuis un message assistant (format simulation Klanvio). */
 export function parseSimulationTurnsFromText(content: string): PhoneBubble[] {
   const text = String(content ?? '');
   if (!text.trim()) return [];
 
+  // 1) Fence dédiée téléphone (source de vérité)
   const fenceBlocks: string[] = [];
   let m: RegExpExecArray | null;
   const fenceRe = new RegExp(SIM_FENCE_RE.source, 'gi');
@@ -64,14 +74,15 @@ export function parseSimulationTurnsFromText(content: string): PhoneBubble[] {
   }
   if (fenceBlocks.length > 0) {
     const bubbles = parseTurnLines(fenceBlocks[fenceBlocks.length - 1]!);
-    if (bubbles.length >= 1) return bubbles;
+    if (isValidSimulation(bubbles)) return bubbles;
   }
 
-  if (!/(?:→|->|:)\s*[«"“]?/.test(text) && !/^(?:Toi|Moi|You|Prospect)\b/im.test(text)) {
-    return [];
-  }
+  // 2) Fil libre uniquement avec flèches + guillemets (pas de « Label : valeur »)
+  if (!/(?:→|->)\s*[«"“]/.test(text)) return [];
+  if (!/\b(?:Toi|Moi|You)\s*(?:→|->)/i.test(text)) return [];
 
-  return parseTurnLines(text);
+  const bubbles = parseTurnLines(text);
+  return isValidSimulation(bubbles) ? bubbles : [];
 }
 
 /**
@@ -89,8 +100,8 @@ export function stripSimulationPayloadForChat(content: string): string {
       kept.push('');
       continue;
     }
-    if (/^(?:Toi|Moi|You)\s*(?:→|->|:)\s*/i.test(line)) continue;
-    if (/^Prospect(?:\s*\d+)?\s*(?:→|->|:)\s*/i.test(line)) continue;
+    if (/^(?:Toi|Moi|You)\s*(?:→|->)\s*[«"“]/i.test(line)) continue;
+    if (/^Prospect(?:\s*\d+)?\s*(?:→|->)\s*[«"“]/i.test(line)) continue;
     if (/^.+?\s*(?:→|->)\s*[«"“].+[»"”]\s*$/.test(line)) continue;
     if (/^\*\(Simulation/i.test(line)) continue;
     if (/^---+$/.test(line)) continue;
@@ -101,7 +112,7 @@ export function stripSimulationPayloadForChat(content: string): string {
   return out;
 }
 
-/** Dernière simulation trouvée en parcourant les messages assistant du plus récent au plus ancien. */
+/** Dernière vraie simulation (Toi + Prospect) dans l’historique agent. */
 export function extractLatestSimulationBubbles(
   messages: Array<{ kind: string; content: string }>,
 ): PhoneBubble[] {
@@ -109,7 +120,7 @@ export function extractLatestSimulationBubbles(
     const m = messages[i];
     if (m.kind !== 'assistant') continue;
     const bubbles = parseSimulationTurnsFromText(m.content);
-    if (bubbles.length >= 2) return bubbles;
+    if (isValidSimulation(bubbles)) return bubbles;
   }
   return [];
 }
