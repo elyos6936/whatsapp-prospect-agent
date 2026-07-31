@@ -513,12 +513,20 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         const auto = await getAutomation(userId, thread.automation_id);
         approvedOpener = auto?.config.initialMessage?.trim() || null;
       }
-      const display = await generateCampaignSimulationDirect(client, {
+      const sim = await generateCampaignSimulationDirect(client, {
         businessContext,
         recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
         approvedOpener,
       });
-      if (display?.trim()) return display.trim();
+      if (sim?.display?.trim()) {
+        try {
+          const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
+          await persistLivePlaybookForThread(userId, threadId, sim.turns);
+        } catch (err) {
+          console.warn("[agent] persist playbook:", err);
+        }
+        return sim.display.trim();
+      }
     } catch (err) {
       console.warn("[agent] simulation directe échouée, fallback boucle outils:", err);
     }

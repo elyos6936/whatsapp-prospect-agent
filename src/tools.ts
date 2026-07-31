@@ -4149,14 +4149,11 @@ export async function executeTool(
             config.quietHoursStart = q.quietHoursStart;
             config.quietHoursEnd = q.quietHoursEnd;
           }
-          const memoryGuide =
-            mem.instructions.trim() ||
-            `Style (mémoire « ${mem.name} ») : ton ${memoryToneLabel(mem.tone).toLowerCase()}.`;
-          if (!config.conversationGuide?.trim()) {
-            config.conversationGuide = `Mémoire « ${mem.name} » :\n${memoryGuide}`;
-          } else if (!config.conversationGuide.includes("Mémoire")) {
-            config.conversationGuide = `Mémoire « ${mem.name} » :\n${memoryGuide}\n${config.conversationGuide}`;
-          }
+          const { bakeConversationGuideFromMemory } = await import("./campaign-sync.js");
+          config.conversationGuide = bakeConversationGuideFromMemory(
+            mem,
+            config.conversationGuide
+          );
           const owner = (hints.ownerName || mem.ownerName).trim();
           if (owner) {
             await saveBusinessProfile(userId, { ownerName: owner }).catch(() => {});
@@ -4716,7 +4713,23 @@ export async function executeTool(
       const updated = await updateAutomationConfig(userId, id, {
         ...merged,
         enableAutoReply: detail.automation.status === "active" ? true : merged.enableAutoReply !== false,
+        livePlaybook: merged.livePlaybook
+          ? {
+              ...merged.livePlaybook,
+              updatedAt: new Date().toISOString(),
+              openerSnapshot:
+                merged.initialMessage || merged.livePlaybook.openerSnapshot,
+              guideSnapshot:
+                merged.conversationGuide || merged.livePlaybook.guideSnapshot,
+            }
+          : merged.livePlaybook,
       });
+      try {
+        const { syncThreadAutomationFromMemory } = await import("./campaign-sync.js");
+        await syncThreadAutomationFromMemory(userId, threadId);
+      } catch {
+        /* ignore */
+      }
       if (detail.automation.status === "active") {
         await resumeAutomationMessaging(userId, id);
       }
@@ -4730,6 +4743,7 @@ export async function executeTool(
         message:
           `Campagne « ${detail.automation.name} » mise à jour` +
           `${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}. ` +
+          `Mémoire / simulation / réponses prospects restent synchronisées. ` +
           `Confirme brièvement le changement à l'utilisateur et propose « refais la simulation » ` +
           `pour revoir le fil sur le téléphone, ou « c'est bon » pour activer — SANS coller un plan Toi/Prospect dans le chat.`,
       });
@@ -4958,11 +4972,19 @@ export async function executeTool(
           error: err instanceof Error ? err.message : String(err),
         });
       }
+      // Figé / sync : playbook → réponses WhatsApp prospects
+      try {
+        const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
+        await persistLivePlaybookForThread(userId, threadId, turns);
+      } catch (err) {
+        console.warn("[sim] persist playbook:", err);
+      }
       return JSON.stringify({
         success: true,
         display,
         turns: turns.length,
-        message: "Simulation prête. Affiche le champ display tel quel à l'utilisateur.",
+        message:
+          "Simulation prête (téléphone). Playbook synchronisé avec la campagne / réponses prospects.",
       });
     }
 

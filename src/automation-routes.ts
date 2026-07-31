@@ -111,10 +111,15 @@ export async function registerAutomationRoutes(app: FastifyInstance): Promise<vo
         `Simulation validée pour « ${name} ». ` +
         `Tu veux que je l’active maintenant, ou tu as encore des modifications à faire ` +
         `(accroche, ton, relances…) ?`;
-      await updateAutomationConfig(userId, id, {
-        ...detail.automation.config,
-        simulationValidatedAt: new Date().toISOString(),
-      });
+      try {
+        const { freezeLivePlaybookForAutomation } = await import("./campaign-sync.js");
+        await freezeLivePlaybookForAutomation(userId, id);
+      } catch {
+        await updateAutomationConfig(userId, id, {
+          ...detail.automation.config,
+          simulationValidatedAt: new Date().toISOString(),
+        });
+      }
       await saveAgentMessageForAutomation(userId, id, "assistant", confirmMsg).catch(() => {});
       return {
         ok: true,

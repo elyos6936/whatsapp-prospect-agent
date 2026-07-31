@@ -101,7 +101,8 @@ export async function registerCampaignMemoryRoutes(app: FastifyInstance): Promis
       const linkedThreads = await listThreadIdsLinkedToMemory(userId, mem.id);
       const notes: Array<{ threadId: number; id: number }> = [];
       const content =
-        `Mémoire « ${mem.name} » mise à jour. J'ai pris en compte tes nouvelles instructions — continue, je m'y appuie.`;
+        `Mémoire « ${mem.name} » mise à jour. J'ai pris en compte tes nouvelles instructions — continue, je m'y appuie. ` +
+        `Les conversations WhatsApp prospects utilisent aussi cette version à jour.`;
       for (const threadId of linkedThreads) {
         try {
           const saved = await saveAgentMessage(userId, threadId, "assistant", content);
@@ -111,7 +112,22 @@ export async function registerCampaignMemoryRoutes(app: FastifyInstance): Promis
         }
       }
 
-      return { ok: true, memory: toJson(mem), notifiedThreadIds: linkedThreads, notes };
+      // Sync guide + playbook vers les automatisations liées
+      let syncedAutomations: number[] = [];
+      try {
+        const { syncAutomationsLinkedToMemory } = await import("./campaign-sync.js");
+        syncedAutomations = await syncAutomationsLinkedToMemory(userId, mem.id);
+      } catch (err) {
+        console.warn("[memory] sync automations:", err);
+      }
+
+      return {
+        ok: true,
+        memory: toJson(mem),
+        notifiedThreadIds: linkedThreads,
+        notes,
+        syncedAutomations,
+      };
     }
   );
 

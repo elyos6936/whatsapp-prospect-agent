@@ -666,7 +666,10 @@ async function recordAutomationEngagement(
   void text;
 }
 
-function buildActiveCampaignContext(auto: Automation): string {
+function buildActiveCampaignContext(
+  auto: Automation,
+  extras?: { memoryBlock?: string; playbookBlock?: string }
+): string {
   const cfg = auto.config;
   const goalLabels: Record<string, string> = {
     payment: "obtenir le paiement",
@@ -699,6 +702,8 @@ function buildActiveCampaignContext(auto: Automation): string {
     cfg.handoffKeywords?.length
       ? `Mots-clés handoff humain (si le prospect les écrit, l'IA s'arrête) : ${cfg.handoffKeywords.join(", ")}`
       : "",
+    extras?.memoryBlock ? `\n${extras.memoryBlock}` : "",
+    extras?.playbookBlock ? `\n${extras.playbookBlock}` : "",
     "",
     `PARCOURS CONVERSATION (obligatoire — même mission partout, seuls les mots varient) :`,
     `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair OU objectif atteint.`,
@@ -707,10 +712,11 @@ function buildActiveCampaignContext(auto: Automation): string {
     `4. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
     `5. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
     `6. Objectif livraison : une fois adresse notée + confirmation que le livreur contacte le client → UNE courte confirmation puis STOP. Interdit d'enchaîner « le livreur vous appelle » / « parfait il vous contactera » en boucle.`,
-    `7. INTERDIT réactions vides (« Ah super », « Ok », « Parfait ») sans question ou prochaine étape liée à l'objectif.`,
+    `7. INTERDIT réactions vides (« Ah super », « Ok », « Parfait », « Super. ») sans question ou prochaine étape liée à l'objectif.`,
     `8. N'utilise PAS le prénom du prospect à tout va.`,
+    `9. Mémoire + playbook ci-dessus = source de vérité figée/synchronisée avec le chat agent et la simulation — ne dérive pas.`,
     `RÈGLES : messages COURTS (1-2 phrases), ton WhatsApp naturel, VOUS (jamais tu/ton/ta/te). Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. AUCUN texte entre crochets [ ].`,
-  ].filter((l) => l !== undefined);
+  ].filter((l) => l !== undefined && l !== "");
   return lines.join("\n");
 }
 
@@ -723,7 +729,29 @@ async function buildAutomationContext(
   const parts: string[] = [];
 
   if (activeCampaign) {
-    parts.push(buildActiveCampaignContext(activeCampaign));
+    const {
+      formatCampaignMemoryForWhatsApp,
+      formatLivePlaybookForWhatsApp,
+      getLinkedMemoryForAutomation,
+    } = await import("./campaign-sync.js");
+
+    let memoryBlock = "";
+    try {
+      const mem = await getLinkedMemoryForAutomation(userId, activeCampaign.id);
+      if (mem) memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+    } catch {
+      /* ignore */
+    }
+
+    let playbookBlock = "";
+    const pb = activeCampaign.config.livePlaybook;
+    if (pb?.turns?.length) {
+      playbookBlock = formatLivePlaybookForWhatsApp(pb);
+    }
+
+    parts.push(
+      buildActiveCampaignContext(activeCampaign, { memoryBlock, playbookBlock })
+    );
   }
 
   const memory = await getMemoryContextBlock(userId, chatId, activeCampaign?.id);

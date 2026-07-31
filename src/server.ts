@@ -575,7 +575,7 @@ app.put<{
     if (memoryId != null) {
       const mem = await getCampaignMemory(userId, memoryId);
       const content = mem
-        ? `Mémoire « ${mem.name} » connectée à cette automatisation. Je m'appuie dessus pour la suite — tu peux continuer tes instructions.`
+        ? `Mémoire « ${mem.name} » connectée à cette automatisation. Je m'appuie dessus pour la suite — tu peux continuer tes instructions. Les réponses WhatsApp prospects resteront alignées sur cette mémoire.`
         : `Mémoire connectée à cette automatisation. Tu peux continuer tes instructions.`;
       const saved = await saveAgentMessage(userId, threadId, "assistant", content);
       note = {
@@ -583,6 +583,13 @@ app.put<{
         content: saved.content,
         created_at: saved.created_at,
       };
+      // Sync campagne liée (si existe déjà)
+      try {
+        const { syncThreadAutomationFromMemory } = await import("./campaign-sync.js");
+        await syncThreadAutomationFromMemory(userId, threadId);
+      } catch (err) {
+        console.warn("[memory] sync on link:", err);
+      }
     } else {
       const content =
         "Mémoire déconnectée de cette automatisation. Relie une mémoire (bouton Mémoire) pour reprendre le brief.";

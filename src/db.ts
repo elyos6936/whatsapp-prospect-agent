@@ -2584,6 +2584,19 @@ export interface AutomationConfig {
   /** Plan graphique (nodes/edges) pour la carte visuelle — généré côté serveur. */
   /** ISO — simulation validée via le bouton UI (lancement). */
   simulationValidatedAt?: string;
+  /**
+   * Playbook synchronisé : tours de simulation + snapshots mémoire/opener.
+   * Utilisé par les réponses WhatsApp prospects pour rester aligné chat/sim/mémoire.
+   */
+  livePlaybook?: {
+    updatedAt: string;
+    validatedAt?: string;
+    turns: Array<{ speaker: "toi" | "prospect"; text: string; name?: string }>;
+    openerSnapshot?: string;
+    guideSnapshot?: string;
+    memoryName?: string;
+    memoryFingerprint?: string;
+  };
   visualPlan?: {
     version: 1;
     title: string;

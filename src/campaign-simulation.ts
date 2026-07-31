@@ -129,7 +129,7 @@ export async function generateCampaignSimulationDirect(
     /** Accroche validée — le 1er tour « toi » doit coller à ce texte (légère reformulation OK). */
     approvedOpener?: string | null;
   }
-): Promise<string | null> {
+): Promise<{ display: string; turns: SimulationTurn[] } | null> {
   const openerRule = opts.approvedOpener?.trim()
     ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 280)} » — micro-variation de mots OK, PAS de nouvel angle, PAS de prix/lien/pitch\n`
     : `- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet, vouvoiement, sans prénom du prospect)\n`;
@@ -181,7 +181,7 @@ export async function generateCampaignSimulationDirect(
   }
 
   try {
-    return formatCampaignSimulationDisplay(turns);
+    return { display: formatCampaignSimulationDisplay(turns), turns };
   } catch (err) {
     console.warn("[simulation] format failed:", err);
     return null;

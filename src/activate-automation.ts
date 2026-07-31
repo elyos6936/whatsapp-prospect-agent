@@ -169,6 +169,15 @@ export async function activateAutomationCore(
 
   let targetsAdded = 0;
   await updateAutomationConfig(userId, id, safeConfig);
+
+  // Figé playbook + re-sync mémoire (après écriture config) → réponses prospects alignées
+  try {
+    const { freezeLivePlaybookForAutomation } = await import("./campaign-sync.js");
+    await freezeLivePlaybookForAutomation(userId, id);
+  } catch (err) {
+    console.warn("[activate] freeze playbook:", err);
+  }
+
   await setAutoReplyEnabled(userId, true);
 
   try {
