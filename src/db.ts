@@ -1998,6 +1998,11 @@ export async function isStartingNewConversation(
   chatId: string,
   automationId?: number | null
 ): Promise<boolean> {
+  // Groupes / chaînes : pas des contacts prospects — ne jamais passer par normalizeContactPhone.
+  const trimmedChat = chatId.trim();
+  if (trimmedChat.endsWith("@g.us") || trimmedChat.includes("@newsletter")) {
+    return false;
+  }
   const phone = normalizeContactPhone(chatId);
   const digits = phone.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
   const epochIso = await conversationEpochForContact(userId, phone, automationId);
@@ -2075,6 +2080,11 @@ export async function classifyNewConversationKind(
   chatId: string,
   automationId?: number | null
 ): Promise<"none" | "outbound" | "inbound"> {
+  const trimmedChat = chatId.trim();
+  // Diffusion groupe / chaîne : hors quotas « nouveau fil » prospects.
+  if (trimmedChat.endsWith("@g.us") || trimmedChat.includes("@newsletter")) {
+    return "none";
+  }
   const phone = normalizeContactPhone(chatId);
   if (!(await isStartingNewConversation(userId, phone, automationId))) {
     return "none";
@@ -2187,7 +2197,12 @@ export async function assertCanSendTo(
     forceKind?: "outbound" | "inbound";
   }
 ): Promise<void> {
-  if (!chatId.endsWith("@g.us") && (await isContactBlocked(userId, chatId))) {
+  // Groupes / chaînes : pas de STOP contact ni de plafond « nouveau fil » prospect.
+  // (Le contrôle admin groupe est fait côté Evolution avant l'envoi.)
+  if (chatId.endsWith("@g.us") || chatId.includes("@newsletter")) {
+    return;
+  }
+  if (await isContactBlocked(userId, chatId)) {
     throw new Error(
       `Contact ${chatId} est en statut STOP. Aucun envoi possible. Débloquez-le d'abord si vraiment nécessaire.`
     );

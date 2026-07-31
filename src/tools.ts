@@ -3012,6 +3012,10 @@ export async function executeTool(
       try {
         const chatId = await resolveRecipient(userId, recipient);
 
+        if (chatId.endsWith("@g.us")) {
+          await assertUserIsGroupAdmin(userId, chatId);
+        }
+
         if (chatId.endsWith("@c.us")) {
           const existing = await getContact(userId, chatId);
           if (existing?.status === "stop") {
@@ -3270,6 +3274,9 @@ export async function executeTool(
       }
       try {
         const chatId = await resolveRecipient(userId, recipient);
+        if (chatId.endsWith("@g.us")) {
+          await assertUserIsGroupAdmin(userId, chatId);
+        }
         if (chatId.endsWith("@c.us")) {
           const existing = await getContact(userId, chatId);
           if (existing?.status === "stop") {
@@ -3664,6 +3671,15 @@ export async function executeTool(
       }
 
       const chatId = await resolveRecipient(userId, recipientRaw);
+      if (chatId.endsWith("@g.us")) {
+        try {
+          await assertUserIsGroupAdmin(userId, chatId);
+        } catch (err) {
+          return JSON.stringify({
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
       if (chatId.endsWith("@c.us")) {
         const existing = await getContact(userId, chatId);
         if (existing?.status === "stop") {

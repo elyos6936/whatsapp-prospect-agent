@@ -248,7 +248,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           enableAutoReply: item.automation_id != null,
           automationId: item.automation_id,
         });
-        if (item.automation_id != null) {
+        if (item.automation_id != null && !item.recipient.endsWith("@g.us")) {
           try {
             const { setContactAutoReply, saveContact } = await import("./db.js");
             await setContactAutoReply(userId, item.recipient, true);

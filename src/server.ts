@@ -29,7 +29,6 @@ import {
   listAgentThreads,
   createAgentThread,
   deleteAgentThread,
-  ensureDefaultAgentThread,
   updateAgentThreadTitle,
   maskSecret,
   saveAgentMessage,
@@ -459,11 +458,8 @@ app.post<{
 app.get("/api/threads", async (request) => {
   const userId = requireUserId(request);
   await ensureCampaignMemoriesSchema().catch(() => {});
-  let threads = await listAgentThreads(userId);
-  if (!threads.length) {
-    const created = await ensureDefaultAgentThread(userId);
-    threads = [created];
-  }
+  const threads = await listAgentThreads(userId);
+  // Liste vide autorisée : l'utilisateur peut tout supprimer ; création via POST /api/threads.
   return { threads };
 });
 

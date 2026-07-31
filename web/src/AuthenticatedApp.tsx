@@ -165,11 +165,7 @@ export default function AuthenticatedApp() {
     async (id: number) => {
       try {
         await deleteThread(id);
-        const list = await refreshThreads();
-        if (!list.length) {
-          const created = await createThread();
-          await refreshThreads(created.id);
-        }
+        await refreshThreads();
         setOverlayView(null);
         clear();
       } catch (err) {
@@ -264,7 +260,10 @@ export default function AuthenticatedApp() {
       <div className="flex min-w-0 flex-1 flex-col">
         <AppHeader
           overlayView={overlayView}
-          threadTitle={activeThread?.title ?? 'Automatisation'}
+          threadTitle={
+            activeThread?.title ??
+            (threads.length === 0 && !threadsLoading ? 'Aucune automatisation' : 'Automatisation')
+          }
           hasCampaign={Boolean(activeThread?.automation_id)}
           automationId={activeThread?.automation_id ?? null}
           campaignStatus={activeThread?.automation_status ?? null}
@@ -288,9 +287,31 @@ export default function AuthenticatedApp() {
           <ThreadStatsPage threadId={activeThreadId} />
         )}
 
-        {overlayView == null && (
+        {overlayView == null && activeThreadId == null && !threadsLoading && (
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-center bg-bg-0 px-6">
+            <div className="max-w-md animate-fade-in text-center">
+              <h1 className="font-serif text-3xl font-light tracking-tight text-text-100">
+                Aucune automatisation
+              </h1>
+              <p className="mt-3 text-[15px] leading-relaxed text-text-400">
+                Toutes vos automatisations ont été supprimées. Créez-en une pour
+                reprendre avec l&apos;agent.
+              </p>
+              <button
+                type="button"
+                disabled={!waConnected || creatingThread}
+                onClick={handleNewThread}
+                className="mt-6 inline-flex items-center justify-center rounded-lg bg-brand px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-brand-dark disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Nouvelle automatisation
+              </button>
+            </div>
+          </div>
+        )}
+
+        {overlayView == null && activeThreadId != null && (
           <ChatWorkspace
-            key={activeThreadId ?? 'no-thread'}
+            key={activeThreadId}
             threadId={activeThreadId}
             threadPurpose={activeThread?.purpose ?? null}
             messages={messages}
@@ -298,9 +319,7 @@ export default function AuthenticatedApp() {
             isSending={isSending}
             onSend={handleSend}
             isFreshSession={messages.length === 0 && !loading && !threadsLoading}
-            onOpenMemory={
-              activeThreadId != null ? () => setMemoryModalOpen(true) : undefined
-            }
+            onOpenMemory={() => setMemoryModalOpen(true)}
             memoryLinked={Boolean(activeThread?.campaign_memory_id)}
             memoryName={activeThread?.campaign_memory_name ?? null}
           />

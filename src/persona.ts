@@ -183,9 +183,10 @@ Si le contexte contient **Mémoire active** liée au fil :
 - INTERDIT de poser des questions « phrase déclencheur » / closing entrant comme flux principal.
 
 #### Si TYPE DE FIL = GROUPES WHATSAPP
-- Type autorisé : \`group_broadcast\` uniquement (publier **dans** le groupe).
-- Uniquement les groupes où l'utilisateur est **administrateur** — \`list_whatsapp_groups\` avec \`admin_only=true\`.
-- Brief : texte du message, liste des groupes admin, rythme éventuel. Pas de DM membres, pas de support entrant.
+- Envoi ponctuel : \`send_whatsapp_message\` (nom du groupe). Programmation : \`schedule_whatsapp_message\`. Campagne : \`group_broadcast\`.
+- **INTERDIT** d'enregistrer un @g.us comme contact / prospect.
+- Uniquement les groupes où l'utilisateur est **administrateur** — sinon refuse clairement.
+- \`list_whatsapp_groups\` avec \`admin_only=true\` pour lister. Pas de DM membres, pas de support entrant.
 - Stats : messages envoyés vs restants.
 
 #### Si TYPE DE FIL = SUPPORT CLIENT

@@ -176,6 +176,8 @@ export function normalizePhoneToChatId(phone: string): string {
 
 export function normalizeGroupParticipantId(participantId: string): string {
   const id = participantId.trim();
+  // Ne jamais transformer un JID groupe / chaîne en faux contact @c.us / @lid.
+  if (id.endsWith("@g.us") || isNewsletterJid(id)) return id;
   if (isLidJid(id)) return id;
   if (id.endsWith("@c.us") || id.endsWith("@s.whatsapp.net")) {
     const digits = chatIdToNumber(id);
@@ -855,9 +857,15 @@ export async function assertUserIsGroupAdmin(userId: number, groupId: string): P
   );
   if (!ok) {
     throw new EvolutionApiError(
-      `Vous n'êtes pas administrateur de ce groupe. Seuls les groupes où vous êtes admin peuvent recevoir une diffusion.`
+      `Vous n'êtes pas administrateur de ce groupe. Seuls les administrateurs peuvent envoyer ou programmer des messages dans ce groupe.`
     );
   }
+}
+
+/** Avant tout envoi vers un @g.us : l'utilisateur doit être admin. */
+async function assertGroupAdminBeforeSend(userId: number, chatId: string): Promise<void> {
+  if (!chatId.trim().endsWith("@g.us")) return;
+  await assertUserIsGroupAdmin(userId, chatId.trim());
 }
 
 export async function listWhatsAppChannels(userId: number): Promise<Array<{ id: string; name: string; type: string }>> {
@@ -1301,6 +1309,8 @@ export async function sendWhatsAppMessage(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("WhatsApp non configuré.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
+
   const newKind = await classifyNewConversationKind(
     userId,
     chatId,
@@ -1441,6 +1451,8 @@ export async function sendWhatsAppMedia(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
+
   const newKind = await classifyNewConversationKind(
     userId,
     chatId,
@@ -1531,6 +1543,7 @@ export async function sendWhatsAppVoice(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
   await assertCanSendTo(userId, chatId);
 
   return withOutboundSpacing(userId, async () => {
@@ -1575,6 +1588,7 @@ export async function sendWhatsAppLocation(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
   await assertCanSendTo(userId, chatId);
 
   return withOutboundSpacing(userId, async () => {
@@ -1630,6 +1644,7 @@ export async function sendWhatsAppContact(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
   await assertCanSendTo(userId, chatId);
 
   return withOutboundSpacing(userId, async () => {
@@ -1691,6 +1706,7 @@ export async function sendWhatsAppPoll(
   if (!input.name.trim()) throw new EvolutionApiError("La question du sondage est requise.");
   if (values.length < 2) throw new EvolutionApiError("Un sondage nécessite au moins 2 options.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
   await assertCanSendTo(userId, chatId);
 
   return withOutboundSpacing(userId, async () => {
@@ -1742,6 +1758,7 @@ export async function sendWhatsAppList(
 
   if (!input.sections?.length) throw new EvolutionApiError("La liste nécessite au moins une section.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
   await assertCanSendTo(userId, chatId);
 
   return withOutboundSpacing(userId, async () => {
@@ -1791,6 +1808,7 @@ export async function sendWhatsAppSticker(
   const creds = await getEvolutionCredentials(userId);
   if (!creds) throw new EvolutionApiError("Evolution API non configurée.");
 
+  await assertGroupAdminBeforeSend(userId, chatId);
   await assertCanSendTo(userId, chatId);
 
   return withOutboundSpacing(userId, async () => {
