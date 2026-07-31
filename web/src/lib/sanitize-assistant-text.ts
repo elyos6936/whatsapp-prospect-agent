@@ -18,13 +18,16 @@ export function sanitizeAssistantText(text: string): string {
   out = out.replace(/(«[^»]+»)\s*#\d+/g, '$1');
   out = out.replace(/#\d{1,6}\b/g, '');
 
-  // Vocabulaire UI : panneau / carte → simulation
-  out = out.replace(/\b(ouvre|voir|ouvre[rz]?)\s+(la\s+)?(carte|panneau)\b/gi, 'ouvre la simulation');
-  out = out.replace(/\bpanneau\s+à\s+droite\b/gi, 'simulation à droite');
-  out = out.replace(/\bVoir le panneau à droite\b/gi, 'Tester la simulation à droite');
-  out = out.replace(/\bCampagne\s+[«"]([^»"]+)[»"]\s+créée en brouillon\b/gi, '« $1 » est prêt — ouvre la simulation');
+  // Vocabulaire UI : panneau / carte → simulation dans le chat
+  out = out.replace(/\b(ouvre|voir|ouvre[rz]?)\s+(la\s+)?(carte|panneau)\b/gi, 'teste une simulation');
+  out = out.replace(/\bpanneau\s+à\s+droite\b/gi, 'simulation dans ce chat');
+  out = out.replace(/\bsimulation\s+à\s+droite\b/gi, 'simulation dans ce chat');
+  out = out.replace(/\bVoir le panneau à droite\b/gi, 'Tester une simulation dans ce chat');
+  out = out.replace(/\bTester la simulation à droite\b/gi, 'Tester une simulation dans ce chat');
+  out = out.replace(/\bValider\s+à\s+droite\b/gi, "répondre « c'est bon »");
+  out = out.replace(/\bCampagne\s+[«"]([^»"]+)[»"]\s+créée en brouillon\b/gi, '« $1 » est prêt — on peut simuler ici');
   out = out.replace(/\bCampagne\s+[«"]([^»"]+)[»"]\s+mise à jour\b/gi, '« $1 » mis à jour');
-  out = out.replace(/\bVoici le plan[^.]*\./gi, 'Ouvre la simulation à droite pour tester.');
+  out = out.replace(/\bVoici le plan[^.]*\./gi, 'Veux-tu tester une simulation dans ce chat ?');
   out = out.replace(/\bavant simulation\b/gi, 'via la simulation');
   out = out.replace(/\bCampagne «/g, '«');
   out = out.replace(/\bcampagne «/gi, '«');

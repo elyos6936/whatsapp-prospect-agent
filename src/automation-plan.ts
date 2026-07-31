@@ -49,7 +49,7 @@ export function formatPlanFence(plan: AutomationVisualPlan): string {
 export function formatPlanDisplay(plan: AutomationVisualPlan, intro?: string): string {
   const head =
     intro?.trim() ||
-    `Voici le déroulé de « ${plan.title} ». Ouvre la **simulation** à droite pour tester les réponses.`;
+    `Voici le déroulé de « ${plan.title} ». Veux-tu tester une **simulation** dans ce chat ?`;
   return `${head}\n\n${formatPlanFence(plan)}`;
 }
 

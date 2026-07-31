@@ -76,7 +76,7 @@ export function recentAssistantAskedActivationConfirm(history: AgentMessage[]): 
 }
 
 /**
- * Demande EXPLICITE de refaire / revoir la simulation (fenêtre).
+ * Demande EXPLICITE de refaire / revoir la simulation dans le chat.
  * Seul cas où on régénère un fil après une simu déjà affichée.
  */
 export function userWantsExplicitResimulation(text: string): boolean {
@@ -108,7 +108,7 @@ export function userWantsSilentCampaignTweak(text: string): boolean {
   );
 }
 
-/** Question / préoccupation après simu — répondre sans rouvrir la fenêtre. */
+/** Question / préoccupation après simu — répondre sans re-simuler. */
 export function userAsksFollowUpAboutCampaign(text: string): boolean {
   if (userWantsExplicitResimulation(text)) return false;
   const t = text.trim();
@@ -172,10 +172,12 @@ export function resolveSimulationTurnMode(
   return "none";
 }
 
-/** Heuristique front : faut-il auto-ouvrir le panneau simulation ? */
+/** Heuristique : réponse assistant = révélation brouillon / fil de simulation (chat). */
 export function shouldAutoOpenSimulationPanel(assistantReply: string): boolean {
   const isSimThread = (assistantReply.match(/→/g) || []).length >= 2;
   const isDraftReveal =
-    /brouillon|simulation à droite|est prêt|ouvre la \*\*simulation\*\*/i.test(assistantReply);
+    /brouillon|simulation dans ce chat|est prêt|veux-tu tester une \*\*simulation\*\*|ouvre la \*\*simulation\*\*/i.test(
+      assistantReply,
+    );
   return isSimThread || isDraftReveal;
 }

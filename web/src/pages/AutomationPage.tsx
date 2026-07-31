@@ -196,8 +196,8 @@ export function AutomationPage({ threadId }: AutomationPageProps) {
               </header>
 
               <div className="rounded-xl border border-brand/20 bg-brand-muted/40 px-4 py-3 text-sm text-text-400">
-                Le schéma de stratégie s’affiche dans le <strong className="font-medium text-text-200">panneau de droite</strong> du chat
-                (bouton « Stratégie »). Ici : statut et actions de la campagne.
+                La simulation se teste <strong className="font-medium text-text-200">dans le chat</strong> de
+                l&apos;automatisation. Ici : statut et actions de la campagne.
               </div>
 
               <div className="flex flex-wrap gap-3 text-sm text-text-400">

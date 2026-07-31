@@ -1,4 +1,4 @@
-import { ArrowLeft, BarChart3, Eye, Settings } from 'lucide-react';
+import { ArrowLeft, BarChart3, Settings } from 'lucide-react';
 import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
@@ -9,13 +9,10 @@ type AppHeaderProps = {
   hasCampaign: boolean;
   campaignStatus?: string | null;
   automationId?: number | null;
-  hasStrategy: boolean;
-  strategyOpen: boolean;
   outreachLevel?: number | null;
   onGoToChat: () => void;
   onOpenSettings: () => void;
   onOpenStats?: () => void;
-  onToggleStrategy?: () => void;
   onOpenMobileNav?: () => void;
   onCampaignStatusChange?: () => void | Promise<void>;
 };
@@ -26,13 +23,10 @@ export function AppHeader({
   hasCampaign,
   campaignStatus,
   automationId,
-  hasStrategy,
-  strategyOpen,
   outreachLevel,
   onGoToChat,
   onOpenSettings,
   onOpenStats,
-  onToggleStrategy,
   onOpenMobileNav,
   onCampaignStatusChange,
 }: AppHeaderProps) {
@@ -86,19 +80,6 @@ export function AppHeader({
             className="!px-2.5 !py-1.5 !text-xs sm:!px-3"
             onUpdated={onCampaignStatusChange}
           />
-        )}
-
-        {onChat && hasStrategy && onToggleStrategy && (
-          <button
-            type="button"
-            onClick={onToggleStrategy}
-            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs text-text-400 transition hover:bg-bg-200 hover:text-text-100"
-            title={strategyOpen ? 'Masquer la simulation' : 'Afficher la simulation'}
-            aria-pressed={strategyOpen}
-          >
-            <Eye className="h-3.5 w-3.5" />
-            <span className="hidden sm:inline">{strategyOpen ? 'Masquer' : 'Simulation'}</span>
-          </button>
         )}
 
         {onChat && hasCampaign && onOpenStats && (

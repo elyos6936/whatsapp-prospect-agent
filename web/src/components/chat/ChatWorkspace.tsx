@@ -8,7 +8,6 @@ import { TypingIndicator } from './TypingIndicator';
 import { PLATFORM_NAME } from '@/lib/brand';
 import type { ChatAttachment } from '@/lib/chat-attachments';
 import type { ChatMessage, ThreadPurpose } from '@/lib/api';
-import type { AutomationVisualPlan } from '@/lib/automation-plan';
 
 interface ChatWorkspaceProps {
   messages: ChatMessage[];
@@ -16,7 +15,6 @@ interface ChatWorkspaceProps {
   isSending?: boolean;
   onSend: (text: string, attachments?: ChatAttachment[]) => void | Promise<void>;
   isFreshSession?: boolean;
-  onOpenPlan?: (plan: AutomationVisualPlan) => void;
   /** Identifiant du fil — remonte le composer et recentre le focus. */
   threadId?: number | null;
   /** Intention choisie à la création (prospection / support). */
@@ -45,7 +43,6 @@ export function ChatWorkspace({
   isSending,
   onSend,
   isFreshSession = true,
-  onOpenPlan,
   threadId = null,
   threadPurpose = null,
 }: ChatWorkspaceProps) {
@@ -133,7 +130,7 @@ export function ChatWorkspace({
               ) : (
                 <div className="flex min-w-0 flex-col gap-3 pb-4">
                   {messages.map((msg) => (
-                    <MessageBubble key={msg.id} message={msg} onOpenPlan={onOpenPlan} />
+                    <MessageBubble key={msg.id} message={msg} />
                   ))}
                   {isSending && (
                     <div className="flex animate-fade-in gap-2">

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
-import { StrategyDock } from '@/components/chat/PlanPanel';
 import { ThreadStatsPage } from '@/components/chat/ThreadStatsPage';
 import { ConnectWhatsAppGate } from '@/components/whatsapp/ConnectWhatsAppGate';
 import { ConnectGoogleContactsGate } from '@/components/whatsapp/ConnectGoogleContactsGate';
@@ -17,29 +16,15 @@ import {
 import {
   createThread,
   deleteThread,
-  fetchThreadCampaign,
   fetchThreads,
   renameThread,
   sendChatMessage,
   type AgentThreadSummary,
 } from '@/lib/api';
-import { extractPlanFromText, type AutomationVisualPlan } from '@/lib/automation-plan';
 import type { OverlayView } from '@/lib/navigation';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { NewAutomationModal } from '@/components/ui/NewAutomationModal';
-
-const STRATEGY_OPEN_KEY = 'klanvio.strategyDockOpen';
-
-function readStrategyOpenPref(): boolean {
-  try {
-    const v = localStorage.getItem(STRATEGY_OPEN_KEY);
-    if (v === null) return true;
-    return v === '1';
-  } catch {
-    return true;
-  }
-}
 
 export default function AuthenticatedApp() {
   const { user, refreshUser } = useAuth();
@@ -53,8 +38,6 @@ export default function AuthenticatedApp() {
   const [creatingThread, setCreatingThread] = useState(false);
   const [newAutoModalOpen, setNewAutoModalOpen] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(true);
-  const [strategyPlan, setStrategyPlan] = useState<AutomationVisualPlan | null>(null);
-  const [strategyOpen, setStrategyOpen] = useState(readStrategyOpenPref);
 
   const chatEnabled = overlayView == null && !!user?.whatsapp?.connected && activeThreadId != null;
   const { messages, loading, appendLocal, appendOptimisticUser, clear } =
@@ -66,8 +49,6 @@ export default function AuthenticatedApp() {
   const neverConnected = user?.whatsapp?.state === 'not_configured';
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
-  const showStrategyDock =
-    overlayView == null && strategyOpen && strategyPlan != null && strategyPlan.nodes?.length > 0;
 
   // Retour OAuth Typeform → ouvrir Réglages / Intégrations
   useEffect(() => {
@@ -90,28 +71,6 @@ export default function AuthenticatedApp() {
       return list[0]?.id ?? null;
     });
     return list;
-  }, []);
-
-  const toggleStrategy = useCallback(() => {
-    setStrategyOpen((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem(STRATEGY_OPEN_KEY, next ? '1' : '0');
-      } catch {
-        /* ignore */
-      }
-      return next;
-    });
-  }, []);
-
-  const openStrategy = useCallback((plan: AutomationVisualPlan) => {
-    setStrategyPlan(plan);
-    setStrategyOpen(true);
-    try {
-      localStorage.setItem(STRATEGY_OPEN_KEY, '1');
-    } catch {
-      /* ignore */
-    }
   }, []);
 
   useEffect(() => {
@@ -149,50 +108,6 @@ export default function AuthenticatedApp() {
     };
   }, [user?.onboarding_completed, waConnected, refreshThreads]);
 
-  // Charger le plan depuis la campagne liée au fil
-  useEffect(() => {
-    if (activeThreadId == null) {
-      setStrategyPlan(null);
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      try {
-        if (!activeThread?.automation_id) {
-          if (!cancelled) setStrategyPlan(null);
-          return;
-        }
-        const data = await fetchThreadCampaign(activeThreadId);
-        const plan = (data.detail.automation.config as { visualPlan?: AutomationVisualPlan } | undefined)
-          ?.visualPlan;
-        if (!cancelled && plan?.nodes?.length) {
-          setStrategyPlan({
-            ...plan,
-            automationId: plan.automationId ?? data.detail.automation.id,
-          });
-        }
-      } catch {
-        /* pas encore de campagne */
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeThreadId, activeThread?.automation_id]);
-
-  // Dès qu’un plan apparaît dans le chat → panneau droit
-  useEffect(() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m.kind !== 'assistant') continue;
-      const { plan } = extractPlanFromText(m.content);
-      if (plan?.nodes?.length) {
-        setStrategyPlan(plan);
-        break;
-      }
-    }
-  }, [messages]);
-
   const handleNewThread = useCallback(() => {
     setNewAutoModalOpen(true);
   }, []);
@@ -205,7 +120,6 @@ export default function AuthenticatedApp() {
         setNewAutoModalOpen(false);
         await refreshThreads(thread.id);
         setOverlayView(null);
-        setStrategyPlan(null);
         clear();
       } catch (err) {
         alert(err instanceof Error ? err.message : 'Erreur');
@@ -227,7 +141,6 @@ export default function AuthenticatedApp() {
       setIsSending(false);
       setActiveThreadId(id);
       setOverlayView(null);
-      setStrategyPlan(null);
     },
     [activeThreadId, clear],
   );
@@ -254,7 +167,6 @@ export default function AuthenticatedApp() {
           await refreshThreads(created.id);
         }
         setOverlayView(null);
-        setStrategyPlan(null);
         clear();
       } catch (err) {
         alert(err instanceof Error ? err.message : 'Impossible de supprimer.');
@@ -285,40 +197,6 @@ export default function AuthenticatedApp() {
           created_at: result.created_at,
           label: 'Agent',
         });
-        const { plan } = extractPlanFromText(result.reply);
-        if (plan?.nodes?.length) {
-          setStrategyPlan(plan);
-          // N'auto-ouvre que pour une vraie révélation (brouillon / fil de simu),
-          // pas pour un simple update collé dans le chat.
-          const isSimThread = (result.reply.match(/→/g) || []).length >= 2;
-          const isDraftReveal =
-            /brouillon|simulation à droite|est prêt|ouvre la \*\*simulation\*\*/i.test(
-              result.reply,
-            );
-          if (isSimThread || isDraftReveal) {
-            openStrategy(plan);
-          }
-        } else if (activeThreadIdRef.current === threadIdAtSend) {
-          // Modif silencieuse : rafraîchir le plan API sans rouvrir le panneau
-          void (async () => {
-            try {
-              const data = await fetchThreadCampaign(threadIdAtSend);
-              const vp = (
-                data.detail.automation.config as
-                  | { visualPlan?: AutomationVisualPlan }
-                  | undefined
-              )?.visualPlan;
-              if (vp?.nodes?.length) {
-                setStrategyPlan({
-                  ...vp,
-                  automationId: vp.automationId ?? data.detail.automation.id,
-                });
-              }
-            } catch {
-              /* ignore */
-            }
-          })();
-        }
         void refreshUser();
         void refreshThreads(threadIdAtSend);
       } catch (err) {
@@ -341,7 +219,7 @@ export default function AuthenticatedApp() {
         }
       }
     },
-    [activeThreadId, appendLocal, appendOptimisticUser, openStrategy, refreshUser, refreshThreads],
+    [activeThreadId, appendLocal, appendOptimisticUser, refreshUser, refreshThreads],
   );
 
   if (!user) return null;
@@ -386,25 +264,12 @@ export default function AuthenticatedApp() {
           hasCampaign={Boolean(activeThread?.automation_id)}
           automationId={activeThread?.automation_id ?? null}
           campaignStatus={activeThread?.automation_status ?? null}
-          hasStrategy={Boolean(strategyPlan?.nodes?.length)}
-          strategyOpen={showStrategyDock}
           outreachLevel={user?.outreach_level ?? null}
           onGoToChat={() => setOverlayView(null)}
           onOpenSettings={() => setOverlayView('settings')}
           onCampaignStatusChange={() => void refreshThreads(activeThreadId)}
           onOpenStats={
             activeThread?.automation_id ? () => setOverlayView('stats') : undefined
-          }
-          onToggleStrategy={
-            strategyPlan?.nodes?.length
-              ? () => {
-                  if (strategyOpen) {
-                    toggleStrategy();
-                  } else {
-                    openStrategy(strategyPlan);
-                  }
-                }
-              : undefined
           }
           onOpenMobileNav={() => setMobileNavOpen(true)}
         />
@@ -424,58 +289,9 @@ export default function AuthenticatedApp() {
             isSending={isSending}
             onSend={handleSend}
             isFreshSession={messages.length === 0 && !loading && !threadsLoading}
-            onOpenPlan={openStrategy}
           />
         )}
       </div>
-
-      {/* Droite : simulation conversation (masquable) */}
-      {showStrategyDock && strategyPlan && (
-        <>
-          {/* Desktop : colonne fixe à droite */}
-          <div className="sticky top-0 hidden h-full max-h-full w-[min(38vw,380px)] shrink-0 self-stretch lg:flex">
-            <StrategyDock
-              plan={strategyPlan}
-              onClose={toggleStrategy}
-              onValidated={(message) => {
-                appendLocal({
-                  id: `sim-validate-${Date.now()}`,
-                  kind: 'assistant',
-                  content: message,
-                  created_at: new Date().toISOString(),
-                  label: 'Agent',
-                });
-                void refreshThreads(activeThreadId);
-              }}
-            />
-          </div>
-          {/* Mobile / tablette : tiroir plein hauteur */}
-          <div className="fixed inset-0 z-40 flex justify-end lg:hidden">
-            <button
-              type="button"
-              className="absolute inset-0 bg-black/35"
-              aria-label="Fermer la simulation"
-              onClick={toggleStrategy}
-            />
-            <div className="relative z-10 flex h-full w-[min(92vw,380px)] shadow-2xl">
-              <StrategyDock
-                plan={strategyPlan}
-                onClose={toggleStrategy}
-                onValidated={(message) => {
-                  appendLocal({
-                    id: `sim-validate-${Date.now()}`,
-                    kind: 'assistant',
-                    content: message,
-                    created_at: new Date().toISOString(),
-                    label: 'Agent',
-                  });
-                  void refreshThreads(activeThreadId);
-                }}
-              />
-            </div>
-          </div>
-        </>
-      )}
     </div>
 
     <NewAutomationModal

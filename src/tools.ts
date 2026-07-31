@@ -4218,12 +4218,12 @@ export async function executeTool(
             planDisplay: plan
               ? formatPlanDisplay(
                   plan,
-                  `« ${name} » est prêt. Ouvre la **simulation** à droite pour tester les réponses avant de lancer.`
+                  `« ${name} » est prêt. Veux-tu tester une **simulation** dans ce chat avant de lancer ?`
             )
           : undefined,
-            message: `« ${name} » mis à jour — pas de doublon. Prochaine étape : simulation à droite, puis lancement si tu valides.`,
+            message: `« ${name} » mis à jour — pas de doublon. Prochaine étape : simulation dans ce chat (show_campaign_simulation), puis lancement si tu valides.`,
             simulationHint:
-              "Invite à ouvrir la simulation à droite : jouer le prospect, jusqu'à 7 messages, sans WhatsApp réel.",
+              "Propose une simulation dans ce chat via show_campaign_simulation (6-7 tours), sans WhatsApp réel.",
             completedAt: nowFr(),
           });
         }
@@ -4241,7 +4241,7 @@ export async function executeTool(
         const otherActive = (await listActiveAutomations(userId)).filter((a) => a.id !== auto.id);
         const activeNote = otherActive.length
           ? ` Une campagne est déjà active (${otherActive.map((a) => `« ${a.name} »`).join(", ")}) — elle continue. Celle-ci reste en brouillon : active-la quand tu es prêt (dans le chat ou bouton Lancer) ; l'ancienne passera alors en pause.`
-          : " Prochaine étape : simulation à droite, puis lancement après confirmation.";
+          : " Prochaine étape : simulation dans ce chat, puis lancement après confirmation.";
         return JSON.stringify({
           success: true,
           updated: false,
@@ -4261,14 +4261,14 @@ export async function executeTool(
                 plan,
                 otherActive.length
                   ? `« ${auto.name} » est en brouillon. Une autre campagne tourne encore — simule ici, puis lance quand tu es prêt.`
-                  : `« ${auto.name} » est prêt en brouillon. Ouvre la **simulation** à droite pour valider le déroulé avant le lancement.`
+                  : `« ${auto.name} » est prêt en brouillon. Veux-tu tester une **simulation** dans ce chat avant le lancement ?`
               )
             : undefined,
           message: `« ${auto.name} » prêt en brouillon${
             extra?.resolvedCount != null ? ` avec ${extra.resolvedCount} contact(s)` : ""
           }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""}${activeNote}`,
           simulationHint:
-            "Invite à ouvrir la simulation à droite : jouer le prospect, jusqu'à 7 messages, sans WhatsApp réel.",
+            "Propose une simulation dans ce chat via show_campaign_simulation (6-7 tours), sans WhatsApp réel.",
           completedAt: nowFr(),
         });
       };
@@ -4549,12 +4549,12 @@ export async function executeTool(
         automationId: id,
         config: updated?.config,
         plan,
-        // Pas de planDisplay : évite de re-coller le fence / rouvrir la simulation à chaque tweak.
+        // Pas de planDisplay : évite de re-coller le fence / re-simuler à chaque tweak.
         message:
           `Campagne « ${detail.automation.name} » mise à jour` +
           `${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}. ` +
-          `Confirme brièvement le changement à l'utilisateur et dis qu'il peut repartir tester / Valider ` +
-          `dans la simulation à droite — SANS rappeler show_campaign_simulation ni coller un plan.`,
+          `Confirme brièvement le changement à l'utilisateur et propose « refais la simulation » ` +
+          `pour revoir le fil dans ce chat, ou « c'est bon » pour activer — SANS rappeler show_campaign_simulation ni coller un plan.`,
       });
     }
 

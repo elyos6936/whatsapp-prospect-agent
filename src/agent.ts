@@ -82,7 +82,7 @@ const ACTIVATION_AFTER_SIMULATION_NUDGE =
   "ou s’il a encore des **modifications** (accroche, ton, relances…). " +
   "N'appelle activate_automation QUE si l'utilisateur répond clairement oui / lance / active / vas-y. " +
   "S’il veut des modifs → update_automation_config en silence, confirme brièvement, " +
-  "dis qu’il peut **repartir Valider / tester à droite** — INTERDIT de régénérer une simulation. " +
+  "propose « refais la simulation » ou « c'est bon » pour activer — INTERDIT de régénérer une simulation tout seul. " +
   "Il peut aussi cliquer **Lancer** dans l'en-tête. Activer = simulation déjà validée.";
 
 const CONFIRM_ACTIVATE_NOW_NUDGE =
@@ -95,12 +95,11 @@ const FORCE_SIMULATION_NUDGE =
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
   "Le 1er tour « toi » = l'accroche validée (initial_message / variante choisie) — Attention seulement, PAS de prix/lien/pitch. " +
   "Les tours suivants : même mission / pacing (pousser l'intérêt, pas de « Ah super » vide), vouvoiement, sans prénom du prospect à tout va. " +
-  "Parle de **simulation** (à droite) — jamais « panneau » ni « campagne créée ». " +
-  "Dis clairement : « Si c'est bon, clique sur **Valider** à droite — je te demanderai ensuite dans ce chat si on active ou s’il y a d’autres modifs. » " +
+  "Parle de **simulation** dans CE chat — jamais « panneau », « à droite », ni « campagne créée ». " +
+  "Après le fil : le footer demande déjà le feedback — s’il dit « c'est bon », tu demanderas ensuite s’il active ou s’il y a d’autres modifs. " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +
-  "Après l'outil, le message contient déjà la demande de feedback — ne l'oublie pas. " +
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
-  "la simulation s'affiche dans ce chat et à droite — aucun envoi WhatsApp réel.";
+  "la simulation s'affiche UNIQUEMENT dans ce chat — aucun envoi WhatsApp réel.";
 
 /** Après une simu déjà là : modifs / questions = pas de nouveau fil ni de fenêtre. */
 const SILENT_TWEAK_AFTER_SIM_NUDGE =
@@ -109,9 +108,9 @@ const SILENT_TWEAK_AFTER_SIM_NUDGE =
   "INTERDIT de coller un planDisplay / fence de plan dans ta réponse. " +
   "Si modif (ton, accroche, prix, relances, vouvoiement…) → applique via update_automation_config " +
   "(et initial_message / conversation_guide si besoin), puis confirme en 1–2 phrases courtes : " +
-  "ce qui a changé + « tu peux repartir tester / Valider dans la simulation à droite ». " +
+  "ce qui a changé + « dis « refais la simulation » pour revoir le fil ici, ou « c'est bon » pour activer ». " +
   "Si question / préoccupation → réponds clairement, sans outil de simulation. " +
-  "Ne rouvre / ne renvoie PAS la fenêtre de simulation.";
+  "Ne régénère PAS une simulation sauf demande explicite.";
 
 /** Outils d'envoi réel — bloqués pendant une demande de simulation. */
 const OUTBOUND_SEND_TOOLS = new Set([
@@ -666,7 +665,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         ) {
           result = JSON.stringify({
             error: silentTweakAfterSim
-              ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler) et confirme brièvement : l'utilisateur peut repartir Valider à droite."
+              ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler) et confirme brièvement : propose « refais la simulation » ou « c'est bon » pour activer."
               : "Simulation déjà affichée. Ne la répète pas : résume et demande dans ce chat s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
           });
           messages.push({
@@ -764,9 +763,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           }
         }
 
-        // Après create : afficher le plan (ouvre la simu à droite).
+        // Après create : afficher le plan (invite à simuler dans ce chat).
         // Après update : NE PAS coller planDisplay — laisse l'IA confirmer brièvement
-        // sans re-spammer la fenêtre de simulation.
+        // sans re-spammer une simulation.
         if (toolCall.function.name === "create_automation") {
           try {
             const parsed = JSON.parse(result) as {

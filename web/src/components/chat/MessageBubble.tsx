@@ -5,10 +5,9 @@ import ReactMarkdown from 'react-markdown';
 import { Bot, MessageCircle } from 'lucide-react';
 import { LazyCodeBlock } from './LazyCodeBlock';
 import { ChatMedia } from './ChatMedia';
-import { PlanCard } from './PlanCard';
 import { cn } from '@/lib/utils';
 import { sanitizeAssistantText } from '@/lib/sanitize-assistant-text';
-import { extractPlanFromText, type AutomationVisualPlan } from '@/lib/automation-plan';
+import { extractPlanFromText } from '@/lib/automation-plan';
 import { classifyMediaUrl, isProxiableMediaUrl, normalizeMediaUrl } from '@/lib/media';
 import type { ChatMessage } from '@/lib/api';
 
@@ -58,10 +57,9 @@ const markdownComponents = {
 interface MessageBubbleProps {
   message: ChatMessage;
   isStreaming?: boolean;
-  onOpenPlan?: (plan: AutomationVisualPlan) => void;
 }
 
-export function MessageBubble({ message, isStreaming, onOpenPlan }: MessageBubbleProps) {
+export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const isUser = message.kind === 'user';
   const isAssistant = message.kind === 'assistant' || message.kind === 'error';
   const isWaIn = message.kind === 'whatsapp-in';
@@ -73,9 +71,9 @@ export function MessageBubble({ message, isStreaming, onOpenPlan }: MessageBubbl
   );
 
   const raw = isAssistant ? sanitizeAssistantText(message.content) : message.content;
-  const { plan, textWithoutPlan } = isAssistant
+  const { textWithoutPlan } = isAssistant
     ? extractPlanFromText(raw)
-    : { plan: null, textWithoutPlan: raw };
+    : { textWithoutPlan: raw };
   const displayContent = textWithoutPlan;
 
   const bubbleClass = cn(
@@ -132,7 +130,6 @@ export function MessageBubble({ message, isStreaming, onOpenPlan }: MessageBubbl
             </div>
           </div>
         )}
-        {plan && onOpenPlan && <PlanCard plan={plan} onOpen={() => onOpenPlan(plan)} />}
         <time className="px-1 text-[10px] text-text-500" dateTime={message.created_at}>
           {time}
         </time>
