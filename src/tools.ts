@@ -150,6 +150,7 @@ import { detectStickerConsent } from "./sticker-consent.js";
 import { parseThirdPartyNotificationArgs } from "./third-party-notification.js";
 import {
   formatVerticalContactList,
+  formatVerticalGroupList,
   formatVerticalMemberList,
   userFacingError,
 } from "./user-facing.js";
@@ -206,13 +207,20 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "get_group_members",
-      description: "Récupère les membres d'un groupe WhatsApp par son ID (xxx@g.us) ou son nom.",
+      description:
+        "Récupère les membres d'un groupe WhatsApp par son ID (xxx@g.us) ou son nom. " +
+        "Si l'utilisateur demande N membres seulement (ex. « deux membres »), passe limit=N.",
       parameters: {
         type: "object",
         properties: {
           group_id: {
             type: "string",
             description: "ID du groupe (xxx@g.us) OU nom du groupe (ex. Automax)",
+          },
+          limit: {
+            type: "number",
+            description:
+              "Nombre max de membres à renvoyer (ex. 2 si l'utilisateur demande « deux membres »). Omit = tous.",
           },
         },
         required: ["group_id"],
@@ -2181,18 +2189,21 @@ export async function executeTool(
           name: g.name,
           type: "groupe",
       }));
-      // Pas de `display` massif : l'affichage liste se fait via le chemin rapide agent
-      // (demande explicite). Ici = lookup LLM — renvoyer trop de lignes poussait à dumper le chat.
       const cap = 40;
+      const sliced = mapped.slice(0, cap);
       return JSON.stringify({
         count: mapped.length,
-        groups: mapped.slice(0, cap),
+        groups: sliced,
         truncated: mapped.length > cap,
+        // display pour le chemin outil si catalogue demandé (early-return agent)
+        display: formatVerticalGroupList(sliced.map((g) => ({ name: g.name, id: g.id }))),
         hint:
           mapped.length === 0
             ? "Aucun groupe trouvé — vérifiez que WhatsApp est connecté."
             : "N'affiche PAS ces groupes à l'utilisateur sauf s'il a demandé explicitement la liste. " +
-              "Pour agir sur un groupe nommé, passe le nom à send_whatsapp_message / l'outil concerné (résolution auto).",
+              "Si demandé : présente le champ display tel quel (liste verticale). " +
+              "Pour agir sur un groupe nommé / lister ses membres, utilise get_group_members — " +
+              "PAS ce catalogue.",
       });
     }
 
@@ -2286,20 +2297,27 @@ export async function executeTool(
       try {
       const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
       const data = await getGroupMembers(userId, groupId);
-        const members = data.participants.map((p) => ({
+        const allMembers = data.participants.map((p) => ({
           id: p.id,
           display: chatIdToDisplay(p.id),
           name: p.name ?? null,
           isAdmin: p.isAdmin ?? false,
         }));
+        const limRaw = args.limit != null ? Number(args.limit) : NaN;
+        const limit =
+          Number.isFinite(limRaw) && limRaw > 0
+            ? Math.min(500, Math.max(1, Math.round(limRaw)))
+            : undefined;
+        const members = limit != null ? allMembers.slice(0, limit) : allMembers;
         const groupName = data.subject || String(args.group_id ?? "groupe");
         return JSON.stringify({
           groupId: data.groupId,
           name: groupName,
           size: data.size,
+          shown: members.length,
           members,
-          display: formatVerticalMemberList(groupName, members),
-          hint: "Présente le champ display tel quel à l'utilisateur (liste verticale numérotée).",
+          display: formatVerticalMemberList(groupName, members, { total: allMembers.length }),
+          hint: "Présente le champ display tel quel à l'utilisateur (liste verticale numérotée). Respecte la limite demandée.",
         });
       } catch (err) {
         return JSON.stringify({ error: userFacingError(err) });

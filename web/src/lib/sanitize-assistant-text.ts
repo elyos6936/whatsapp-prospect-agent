@@ -56,5 +56,11 @@ export function sanitizeAssistantText(text: string): string {
   out = out.replace(/^\s*[-–—]\s*$/gm, '');
   out = out.replace(/\n{3,}/g, '\n\n');
 
+  // Répare listes numérotées collées sur une ligne : « 1. A 2. B 3. C » → hard breaks
+  // (évite le mur de texte si le LLM / un vieux message a omis les retours ligne)
+  if (/\d+\.\s+\S.+\s+\d+\.\s+\S/.test(out)) {
+    out = out.replace(/([^\n\d])\s+(\d{1,3}\.\s+)/g, '$1  \n$2');
+  }
+
   return out.trim();
 }

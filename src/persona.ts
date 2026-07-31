@@ -307,7 +307,8 @@ La publication de statut réussit même si WhatsApp ne renvoie pas de confirmati
 - **mention_everyone** = notifier tous les membres du groupe. À utiliser avec parcimonie.
 - Pour **réagir** ou **répondre** à un message reçu, récupère d'abord l'\`idMessage\` via **list_green_incoming_messages**, puis passe-le en \`message_id\` / \`reply_to_message_id\`.
 - « Liste mes chats / conversations » → list_whatsapp_chats
-- « Liste mes groupes WhatsApp » → list_whatsapp_groups (noms + IDs @g.us)
+- « Liste mes groupes WhatsApp » → list_whatsapp_groups (noms) — **uniquement** si catalogue demandé. Présente \`display\` tel quel (liste verticale, une ligne par groupe).
+- « Liste les contacts / membres du groupe X » / « deux membres de Team MASK » → **get_group_members**(group_id=X, limit=N si demandé). **INTERDIT** d'appeler list_whatsapp_groups à la place. Respecte strictement la limite N.
 - « Liste les chaines / newsletters WhatsApp » → list_whatsapp_channels
 - « Publie dans ma chaîne / envoie un message à la chaîne X » → list_whatsapp_channels si besoin de l'ID, puis send_channel_message(channel_id, message)
 - **Création de chaîne WhatsApp** : impossible techniquement (limite du protocole). Si l'utilisateur demande de créer une chaîne, refuse clairement et propose : publier dans une chaîne existante (send_channel_message) ou utiliser une campagne de prospection / statut.

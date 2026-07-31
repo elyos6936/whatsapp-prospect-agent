@@ -42,20 +42,26 @@ export function userFacingError(err: unknown): string {
 
 export function formatVerticalMemberList(
   groupName: string,
-  members: Array<{ display: string; name?: string | null; isAdmin?: boolean }>
+  members: Array<{ display: string; name?: string | null; isAdmin?: boolean }>,
+  opts?: { total?: number }
 ): string {
   if (!members.length) {
     return `Groupe « ${groupName} » — aucun membre trouvé.`;
   }
+  const total = opts?.total ?? members.length;
+  const countLabel =
+    total > members.length ? `${members.length} sur ${total}` : String(members.length);
+  // Hard breaks markdown (deux espaces + \n) : évite le collapse en un seul paragraphe
+  // si le parser markdown ne reconnaît pas la liste ordonnée.
   const lines = members.map((m, i) => {
     const label = (m.name && m.name.trim()) || m.display;
     const admin = m.isAdmin ? " · admin" : "";
-    const phone = m.display && m.display !== label ? `\n   ${m.display}` : "";
+    const phone = m.display && m.display !== label ? `  \n   ${m.display}` : "";
     return `${i + 1}. ${label}${admin}${phone}`;
   });
   return (
-    `Voici les membres du groupe « ${groupName} » (${members.length}) :\n\n` +
-    lines.join("\n\n")
+    `Voici les membres du groupe « ${groupName} » (${countLabel}) :\n\n` +
+    lines.join("  \n")
   );
 }
 
@@ -64,7 +70,7 @@ export function formatVerticalGroupList(
 ): string {
   if (!groups.length) return "Aucun groupe trouvé sur ce compte WhatsApp.";
   const lines = groups.map((g, i) => `${i + 1}. ${g.name || g.id || "Groupe"}`);
-  return `Voici vos groupes WhatsApp (${groups.length}) :\n\n` + lines.join("\n");
+  return `Voici vos groupes WhatsApp (${groups.length}) :\n\n` + lines.join("  \n");
 }
 
 export function formatVerticalContactList(
@@ -75,7 +81,7 @@ export function formatVerticalContactList(
   const lines = contacts.map((c, i) => {
     const phone = c.display || c.phone || "";
     const name = (c.name && c.name.trim()) || phone || "Sans nom";
-    return phone && phone !== name ? `${i + 1}. ${name}\n   ${phone}` : `${i + 1}. ${name}`;
+    return phone && phone !== name ? `${i + 1}. ${name}  \n   ${phone}` : `${i + 1}. ${name}`;
   });
-  return `Voici vos ${title} (${contacts.length}) :\n\n` + lines.join("\n\n");
+  return `Voici vos ${title} (${contacts.length}) :\n\n` + lines.join("  \n");
 }

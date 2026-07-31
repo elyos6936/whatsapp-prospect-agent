@@ -285,8 +285,17 @@ section[id] {
 }
 .prose-klanvio p { margin: 0 0 0.5em; }
 .prose-klanvio p:last-child { margin-bottom: 0; }
-.prose-klanvio ul, .prose-klanvio ol { margin: 0 0 0.5em 1.15em; }
-.prose-klanvio li { margin: 0.1em 0; }
+.prose-klanvio ul,
+.prose-klanvio ol {
+  margin: 0 0 0.5em;
+  padding-left: 1.25em;
+}
+.prose-klanvio ul { list-style-type: disc; }
+.prose-klanvio ol { list-style-type: decimal; }
+.prose-klanvio li {
+  margin: 0.15em 0;
+  display: list-item;
+}
 .prose-klanvio code:not(pre code) {
   font-size: 0.85em;
   padding: 0.15em 0.4em;
