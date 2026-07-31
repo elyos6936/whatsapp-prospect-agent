@@ -161,6 +161,7 @@ import {
   listCampaignMemories,
   memoryToQuietHours,
   memoryToneLabel,
+  parseMemoryHints,
   setThreadCampaignMemory,
 } from "./campaign-memory.js";
 
@@ -3812,21 +3813,15 @@ export async function executeTool(
           active: null,
           linkedToThread: false,
           message:
-            "Aucune mémoire liée à ce fil. Demande à l'utilisateur de cliquer sur le bouton Mémoire en haut du chat pour en choisir ou en créer une avant de continuer.",
+            "Aucune mémoire liée à ce fil. Demande à l'utilisateur de cliquer sur le bouton Mémoire pour en choisir ou en créer une avant de continuer.",
         });
       }
       return JSON.stringify({
         active: {
           id: mem.id,
           name: mem.name,
+          instructions: mem.instructions,
           isDefault: mem.isDefault,
-          ownerName: mem.ownerName,
-          introFormula: mem.introFormula,
-          tone: memoryToneLabel(mem.tone),
-          formality: mem.formality,
-          stickersEnabled: mem.stickersEnabled,
-          emojiLevel: mem.emojiLevel,
-          sendWindow: `${mem.sendWindowStart}h–${mem.sendWindowEnd}h`,
         },
         linkedToThread: true,
       });
@@ -4079,31 +4074,26 @@ export async function executeTool(
       try {
         const mem = linkedMem;
         if (mem) {
+          const hints = parseMemoryHints(mem.instructions);
           if (args.stickers_enabled === undefined) {
-            config.stickersEnabled = mem.stickersEnabled;
+            config.stickersEnabled = hints.stickersEnabled || mem.stickersEnabled;
           }
           if (args.quiet_hours_start == null && args.quiet_hours_end == null) {
             const q = memoryToQuietHours(mem);
             config.quietHoursStart = q.quietHoursStart;
             config.quietHoursEnd = q.quietHoursEnd;
           }
-          const toneBits = [
-            `Ton ${memoryToneLabel(mem.tone).toLowerCase()}`,
-            mem.formality === "tu" ? "tutoiement" : "vouvoiement",
-            mem.emojiLevel === "sparse" ? "emojis discrets" : "sans emoji",
-            mem.ownerName
-              ? `présentation : ${mem.ownerName}${mem.introFormula ? ` (« ${mem.introFormula} »)` : ""}`
-              : null,
-            mem.toneNote || null,
-          ].filter(Boolean);
-          const memoryGuide = `Style (mémoire « ${mem.name} ») : ${toneBits.join(" · ")}.`;
+          const memoryGuide =
+            mem.instructions.trim() ||
+            `Style (mémoire « ${mem.name} ») : ton ${memoryToneLabel(mem.tone).toLowerCase()}.`;
           if (!config.conversationGuide?.trim()) {
-            config.conversationGuide = memoryGuide;
-          } else if (!config.conversationGuide.includes("mémoire")) {
-            config.conversationGuide = `${memoryGuide}\n${config.conversationGuide}`;
+            config.conversationGuide = `Mémoire « ${mem.name} » :\n${memoryGuide}`;
+          } else if (!config.conversationGuide.includes("Mémoire")) {
+            config.conversationGuide = `Mémoire « ${mem.name} » :\n${memoryGuide}\n${config.conversationGuide}`;
           }
-          if (mem.ownerName.trim()) {
-            await saveBusinessProfile(userId, { ownerName: mem.ownerName.trim() }).catch(() => {});
+          const owner = (hints.ownerName || mem.ownerName).trim();
+          if (owner) {
+            await saveBusinessProfile(userId, { ownerName: owner }).catch(() => {});
           }
         }
       } catch {

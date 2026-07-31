@@ -16,6 +16,7 @@ function bodyToInput(body: Record<string, unknown> | null | undefined): Campaign
   const b = body ?? {};
   return {
     name: String(b.name ?? "").trim(),
+    instructions: b.instructions != null ? String(b.instructions) : undefined,
     ownerName: b.ownerName != null ? String(b.ownerName) : undefined,
     introFormula: b.introFormula != null ? String(b.introFormula) : undefined,
     tone: b.tone as CampaignMemoryInput["tone"],
@@ -34,6 +35,7 @@ function toJson(m: Awaited<ReturnType<typeof getCampaignMemory>>) {
   return {
     id: m.id,
     name: m.name,
+    instructions: m.instructions,
     ownerName: m.ownerName,
     introFormula: m.introFormula,
     tone: m.tone,
@@ -84,6 +86,12 @@ export async function registerCampaignMemoryRoutes(app: FastifyInstance): Promis
       const id = Number(request.params.id);
       if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
       const input = bodyToInput(request.body);
+      // PATCH : name optionnel si on ne met à jour que les instructions
+      if (request.body?.name == null) {
+        delete (input as { name?: string }).name;
+      } else if (!input.name || input.name.length < 2) {
+        return reply.status(400).send({ error: "Donne un nom à la mémoire (min. 2 caractères)." });
+      }
       const mem = await updateCampaignMemory(userId, id, input);
       if (!mem) return reply.status(404).send({ error: "Mémoire introuvable." });
       return { ok: true, memory: toJson(mem) };

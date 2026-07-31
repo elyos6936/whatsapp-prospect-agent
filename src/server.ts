@@ -525,6 +525,7 @@ app.get<{ Params: { id: string } }>("/api/threads/:id/memory", async (request, r
       ? {
           id: memory.id,
           name: memory.name,
+          instructions: memory.instructions,
           ownerName: memory.ownerName,
           introFormula: memory.introFormula,
           tone: memory.tone,

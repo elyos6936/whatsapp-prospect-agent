@@ -428,6 +428,7 @@ export type CampaignMemoryEmojiLevel = 'none' | 'sparse';
 export type CampaignMemoryDto = {
   id: number;
   name: string;
+  instructions: string;
   ownerName: string;
   introFormula: string;
   tone: CampaignMemoryTone;
@@ -444,6 +445,7 @@ export type CampaignMemoryDto = {
 
 export type CampaignMemoryInput = {
   name: string;
+  instructions?: string;
   ownerName?: string;
   introFormula?: string;
   tone?: CampaignMemoryTone;
@@ -459,7 +461,7 @@ export type CampaignMemoryInput = {
 export async function fetchCampaignMemories(): Promise<{
   memories: CampaignMemoryDto[];
   max: number;
-  prefill: { ownerName: string };
+  prefill: { ownerName: string; template?: string };
 }> {
   return request('/api/campaign-memories');
 }

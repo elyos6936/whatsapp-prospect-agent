@@ -3,7 +3,7 @@
  * Complète les consignes de persona.ts (questions progressives, RDV, etc.).
  */
 import type { AgentMessage } from "./db.js";
-import type { CampaignMemory } from "./campaign-memory.js";
+import { parseMemoryHints, type CampaignMemory } from "./campaign-memory.js";
 
 const CAMPAIGN_INTENT_RE =
   /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|g[eè]re[rz]?\s+tout|tous\s+(mes\s+)?messages|compte\s+whatsapp|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
@@ -258,16 +258,27 @@ export function assessCampaignBriefing(
   const missing: string[] = [];
   const inbound = isInboundClosingFlow(history, userMessage, purpose);
   const catchAll = inbound && wantsInboundCatchAll(history, userMessage);
-  const memoryCoversIdentity = Boolean(memory?.ownerName?.trim());
+  const memText = (memory?.instructions ?? "").trim();
+  const memHints = memory ? parseMemoryHints(memText || memory.instructions || "") : null;
+  const memoryCoversIdentity =
+    Boolean(memory?.ownerName?.trim()) || Boolean(memHints?.coversIdentity);
   const memoryCoversWindow =
-    memory != null &&
-    Number.isFinite(memory.sendWindowStart) &&
-    Number.isFinite(memory.sendWindowEnd);
+    Boolean(memHints?.coversWindow) ||
+    (memory != null &&
+      Number.isFinite(memory.sendWindowStart) &&
+      Number.isFinite(memory.sendWindowEnd));
+  const memoryCoversOffer = Boolean(memHints?.coversOffer);
+  const memoryCoversPrice = Boolean(memHints?.coversPrice);
+  const memoryCoversGoal = Boolean(memHints?.coversGoal);
+  const memoryCoversLink = Boolean(memHints?.coversLink);
+  const memoryIsRich = memText.length >= 120;
 
   const hasOffer =
-    /\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence|support|messages)\b/i.test(
+    memoryCoversOffer ||
+    (/\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence|support|messages)\b/i.test(
       blob
-    ) && blob.length > 60;
+    ) &&
+      blob.length > 60);
   if (!hasOffer) missing.push("offre / produit ou service précis");
 
   const hasTarget =
@@ -290,19 +301,21 @@ export function assessCampaignBriefing(
     /\b(paiement|payer|wave|orange\s*money|moov|lien\s+de\s+paiement|checkout)\b/i.test(blob);
   const wantsLink = /\b(envoyer\s+un\s+lien|lien\s+vers|url)\b/i.test(blob) || wantsPay;
 
-  const hasHttpLink = /https?:\/\/\S+/i.test(blob);
+  const hasHttpLink = memoryCoversLink || /https?:\/\/\S+/i.test(blob);
   if (wantsRdv && !hasHttpLink) {
     missing.push("lien de réservation RDV (URL réelle Calendly / Google / autre)");
   } else if (wantsLink && !hasHttpLink && !wantsRdv) {
     missing.push("URL concrète à envoyer au prospect");
   }
 
-  const hasPrice = /\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)|\bprix\b.{0,40}\d/i.test(blob);
+  const hasPrice =
+    memoryCoversPrice || /\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)|\bprix\b.{0,40}\d/i.test(blob);
   const isSale =
     /\b(vendre|vente|acheter|prix|tarif|fcfa|commander|paiement)\b/i.test(blob) && !wantsRdv;
   if (isSale && !hasPrice) missing.push("prix exact (chiffre en FCFA)");
 
   const hasGoal =
+    memoryCoversGoal ||
     /\b(objectif|rdv|rendez[- ]?vous|vente|paiement|livraison|inscription|d[eé]mo|closing|support)\b/i.test(
       blob
     );
@@ -341,9 +354,13 @@ export function assessCampaignBriefing(
     }
   }
 
-  // Au moins 6 questions posées + aucun élément critique manquant
-  // (seuil abaissé si mémoire couvre identité + fenêtre)
-  const minQuestions = memoryCoversIdentity && memoryCoversWindow ? 4 : 6;
+  // Au moins N questions + aucun élément critique manquant
+  // Mémoire riche → bien moins de questions (infos déjà dans les instructions).
+  const minQuestions = memoryIsRich
+    ? 2
+    : memoryCoversIdentity && memoryCoversWindow
+      ? 3
+      : 6;
   const criticalMissing = missing.filter(
     (m) =>
       m.includes("lien de réservation") ||

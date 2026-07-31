@@ -1,6 +1,6 @@
 /**
- * Mémoires de campagne — préférences communes entrant / sortant
- * (présentation, ton, stickers, emojis, fenêtre d'envoi).
+ * Mémoires de campagne — instructions libres (phrases à tirets)
+ * liées à une automatisation via agent_threads.campaign_memory_id.
  */
 import { sql } from "./pg.js";
 import { getAppSettings } from "./db.js";
@@ -13,6 +13,9 @@ export interface CampaignMemory {
   id: number;
   userId: number;
   name: string;
+  /** Instructions clés (une phrase par ligne, souvent préfixée par « - »). */
+  instructions: string;
+  /** Champs legacy (dérivés / rétrocompat). */
   ownerName: string;
   introFormula: string;
   tone: CampaignMemoryTone;
@@ -20,9 +23,7 @@ export interface CampaignMemory {
   formality: CampaignMemoryFormality;
   stickersEnabled: boolean;
   emojiLevel: CampaignMemoryEmojiLevel;
-  /** Début fenêtre d'envoi (heure locale inclusive), ex. 9. */
   sendWindowStart: number;
-  /** Fin fenêtre d'envoi (heure locale exclusive), ex. 18. */
   sendWindowEnd: number;
   isDefault: boolean;
   createdAt: string;
@@ -31,6 +32,7 @@ export interface CampaignMemory {
 
 export type CampaignMemoryInput = {
   name: string;
+  instructions?: string;
   ownerName?: string;
   introFormula?: string;
   tone?: CampaignMemoryTone;
@@ -44,6 +46,7 @@ export type CampaignMemoryInput = {
 };
 
 const MAX_MEMORIES = 8;
+const INSTRUCTIONS_MAX = 12_000;
 
 const TONES = new Set<CampaignMemoryTone>(["direct", "chaleureux", "pro", "decontracte"]);
 const FORMALITIES = new Set<CampaignMemoryFormality>(["vous", "tu"]);
@@ -73,6 +76,7 @@ export async function ensureCampaignMemoriesSchema(): Promise<void> {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
       `;
+      await sql`ALTER TABLE campaign_memories ADD COLUMN IF NOT EXISTS instructions TEXT NOT NULL DEFAULT ''`;
       await sql`CREATE INDEX IF NOT EXISTS idx_campaign_memories_user ON campaign_memories(user_id, id DESC)`;
       await sql`ALTER TABLE agent_threads ADD COLUMN IF NOT EXISTS campaign_memory_id BIGINT REFERENCES campaign_memories(id) ON DELETE SET NULL`;
     })().catch((err) => {
@@ -112,20 +116,217 @@ function normalizeEmoji(raw: unknown): CampaignMemoryEmojiLevel {
   return "none";
 }
 
-function mapRow(row: Record<string, unknown>): CampaignMemory {
+export function memoryToneLabel(tone: CampaignMemoryTone): string {
+  const map: Record<CampaignMemoryTone, string> = {
+    direct: "Direct",
+    chaleureux: "Chaleureux",
+    pro: "Pro",
+    decontracte: "Décontracté",
+  };
+  return map[tone] ?? tone;
+}
+
+/** Gabarit de phrases pour une nouvelle mémoire. */
+export function buildDefaultMemoryInstructions(opts?: {
+  ownerName?: string | null;
+  businessName?: string | null;
+}): string {
+  const owner = (opts?.ownerName ?? "").trim();
+  const biz = (opts?.businessName ?? "").trim();
+  const who = owner
+    ? `- Je me présente comme ${owner}${biz ? `, de ${biz}` : ""}.`
+    : `- Je me présente comme [prénom], [rôle]${biz ? ` de ${biz}` : " de [entreprise]"}.`;
+  return [
+    who,
+    "- Ton professionnel, clair et rassurant.",
+    "- Je vouvoie les interlocuteurs.",
+    "- Pas d'emojis dans les messages.",
+    "- Pas de stickers dans les conversations.",
+    "- J'envoie uniquement entre 9h et 18h.",
+    "- Produit / service : [décrire ce que tu proposes et à qui ça s'adresse].",
+    "- Prix / tarifs : [indiquer les prix en FCFA].",
+    "- Objectif des conversations : [RDV, vente, support, envoi de lien…].",
+    "- Lien utile à envoyer si besoin : [URL].",
+    "- Infos complémentaires : [avantages, zones, délais, FAQ…].",
+  ].join("\n");
+}
+
+/** Reconstruit des phrases à partir des anciens champs structurés. */
+export function legacyFieldsToInstructions(fields: {
+  ownerName?: string;
+  introFormula?: string;
+  tone?: CampaignMemoryTone;
+  toneNote?: string;
+  formality?: CampaignMemoryFormality;
+  stickersEnabled?: boolean;
+  emojiLevel?: CampaignMemoryEmojiLevel;
+  sendWindowStart?: number;
+  sendWindowEnd?: number;
+}): string {
+  const lines: string[] = [];
+  const owner = (fields.ownerName ?? "").trim();
+  const intro = (fields.introFormula ?? "").trim();
+  if (owner) {
+    lines.push(
+      intro
+        ? `- Je me présente comme ${owner} (« ${intro} »).`
+        : `- Je me présente comme ${owner}.`
+    );
+  } else {
+    lines.push("- Je me présente comme [prénom], [rôle] de [entreprise].");
+  }
+  const tone = memoryToneLabel(normalizeTone(fields.tone)).toLowerCase();
+  const note = (fields.toneNote ?? "").trim();
+  lines.push(note ? `- Ton ${tone} (${note}).` : `- Ton ${tone}.`);
+  lines.push(
+    fields.formality === "tu"
+      ? "- Je tutoie les interlocuteurs."
+      : "- Je vouvoie les interlocuteurs."
+  );
+  lines.push(
+    fields.emojiLevel === "sparse"
+      ? "- Emojis discrets (max 1 par message)."
+      : "- Pas d'emojis dans les messages."
+  );
+  lines.push(
+    fields.stickersEnabled
+      ? "- Stickers autorisés dans les conversations."
+      : "- Pas de stickers dans les conversations."
+  );
+  const start = clampHour(fields.sendWindowStart, 9);
+  const end = clampHour(fields.sendWindowEnd, 18);
+  lines.push(`- J'envoie uniquement entre ${start}h et ${end}h.`);
+  lines.push("- Produit / service : [décrire ce que tu proposes et à qui ça s'adresse].");
+  lines.push("- Prix / tarifs : [indiquer les prix en FCFA].");
+  lines.push("- Objectif des conversations : [RDV, vente, support, envoi de lien…].");
+  lines.push("- Lien utile à envoyer si besoin : [URL].");
+  lines.push("- Infos complémentaires : [avantages, zones, délais, FAQ…].");
+  return lines.join("\n");
+}
+
+/** Indices dérivés du texte libre (seed create_automation / briefing). */
+export function parseMemoryHints(instructions: string): {
+  ownerName: string;
+  stickersEnabled: boolean;
+  emojiLevel: CampaignMemoryEmojiLevel;
+  formality: CampaignMemoryFormality;
+  sendWindowStart: number;
+  sendWindowEnd: number;
+  coversIdentity: boolean;
+  coversOffer: boolean;
+  coversPrice: boolean;
+  coversGoal: boolean;
+  coversWindow: boolean;
+  coversLink: boolean;
+} {
+  const text = instructions.trim();
+  const lower = text.toLowerCase();
+
+  let ownerName = "";
+  const who =
+    text.match(
+      /(?:je\s+(?:me\s+présente\s+comme|suis|m['']appelle)|présentation\s*[:=]\s*)\s*([^.\n]+)/i
+    ) ?? text.match(/-\s*je\s+suis\s+([^.\n]+)/i);
+  if (who?.[1]) {
+    ownerName = who[1].replace(/[«»"].*$/, "").trim().slice(0, 120);
+  }
+
+  const stickersEnabled =
+    /stickers?\s+autoris/i.test(text) ||
+    (/stickers?/i.test(text) && !/pas\s+de\s+stickers?/i.test(text));
+
+  const emojiLevel: CampaignMemoryEmojiLevel =
+    /emojis?\s+discret|max\s*1/i.test(text) && !/pas\s+d['']?emojis?/i.test(text)
+      ? "sparse"
+      : "none";
+
+  const formality: CampaignMemoryFormality =
+    /je\s+tutoie|tutoiement|\btu\b.*interlocut/i.test(lower) &&
+    !/je\s+vouvoie|vouvoiement/i.test(lower)
+      ? "tu"
+      : "vous";
+
+  let sendWindowStart = 9;
+  let sendWindowEnd = 18;
+  const win =
+    text.match(/entre\s+(\d{1,2})\s*h?\s*(?:et|à|a|-|–|—)\s*(\d{1,2})\s*h?/i) ??
+    text.match(/(\d{1,2})\s*h\s*(?:-|–|—|à|a)\s*(\d{1,2})\s*h/i);
+  if (win) {
+    sendWindowStart = clampHour(win[1], 9);
+    sendWindowEnd = clampHour(win[2], 18);
+  }
+
+  const coversIdentity =
+    Boolean(ownerName) ||
+    /je\s+(me\s+présente|suis|m['']appelle)|présentation/i.test(text);
+  const coversOffer =
+    /produit|service|offre|je\s+(propose|vends|offre)|formation|coaching|automatisation/i.test(
+      text
+    ) && !/\[décrire/i.test(text);
+  const coversPrice =
+    (/\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€)?|\bprix\b|\btarif/i.test(text) &&
+      !/\[indiquer/i.test(text)) ||
+    /\d{3,}/.test(text);
+  const coversGoal =
+    /objectif|rdv|rendez[- ]?vous|vente|support|closing|paiement|livraison|inscription/i.test(
+      text
+    ) && !/\[RDV/i.test(text);
+  const coversWindow =
+    /entre\s+\d{1,2}|envoie\s+uniquement|\d{1,2}\s*h\s*(?:-|–|et)/i.test(text);
+  const coversLink =
+    /https?:\/\/\S+/i.test(text) ||
+    (/lien\s+(utile|à\s+envoyer|de\s+réserv)/i.test(text) && !/\[URL\]/i.test(text));
+
   return {
-    id: Number(row.id),
-    userId: Number(row.user_id),
-    name: String(row.name ?? "").trim() || "Mémoire",
-    ownerName: String(row.owner_name ?? "").trim(),
-    introFormula: String(row.intro_formula ?? "").trim(),
+    ownerName,
+    stickersEnabled,
+    emojiLevel,
+    formality,
+    sendWindowStart,
+    sendWindowEnd,
+    coversIdentity,
+    coversOffer,
+    coversPrice,
+    coversGoal,
+    coversWindow,
+    coversLink,
+  };
+}
+
+function effectiveInstructions(row: Record<string, unknown>): string {
+  const raw = String(row.instructions ?? "").trim();
+  if (raw) return raw;
+  return legacyFieldsToInstructions({
+    ownerName: String(row.owner_name ?? ""),
+    introFormula: String(row.intro_formula ?? ""),
     tone: normalizeTone(row.tone),
-    toneNote: String(row.tone_note ?? "").trim(),
+    toneNote: String(row.tone_note ?? ""),
     formality: normalizeFormality(row.formality),
     stickersEnabled: Boolean(row.stickers_enabled),
     emojiLevel: normalizeEmoji(row.emoji_level),
     sendWindowStart: clampHour(row.send_window_start, 9),
     sendWindowEnd: clampHour(row.send_window_end, 18),
+  });
+}
+
+function mapRow(row: Record<string, unknown>): CampaignMemory {
+  const instructions = effectiveInstructions(row);
+  const hints = parseMemoryHints(instructions);
+  const ownerFromRow = String(row.owner_name ?? "").trim();
+  return {
+    id: Number(row.id),
+    userId: Number(row.user_id),
+    name: String(row.name ?? "").trim() || "Mémoire",
+    instructions,
+    ownerName: ownerFromRow || hints.ownerName,
+    introFormula: String(row.intro_formula ?? "").trim(),
+    tone: normalizeTone(row.tone),
+    toneNote: String(row.tone_note ?? "").trim(),
+    formality: normalizeFormality(row.formality) || hints.formality,
+    stickersEnabled: Boolean(row.stickers_enabled) || hints.stickersEnabled,
+    emojiLevel: normalizeEmoji(row.emoji_level) || hints.emojiLevel,
+    sendWindowStart: clampHour(row.send_window_start, hints.sendWindowStart),
+    sendWindowEnd: clampHour(row.send_window_end, hints.sendWindowEnd),
     isDefault: Boolean(row.is_default),
     createdAt: formatTs(row.created_at),
     updatedAt: formatTs(row.updated_at),
@@ -137,42 +338,24 @@ export function memoryToQuietHours(memory: CampaignMemory): {
   quietHoursStart: number;
   quietHoursEnd: number;
 } {
+  const hints = parseMemoryHints(memory.instructions);
   return {
-    quietHoursStart: memory.sendWindowEnd,
-    quietHoursEnd: memory.sendWindowStart,
+    quietHoursStart: hints.sendWindowEnd || memory.sendWindowEnd,
+    quietHoursEnd: hints.sendWindowStart || memory.sendWindowStart,
   };
-}
-
-export function memoryToneLabel(tone: CampaignMemoryTone): string {
-  const map: Record<CampaignMemoryTone, string> = {
-    direct: "Direct",
-    chaleureux: "Chaleureux",
-    pro: "Pro",
-    decontracte: "Décontracté",
-  };
-  return map[tone] ?? tone;
 }
 
 /** Texte injecté dans le contexte agent. */
 export function formatMemoryForAgent(memory: CampaignMemory): string {
-  const lines = [
-    `Nom : « ${memory.name} »`,
-    memory.ownerName
-      ? `Présentation : ${memory.ownerName}${memory.introFormula ? ` — « ${memory.introFormula} »` : ""}`
-      : null,
-    `Ton : ${memoryToneLabel(memory.tone)}${memory.toneNote ? ` (${memory.toneNote})` : ""}`,
-    `Tutoiement : ${memory.formality === "tu" ? "tutoiement (tu)" : "vouvoiement (vous)"}`,
-    `Stickers / emojis campagne : ${memory.stickersEnabled ? "oui" : "non"}`,
-    `Emojis dans les messages : ${memory.emojiLevel === "sparse" ? "discrets (max 1)" : "aucun"}`,
-    `Fenêtre d'envoi : ${memory.sendWindowStart}h–${memory.sendWindowEnd}h`,
-  ].filter(Boolean);
+  const body = memory.instructions.trim() || legacyFieldsToInstructions(memory);
   return (
-    `## Mémoire active — « ${memory.name} » (liée à CE fil — ne PAS re-demander)\n` +
-    `${lines.join("\n")}\n\n` +
-    `Ces préférences sont déjà fixées pour cette automatisation (bouton Mémoire dans le chat). ` +
-    `INTERDIT de reposer : présentation / identité, stickers, ton/style, tutoiement, fenêtre horaire d'envoi.\n` +
-    `Continue de briefier uniquement le produit (offre, cible, prix, lien, déclencheurs, accroche, lancement, relances, notif tiers).\n` +
-    `Si l'utilisateur veut changer de mémoire → set_campaign_memory ou bouton Mémoire.`
+    `## Mémoire active — « ${memory.name} » (liée à CE fil uniquement)\n` +
+    `Ces instructions sont la source de vérité pour CETTE automatisation.\n` +
+    `Applique-les pour le style, la présentation, les produits/services et le comportement.\n` +
+    `INTERDIT de reposer ce qui est déjà couvert ci-dessous.\n` +
+    `Pose uniquement les questions encore manquantes et pertinentes pour lancer.\n\n` +
+    `${body}\n\n` +
+    `Si l'utilisateur veut changer de mémoire → bouton Mémoire ou set_campaign_memory.`
   );
 }
 
@@ -239,7 +422,6 @@ export async function resolveActiveCampaignMemory(
 
 /**
  * Mémoire explicitement liée au fil uniquement (pas de fallback défaut compte).
- * Isolations par automatisation : sans lien → null.
  */
 export async function getLinkedCampaignMemory(
   userId: number,
@@ -257,6 +439,11 @@ async function clearDefaults(userId: number): Promise<void> {
   `;
 }
 
+function normalizeInstructions(raw: unknown, fallback = ""): string {
+  const text = String(raw ?? fallback).replace(/\r\n/g, "\n").trim();
+  return text.slice(0, INSTRUCTIONS_MAX);
+}
+
 export async function createCampaignMemory(
   userId: number,
   input: CampaignMemoryInput
@@ -268,14 +455,18 @@ export async function createCampaignMemory(
   }
 
   let ownerName = (input.ownerName ?? "").trim();
-  if (!ownerName) {
-    try {
-      const s = await getAppSettings(userId);
-      ownerName = (s.business_owner_name || "").trim();
-    } catch {
-      /* ignore */
-    }
+  try {
+    const s = await getAppSettings(userId);
+    if (!ownerName) ownerName = (s.business_owner_name || "").trim();
+  } catch {
+    /* ignore */
   }
+
+  const instructions =
+    normalizeInstructions(input.instructions) ||
+    buildDefaultMemoryInstructions({ ownerName });
+  const hints = parseMemoryHints(instructions);
+  if (!ownerName) ownerName = hints.ownerName;
 
   const name = input.name.trim().slice(0, 80) || "Mémoire";
   const makeDefault = existing.length === 0 || Boolean(input.isDefault);
@@ -283,20 +474,21 @@ export async function createCampaignMemory(
 
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO campaign_memories (
-      user_id, name, owner_name, intro_formula, tone, tone_note, formality,
+      user_id, name, instructions, owner_name, intro_formula, tone, tone_note, formality,
       stickers_enabled, emoji_level, send_window_start, send_window_end, is_default
     ) VALUES (
       ${userId},
       ${name},
+      ${instructions},
       ${ownerName.slice(0, 120)},
       ${(input.introFormula ?? "").trim().slice(0, 280)},
       ${normalizeTone(input.tone)},
       ${(input.toneNote ?? "").trim().slice(0, 200)},
-      ${normalizeFormality(input.formality)},
-      ${Boolean(input.stickersEnabled)},
-      ${normalizeEmoji(input.emojiLevel)},
-      ${clampHour(input.sendWindowStart, 9)},
-      ${clampHour(input.sendWindowEnd, 18)},
+      ${normalizeFormality(input.formality ?? hints.formality)},
+      ${input.stickersEnabled != null ? Boolean(input.stickersEnabled) : hints.stickersEnabled},
+      ${normalizeEmoji(input.emojiLevel ?? hints.emojiLevel)},
+      ${clampHour(input.sendWindowStart ?? hints.sendWindowStart, 9)},
+      ${clampHour(input.sendWindowEnd ?? hints.sendWindowEnd, 18)},
       ${makeDefault}
     )
     RETURNING *
@@ -316,18 +508,45 @@ export async function updateCampaignMemory(
   if (input.isDefault === true) await clearDefaults(userId);
 
   const name = input.name != null ? input.name.trim().slice(0, 80) || current.name : current.name;
+  const instructions =
+    input.instructions != null
+      ? normalizeInstructions(input.instructions, current.instructions)
+      : current.instructions;
+  const hints = parseMemoryHints(instructions);
+  const ownerName =
+    input.ownerName != null
+      ? input.ownerName.trim().slice(0, 120)
+      : hints.ownerName || current.ownerName;
+
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE campaign_memories SET
       name = ${name},
-      owner_name = ${input.ownerName != null ? input.ownerName.trim().slice(0, 120) : current.ownerName},
+      instructions = ${instructions},
+      owner_name = ${ownerName},
       intro_formula = ${input.introFormula != null ? input.introFormula.trim().slice(0, 280) : current.introFormula},
       tone = ${input.tone != null ? normalizeTone(input.tone) : current.tone},
       tone_note = ${input.toneNote != null ? input.toneNote.trim().slice(0, 200) : current.toneNote},
-      formality = ${input.formality != null ? normalizeFormality(input.formality) : current.formality},
-      stickers_enabled = ${input.stickersEnabled != null ? Boolean(input.stickersEnabled) : current.stickersEnabled},
-      emoji_level = ${input.emojiLevel != null ? normalizeEmoji(input.emojiLevel) : current.emojiLevel},
-      send_window_start = ${input.sendWindowStart != null ? clampHour(input.sendWindowStart, current.sendWindowStart) : current.sendWindowStart},
-      send_window_end = ${input.sendWindowEnd != null ? clampHour(input.sendWindowEnd, current.sendWindowEnd) : current.sendWindowEnd},
+      formality = ${
+        input.formality != null
+          ? normalizeFormality(input.formality)
+          : hints.formality || current.formality
+      },
+      stickers_enabled = ${
+        input.stickersEnabled != null ? Boolean(input.stickersEnabled) : hints.stickersEnabled
+      },
+      emoji_level = ${
+        input.emojiLevel != null
+          ? normalizeEmoji(input.emojiLevel)
+          : hints.emojiLevel || current.emojiLevel
+      },
+      send_window_start = ${clampHour(
+        input.sendWindowStart ?? hints.sendWindowStart,
+        current.sendWindowStart
+      )},
+      send_window_end = ${clampHour(
+        input.sendWindowEnd ?? hints.sendWindowEnd,
+        current.sendWindowEnd
+      )},
       is_default = ${input.isDefault === true ? true : current.isDefault},
       updated_at = NOW()
     WHERE user_id = ${userId} AND id = ${id}
@@ -398,12 +617,22 @@ export async function getThreadCampaignMemoryId(
 }
 
 /** Prefill présentation depuis profil business (onboarding). */
-export async function getPresentationPrefill(userId: number): Promise<{ ownerName: string }> {
+export async function getPresentationPrefill(userId: number): Promise<{
+  ownerName: string;
+  template: string;
+}> {
   try {
     const s = await getAppSettings(userId);
-    return { ownerName: (s.business_owner_name || "").trim() };
+    const ownerName = (s.business_owner_name || "").trim();
+    return {
+      ownerName,
+      template: buildDefaultMemoryInstructions({ ownerName }),
+    };
   } catch {
-    return { ownerName: "" };
+    return {
+      ownerName: "",
+      template: buildDefaultMemoryInstructions(),
+    };
   }
 }
 
