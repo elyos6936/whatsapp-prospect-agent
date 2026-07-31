@@ -5,25 +5,43 @@
 import type { AgentMessage } from "./db.js";
 import { wantsCampaignSimulation } from "./campaign-briefing.js";
 
-/** Vrai contenu de simulation (fil Toi → / Prospect → ou messages entre guillemets). */
+/** Retire fences code / plan pour ne pas confondre JSON avec un fil de simu. */
+function stripCodeFences(text: string): string {
+  return text.replace(/```[\s\S]*?```/g, " ");
+}
+
+/** Vrai contenu de simulation (fil Toi → / Prospect →). */
 export function hasSimulationThread(text: string): boolean {
-  const arrowTurns = (text.match(/→/g) || []).length;
+  const cleaned = stripCodeFences(text);
+  const arrowTurns = (cleaned.match(/→/g) || []).length;
   if (arrowTurns >= 2) return true;
-  if (/(^|\n)\s*(toi|moi)\s*→/im.test(text) && /(^|\n)\s*\S{2,}\s*→/im.test(text)) {
+  if (
+    /(^|\n)\s*(toi|moi)\s*→/im.test(cleaned) &&
+    /(^|\n)\s*\S{2,}\s*→/im.test(cleaned)
+  ) {
     return true;
   }
-  const quotes = text.match(/[«"][^»"\n]{12,}[»"]/g);
-  return Boolean(quotes && quotes.length >= 2);
+  // Guillemets français seulement (jamais " ASCII du JSON planDisplay).
+  const quotes = cleaned.match(/«[^»\n]{8,}»/g);
+  // Au moins 2 répliques « … » ET un marqueur de fil (Toi/Prospect/Simulation).
+  if (quotes && quotes.length >= 2) {
+    return /\b(toi|prospect|simulation)\b/i.test(cleaned);
+  }
+  return false;
 }
 
 const SIMULATION_ADJUSTMENT_FOOTER =
-  /Qu'est-ce que tu veux (ajuster|changer)|ce qui te convient|simulation courte/i;
+  /Qu'est-ce que tu veux (ajuster|changer)|ce qui te convient|simulation courte|Dis-moi concrètement/i;
 
 export function recentHistoryHasSimulation(history: AgentMessage[]): boolean {
   for (let i = history.length - 1; i >= 0 && i >= history.length - 8; i--) {
     const m = history[i];
     if (m?.role !== "assistant") continue;
-    if (hasSimulationThread(m.content) || SIMULATION_ADJUSTMENT_FOOTER.test(m.content)) {
+    // Offre de simu / planDisplay ≠ fil déjà montré
+    if (/veux-tu tester une?\s*\*?\*?simulation/i.test(m.content) && !hasSimulationThread(m.content)) {
+      continue;
+    }
+    if (hasSimulationThread(m.content) || SIMULATION_ADJUSTMENT_FOOTER.test(stripCodeFences(m.content))) {
       return true;
     }
   }
@@ -143,8 +161,9 @@ export function resolveSimulationTurnMode(
   userMessage: string
 ): SimulationTurnMode {
   const hasSimAlready = recentHistoryHasSimulation(history);
+  const wantsSim = wantsCampaignSimulation(userMessage, history);
   const forceSim =
-    (!hasSimAlready && wantsCampaignSimulation(userMessage, history)) ||
+    (!hasSimAlready && wantsSim) ||
     (hasSimAlready && userWantsExplicitResimulation(userMessage));
   if (forceSim) return "force_sim";
 

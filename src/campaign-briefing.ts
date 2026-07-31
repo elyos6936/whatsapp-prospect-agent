@@ -31,7 +31,7 @@ export function wantsCampaignSimulation(userMessage: string, history: AgentMessa
     const m = history[i];
     if (m?.role !== "assistant") continue;
     if (
-      /simulation|simuler|aper[cç]u|fil de (discussion|conversation)|veux-tu une simulation|simulation courte/i.test(
+      /simulation|simuler|aper[cç]u|fil de (discussion|conversation)|veux-tu (tester )?une?\s*\*?\*?simulation|simulation dans ce chat|simulation courte/i.test(
         m.content
       )
     ) {
