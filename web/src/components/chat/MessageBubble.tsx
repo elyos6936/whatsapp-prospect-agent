@@ -8,6 +8,7 @@ import { ChatMedia } from './ChatMedia';
 import { cn } from '@/lib/utils';
 import { sanitizeAssistantText } from '@/lib/sanitize-assistant-text';
 import { extractPlanFromText } from '@/lib/automation-plan';
+import { stripSimulationPayloadForChat } from '@/lib/parse-simulation-turns';
 import { classifyMediaUrl, isProxiableMediaUrl, normalizeMediaUrl } from '@/lib/media';
 import type { ChatMessage } from '@/lib/api';
 
@@ -15,7 +16,7 @@ const markdownComponents = {
   code({ className, children, ...props }: ComponentProps<'code'> & { className?: string }) {
     const match = /language-(\w+)/.exec(className ?? '');
     const code = String(children).replace(/\n$/, '');
-    if (match?.[1] === 'klanvio-plan') {
+    if (match?.[1] === 'klanvio-plan' || match?.[1] === 'klanvio-sim') {
       return null;
     }
     if (match) {
@@ -74,7 +75,20 @@ export function MessageBubble({ message, isStreaming }: MessageBubbleProps) {
   const { textWithoutPlan } = isAssistant
     ? extractPlanFromText(raw)
     : { textWithoutPlan: raw };
-  const displayContent = textWithoutPlan;
+  const displayContent = isAssistant
+    ? (() => {
+        const stripped = stripSimulationPayloadForChat(textWithoutPlan);
+        if (stripped.trim()) return stripped;
+        // Ancien message : tout le fil était visible → fallback court si on a strippé une simu
+        if (
+          /```klanvio-sim\b/i.test(message.content) ||
+          /(?:Toi|Moi|You)\s*(?:→|->|:)/i.test(message.content)
+        ) {
+          return 'Simulation affichée sur le **téléphone à droite**. Dis-moi ce qui te convient ou « c\'est bon » pour activer.';
+        }
+        return '';
+      })()
+    : textWithoutPlan;
 
   const bubbleClass = cn(
     'min-w-0 max-w-full rounded-2xl px-3 py-2 text-[13px] leading-[1.45] transition-all duration-200',

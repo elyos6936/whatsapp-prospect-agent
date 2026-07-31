@@ -10,14 +10,23 @@ function stripCodeFences(text: string): string {
   return text.replace(/```[\s\S]*?```/g, " ");
 }
 
-/** Vrai contenu de simulation (fil Toi → / Prospect →). */
+/** Vrai contenu de simulation (fil Toi → / Prospect → ou fence téléphone). */
 export function hasSimulationThread(text: string): boolean {
+  // Fence dédiée au téléphone — ne pas stripper avant ce test
+  if (/```klanvio-sim\b/i.test(text)) return true;
   const cleaned = stripCodeFences(text);
   const arrowTurns = (cleaned.match(/→/g) || []).length;
   if (arrowTurns >= 2) return true;
   if (
     /(^|\n)\s*(toi|moi)\s*→/im.test(cleaned) &&
     /(^|\n)\s*\S{2,}\s*→/im.test(cleaned)
+  ) {
+    return true;
+  }
+  // Format colon (Toi: / Prospect:)
+  if (
+    /(^|\n)\s*(toi|moi)\s*:/im.test(cleaned) &&
+    /(^|\n)\s*(prospect|prospect\s*\d+)\s*:/im.test(cleaned)
   ) {
     return true;
   }

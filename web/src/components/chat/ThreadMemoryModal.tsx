@@ -39,6 +39,7 @@ type ThreadMemoryModalProps = {
   threadTitle?: string | null;
   linkedMemoryId?: number | null;
   onClose: () => void;
+  /** Après lien / création / édition — rafraîchir fil + chat (notes mémoire). */
   onLinked: () => void | Promise<void>;
 };
 

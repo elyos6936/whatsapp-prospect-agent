@@ -14,14 +14,13 @@ export type SimulationTurn = {
   text: string;
 };
 
-const SIM_FOOTER =
-  "\n\n---\n" +
-  "*(Simulation — jusqu'à 7 messages.)*\n\n" +
-  "Dis-moi concrètement :\n" +
-  "• ce qui te convient\n" +
-  "• ce que tu veux changer (ton, accroche, CTA, prix, lien…)\n\n" +
-  "Ou réponds « c'est bon » si on peut passer à l'activation.";
+const SIM_CHAT_FOOTER =
+  "\n\nSimulation affichée sur le **téléphone à droite**. " +
+  "Dis-moi ce qui te convient, ce qu'il faut changer, ou « c'est bon » pour activer.";
 
+/**
+ * Payload machine pour le téléphone (fence masquée dans le chat) + phrase courte visible.
+ */
 export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string {
   const limited = turns.slice(0, 7);
   if (limited.length < 3) {
@@ -41,7 +40,7 @@ export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string
       lines.push(`${name} → « ${text} »`);
     }
   }
-  return lines.join("\n") + SIM_FOOTER;
+  return "```klanvio-sim\n" + lines.join("\n") + "\n```" + SIM_CHAT_FOOTER;
 }
 
 function normalizeTurns(raw: unknown[]): SimulationTurn[] | null {

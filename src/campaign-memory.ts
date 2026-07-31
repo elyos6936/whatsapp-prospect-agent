@@ -618,6 +618,21 @@ export async function getThreadCampaignMemoryId(
   return v != null ? Number(v) : null;
 }
 
+/** Fils qui utilisent actuellement cette mémoire (pour notifier le chat). */
+export async function listThreadIdsLinkedToMemory(
+  userId: number,
+  memoryId: number
+): Promise<number[]> {
+  await ensureCampaignMemoriesSchema();
+  const rows = await sql<{ id: number }[]>`
+    SELECT id FROM agent_threads
+    WHERE user_id = ${userId} AND campaign_memory_id = ${memoryId}
+    ORDER BY updated_at DESC
+    LIMIT 20
+  `;
+  return rows.map((r) => Number(r.id)).filter((id) => Number.isFinite(id));
+}
+
 /** Prefill présentation depuis profil business (onboarding). */
 export async function getPresentationPrefill(userId: number): Promise<{
   ownerName: string;

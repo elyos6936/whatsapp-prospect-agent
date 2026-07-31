@@ -570,7 +570,33 @@ app.put<{
     });
   }
   const updated = await getAgentThread(userId, threadId);
-  return { ok: true, thread: updated };
+  let note: { id: number; content: string; created_at: string } | null = null;
+  try {
+    if (memoryId != null) {
+      const mem = await getCampaignMemory(userId, memoryId);
+      const content = mem
+        ? `Mémoire « ${mem.name} » connectée à cette automatisation. Je m'appuie dessus pour la suite — tu peux continuer tes instructions.`
+        : `Mémoire connectée à cette automatisation. Tu peux continuer tes instructions.`;
+      const saved = await saveAgentMessage(userId, threadId, "assistant", content);
+      note = {
+        id: saved.id,
+        content: saved.content,
+        created_at: saved.created_at,
+      };
+    } else {
+      const content =
+        "Mémoire déconnectée de cette automatisation. Relie une mémoire (bouton Mémoire) pour reprendre le brief.";
+      const saved = await saveAgentMessage(userId, threadId, "assistant", content);
+      note = {
+        id: saved.id,
+        content: saved.content,
+        created_at: saved.created_at,
+      };
+    }
+  } catch (err) {
+    console.warn("[memory] note chat:", err);
+  }
+  return { ok: true, thread: updated, note };
 });
 
 app.delete<{ Params: { id: string } }>("/api/threads/:id", async (request, reply) => {

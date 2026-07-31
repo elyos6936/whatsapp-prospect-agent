@@ -101,22 +101,23 @@ const FORCE_SIMULATION_NUDGE =
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
   "Le 1er tour « toi » = l'accroche validée (initial_message / variante choisie) — Attention seulement, PAS de prix/lien/pitch. " +
   "Les tours suivants : même mission / pacing (pousser l'intérêt, pas de « Ah super » vide), vouvoiement, sans prénom du prospect à tout va. " +
-  "Parle de **simulation** dans CE chat — jamais « panneau », « à droite », ni « campagne créée ». " +
-  "Après le fil : le footer demande déjà le feedback — s’il dit « c'est bon », tu demanderas ensuite s’il active ou s’il y a d’autres modifs. " +
+  "La simulation s'affiche UNIQUEMENT sur le **téléphone à droite** — INTERDIT de recopier le fil Toi → / Prospect → dans ta réponse chat. " +
+  "Après l'outil : confirme en 1–2 phrases courtes (le footer de l'outil guide déjà le feedback). " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
-  "la simulation s'affiche UNIQUEMENT dans ce chat — aucun envoi WhatsApp réel.";
+  "aucun envoi WhatsApp réel.";
 
 /** Après une simu déjà là : modifs / questions = pas de nouveau fil ni de fenêtre. */
 const SILENT_TWEAK_AFTER_SIM_NUDGE =
   "Une simulation a DÉJÀ été montrée. L'utilisateur demande une modification ou pose une question. " +
-  "INTERDIT d'appeler show_campaign_simulation. INTERDIT d'écrire un fil Toi → / Prospect →. " +
+  "INTERDIT d'écrire un fil Toi → / Prospect → dans le chat. " +
   "INTERDIT de coller un planDisplay / fence de plan dans ta réponse. " +
   "Si modif (ton, accroche, prix, relances, vouvoiement…) → applique via update_automation_config " +
-  "(et initial_message / conversation_guide si besoin), puis confirme en 1–2 phrases courtes : " +
-  "ce qui a changé + « dis « refais la simulation » pour revoir le fil ici, ou « c'est bon » pour activer ». " +
-  "Si question / préoccupation → réponds clairement, sans outil de simulation. " +
-  "Ne régénère PAS une simulation sauf demande explicite.";
+  "(et initial_message / conversation_guide si besoin), puis appelle show_campaign_simulation " +
+  "pour actualiser le **téléphone à droite** (sauf s'il dit de ne pas re-simuler). " +
+  "Confirme en 1–2 phrases courtes + « c'est bon » pour activer. " +
+  "Si question seule → réponds clairement, sans outil de simulation. " +
+  "Ne régénère PAS une simulation sauf après une modif de config ou demande explicite (« refais »).";
 
 /** Outils d'envoi réel — bloqués pendant une demande de simulation. */
 const OUTBOUND_SEND_TOOLS = new Set([
@@ -479,9 +480,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       role: "system",
       content:
         `## Rappel tour — fidélité & exécution\n` +
-        `Mémoire liée : « ${linkedMemory.name} ». Respecte-la à la lettre.\n` +
+        `Mémoire liée : « ${linkedMemory.name} ». La section « Mémoire active » du contexte est la version à jour ` +
+        `(rechargée à chaque message — y compris après édition en live). Respecte-la à la lettre.\n` +
         `Demande utilisateur (ce tour) : exécute EXACTEMENT ce qu'il demande. ` +
-        `Utilise les faits déjà donnés dans ce fil. Ne change pas de sujet. ` +
+        `Utilise les faits déjà donnés dans ce fil et dans la mémoire. Ne change pas de sujet. ` +
         `Ne propose pas d'alternative non demandée. Une question max si une info critique manque, sinon agis.`,
     });
   }
@@ -606,7 +608,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             content: JSON.stringify({
               error:
                 "Simulation en cours : INTERDIT d'envoyer sur WhatsApp. " +
-                "Appelle UNIQUEMENT show_campaign_simulation (aperçu dans le chat, 0 envoi réel).",
+                "Appelle UNIQUEMENT show_campaign_simulation (aperçu téléphone à droite, 0 envoi réel).",
             }),
           });
           if (!forcedSimUsed) {
@@ -718,7 +720,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           result = JSON.stringify({
             error: silentTweakAfterSim
               ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler) et confirme brièvement : propose « refais la simulation » ou « c'est bon » pour activer."
-              : "Simulation déjà affichée. Ne la répète pas : résume et demande dans ce chat s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
+              : "Simulation déjà sur le téléphone. Ne la répète pas dans le chat : résume et demande s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
           });
           messages.push({
             role: "tool",
@@ -865,7 +867,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       messages.push({
         role: "system",
         content:
-          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Réécris MAINTENANT ta réponse complète dans UN seul message : si c'est une simulation, appelle l'outil show_campaign_simulation (6-7 tours Toi/Prospect) OU écris directement le fil « Toi → «\u00A0…\u00A0» » / « Prospect → «\u00A0…\u00A0» ». Ne termine JAMAIS sur «\u00A0:\u00A0».",
+          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Appelle MAINTENANT l'outil show_campaign_simulation (6-7 tours). INTERDIT de coller le fil Toi/Prospect dans le chat — le téléphone à droite l'affiche. Ne termine JAMAIS sur «\u00A0:\u00A0».",
       });
       continue;
     }
@@ -888,7 +890,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       messages.push({
         role: "system",
         content:
-          "INTERDIT : tu as annoncé une simulation/aperçu SANS écrire le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 6 ou 7 tours (speaker toi/prospect + texte réel sans crochets), OU écris le fil complet dans ce message au format :\nToi → «\u00A0…\u00A0»\nProspect → «\u00A0…\u00A0»\nToi → «\u00A0…\u00A0»\nPuis demande ce qu'il faut changer ou garder. Aucune phrase qui finit par «\u00A0:\u00A0» sans le fil juste après. MAX 7 messages.",
+          "INTERDIT : tu as annoncé une simulation/aperçu SANS générer le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 6 ou 7 tours (speaker toi/prospect + texte réel sans crochets). INTERDIT de coller Toi → / Prospect → dans le chat — uniquement sur le téléphone. Puis 1 phrase de confirmation. MAX 7 messages.",
       });
       continue;
     }

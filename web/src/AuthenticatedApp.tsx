@@ -43,7 +43,7 @@ export default function AuthenticatedApp() {
   const [threadsLoading, setThreadsLoading] = useState(true);
 
   const chatEnabled = overlayView == null && !!user?.whatsapp?.connected && activeThreadId != null;
-  const { messages, loading, appendLocal, appendOptimisticUser, clear } =
+  const { messages, loading, appendLocal, appendOptimisticUser, clear, loadHistory } =
     useMessages(chatEnabled, activeThreadId);
   const [isSending, setIsSending] = useState(false);
 
@@ -352,7 +352,10 @@ export default function AuthenticatedApp() {
         threadTitle={activeThread?.title}
         linkedMemoryId={activeThread?.campaign_memory_id ?? null}
         onClose={() => setMemoryModalOpen(false)}
-        onLinked={() => refreshThreads(activeThreadId)}
+        onLinked={async () => {
+          await refreshThreads(activeThreadId);
+          await loadHistory();
+        }}
       />
     )}
     </>

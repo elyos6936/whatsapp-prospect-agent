@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { requireUserId } from "./auth.js";
+import { saveAgentMessage } from "./db.js";
 import {
   CAMPAIGN_MEMORY_MAX,
   createCampaignMemory,
@@ -7,6 +8,7 @@ import {
   getCampaignMemory,
   getPresentationPrefill,
   listCampaignMemories,
+  listThreadIdsLinkedToMemory,
   setDefaultCampaignMemory,
   updateCampaignMemory,
   type CampaignMemoryInput,
@@ -94,7 +96,22 @@ export async function registerCampaignMemoryRoutes(app: FastifyInstance): Promis
       }
       const mem = await updateCampaignMemory(userId, id, input);
       if (!mem) return reply.status(404).send({ error: "Mémoire introuvable." });
-      return { ok: true, memory: toJson(mem) };
+
+      // Notifie les fils liés : l'agent se met à jour au prochain tour + message visible.
+      const linkedThreads = await listThreadIdsLinkedToMemory(userId, mem.id);
+      const notes: Array<{ threadId: number; id: number }> = [];
+      const content =
+        `Mémoire « ${mem.name} » mise à jour. J'ai pris en compte tes nouvelles instructions — continue, je m'y appuie.`;
+      for (const threadId of linkedThreads) {
+        try {
+          const saved = await saveAgentMessage(userId, threadId, "assistant", content);
+          notes.push({ threadId, id: saved.id });
+        } catch (err) {
+          console.warn("[memory] update note:", err);
+        }
+      }
+
+      return { ok: true, memory: toJson(mem), notifiedThreadIds: linkedThreads, notes };
     }
   );
 

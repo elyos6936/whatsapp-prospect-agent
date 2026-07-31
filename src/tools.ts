@@ -1871,10 +1871,10 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "show_campaign_simulation",
       description:
-        "À appeler quand l'utilisateur accepte/demande une simulation (1ʳᵉ fois), ou demande EXPLICITEMENT de la refaire. " +
-        "INTERDIT après une simu déjà montrée si l'utilisateur ne fait qu'une modif (ton, accroche…) ou pose une question — dans ce cas update_automation_config + confirmation courte. " +
-        "Affiche un fil de 6 ou 7 messages dans le chat agent — aucun envoi WhatsApp. Le 1er message « toi » = accroche A.I.D.A. Attention (sans prix/lien). " +
-        "Après affichage, demande ce qu'il veut changer ou garder. Ne jamais annoncer « Voici comment… : » sans cet outil.",
+        "À appeler quand l'utilisateur accepte/demande une simulation (1ʳᵉ fois), après une modif de config à re-visualiser, ou « refais la simulation ». " +
+        "Affiche le fil UNIQUEMENT sur le téléphone à droite (6 ou 7 tours) — INTERDIT de coller Toi/Prospect dans le chat. Aucun envoi WhatsApp. " +
+        "Le 1er message « toi » = accroche A.I.D.A. Attention (sans prix/lien). " +
+        "Après l'outil, confirme en 1–2 phrases. Ne jamais annoncer « Voici comment… : » sans cet outil.",
       parameters: {
         type: "object",
         properties: {
@@ -4316,12 +4316,12 @@ export async function executeTool(
             planDisplay: plan
               ? formatPlanDisplay(
                   plan,
-                  `« ${name} » est prêt. Veux-tu tester une **simulation** dans ce chat avant de lancer ?`
+                  `« ${name} » est prêt. Veux-tu tester une **simulation** sur le téléphone avant de lancer ?`
             )
           : undefined,
-            message: `« ${name} » mis à jour — pas de doublon. Prochaine étape : simulation dans ce chat (show_campaign_simulation), puis lancement si tu valides.`,
+            message: `« ${name} » mis à jour — pas de doublon. Prochaine étape : simulation sur le téléphone (show_campaign_simulation), puis lancement si tu valides.`,
             simulationHint:
-              "Propose une simulation dans ce chat via show_campaign_simulation (6-7 tours), sans WhatsApp réel.",
+              "Propose une simulation sur le téléphone via show_campaign_simulation (6-7 tours), sans WhatsApp réel.",
             completedAt: nowFr(),
           });
         }
@@ -4339,7 +4339,7 @@ export async function executeTool(
         const otherActive = (await listActiveAutomations(userId)).filter((a) => a.id !== auto.id);
         const activeNote = otherActive.length
           ? ` Une campagne est déjà active (${otherActive.map((a) => `« ${a.name} »`).join(", ")}) — elle continue. Celle-ci reste en brouillon : active-la quand tu es prêt (dans le chat ou bouton Lancer) ; l'ancienne passera alors en pause.`
-          : " Prochaine étape : simulation dans ce chat, puis lancement après confirmation.";
+          : " Prochaine étape : simulation sur le téléphone, puis lancement après confirmation.";
         return JSON.stringify({
           success: true,
           updated: false,
@@ -4358,15 +4358,15 @@ export async function executeTool(
             ? formatPlanDisplay(
                 plan,
                 otherActive.length
-                  ? `« ${auto.name} » est en brouillon. Une autre campagne tourne encore — simule ici, puis lance quand tu es prêt.`
-                  : `« ${auto.name} » est prêt en brouillon. Veux-tu tester une **simulation** dans ce chat avant le lancement ?`
+                  ? `« ${auto.name} » est en brouillon. Une autre campagne tourne encore — simule sur le téléphone, puis lance quand tu es prêt.`
+                  : `« ${auto.name} » est prêt en brouillon. Veux-tu tester une **simulation** sur le téléphone avant le lancement ?`
               )
             : undefined,
           message: `« ${auto.name} » prêt en brouillon${
             extra?.resolvedCount != null ? ` avec ${extra.resolvedCount} contact(s)` : ""
           }.${extra?.unresolved?.length ? ` Non résolus : ${extra.unresolved.join(", ")}.` : ""}${activeNote}`,
           simulationHint:
-            "Propose une simulation dans ce chat via show_campaign_simulation (6-7 tours), sans WhatsApp réel.",
+            "Propose une simulation sur le téléphone via show_campaign_simulation (6-7 tours), sans WhatsApp réel.",
           completedAt: nowFr(),
         });
       };
@@ -4731,7 +4731,7 @@ export async function executeTool(
           `Campagne « ${detail.automation.name} » mise à jour` +
           `${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}. ` +
           `Confirme brièvement le changement à l'utilisateur et propose « refais la simulation » ` +
-          `pour revoir le fil dans ce chat, ou « c'est bon » pour activer — SANS rappeler show_campaign_simulation ni coller un plan.`,
+          `pour revoir le fil sur le téléphone, ou « c'est bon » pour activer — SANS coller un plan Toi/Prospect dans le chat.`,
       });
     }
 
