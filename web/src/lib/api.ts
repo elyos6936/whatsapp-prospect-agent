@@ -419,6 +419,78 @@ export async function saveBusinessProfile(body: {
   });
 }
 
+export type CampaignMemoryTone = 'direct' | 'chaleureux' | 'pro' | 'decontracte';
+export type CampaignMemoryFormality = 'vous' | 'tu';
+export type CampaignMemoryEmojiLevel = 'none' | 'sparse';
+
+export type CampaignMemoryDto = {
+  id: number;
+  name: string;
+  ownerName: string;
+  introFormula: string;
+  tone: CampaignMemoryTone;
+  toneNote: string;
+  formality: CampaignMemoryFormality;
+  stickersEnabled: boolean;
+  emojiLevel: CampaignMemoryEmojiLevel;
+  sendWindowStart: number;
+  sendWindowEnd: number;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type CampaignMemoryInput = {
+  name: string;
+  ownerName?: string;
+  introFormula?: string;
+  tone?: CampaignMemoryTone;
+  toneNote?: string;
+  formality?: CampaignMemoryFormality;
+  stickersEnabled?: boolean;
+  emojiLevel?: CampaignMemoryEmojiLevel;
+  sendWindowStart?: number;
+  sendWindowEnd?: number;
+  isDefault?: boolean;
+};
+
+export async function fetchCampaignMemories(): Promise<{
+  memories: CampaignMemoryDto[];
+  max: number;
+  prefill: { ownerName: string };
+}> {
+  return request('/api/campaign-memories');
+}
+
+export async function createCampaignMemoryApi(
+  body: CampaignMemoryInput,
+): Promise<{ ok: true; memory: CampaignMemoryDto }> {
+  return request('/api/campaign-memories', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function updateCampaignMemoryApi(
+  id: number,
+  body: Partial<CampaignMemoryInput>,
+): Promise<{ ok: true; memory: CampaignMemoryDto }> {
+  return request(`/api/campaign-memories/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function setDefaultCampaignMemoryApi(
+  id: number,
+): Promise<{ ok: true; memory: CampaignMemoryDto }> {
+  return request(`/api/campaign-memories/${id}/default`, { method: 'POST' });
+}
+
+export async function deleteCampaignMemoryApi(id: number): Promise<{ ok: true }> {
+  return request(`/api/campaign-memories/${id}`, { method: 'DELETE' });
+}
+
 export async function createMoneyFusionCheckout(body: {
   planId: 'starter' | 'pro' | 'business';
   billingPeriod: 'monthly' | 'annual';

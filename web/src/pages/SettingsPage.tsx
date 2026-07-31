@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Brain,
   CreditCard,
   Link2,
   LogOut,
@@ -20,6 +21,7 @@ import { WhatsAppConnectModal } from '@/components/whatsapp/WhatsAppConnectModal
 import { TypeformIntegrationCard } from '@/components/settings/TypeformIntegrationCard';
 import { GoogleSheetsIntegrationCard } from '@/components/settings/GoogleSheetsIntegrationCard';
 import { GoogleContactsIntegrationCard } from '@/components/settings/GoogleContactsIntegrationCard';
+import { CampaignMemoriesPanel } from '@/components/settings/CampaignMemoriesPanel';
 import {
   PLANS,
   TRIAL_DAYS,
@@ -32,7 +34,7 @@ import {
   type PlanId,
 } from '@/lib/pricing';
 
-type SettingsTab = 'connection' | 'integrations' | 'billing';
+type SettingsTab = 'connection' | 'integrations' | 'billing' | 'memory';
 
 function Feedback({ text, type }: { text: string; type?: 'ok' | 'err' }) {
   if (!text) return null;
@@ -273,12 +275,14 @@ export function SettingsPage() {
 
   const tabs: { id: SettingsTab; label: string; icon: typeof Smartphone }[] = [
     { id: 'billing', label: 'Facturation', icon: CreditCard },
+    { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'integrations', label: 'Intégrations', icon: Link2 },
     { id: 'connection', label: 'WhatsApp', icon: Smartphone },
   ];
 
   const tabLabels: Record<SettingsTab, { short: string; full: string }> = {
     billing: { short: 'Facturation', full: 'Facturation' },
+    memory: { short: 'Mémoire', full: 'Mémoire' },
     integrations: { short: 'Intégrations', full: 'Intégrations' },
     connection: { short: 'WhatsApp', full: 'WhatsApp' },
   };
@@ -302,7 +306,7 @@ export function SettingsPage() {
             </button>
           </div>
 
-          <div className="mb-6 grid w-full grid-cols-3 gap-1 rounded-xl border border-black/10 bg-bg-100 p-1">
+          <div className="mb-6 grid w-full grid-cols-4 gap-1 rounded-xl border border-black/10 bg-bg-100 p-1">
             {tabs.map((t) => {
               const Icon = t.icon;
               const labels = tabLabels[t.id];
@@ -367,6 +371,8 @@ export function SettingsPage() {
                 />
               </div>
             </div>
+          ) : tab === 'memory' ? (
+            <CampaignMemoriesPanel />
           ) : (
             <div className="panel min-w-0 space-y-5 overflow-hidden p-4 sm:p-5">
               <div className="min-w-0">

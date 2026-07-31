@@ -34,6 +34,11 @@ import {
   userFacingError,
 } from "./user-facing.js";
 import {
+  formatMemoryForAgent,
+  getThreadCampaignMemoryId,
+  resolveActiveCampaignMemory,
+} from "./campaign-memory.js";
+import {
   detectQuickGroupMembersIntent,
   detectQuickListIntent,
   isGroupActionNotCatalogRequest,
@@ -311,6 +316,22 @@ async function buildBusinessContext(
     /* ignore */
   }
 
+  try {
+    const threadMemId = await getThreadCampaignMemoryId(userId, threadId);
+    const memory = await resolveActiveCampaignMemory(userId, threadMemId);
+    if (memory) {
+      lines.push(formatMemoryForAgent(memory));
+    } else {
+      lines.push(
+        `## Mémoire campagne\n` +
+          `Aucune mémoire configurée. Tu peux poser présentation / stickers / fenêtre si besoin. ` +
+          `Une fois le brief avancé, mentionne discrètement : « Tu peux fixer ça dans Réglages → Mémoire pour les prochaines fois. »`
+      );
+    }
+  } catch {
+    /* ignore */
+  }
+
   return lines.join("\n\n");
 }
 
@@ -413,7 +434,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     messages.push({ role: "system", content: threadBlock });
   }
 
-  const briefing = assessCampaignBriefing(history, userMessage, thread?.purpose ?? null);
+  const threadMemId = await getThreadCampaignMemoryId(userId, threadId).catch(() => null);
+  const activeMemory = await resolveActiveCampaignMemory(userId, threadMemId).catch(() => null);
+  const briefing = assessCampaignBriefing(
+    history,
+    userMessage,
+    thread?.purpose ?? null,
+    activeMemory
+  );
   const hasSimAlready = recentHistoryHasSimulation(history);
   const turnMode = resolveSimulationTurnMode(history, userMessage);
   const forceSim = turnMode === "force_sim";

@@ -3,6 +3,7 @@
  * Complète les consignes de persona.ts (questions progressives, RDV, etc.).
  */
 import type { AgentMessage } from "./db.js";
+import type { CampaignMemory } from "./campaign-memory.js";
 
 const CAMPAIGN_INTENT_RE =
   /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
@@ -193,11 +194,13 @@ function countBriefingQuestions(
  * Estime ce qui manque encore pour un brief exploitable
  * (tous produits / services / support).
  * @param purpose — intention du fil (prospection | support) ; null = heuristique chat.
+ * @param memory — mémoire active : saute identité / stickers / fenêtre si renseignés.
  */
 export function assessCampaignBriefing(
   history: AgentMessage[],
   userMessage: string,
-  purpose?: "prospection" | "support" | null
+  purpose?: "prospection" | "support" | null,
+  memory?: CampaignMemory | null
 ): BriefingAssessment {
   const purposeForced = purpose === "prospection" || purpose === "support";
   const inFlow =
@@ -231,6 +234,11 @@ export function assessCampaignBriefing(
 
   const missing: string[] = [];
   const inbound = isInboundClosingFlow(history, userMessage, purpose);
+  const memoryCoversIdentity = Boolean(memory?.ownerName?.trim());
+  const memoryCoversWindow =
+    memory != null &&
+    Number.isFinite(memory.sendWindowStart) &&
+    Number.isFinite(memory.sendWindowEnd);
 
   const hasOffer =
     /\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence)\b/i.test(
@@ -277,28 +285,41 @@ export function assessCampaignBriefing(
   if (!hasGoal) missing.push("objectif final concret (RDV, vente, lien, livraison…)");
 
   if (!inbound) {
-    // Délais entre messages + rythme anti-blocage : gérés automatiquement (pas de question user).
-    const hasSchedule =
-      /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|cr[eé]neau|horaire|fen[eê]tre|lancer\s+(à|a)|d[eé]marr)\b/i.test(
+    // Fenêtre d'envoi : couverte par la mémoire → seulement le lancement
+    const hasLaunch =
+      /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|lancer\s+(à|a)|d[eé]marr)\b/i.test(
         blob
       );
-    if (!hasSchedule) {
-      missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+    if (memoryCoversWindow) {
+      if (!hasLaunch) {
+        missing.push("jour/heure de lancement de la campagne");
+      }
+    } else {
+      const hasSchedule =
+        hasLaunch ||
+        /\b(cr[eé]neau|horaire|fen[eê]tre)\b/i.test(blob);
+      if (!hasSchedule) {
+        missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+      }
     }
   }
 
-  // Identité face aux prospects — obligatoire pour « qui êtes-vous ? »
-  const hasIdentity =
-    /\b(se pr[eé]sent|pr[eé]sentation|comment (je |tu |on )?me pr[eé]sente|comment (je |tu |on )?dois me pr[eé]sent|qui (je |tu )?suis|mon pr[eé]nom|mon nom|appelle[- ]moi|je m.?appelle|pr[eé]sente[- ]toi|pr[eé]sente[- ]moi|face aux prospects|aux prospects.*(pr[eé]nom|nom)|owner_name|business_owner)\b/i.test(
-      blob
-    );
-  if (!hasIdentity) {
-    missing.push(
-      "présentation face aux prospects (prénom/nom + formule si on demande « qui êtes-vous ? »)"
-    );
+  // Identité — skip si mémoire
+  if (!memoryCoversIdentity) {
+    const hasIdentity =
+      /\b(se pr[eé]sent|pr[eé]sentation|comment (je |tu |on )?me pr[eé]sente|comment (je |tu |on )?dois me pr[eé]sent|qui (je |tu )?suis|mon pr[eé]nom|mon nom|appelle[- ]moi|je m.?appelle|pr[eé]sente[- ]toi|pr[eé]sente[- ]moi|face aux prospects|aux prospects.*(pr[eé]nom|nom)|owner_name|business_owner)\b/i.test(
+        blob
+      );
+    if (!hasIdentity) {
+      missing.push(
+        "présentation face aux prospects (prénom/nom + formule si on demande « qui êtes-vous ? »)"
+      );
+    }
   }
 
   // Au moins 6 questions posées + aucun élément critique manquant
+  // (seuil abaissé si mémoire couvre identité + fenêtre)
+  const minQuestions = memoryCoversIdentity && memoryCoversWindow ? 4 : 6;
   const criticalMissing = missing.filter(
     (m) =>
       m.includes("lien de réservation") ||
@@ -309,19 +330,19 @@ export function assessCampaignBriefing(
       m.includes("objectif") ||
       m.includes("cible") ||
       m.includes("horaires") ||
+      m.includes("lancement") ||
       m.includes("présentation")
   );
-  const readyForDraft = questionsAsked >= 6 && criticalMissing.length === 0;
-  const stickersQuestionAsked = hasStickersQuestionAsked(history);
+  const readyForDraft = questionsAsked >= minQuestions && criticalMissing.length === 0;
+  const stickersQuestionAsked =
+    memory != null || hasStickersQuestionAsked(history);
   const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
-  // Closing entrant : pas d'opener sortant → ces étapes sont N/A (considérées OK).
   const openerDirectionCollected = inbound
     ? true
     : hasUserProvidedOpenerDirection(history, userMessage);
   const openerVariantsProposed = inbound
     ? true
     : hasProposedOpenerVariants(history);
-  // Pacing vagues / délais : gérés en arrière-plan — ne jamais bloquer le brief.
   const inboundPacingAsked = true;
 
   return {

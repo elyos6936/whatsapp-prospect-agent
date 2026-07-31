@@ -154,6 +154,16 @@ import {
   formatVerticalMemberList,
   userFacingError,
 } from "./user-facing.js";
+import {
+  findCampaignMemoryByName,
+  getCampaignMemory,
+  getThreadCampaignMemoryId,
+  listCampaignMemories,
+  memoryToQuietHours,
+  memoryToneLabel,
+  resolveActiveCampaignMemory,
+  setThreadCampaignMemory,
+} from "./campaign-memory.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -1026,6 +1036,39 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "string",
             description: "Tarif en FCFA (texte libre, ex. 25 000 FCFA)",
           },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_campaign_memories",
+      description:
+        "Liste les mémoires de campagne (style / présentation / stickers / fenêtre). Utilise aussi pour proposer un changement de mémoire.",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "get_active_campaign_memory",
+      description: "Renvoie la mémoire active sur ce fil (override fil ou défaut compte).",
+      parameters: { type: "object", properties: {}, additionalProperties: false },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "set_campaign_memory",
+      description:
+        "Active une mémoire de campagne pour CE fil (par nom ou id). Ex. « utilise la mémoire Support chaleureux ».",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "Nom de la mémoire (recherche souple)" },
+          memory_id: { type: "number", description: "ID interne si connu" },
         },
         additionalProperties: false,
       },
@@ -3704,7 +3747,7 @@ export async function executeTool(
           offer: s.business_offer,
           price: s.business_price,
         },
-        message: "Profil business enregistré dans SQLite. Les prochaines réponses auto l'utiliseront.",
+        message: "Profil business enregistré. Les prochaines réponses auto l'utiliseront.",
       });
     }
 
@@ -3715,6 +3758,74 @@ export async function executeTool(
         offer: s.business_offer || null,
         price: s.business_price || null,
         configured: Boolean(s.business_owner_name || s.business_offer),
+      });
+    }
+
+    case "list_campaign_memories": {
+      const memories = await listCampaignMemories(userId);
+      return JSON.stringify({
+        count: memories.length,
+        memories: memories.map((m) => ({
+          id: m.id,
+          name: m.name,
+          isDefault: m.isDefault,
+          ownerName: m.ownerName || null,
+          tone: memoryToneLabel(m.tone),
+          formality: m.formality,
+          stickersEnabled: m.stickersEnabled,
+          sendWindow: `${m.sendWindowStart}h–${m.sendWindowEnd}h`,
+        })),
+        hint: "Cite les noms à l'utilisateur. Pour activer une mémoire sur ce fil → set_campaign_memory.",
+      });
+    }
+
+    case "get_active_campaign_memory": {
+      const threadMemId = await getThreadCampaignMemoryId(userId, threadId);
+      const mem = await resolveActiveCampaignMemory(userId, threadMemId);
+      if (!mem) {
+        return JSON.stringify({
+          active: null,
+          message: "Aucune mémoire. L'utilisateur peut en créer dans Réglages → Mémoire.",
+        });
+      }
+      return JSON.stringify({
+        active: {
+          id: mem.id,
+          name: mem.name,
+          isDefault: mem.isDefault,
+          ownerName: mem.ownerName,
+          introFormula: mem.introFormula,
+          tone: memoryToneLabel(mem.tone),
+          formality: mem.formality,
+          stickersEnabled: mem.stickersEnabled,
+          emojiLevel: mem.emojiLevel,
+          sendWindow: `${mem.sendWindowStart}h–${mem.sendWindowEnd}h`,
+        },
+      });
+    }
+
+    case "set_campaign_memory": {
+      const byId =
+        args.memory_id != null && Number.isFinite(Number(args.memory_id))
+          ? Number(args.memory_id)
+          : null;
+      let mem =
+        byId != null ? await getCampaignMemory(userId, byId) : null;
+      if (!mem && args.name) {
+        mem = await findCampaignMemoryByName(userId, String(args.name));
+      }
+      if (!mem) {
+        const all = await listCampaignMemories(userId);
+        return JSON.stringify({
+          error: "Mémoire introuvable.",
+          available: all.map((m) => m.name),
+        });
+      }
+      await setThreadCampaignMemory(userId, threadId, mem.id);
+      return JSON.stringify({
+        success: true,
+        memory: { id: mem.id, name: mem.name },
+        message: `Mémoire « ${mem.name} » active sur ce fil. Ne repose plus présentation / stickers / fenêtre / ton.`,
       });
     }
 
@@ -3924,6 +4035,42 @@ export async function executeTool(
 
       const config = buildAutomationConfigFromArgs(args, type);
       const isOutbound = type === "group_prospect" || type === "contact_prospect";
+
+      // Seed depuis mémoire active (ne remplace pas ce que l'outil a déjà fourni explicitement)
+      try {
+        const threadMemId = await getThreadCampaignMemoryId(userId, threadId);
+        const mem = await resolveActiveCampaignMemory(userId, threadMemId);
+        if (mem) {
+          if (args.stickers_enabled === undefined) {
+            config.stickersEnabled = mem.stickersEnabled;
+          }
+          if (args.quiet_hours_start == null && args.quiet_hours_end == null) {
+            const q = memoryToQuietHours(mem);
+            config.quietHoursStart = q.quietHoursStart;
+            config.quietHoursEnd = q.quietHoursEnd;
+          }
+          const toneBits = [
+            `Ton ${memoryToneLabel(mem.tone).toLowerCase()}`,
+            mem.formality === "tu" ? "tutoiement" : "vouvoiement",
+            mem.emojiLevel === "sparse" ? "emojis discrets" : "sans emoji",
+            mem.ownerName
+              ? `présentation : ${mem.ownerName}${mem.introFormula ? ` (« ${mem.introFormula} »)` : ""}`
+              : null,
+            mem.toneNote || null,
+          ].filter(Boolean);
+          const memoryGuide = `Style (mémoire « ${mem.name} ») : ${toneBits.join(" · ")}.`;
+          if (!config.conversationGuide?.trim()) {
+            config.conversationGuide = memoryGuide;
+          } else if (!config.conversationGuide.includes("mémoire")) {
+            config.conversationGuide = `${memoryGuide}\n${config.conversationGuide}`;
+          }
+          if (mem.ownerName.trim()) {
+            await saveBusinessProfile(userId, { ownerName: mem.ownerName.trim() }).catch(() => {});
+          }
+        }
+      } catch {
+        /* ignore */
+      }
 
       // Interdit de stocker des crochets dans les textes de campagne (ils finiraient chez les prospects).
       const badFields = findPlaceholderFields([

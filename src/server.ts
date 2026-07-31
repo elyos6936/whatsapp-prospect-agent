@@ -52,6 +52,7 @@ import { registerAutomationRoutes } from "./automation-routes.js";
 import { registerFeatureRoutes } from "./feature-routes.js";
 import { registerIntegrationRoutes } from "./integration-routes.js";
 import { registerBillingRoutes } from "./billing-routes.js";
+import { registerCampaignMemoryRoutes } from "./campaign-memory-routes.js";
 import { startAutomationEngine } from "./automation-engine.js";
 import { processSendQueue } from "./send-queue.js";
 import { processDueSequences } from "./sequences.js";
@@ -111,6 +112,7 @@ await app.register(fastifyStatic, {
 await registerAuth(app);
 await registerAuthRoutes(app);
 await registerAdminRoutes(app);
+await registerCampaignMemoryRoutes(app);
 
 app.get("/", async (_request, reply) => {
   return reply.sendFile("index.html");
