@@ -9,6 +9,7 @@ import {
   verifyAdminCredentials,
 } from "./admin-auth.js";
 import {
+  adminClearAgentHistory,
   adminHardDeleteUser,
   adminSoftDeleteUser,
   adminStopOutbound,
@@ -327,6 +328,46 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         payload: { outbound: result.outbound },
       });
       return { ok: true, user: result.user, ...result.outbound };
+    }
+  );
+
+  app.delete<{ Params: { id: string } }>(
+    "/api/admin/users/:id/agent-history",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      try {
+        const result = await adminClearAgentHistory(id);
+        const meta = actorMeta(request);
+        await writeAdminAudit({
+          ...meta,
+          action: "user.clear_agent_history",
+          targetUserId: id,
+          payload: { deletedMessages: result.deletedMessages },
+        });
+        return { ok: true, ...result };
+      } catch (err) {
+        return reply.status(404).send({
+          error: err instanceof Error ? err.message : "Impossible de vider l'historique.",
+        });
+      }
+    }
+  );
+
+  app.delete(
+    "/api/admin/agent-history",
+    { preHandler: requireAdmin },
+    async (request) => {
+      const result = await adminClearAgentHistory();
+      const meta = actorMeta(request);
+      await writeAdminAudit({
+        ...meta,
+        action: "platform.clear_agent_history",
+        targetUserId: null,
+        payload: { deletedMessages: result.deletedMessages },
+      });
+      return { ok: true, ...result };
     }
   );
 

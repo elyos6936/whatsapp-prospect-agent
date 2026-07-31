@@ -752,6 +752,40 @@ export async function adminSoftDeleteUser(
 }
 
 /**
+ * Vide l'historique des conversations agent (chat Klanvio).
+ * - avec userId : un compte
+ * - sans userId : tous les comptes
+ * Ne touche pas aux messages WhatsApp ni aux campagnes.
+ */
+export async function adminClearAgentHistory(userId?: number): Promise<{
+  deletedMessages: number;
+  scope: "user" | "all";
+  userId: number | null;
+}> {
+  if (userId != null && Number.isFinite(userId)) {
+    const user = await getUserById(userId);
+    if (!user) {
+      throw new Error("Utilisateur introuvable.");
+    }
+    const res = await sql`
+      DELETE FROM agent_conversation WHERE user_id = ${userId}
+    `;
+    return {
+      deletedMessages: Number(res.count ?? 0),
+      scope: "user",
+      userId,
+    };
+  }
+
+  const res = await sql`DELETE FROM agent_conversation`;
+  return {
+    deletedMessages: Number(res.count ?? 0),
+    scope: "all",
+    userId: null,
+  };
+}
+
+/**
  * Suppression physique complète d'un compte.
  * - coupe d'abord toute activité sortante
  * - purge les données liées dans les tables multi-tenant

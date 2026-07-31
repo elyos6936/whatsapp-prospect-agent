@@ -235,6 +235,33 @@ export function UserAccountManagementPage() {
                 </div>
               </div>
 
+              <div className="detail-card">
+                <h3>Historique agent</h3>
+                <p className="actions-help">
+                  Efface les messages du chat Klanvio de ce compte (tous les fils). Ne touche pas
+                  aux messages WhatsApp ni aux campagnes.
+                </p>
+                <div className="actions-row">
+                  <button
+                    className="btn btn-warn"
+                    type="button"
+                    disabled={busy || Boolean(detail.user.deletedAt)}
+                    onClick={() =>
+                      setConfirm({
+                        title: "Vider l'historique agent",
+                        body: "Tous les messages du chat agent de ce compte seront supprimés. Irreversible.",
+                        run: async () =>
+                          runAction("Historique agent vidé", () =>
+                            api(`/api/admin/users/${userId}/agent-history`, { method: "DELETE" })
+                          ),
+                      })
+                    }
+                  >
+                    Vider l'historique
+                  </button>
+                </div>
+              </div>
+
               <div className="detail-card" style={{ borderColor: "#fecaca", background: "#fffafa" }}>
                 <h3>Suppression definitive</h3>
                 <p className="actions-help">

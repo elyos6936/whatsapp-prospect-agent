@@ -458,15 +458,26 @@ app.get("/api/threads", async (request) => {
   return { threads };
 });
 
-app.post<{ Body: { title?: string; description?: string } }>("/api/threads", async (request) => {
-  const userId = requireUserId(request);
-  const thread = await createAgentThread(
-    userId,
-    request.body?.title?.trim() || "Automatisation",
-    request.body?.description?.trim() || null
-  );
-  return { thread };
-});
+app.post<{ Body: { title?: string; description?: string; purpose?: string } }>(
+  "/api/threads",
+  async (request, reply) => {
+    const userId = requireUserId(request);
+    const { normalizeThreadPurpose } = await import("./db.js");
+    const purpose = normalizeThreadPurpose(request.body?.purpose);
+    if (request.body?.purpose != null && String(request.body.purpose).trim() && !purpose) {
+      return reply.status(400).send({
+        error: "Le champ « purpose » doit valoir « prospection » ou « support ».",
+      });
+    }
+    const thread = await createAgentThread(
+      userId,
+      request.body?.title?.trim() || "Automatisation",
+      request.body?.description?.trim() || null,
+      purpose
+    );
+    return { thread };
+  }
+);
 
 app.patch<{ Params: { id: string }; Body: { title?: string } }>("/api/threads/:id", async (request, reply) => {
   const userId = requireUserId(request);

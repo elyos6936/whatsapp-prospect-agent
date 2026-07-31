@@ -57,8 +57,8 @@ export type BriefingAssessment = {
   /** L'agent a posé la question notification tiers (messages assistant uniquement). */
   thirdPartyQuestionAsked: boolean;
   /**
-   * Closing entrant : question pacing (vagues / plage horaire) posée.
-   * Pour les campagnes sortantes : toujours true (N/A).
+   * Closing entrant : pacing vagues géré en arrière-plan (défauts système).
+   * Toujours true — on ne pose plus la question à l'utilisateur.
    */
   inboundPacingAsked: boolean;
 };
@@ -143,7 +143,13 @@ export function hasInboundPacingQuestionAsked(history: AgentMessage[]): boolean 
 }
 
 /** Closing entrant / keyword_sales / support — le prospect écrit en premier. */
-export function isInboundClosingFlow(history: AgentMessage[], userMessage: string): boolean {
+export function isInboundClosingFlow(
+  history: AgentMessage[],
+  userMessage: string,
+  purpose?: "prospection" | "support" | null
+): boolean {
+  if (purpose === "support") return true;
+  if (purpose === "prospection") return false;
   const blob = conversationBlob(history, userMessage);
   return /\b(keyword_sales|inbound_closing|closing\s+entrant|support\s*client|d[eé]clencheur|mot[- ]?cl[eé]|quand\s+(quelqu|un\s+prospect|un\s+client)\s+[eé]crit|r[eé]pond(?:re|s)?\s+(uniquement\s+)?quand)\b/i.test(
     blob
@@ -155,13 +161,20 @@ function conversationBlob(history: AgentMessage[], userMessage: string): string 
   return [...recent.map((m) => m.content), userMessage].join("\n");
 }
 
-function countBriefingQuestions(history: AgentMessage[]): number {
+function countBriefingQuestions(
+  history: AgentMessage[],
+  purpose?: "prospection" | "support" | null
+): number {
   let campaignStart = -1;
-  for (let i = 0; i < history.length; i++) {
-    const m = history[i];
-    if (m?.role === "user" && isCampaignIntent(m.content)) {
-      campaignStart = i;
-      break;
+  if (purpose === "prospection" || purpose === "support") {
+    campaignStart = 0;
+  } else {
+    for (let i = 0; i < history.length; i++) {
+      const m = history[i];
+      if (m?.role === "user" && isCampaignIntent(m.content)) {
+        campaignStart = i;
+        break;
+      }
     }
   }
   if (campaignStart < 0) {
@@ -179,12 +192,16 @@ function countBriefingQuestions(history: AgentMessage[]): number {
 /**
  * Estime ce qui manque encore pour un brief exploitable
  * (tous produits / services / support).
+ * @param purpose — intention du fil (prospection | support) ; null = heuristique chat.
  */
 export function assessCampaignBriefing(
   history: AgentMessage[],
-  userMessage: string
+  userMessage: string,
+  purpose?: "prospection" | "support" | null
 ): BriefingAssessment {
+  const purposeForced = purpose === "prospection" || purpose === "support";
   const inFlow =
+    purposeForced ||
     isCampaignIntent(userMessage) ||
     history.slice(-16).some((m) => m.role === "user" && isCampaignIntent(m.content)) ||
     history.slice(-10).some(
@@ -210,9 +227,10 @@ export function assessCampaignBriefing(
   }
 
   const blob = conversationBlob(history, userMessage);
-  const questionsAsked = countBriefingQuestions(history) + (isCampaignIntent(userMessage) ? 0 : 0);
+  const questionsAsked = countBriefingQuestions(history, purpose);
 
   const missing: string[] = [];
+  const inbound = isInboundClosingFlow(history, userMessage, purpose);
 
   const hasOffer =
     /\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence)\b/i.test(
@@ -221,14 +239,14 @@ export function assessCampaignBriefing(
   if (!hasOffer) missing.push("offre / produit ou service précis");
 
   const hasTarget =
-    /\b(cible|prospect|audience|client[e]?s?|groupe|membres|contact|qui\s+(je|on)\s+|s'adresse)\b/i.test(
+    /\b(cible|prospect|audience|client[e]?s?|groupe|membres|contact|qui\s+(je|on)\s+|s'adresse|qui\s+[eé]crit|d[eé]clencheur)\b/i.test(
       blob
     );
-  if (!hasTarget) missing.push("cible (qui contacter / qui écrit)");
+  if (!hasTarget) {
+    missing.push(inbound ? "cible (qui écrit / contexte entrant)" : "cible (qui contacter / qui écrit)");
+  }
 
-  const isSupport =
-    /\b(support|closing\s+entrant|d[eé]clencheur|mot[- ]?cl[eé]|keyword|quand\s+quelqu)\b/i.test(blob);
-  if (isSupport) {
+  if (inbound) {
     const hasTrigger =
       /d[eé]clencheur|mot[- ]?cl[eé]|phrase\s+exacte|«[^»]{3,}»|"[^"]{3,}"/i.test(blob);
     if (!hasTrigger) missing.push("phrase(s) déclencheur exacte(s)");
@@ -253,23 +271,20 @@ export function assessCampaignBriefing(
   if (isSale && !hasPrice) missing.push("prix exact (chiffre en FCFA)");
 
   const hasGoal =
-    /\b(objectif|rdv|rendez[- ]?vous|vente|paiement|livraison|inscription|d[eé]mo|closing)\b/i.test(
+    /\b(objectif|rdv|rendez[- ]?vous|vente|paiement|livraison|inscription|d[eé]mo|closing|support)\b/i.test(
       blob
     );
   if (!hasGoal) missing.push("objectif final concret (RDV, vente, lien, livraison…)");
 
-  const hasRhythm =
-    /\b(relance|d[eé]lai|par\s+jour|anti[- ]?blocage|45|60|90|120\s*s|max_per_day|rythme)\b/i.test(
-      blob
-    );
-  if (!hasRhythm) missing.push("rythme / relances (anti-blocage)");
-
-  const hasSchedule =
-    /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|cr[eé]neau|horaire|fen[eê]tre|lancer\s+(à|a)|d[eé]marr)\b/i.test(
-      blob
-    );
-  if (!hasSchedule) {
-    missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+  if (!inbound) {
+    // Délais entre messages + rythme anti-blocage : gérés automatiquement (pas de question user).
+    const hasSchedule =
+      /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|cr[eé]neau|horaire|fen[eê]tre|lancer\s+(à|a)|d[eé]marr)\b/i.test(
+        blob
+      );
+    if (!hasSchedule) {
+      missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+    }
   }
 
   // Identité face aux prospects — obligatoire pour « qui êtes-vous ? »
@@ -294,11 +309,9 @@ export function assessCampaignBriefing(
       m.includes("objectif") ||
       m.includes("cible") ||
       m.includes("horaires") ||
-      m.includes("rythme") ||
       m.includes("présentation")
   );
   const readyForDraft = questionsAsked >= 6 && criticalMissing.length === 0;
-  const inbound = isInboundClosingFlow(history, userMessage);
   const stickersQuestionAsked = hasStickersQuestionAsked(history);
   const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
   // Closing entrant : pas d'opener sortant → ces étapes sont N/A (considérées OK).
@@ -308,7 +321,8 @@ export function assessCampaignBriefing(
   const openerVariantsProposed = inbound
     ? true
     : hasProposedOpenerVariants(history);
-  const inboundPacingAsked = inbound ? hasInboundPacingQuestionAsked(history) : true;
+  // Pacing vagues / délais : gérés en arrière-plan — ne jamais bloquer le brief.
+  const inboundPacingAsked = true;
 
   return {
     inCampaignFlow: true,
@@ -369,25 +383,14 @@ export function buildBriefingNudge(
       );
     }
 
-    // Closing entrant : pacing anti-blocage WhatsApp (vagues + plage).
-    if (assessment.isInboundClosing && !assessment.inboundPacingAsked) {
-      return (
-        "Closing entrant : pose UNE question courte (anti-blocage WhatsApp) — " +
-        "« Pour éviter les blocages, je réponds par vagues de 50 (1–2 min entre chaque). " +
-        "Délai entre deux vagues ? (minimum 1 h, recommandé 2 h) " +
-        "Et plage d'envoi ? (ex. 8h–19h — après 19h on reporte au lendemain). » " +
-        "Puis ARRÊTE-TOI. Enregistre la réponse via quiet_hours_start/end + inbound_wave_gap_minutes dans create_automation. " +
-        "INTERDIT : create_automation tant que cette question n'est pas posée."
-      );
-    }
-
-    // Closing entrant : pas d'opener sortant — brouillon après stickers + tiers + pacing.
+    // Closing entrant : pacing vagues + délais gérés en arrière-plan (pas de question user).
     if (assessment.isInboundClosing) {
       return (
-        "Campagne closing entrant / support : stickers + notification tiers + pacing vagues couverts. " +
+        "Campagne closing entrant / support : stickers + notification tiers couverts. " +
+        "Pacing vagues / délais / plage = défauts système (ne PAS demander à l'utilisateur). " +
         "Pas de 5 variantes d'opener (le prospect écrit en premier). " +
-        "Crée le brouillon (create_automation draft keyword_sales / inbound_closing) avec trigger_phrases, " +
-        "quiet_hours (plage) et inbound_wave_gap_minutes (≥60), " +
+        "Crée le brouillon (create_automation draft keyword_sales / inbound_closing) avec trigger_phrases " +
+        "(les défauts inbound_wave_gap_minutes / quiet_hours / batch seront appliqués automatiquement), " +
         "puis propose une simulation (show_campaign_simulation)."
       );
     }

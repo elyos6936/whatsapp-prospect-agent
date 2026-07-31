@@ -3863,6 +3863,26 @@ export async function executeTool(
         return JSON.stringify({ error: "type invalide." });
       }
 
+      const agentThreadForPurpose = await getAgentThread(userId, threadId);
+      const threadPurpose = agentThreadForPurpose?.purpose ?? null;
+      if (threadPurpose === "support" && type !== "keyword_sales") {
+        return JSON.stringify({
+          error:
+            "Ce fil est en mode Support client : utilise uniquement type=keyword_sales (mode inbound_closing). " +
+            "Pas de prospection sortante (contact_prospect / group_prospect) ici.",
+        });
+      }
+      if (
+        threadPurpose === "prospection" &&
+        (type === "keyword_sales" || type === "custom_followup")
+      ) {
+        return JSON.stringify({
+          error:
+            "Ce fil est en mode Prospection : utilise type=contact_prospect ou group_prospect. " +
+            "Pour du support / messages entrants, crée une nouvelle automatisation en mode Support client.",
+        });
+      }
+
       const explicitAutomationId =
         args.automation_id != null && Number.isFinite(Number(args.automation_id))
           ? Number(args.automation_id)

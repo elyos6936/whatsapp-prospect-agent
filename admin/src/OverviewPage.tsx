@@ -27,6 +27,9 @@ type Overview = {
 export function OverviewPage() {
   const [data, setData] = useState<Overview | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<string | null>(null);
+  const [confirmGlobalClear, setConfirmGlobalClear] = useState(false);
 
   useEffect(() => {
     api<Overview>("/api/admin/overview")
@@ -34,13 +37,40 @@ export function OverviewPage() {
       .catch((err) => setError(err instanceof ApiError ? err.message : "Erreur"));
   }, []);
 
+  async function clearAllAgentHistory() {
+    setBusy(true);
+    setFlash(null);
+    setError(null);
+    try {
+      const res = await api<{ deletedMessages: number }>("/api/admin/agent-history", {
+        method: "DELETE",
+      });
+      setFlash(
+        `Historique agent vidé sur tous les comptes (${res.deletedMessages} message(s) supprimé(s)).`
+      );
+      setConfirmGlobalClear(false);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Échec de la purge.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <header className="topbar">
         <h1>Tableau de bord</h1>
       </header>
       <div className="content">
-        {error ? <div className="error-inline">{error}</div> : null}
+        {error ? <div className="error-banner">{error}</div> : null}
+        {flash ? (
+          <div
+            className="error-banner"
+            style={{ background: "#ecfdf5", borderColor: "#a7f3d0", color: "#047857" }}
+          >
+            {flash}
+          </div>
+        ) : null}
         {!data && !error ? <div className="loading">Chargement…</div> : null}
         {data ? (
           <>
@@ -84,6 +114,25 @@ export function OverviewPage() {
               title="Activité messages"
               subtitle="30 derniers jours — envoyés vs reçus (plateforme)"
             />
+
+            <div className="detail-card" style={{ marginBottom: 20 }}>
+              <h3>Maintenance — historiques agent</h3>
+              <p className="actions-help">
+                Vide le chat Klanvio de <strong>tous</strong> les comptes (tous les fils). Ne touche
+                pas aux messages WhatsApp ni aux campagnes. Pour un seul compte : Comptes → Gestion
+                compte.
+              </p>
+              <div className="actions-row">
+                <button
+                  className="btn btn-danger"
+                  type="button"
+                  disabled={busy}
+                  onClick={() => setConfirmGlobalClear(true)}
+                >
+                  Vider l&apos;historique de tous les comptes
+                </button>
+              </div>
+            </div>
 
             <div className="grid-2" style={{ marginBottom: 20 }}>
               <div className="panel">
@@ -154,6 +203,36 @@ export function OverviewPage() {
           </>
         ) : null}
       </div>
+
+      {confirmGlobalClear ? (
+        <div className="modal-backdrop" role="presentation">
+          <div className="modal" role="dialog">
+            <h3>Vider l&apos;historique de tous les comptes ?</h3>
+            <p>
+              Tous les messages du chat agent (tous les fils, tous les utilisateurs) seront
+              supprimés. Action irreversible. Les campagnes et messages WhatsApp restent.
+            </p>
+            <div className="modal-actions">
+              <button
+                className="btn btn-ghost"
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmGlobalClear(false)}
+              >
+                Annuler
+              </button>
+              <button
+                className="btn btn-danger"
+                type="button"
+                disabled={busy}
+                onClick={() => void clearAllAgentHistory()}
+              >
+                {busy ? "Suppression…" : "Confirmer la purge globale"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

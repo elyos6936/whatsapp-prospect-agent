@@ -7,7 +7,7 @@ import { MessageBubble } from './MessageBubble';
 import { TypingIndicator } from './TypingIndicator';
 import { PLATFORM_NAME } from '@/lib/brand';
 import type { ChatAttachment } from '@/lib/chat-attachments';
-import type { ChatMessage } from '@/lib/api';
+import type { ChatMessage, ThreadPurpose } from '@/lib/api';
 import type { AutomationVisualPlan } from '@/lib/automation-plan';
 
 interface ChatWorkspaceProps {
@@ -19,6 +19,8 @@ interface ChatWorkspaceProps {
   onOpenPlan?: (plan: AutomationVisualPlan) => void;
   /** Identifiant du fil — remonte le composer et recentre le focus. */
   threadId?: number | null;
+  /** Intention choisie à la création (prospection / support). */
+  threadPurpose?: ThreadPurpose | null;
 }
 
 function getGreeting(): string {
@@ -45,6 +47,7 @@ export function ChatWorkspace({
   isFreshSession = true,
   onOpenPlan,
   threadId = null,
+  threadPurpose = null,
 }: ChatWorkspaceProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
@@ -108,8 +111,11 @@ export function ChatWorkspace({
                 {getGreeting()}
               </h1>
               <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-text-400">
-                Votre agent {PLATFORM_NAME} WhatsApp est prêt. Donnez une instruction — il exécute
-                prospection, groupes et réponses automatiques.
+                {threadPurpose === 'support'
+                  ? `Votre agent ${PLATFORM_NAME} est prêt pour le support client. Décrivez le produit et les phrases déclencheurs — il configurera les réponses entrantes.`
+                  : threadPurpose === 'prospection'
+                    ? `Votre agent ${PLATFORM_NAME} est prêt pour la prospection. Indiquez la cible (groupe ou contacts) et l’offre — il guidera le brief.`
+                    : `Votre agent ${PLATFORM_NAME} WhatsApp est prêt. Donnez une instruction — il exécute prospection, groupes et réponses automatiques.`}
               </p>
             </div>
           </div>

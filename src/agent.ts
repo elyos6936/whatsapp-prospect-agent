@@ -319,6 +319,25 @@ async function buildBusinessContext(
 
   try {
     const thread = await getAgentThread(userId, threadId);
+    if (thread?.purpose === "support") {
+      lines.push(
+        `## TYPE DE FIL — SUPPORT CLIENT (OBLIGATOIRE)\n` +
+          `Ce fil a été créé en mode **Support client**. Le client écrit en premier.\n` +
+          `- create_automation UNIQUEMENT avec type=\`keyword_sales\` et mode=\`inbound_closing\`.\n` +
+          `- INTERDIT : contact_prospect, group_prospect, premier message de contact sortant, 5 variantes d'accroche.\n` +
+          `- Questions utiles : produit/service, phrase(s) déclencheur exacte(s), infos à donner, objectif (vente/RDV/lien), présentation, stickers, notif tiers.\n` +
+          `- INTERDIT de demander délais entre messages, vagues de 50, gap entre vagues ou plage anti-blocage — défauts système automatiques.\n` +
+          `- Commence le brief par une question ouverte sur le produit / ce que tu dois répondre — PAS « quel premier message envoyer ».`
+      );
+    } else if (thread?.purpose === "prospection") {
+      lines.push(
+        `## TYPE DE FIL — PROSPECTION (OBLIGATOIRE)\n` +
+          `Ce fil a été créé en mode **Prospection**. Vous contactez les prospects en premier.\n` +
+          `- create_automation UNIQUEMENT avec type=\`contact_prospect\` ou \`group_prospect\` (mode \`outbound_prospect\`).\n` +
+          `- INTERDIT : keyword_sales / inbound_closing / questions « phrase déclencheur » comme flux principal.\n` +
+          `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, puis 5 variantes d'accroche.`
+      );
+    }
     if (thread?.description?.trim()) {
       lines.push(
         `## Objectif de cette automatisation\n${thread.description.trim()}\n\n` +
@@ -457,7 +476,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     messages.push({ role: "system", content: threadBlock });
   }
 
-  const briefing = assessCampaignBriefing(history, userMessage);
+  const briefing = assessCampaignBriefing(history, userMessage, thread?.purpose ?? null);
   const hasSimAlready = recentHistoryHasSimulation(history);
   const turnMode = resolveSimulationTurnMode(history, userMessage);
   const forceSim = turnMode === "force_sim";
@@ -624,22 +643,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
               error:
                 "INTERDIT de créer le brouillon avant d'avoir demandé si l'utilisateur veut prévenir un tiers (livreur, associé, commercial…) à la conversion. " +
                 "Pose la question oui/non — ne saute pas cette étape même si le brief parle déjà de livraison.",
-            });
-            messages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: block,
-            });
-            const nudge = buildBriefingNudge(briefing, history, userMessage);
-            if (nudge) messages.push({ role: "system", content: nudge });
-            continue;
-          }
-
-          if (briefing.isInboundClosing && !briefing.inboundPacingAsked) {
-            const block = JSON.stringify({
-              error:
-                "INTERDIT de créer le brouillon closing entrant avant d'avoir posé la question anti-blocage : " +
-                "délai entre vagues de 50 réponses (min 1 h) + plage d'envoi (ex. 8h–19h).",
             });
             messages.push({
               role: "tool",

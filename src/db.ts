@@ -196,6 +196,7 @@ export async function ensureAgentThreadsSchema(): Promise<void> {
       await sql`ALTER TABLE agent_conversation ADD COLUMN IF NOT EXISTS thread_id BIGINT REFERENCES agent_threads(id) ON DELETE CASCADE`;
       await sql`ALTER TABLE automations ADD COLUMN IF NOT EXISTS agent_thread_id BIGINT REFERENCES agent_threads(id) ON DELETE SET NULL`;
       await sql`ALTER TABLE agent_threads ADD COLUMN IF NOT EXISTS description TEXT`;
+      await sql`ALTER TABLE agent_threads ADD COLUMN IF NOT EXISTS purpose TEXT`;
       await sql`CREATE INDEX IF NOT EXISTS idx_agent_conversation_thread ON agent_conversation(user_id, thread_id, id)`;
 
       // Backfill : 1 fil par user avec messages orphelins
@@ -223,11 +224,22 @@ export async function ensureAgentThreadsSchema(): Promise<void> {
   await agentThreadsSchemaReady;
 }
 
+/** Intention du fil choisie à la création — force le briefing / type de campagne. */
+export type AgentThreadPurpose = "prospection" | "support";
+
+export function normalizeThreadPurpose(raw: unknown): AgentThreadPurpose | null {
+  const v = String(raw ?? "").trim().toLowerCase();
+  if (v === "prospection" || v === "support") return v;
+  return null;
+}
+
 export interface AgentThread {
   id: number;
   user_id: number;
   title: string;
   description?: string | null;
+  /** null = fils legacy (heuristique chat). */
+  purpose?: AgentThreadPurpose | null;
   automation_id: number | null;
   created_at: string;
   updated_at: string;
@@ -251,6 +263,7 @@ function mapAgentThread(row: Record<string, unknown>): AgentThread {
     user_id: Number(row.user_id),
     title: sanitizeThreadTitle(String(row.title)),
     description: desc || null,
+    purpose: normalizeThreadPurpose(row.purpose),
     automation_id: row.automation_id != null ? Number(row.automation_id) : null,
     created_at: formatTs(row.created_at),
     updated_at: formatTs(row.updated_at),
@@ -263,7 +276,7 @@ export async function listAgentThreads(userId: number, limit = 50): Promise<Agen
   await ensureAgentThreadsSchema().catch(() => {});
   const rows = await sql<Record<string, unknown>[]>`
     SELECT
-      t.id, t.user_id, t.title, t.description, t.automation_id, t.created_at, t.updated_at,
+      t.id, t.user_id, t.title, t.description, t.purpose, t.automation_id, t.created_at, t.updated_at,
       a.status AS automation_status,
       a.name AS automation_name
     FROM agent_threads t
@@ -278,7 +291,7 @@ export async function listAgentThreads(userId: number, limit = 50): Promise<Agen
 export async function getAgentThread(userId: number, threadId: number): Promise<AgentThread | null> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT
-      t.id, t.user_id, t.title, t.description, t.automation_id, t.created_at, t.updated_at,
+      t.id, t.user_id, t.title, t.description, t.purpose, t.automation_id, t.created_at, t.updated_at,
       a.status AS automation_status,
       a.name AS automation_name
     FROM agent_threads t
@@ -292,15 +305,17 @@ export async function getAgentThread(userId: number, threadId: number): Promise<
 export async function createAgentThread(
   userId: number,
   title = "Automatisation",
-  description?: string | null
+  description?: string | null,
+  purpose?: AgentThreadPurpose | null
 ): Promise<AgentThread> {
   await ensureAgentThreadsSchema().catch(() => {});
   const cleanTitle = sanitizeThreadTitle(title);
   const cleanDesc = description?.trim().slice(0, 280) || null;
+  const cleanPurpose = normalizeThreadPurpose(purpose);
   const rows = await sql<Record<string, unknown>[]>`
-    INSERT INTO agent_threads (user_id, title, description)
-    VALUES (${userId}, ${cleanTitle}, ${cleanDesc})
-    RETURNING id, user_id, title, description, automation_id, created_at, updated_at
+    INSERT INTO agent_threads (user_id, title, description, purpose)
+    VALUES (${userId}, ${cleanTitle}, ${cleanDesc}, ${cleanPurpose})
+    RETURNING id, user_id, title, description, purpose, automation_id, created_at, updated_at
   `;
   return mapAgentThread(rows[0]);
 }
@@ -322,7 +337,7 @@ export async function updateAgentThreadTitle(userId: number, threadId: number, t
     UPDATE agent_threads
     SET title = ${clean}, updated_at = NOW()
     WHERE user_id = ${userId} AND id = ${threadId}
-    RETURNING id, user_id, title, description, automation_id, created_at, updated_at
+    RETURNING id, user_id, title, description, purpose, automation_id, created_at, updated_at
   `;
   const thread = rows[0] ? mapAgentThread(rows[0]) : null;
   if (thread?.automation_id) {

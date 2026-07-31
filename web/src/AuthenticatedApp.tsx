@@ -198,10 +198,10 @@ export default function AuthenticatedApp() {
   }, []);
 
   const handleCreateThread = useCallback(
-    async (title: string, description: string) => {
+    async (title: string, description: string, purpose: 'prospection' | 'support') => {
       setCreatingThread(true);
       try {
-        const thread = await createThread(title, description);
+        const thread = await createThread(title, description, purpose);
         setNewAutoModalOpen(false);
         await refreshThreads(thread.id);
         setOverlayView(null);
@@ -418,6 +418,7 @@ export default function AuthenticatedApp() {
           <ChatWorkspace
             key={activeThreadId ?? 'no-thread'}
             threadId={activeThreadId}
+            threadPurpose={activeThread?.purpose ?? null}
             messages={messages}
             messagesLoading={loading || threadsLoading}
             isSending={isSending}
@@ -481,7 +482,9 @@ export default function AuthenticatedApp() {
       open={newAutoModalOpen}
       busy={creatingThread}
       onCancel={() => !creatingThread && setNewAutoModalOpen(false)}
-      onConfirm={(title, description) => void handleCreateThread(title, description)}
+      onConfirm={(title, description, purpose) =>
+        void handleCreateThread(title, description, purpose)
+      }
     />
     </>
   );

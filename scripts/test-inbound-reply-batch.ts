@@ -147,7 +147,7 @@ console.log("\n=== Briefing — question pacing détectée ===");
   );
 }
 
-console.log("\n=== Briefing — ordre stickers → tiers → pacing (inbound) ===");
+console.log("\n=== Briefing — ordre stickers → tiers → brouillon (inbound, pacing auto) ===");
 {
   // Teste l'ordre des nudges avec un assessment « ready » synthétique
   // (évite de dépendre du compteur de questions du brief).
@@ -189,31 +189,15 @@ console.log("\n=== Briefing — ordre stickers → tiers → pacing (inbound) ==
     "non"
   );
   assert(
-    "3) pacing après tiers",
-    !!n3 && /vagues de 50/i.test(n3) && /anti-blocage|blocages/i.test(n3),
+    "3) après stickers+tiers → brouillon (pas de question vagues)",
+    !!n3 &&
+      /create_automation/i.test(n3) &&
+      /Pas de 5 variantes/i.test(n3) &&
+      !/Délai entre deux vagues/i.test(n3),
     n3 ?? "null"
   );
 
-  const n4 = buildBriefingNudge(
-    {
-      ...base,
-      stickersQuestionAsked: true,
-      thirdPartyQuestionAsked: true,
-      inboundPacingAsked: true,
-    },
-    [],
-    "2h"
-  );
-  assert(
-    "4) après pacing → brouillon (pas d'opener)",
-    !!n4 &&
-      /create_automation/i.test(n4) &&
-      /Pas de 5 variantes/i.test(n4) &&
-      /inbound_wave_gap_minutes/i.test(n4),
-    n4 ?? "null"
-  );
-
-  // Détection réelle dans un fil (regex + assess)
+  // Détection réelle dans un fil (regex + assess) — pacing auto même sans question
   const hist = [
     msg("user", "Campagne keyword_sales / closing entrant"),
     msg(
@@ -226,17 +210,12 @@ console.log("\n=== Briefing — ordre stickers → tiers → pacing (inbound) ==
       "Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial…) sur WhatsApp ? (oui/non)"
     ),
     msg("user", "non"),
-    msg(
-      "assistant",
-      "Pour éviter les blocages, je réponds par vagues de 50. Délai entre deux vagues ? (min 1 h) Et plage d'envoi 8h–19h ?"
-    ),
   ];
   assert("detect stickers", hasStickersQuestionAsked(hist));
   assert("detect tiers", hasThirdPartyQuestionAsked(hist));
-  assert("detect pacing", hasInboundPacingQuestionAsked(hist));
-  const assessed = assessCampaignBriefing(hist, "2h");
+  const assessed = assessCampaignBriefing(hist, "ok");
   assert("assess inbound", assessed.isInboundClosing === true);
-  assert("assess pacing asked", assessed.inboundPacingAsked === true);
+  assert("assess pacing auto (toujours true)", assessed.inboundPacingAsked === true);
 }
 
 console.log("\n=== Briefing — outbound ne demande PAS le pacing ===");

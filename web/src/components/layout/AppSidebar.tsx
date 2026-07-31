@@ -229,10 +229,19 @@ function ThreadList({
           const active = activeThreadId === thread.id;
           const status = thread.automation_status;
           const badge = status ? STATUS_LABELS[status] || status : 'Vide';
+          const purposeLabel =
+            thread.purpose === 'support'
+              ? 'Support'
+              : thread.purpose === 'prospection'
+                ? 'Prospection'
+                : null;
           const desc = thread.description?.trim();
-          const subtitle = desc
-            ? `${badge} · ${desc.length > 40 ? `${desc.slice(0, 39)}…` : desc}`
-            : badge;
+          const subtitleParts = [
+            purposeLabel,
+            badge,
+            desc ? (desc.length > 36 ? `${desc.slice(0, 35)}…` : desc) : null,
+          ].filter(Boolean);
+          const subtitle = subtitleParts.join(' · ');
           const isRenaming = renamingId === thread.id;
           const isBusy = busyId === thread.id;
 

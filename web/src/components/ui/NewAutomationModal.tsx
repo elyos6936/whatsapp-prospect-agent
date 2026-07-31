@@ -1,25 +1,30 @@
 import { useEffect, useState } from 'react';
+import { Headphones, Megaphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+export type ThreadPurpose = 'prospection' | 'support';
 
 type NewAutomationModalProps = {
   open: boolean;
   busy?: boolean;
-  onConfirm: (title: string, description: string) => void;
+  onConfirm: (title: string, description: string, purpose: ThreadPurpose) => void;
   onCancel: () => void;
 };
 
-/** Popup centrée : nom + courte description avant création d'une automatisation. */
+/** Popup centrée : type (prospection / support) + nom + description avant création. */
 export function NewAutomationModal({
   open,
   busy = false,
   onConfirm,
   onCancel,
 }: NewAutomationModalProps) {
+  const [purpose, setPurpose] = useState<ThreadPurpose | null>(null);
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
 
   useEffect(() => {
     if (!open) return;
+    setPurpose(null);
     setTitle('');
     setDescription('');
   }, [open]);
@@ -35,7 +40,8 @@ export function NewAutomationModal({
 
   if (!open) return null;
 
-  const canSubmit = title.trim().length >= 2 && !busy;
+  const canSubmit = purpose != null && title.trim().length >= 2 && !busy;
+  const isSupport = purpose === 'support';
 
   return (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="presentation">
@@ -50,23 +56,75 @@ export function NewAutomationModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="new-auto-title"
-        className="relative z-10 w-full max-w-[420px] rounded-2xl border border-black/[0.08] bg-bg-0 p-5 shadow-2xl sm:p-6"
+        className="relative z-10 w-full max-w-[440px] rounded-2xl border border-black/[0.08] bg-bg-0 p-5 shadow-2xl sm:p-6"
       >
         <h2 id="new-auto-title" className="text-lg font-semibold text-text-100">
           Nouvelle automatisation
         </h2>
         <p className="mt-1.5 text-sm text-text-400">
-          Donnez un nom et un objectif court — l&apos;agent s&apos;en servira pour vous guider.
+          Choisissez d&apos;abord le type — l&apos;agent ne mélangera plus prospection et support.
         </p>
 
         <form
           className="mt-5 space-y-4"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!canSubmit) return;
-            onConfirm(title.trim(), description.trim());
+            if (!canSubmit || !purpose) return;
+            onConfirm(title.trim(), description.trim(), purpose);
           }}
         >
+          <div>
+            <p className="mb-1.5 block text-xs font-medium text-text-400">Type</p>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setPurpose('prospection')}
+                className={cn(
+                  'flex flex-col items-start gap-1 rounded-xl border px-3 py-3 text-left transition',
+                  purpose === 'prospection'
+                    ? 'border-brand bg-brand/[0.06] ring-1 ring-brand/20'
+                    : 'border-black/10 bg-bg-100 hover:border-black/15',
+                  busy && 'opacity-60',
+                )}
+              >
+                <Megaphone
+                  className={cn(
+                    'h-4 w-4',
+                    purpose === 'prospection' ? 'text-brand' : 'text-text-400',
+                  )}
+                />
+                <span className="text-sm font-semibold text-text-100">Prospection</span>
+                <span className="text-[11px] leading-snug text-text-500">
+                  Vous contactez des prospects (groupe ou liste).
+                </span>
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setPurpose('support')}
+                className={cn(
+                  'flex flex-col items-start gap-1 rounded-xl border px-3 py-3 text-left transition',
+                  purpose === 'support'
+                    ? 'border-brand bg-brand/[0.06] ring-1 ring-brand/20'
+                    : 'border-black/10 bg-bg-100 hover:border-black/15',
+                  busy && 'opacity-60',
+                )}
+              >
+                <Headphones
+                  className={cn(
+                    'h-4 w-4',
+                    purpose === 'support' ? 'text-brand' : 'text-text-400',
+                  )}
+                />
+                <span className="text-sm font-semibold text-text-100">Support client</span>
+                <span className="text-[11px] leading-snug text-text-500">
+                  Réponses entrantes sur phrases déclencheurs.
+                </span>
+              </button>
+            </div>
+          </div>
+
           <div>
             <label htmlFor="auto-name" className="mb-1.5 block text-xs font-medium text-text-400">
               Nom
@@ -76,7 +134,11 @@ export function NewAutomationModal({
               type="text"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              placeholder="Ex. Florelle Bio — Prospection"
+              placeholder={
+                isSupport
+                  ? 'Ex. Florelle Bio — Support intéressés'
+                  : 'Ex. Florelle Bio — Prospection groupe'
+              }
               maxLength={80}
               autoFocus
               disabled={busy}
@@ -91,7 +153,11 @@ export function NewAutomationModal({
               id="auto-desc"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ex. Prospecter les membres du groupe et proposer la cure minceur naturelle."
+              placeholder={
+                isSupport
+                  ? 'Ex. Répondre quand quelqu’un écrit « je suis intéressé » et closer la vente.'
+                  : 'Ex. Prospecter les membres du groupe et proposer la cure minceur naturelle.'
+              }
               rows={3}
               maxLength={280}
               disabled={busy}
