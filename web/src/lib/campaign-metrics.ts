@@ -106,7 +106,10 @@ export function goalAwareStatCards(input: {
             0,
         );
   const inboundMsgs = Number(input.period?.inboundMessages ?? handled);
-  const periodHint = input.periodFiltered ? 'sur la période' : undefined;
+  const periodHint =
+    input.periodFiltered && input.period ? 'sur la période' : undefined;
+  const periodOr = <T,>(periodValue: T | null | undefined, lifetime: T): T =>
+    input.periodFiltered ? ((periodValue ?? 0) as T) : lifetime;
 
   if (isGroupBroadcast) {
     const total = Number(input.stats?.targetsTotal ?? 0);
@@ -158,15 +161,13 @@ export function goalAwareStatCards(input: {
         {
           key: 'reached',
           label: 'Atteints',
-          value: input.periodFiltered ? (input.period?.newlyReached ?? metrics.reached) : metrics.reached,
+          value: periodOr(input.period?.newlyReached, metrics.reached),
           hint: periodHint,
         },
         {
           key: 'answered',
           label: 'Réponses',
-          value: input.periodFiltered
-            ? (input.period?.newlyAnswered ?? metrics.answered)
-            : metrics.answered,
+          value: periodOr(input.period?.newlyAnswered, metrics.answered),
           hint: periodHint,
         },
         {
@@ -198,25 +199,19 @@ export function goalAwareStatCards(input: {
             {
               key: 'reached',
               label: 'Atteints',
-              value: input.periodFiltered
-                ? (input.period?.newlyReached ?? metrics.reached)
-                : metrics.reached,
+              value: periodOr(input.period?.newlyReached, metrics.reached),
               hint: periodHint,
             },
             {
               key: 'answered',
               label: 'Réponses',
-              value: input.periodFiltered
-                ? (input.period?.newlyAnswered ?? metrics.answered)
-                : metrics.answered,
+              value: periodOr(input.period?.newlyAnswered, metrics.answered),
               hint: periodHint,
             },
             {
               key: 'interested',
               label: 'Intéressés',
-              value: input.periodFiltered
-                ? (input.period?.newlyInterested ?? metrics.interested)
-                : metrics.interested,
+              value: periodOr(input.period?.newlyInterested, metrics.interested),
               accent: 'success',
               hint: periodHint,
             },
@@ -267,15 +262,13 @@ export function goalAwareStatCards(input: {
         {
           key: 'reached',
           label: 'Atteints',
-          value: input.periodFiltered ? (input.period?.newlyReached ?? metrics.reached) : metrics.reached,
+          value: periodOr(input.period?.newlyReached, metrics.reached),
           hint: periodHint,
         },
         {
           key: 'answered',
           label: 'Réponses',
-          value: input.periodFiltered
-            ? (input.period?.newlyAnswered ?? metrics.answered)
-            : metrics.answered,
+          value: periodOr(input.period?.newlyAnswered, metrics.answered),
           hint: periodHint,
         },
         {
@@ -323,9 +316,7 @@ export function goalAwareStatCards(input: {
         {
           key: 'interested',
           label: 'Intéressés',
-          value: input.periodFiltered
-            ? (input.period?.newlyInterested ?? metrics.interested)
-            : metrics.interested,
+          value: periodOr(input.period?.newlyInterested, metrics.interested),
         },
       ],
     };
@@ -340,15 +331,13 @@ export function goalAwareStatCards(input: {
       {
         key: 'reached',
         label: 'Atteints',
-        value: input.periodFiltered ? (input.period?.newlyReached ?? metrics.reached) : metrics.reached,
+        value: periodOr(input.period?.newlyReached, metrics.reached),
         hint: periodHint,
       },
       {
         key: 'answered',
         label: 'Réponses',
-        value: input.periodFiltered
-          ? (input.period?.newlyAnswered ?? metrics.answered)
-          : metrics.answered,
+        value: periodOr(input.period?.newlyAnswered, metrics.answered),
         hint: periodHint,
       },
       {
@@ -360,9 +349,7 @@ export function goalAwareStatCards(input: {
       {
         key: 'interested',
         label: 'Intéressés',
-        value: input.periodFiltered
-          ? (input.period?.newlyInterested ?? metrics.interested)
-          : metrics.interested,
+        value: periodOr(input.period?.newlyInterested, metrics.interested),
         accent: 'success',
         hint: periodHint,
       },

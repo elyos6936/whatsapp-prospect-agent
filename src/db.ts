@@ -769,20 +769,34 @@ export type CampaignAnalytics = {
   series: CampaignAnalyticsDay[];
 };
 
-function startOfLocalDayFromKey(dateKey: string): Date {
+function startOfUtcDayFromKey(dateKey: string): Date {
   const [y, m, d] = dateKey.split("-").map(Number);
-  return new Date(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0);
+  return new Date(Date.UTC(y, (m ?? 1) - 1, d ?? 1, 0, 0, 0, 0));
 }
 
-function addLocalDaysDate(d: Date, days: number): Date {
-  const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
-  x.setDate(x.getDate() + days);
+function addUtcDaysDate(d: Date, days: number): Date {
+  const x = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  x.setUTCDate(x.getUTCDate() + days);
   return x;
 }
 
-function dateKeyLocal(d: Date): string {
+function dateKeyUtc(d: Date): string {
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
+}
+
+/** Normalise une clé jour renvoyée par Postgres (string, Date, ISO…). */
+function normalizeAnalyticsDayKey(raw: unknown): string | null {
+  if (raw == null) return null;
+  if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
+    return dateKeyUtc(raw);
+  }
+  const s = String(raw).trim();
+  const iso = s.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1]!;
+  const d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return dateKeyUtc(d);
+  return null;
 }
 
 /**
@@ -799,27 +813,21 @@ export function resolveCampaignAnalyticsWindow(opts: {
 }): { from: Date; toExclusive: Date; range: string } {
   const now = opts.now ?? new Date();
   const endExclusive = new Date(
-    now.getFullYear(),
-    now.getMonth(),
-    now.getDate() + 1,
-    0,
-    0,
-    0,
-    0
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0)
   );
 
   const parseKey = (raw?: string): Date | null => {
     const s = raw?.trim();
     if (!s || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
     const [y, m, d] = s.split("-").map(Number);
-    const dt = new Date(y, m - 1, d, 0, 0, 0, 0);
+    const dt = new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
     return Number.isNaN(dt.getTime()) ? null : dt;
   };
 
   const customFrom = parseKey(opts.from);
   const customTo = parseKey(opts.to);
   if (customFrom && customTo) {
-    const toEx = addLocalDaysDate(customTo, 1);
+    const toEx = addUtcDaysDate(customTo, 1);
     if (toEx > customFrom) {
       return { from: customFrom, toExclusive: toEx, range: "custom" };
     }
@@ -835,17 +843,17 @@ export function resolveCampaignAnalyticsWindow(opts: {
           : opts.campaignCreatedAt.replace(" ", "T")
       );
       if (!Number.isNaN(d.getTime())) {
-        from = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+        from = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0));
       }
     }
     if (!from) {
-      from = addLocalDaysDate(endExclusive, -365);
+      from = addUtcDaysDate(endExclusive, -365);
     }
     return { from, toExclusive: endExclusive, range: "all" };
   }
 
   const days = range === "7d" ? 7 : range === "90d" ? 90 : 30;
-  const from = addLocalDaysDate(endExclusive, -days);
+  const from = addUtcDaysDate(endExclusive, -days);
   return { from, toExclusive: endExclusive, range: `${days}d` };
 }
 
@@ -927,7 +935,7 @@ export async function getCampaignAnalytics(
     Array<{ d: string; direction: string; msgs: number; people: number }>
   >`
     SELECT
-      to_char(created_at::date, 'YYYY-MM-DD') AS d,
+      to_char((created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d,
       direction,
       COUNT(*)::int AS msgs,
       COUNT(DISTINCT contact_phone)::int AS people
@@ -936,12 +944,12 @@ export async function getCampaignAnalytics(
       AND automation_id = ${automationId}
       AND created_at >= ${from}
       AND created_at < ${toExclusive}
-    GROUP BY created_at::date, direction
+    GROUP BY 1, direction
     ORDER BY d ASC
   `;
 
   const dailyFirstOut = await sql<Array<{ d: string; n: number }>>`
-    SELECT to_char(first_at::date, 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
+    SELECT to_char((first_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
     FROM (
       SELECT contact_phone, MIN(created_at) AS first_at
       FROM messages
@@ -952,12 +960,12 @@ export async function getCampaignAnalytics(
       GROUP BY contact_phone
     ) t
     WHERE first_at >= ${from} AND first_at < ${toExclusive}
-    GROUP BY first_at::date
+    GROUP BY 1
     ORDER BY d ASC
   `;
 
   const dailyFirstIn = await sql<Array<{ d: string; n: number }>>`
-    SELECT to_char(first_at::date, 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
+    SELECT to_char((first_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
     FROM (
       SELECT contact_phone, MIN(created_at) AS first_at
       FROM messages
@@ -967,12 +975,12 @@ export async function getCampaignAnalytics(
       GROUP BY contact_phone
     ) t
     WHERE first_at >= ${from} AND first_at < ${toExclusive}
-    GROUP BY first_at::date
+    GROUP BY 1
     ORDER BY d ASC
   `;
 
   const dailyInterested = await sql<Array<{ d: string; n: number }>>`
-    SELECT to_char(last_action_at::date, 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
+    SELECT to_char((last_action_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD') AS d, COUNT(*)::int AS n
     FROM automation_targets
     WHERE user_id = ${userId}
       AND automation_id = ${automationId}
@@ -980,7 +988,7 @@ export async function getCampaignAnalytics(
       AND last_action_at IS NOT NULL
       AND last_action_at >= ${from}
       AND last_action_at < ${toExclusive}
-    GROUP BY last_action_at::date
+    GROUP BY 1
     ORDER BY d ASC
   `;
 
@@ -1003,7 +1011,9 @@ export async function getCampaignAnalytics(
   };
 
   for (const row of dailyMsgs) {
-    const day = ensure(String(row.d));
+    const key = normalizeAnalyticsDayKey(row.d);
+    if (!key) continue;
+    const day = ensure(key);
     if (row.direction === "entrant") {
       day.inboundMessages = Number(row.msgs);
       day.discussing = Number(row.people);
@@ -1012,27 +1022,30 @@ export async function getCampaignAnalytics(
     }
   }
   for (const row of dailyFirstOut) {
-    ensure(String(row.d)).newlyReached = Number(row.n);
+    const key = normalizeAnalyticsDayKey(row.d);
+    if (key) ensure(key).newlyReached = Number(row.n);
   }
   for (const row of dailyFirstIn) {
-    ensure(String(row.d)).newlyAnswered = Number(row.n);
+    const key = normalizeAnalyticsDayKey(row.d);
+    if (key) ensure(key).newlyAnswered = Number(row.n);
   }
   for (const row of dailyInterested) {
-    ensure(String(row.d)).newlyInterested = Number(row.n);
+    const key = normalizeAnalyticsDayKey(row.d);
+    if (key) ensure(key).newlyInterested = Number(row.n);
   }
 
-  // Remplir tous les jours de la fenêtre (zéros inclus)
-  const fromKey = dateKeyLocal(from);
-  const lastInclusive = addLocalDaysDate(toExclusive, -1);
-  const toKey = dateKeyLocal(lastInclusive);
-  let cursor = startOfLocalDayFromKey(fromKey);
-  const end = startOfLocalDayFromKey(toKey);
+  // Remplir tous les jours de la fenêtre (zéros inclus) — clés UTC alignées SQL
+  const fromKey = dateKeyUtc(from);
+  const lastInclusive = addUtcDaysDate(toExclusive, -1);
+  const toKey = dateKeyUtc(lastInclusive);
+  let cursor = startOfUtcDayFromKey(fromKey);
+  const end = startOfUtcDayFromKey(toKey);
   const series: CampaignAnalyticsDay[] = [];
   // Garde-fou : max 366 jours
   for (let i = 0; i < 370 && cursor.getTime() <= end.getTime(); i++) {
-    const key = dateKeyLocal(cursor);
+    const key = dateKeyUtc(cursor);
     series.push(ensure(key));
-    cursor = addLocalDaysDate(cursor, 1);
+    cursor = addUtcDaysDate(cursor, 1);
   }
 
   return {

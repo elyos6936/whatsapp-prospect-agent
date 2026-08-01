@@ -37,6 +37,16 @@ function xTickInterval(pointCount: number): number {
   return Math.max(0, Math.ceil(pointCount / 7) - 1);
 }
 
+function yDomainMax(values: number[]): number {
+  const peak = values.reduce((m, n) => Math.max(m, n), 0);
+  // Garde une échelle lisible même pour un seul événement (=1).
+  return Math.max(peak, 1);
+}
+
+function sumField(series: TemporalPoint[], key: keyof TemporalPoint): number {
+  return series.reduce((acc, row) => acc + Number(row[key] || 0), 0);
+}
+
 export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsProps) {
   if (!series.length) return null;
 
@@ -46,6 +56,25 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
     ...row,
     label: fmtTick(row.date),
   }));
+
+  const leftKeys =
+    mode === 'outbound'
+      ? (['newlyReached', 'newlyAnswered'] as const)
+      : (['discussing'] as const);
+  const leftMax = yDomainMax(data.flatMap((r) => leftKeys.map((k) => Number(r[k] || 0))));
+  const rightMax = yDomainMax(
+    data.flatMap((r) => [
+      r.inboundMessages,
+      r.outboundMessages,
+      r.newlyInterested,
+    ]),
+  );
+  const leftEmpty = leftKeys.every((k) => sumField(series, k) === 0);
+  const rightEmpty =
+    sumField(series, 'inboundMessages') +
+      sumField(series, 'outboundMessages') +
+      sumField(series, 'newlyInterested') ===
+    0;
 
   const xAxisProps = {
     dataKey: 'label' as const,
@@ -70,7 +99,12 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
             ? 'Nouveaux atteints et premières réponses par jour'
             : 'Personnes distinctes ayant écrit, par jour'}
         </p>
-        <div className="mt-4 h-64 w-full min-w-0">
+        <div className="relative mt-4 h-64 w-full min-w-0">
+          {leftEmpty && (
+            <p className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs text-text-500">
+              Aucun nouvel atteint ni première réponse sur cette période.
+            </p>
+          )}
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart
               data={data}
@@ -88,7 +122,13 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.08)" vertical={false} />
               <XAxis {...xAxisProps} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+              <YAxis
+                allowDecimals={false}
+                domain={[0, leftMax]}
+                tick={{ fontSize: 11, fill: '#64748b' }}
+                axisLine={false}
+                tickLine={false}
+              />
               <Tooltip
                 labelFormatter={(_, payload) => {
                   const p = payload?.[0]?.payload as TemporalPoint | undefined;
@@ -110,6 +150,8 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
                     stroke="#2057ce"
                     fill="url(#gReached)"
                     strokeWidth={2}
+                    dot={{ r: 2, strokeWidth: 0, fill: '#2057ce' }}
+                    activeDot={{ r: 4 }}
                   />
                   <Area
                     type="monotone"
@@ -118,6 +160,8 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
                     stroke="#0ea5e9"
                     fill="url(#gAnswered)"
                     strokeWidth={2}
+                    dot={{ r: 2, strokeWidth: 0, fill: '#0ea5e9' }}
+                    activeDot={{ r: 4 }}
                   />
                 </>
               ) : (
@@ -128,6 +172,8 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
                   stroke="#2057ce"
                   fill="url(#gReached)"
                   strokeWidth={2}
+                  dot={{ r: 2, strokeWidth: 0, fill: '#2057ce' }}
+                  activeDot={{ r: 4 }}
                 />
               )}
             </AreaChart>
@@ -138,7 +184,12 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
       <section className="panel p-4 sm:p-5">
         <h3 className="text-sm font-semibold text-text-200">Messages & intérêt</h3>
         <p className="mt-0.5 text-xs text-text-500">Volume journalier et nouveaux intéressés</p>
-        <div className="mt-4 h-64 w-full min-w-0">
+        <div className="relative mt-4 h-64 w-full min-w-0">
+          {rightEmpty && (
+            <p className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center px-6 text-center text-xs text-text-500">
+              Aucun message / intéressé journalier sur cette période.
+            </p>
+          )}
           <ResponsiveContainer width="100%" height="100%">
             <LineChart
               data={data}
@@ -146,7 +197,13 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
             >
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.08)" vertical={false} />
               <XAxis {...xAxisProps} />
-              <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
+              <YAxis
+                allowDecimals={false}
+                domain={[0, rightMax]}
+                tick={{ fontSize: 11, fill: '#64748b' }}
+                axisLine={false}
+                tickLine={false}
+              />
               <Tooltip
                 labelFormatter={(_, payload) => {
                   const p = payload?.[0]?.payload as TemporalPoint | undefined;
@@ -166,6 +223,7 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
                 stroke="#0ea5e9"
                 strokeWidth={2}
                 dot={false}
+                activeDot={{ r: 4 }}
               />
               <Line
                 type="monotone"
@@ -174,6 +232,7 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
                 stroke="#64748b"
                 strokeWidth={2}
                 dot={false}
+                activeDot={{ r: 4 }}
               />
               <Line
                 type="monotone"
@@ -182,6 +241,7 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
                 stroke="#10b981"
                 strokeWidth={2}
                 dot={false}
+                activeDot={{ r: 4 }}
               />
             </LineChart>
           </ResponsiveContainer>

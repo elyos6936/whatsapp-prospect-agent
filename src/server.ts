@@ -641,16 +641,20 @@ app.get<{
   }
   const auto = detail.automation;
   const targets = detail.targets;
-  const contacted = targets.filter((t) => t.status !== "pending").length;
+  /** Aligné sur TARGET_META / outreachMetrics : « contacted » = sans réponse. */
+  const contacted = targets.filter((t) => t.status === "contacted").length;
+  const reachedTargets = targets.filter(
+    (t) => t.status !== "pending" && t.status !== "queued"
+  ).length;
   const replied = targets.filter(
     (t) => t.status === "replied" || t.status === "interested" || t.status === "stopped"
   ).length;
   const interested = targets.filter((t) => t.status === "interested").length;
   const pending = targets.filter((t) => t.status === "pending").length;
   const stopped = targets.filter((t) => t.status === "stopped").length;
-  const messagesSent = (Number(auto.stats.outboundUsed) || 0) || contacted;
+  const messagesSent = (Number(auto.stats.outboundUsed) || 0) || reachedTargets;
   const messagesHandled = Number(auto.stats.messagesHandled) || 0;
-  const responseRate = contacted > 0 ? Math.round((replied / contacted) * 100) : null;
+  const responseRate = reachedTargets > 0 ? Math.round((replied / reachedTargets) * 100) : null;
   const bilan = await getDailyBilan(userId).catch(() => null);
 
   const { resolveCampaignAnalyticsWindow, getCampaignAnalytics } = await import("./db.js");
