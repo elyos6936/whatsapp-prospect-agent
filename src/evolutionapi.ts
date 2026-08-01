@@ -1434,6 +1434,20 @@ export async function sendWhatsAppReaction(
   return { idMessage, chatId: normalizeGroupParticipantId(chatId) };
 }
 
+/**
+ * Transforme `/uploads/…` (relatif) en URL absolue joignable par Evolution.
+ * Laisse intactes les URLs http(s) et les data: URI.
+ */
+export function resolvePublicMediaUrl(url: string): string {
+  const raw = String(url ?? "").trim();
+  if (!raw) return raw;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("data:")) return raw;
+  if (raw.startsWith("/")) {
+    return `${config.publicUrl}${raw}`;
+  }
+  return raw;
+}
+
 export async function sendWhatsAppMedia(
   userId: number,
   chatId: string,
@@ -1467,9 +1481,10 @@ export async function sendWhatsAppMedia(
   const number = formatEvolutionSendNumber(chatId);
     // Evolution accepte l'URL ou le base64 dans le même champ `media`. On retire un
     // éventuel préfixe data:...;base64, car l'API attend le base64 nu.
-    const media = input.url.startsWith("data:")
-      ? input.url.slice(input.url.indexOf(",") + 1)
-      : input.url;
+  const resolvedUrl = resolvePublicMediaUrl(input.url);
+  const media = resolvedUrl.startsWith("data:")
+      ? resolvedUrl.slice(resolvedUrl.indexOf(",") + 1)
+      : resolvedUrl;
 
     // Les vidéos / gros fichiers : Evolution télécharge, ré-encode puis ré-uploade
     // le média vers WhatsApp → largement plus long que 30 s. On laisse 120 s, et si

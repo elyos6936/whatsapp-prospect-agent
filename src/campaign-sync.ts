@@ -85,21 +85,34 @@ export function formatCampaignMemoryForWhatsApp(memory: CampaignMemory): string 
   );
 }
 
-export function formatLivePlaybookForWhatsApp(playbook: LivePlaybook): string {
+export function formatLivePlaybookForWhatsApp(
+  playbook: LivePlaybook,
+  opts?: { inbound?: boolean }
+): string {
+  const inbound = opts?.inbound === true;
   const lines = [
     `=== PLAYBOOK SYNCHRONISÉ (guide de pacing — PAS un script à recopier) ===`,
     playbook.validatedAt
       ? `Statut : validé (${playbook.validatedAt.slice(0, 16)}).`
       : `Statut : brouillon simu.`,
-    playbook.openerSnapshot
+    !inbound && playbook.openerSnapshot
       ? `Opener (1er message sortant) : « ${playbook.openerSnapshot} »`
+      : "",
+    inbound && playbook.openerSnapshot
+      ? `Ton de référence (pas un opener à coller) : « ${playbook.openerSnapshot} »`
       : "",
     playbook.memoryName ? `Mémoire liée : « ${playbook.memoryName} »` : "",
     "",
-    `Trajectoire de RÉFÉRENCE (ton / mission / CTAs) :`,
-    `- Garde la même mission et le même pacing (Interest → Desire → Action).`,
+    inbound
+      ? `Trajectoire ENTRANT (le client initie) :`
+      : `Trajectoire de RÉFÉRENCE (ton / mission / CTAs) :`,
+    inbound
+      ? `- Accueille / réponds — INTERDIT intro « je vous contacte au sujet de… ».`
+      : `- Garde la même mission et le même pacing (Interest → Desire → Action).`,
     `- Adapte les MOTS au message RÉEL du prospect — priorité au fil réel, pas au prochain tour listé.`,
-    `- Si le prospect dit seulement « salut / ok / hello » alors que TU as initié : INTERDIT de coller le tour « toi » suivant du playbook s'il te présente ou dit « ravi d'échanger ». Continue ton accroche naturellement.`,
+    inbound
+      ? `- Si le client dit seulement « salut / ok / hello » : accueil court + question utile produit.`
+      : `- Si le prospect dit seulement « salut / ok / hello » alors que TU as initié : INTERDIT de coller le tour « toi » suivant du playbook s'il te présente ou dit « ravi d'échanger ». Continue ton accroche naturellement.`,
     `- Si le prospect sort du cadre : recadre en 1 phrase vers l'objectif campagne.`,
   ];
   for (const turn of playbook.turns.slice(0, 7)) {
@@ -111,10 +124,12 @@ export function formatLivePlaybookForWhatsApp(playbook: LivePlaybook): string {
   }
   lines.push(
     "",
-    `RÈGLE : playbook = boussole (ton/objectif). Message réel du prospect = priorité. ` +
-      `Pas de dérive fade (« Super. »), pas d'offre inventée, pas d'intro inbound si tu as déjà ouvert.`
+    inbound
+      ? `RÈGLE : playbook = boussole. Client a initié — pas de cold outreach.`
+      : `RÈGLE : playbook = boussole (ton/objectif). Message réel du prospect = priorité. ` +
+          `Pas de dérive fade (« Super. »), pas d'offre inventée, pas d'intro inbound si tu as déjà ouvert.`
   );
-  return lines.filter((l) => l !== undefined).join("\n");
+  return lines.filter((l) => l !== undefined && l !== "").join("\n");
 }
 
 /** Applique mémoire → conversationGuide (+ hints) sur une automatisation. */

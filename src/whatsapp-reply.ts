@@ -40,6 +40,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 17. **PAS DE PRÉNOM DU PROSPECT** à tout va (vouvoiement = formule neutre).
 18. **INTERDIT RÉACTIONS VIDES** : jamais un message qui n'est que « Super. », « Ok. », « Parfait. », « Ah super », « D'accord. », « Nickel. » — toujours **réagir + avancer** (1 détail utile OU 1 question liée à l'objectif).
 19. **SORTANT** : si TU as envoyé le 1er message, INTERDIT de parler comme un inbound (« ravi de pouvoir échanger », « merci de votre message », te présenter à neuf après un simple « salut »).
+20. **ENTRANT (support / closing)** : si LE CLIENT a écrit en premier, INTERDIT l'intro prospection (« Bonjour, c'est X, je vous contacte au sujet de… »). Accueille / réponds à sa demande ; tu gères le compte, tu ne pitches pas comme un cold outreach.
 
 ## Adaptation rapide
 - Identité / « qui es-tu » → prénom **business** (contexte) + **pourquoi on écrit** en 1 souffle (pas un titre LinkedIn seul : « Growth marketer et expert… »). Ex. intention : « Alex — j'aide des pros à sortir du chaos WhatsApp. Je vous écris pour [offre courte]. »
@@ -48,6 +49,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 - Intérêt / engagement léger → **pousser l'intérêt** : 1 détail utile + question ou prochaine étape
 - Accusé minimal (« oui », « ok », « d'accord », « dac ») → **ne pas pitcher tout de suite** : 1 question concrète OU 1 preuve / détail nouveau (pas le même levier « temps » déjà dit). Ex. « Vous gérez beaucoup de messages WhatsApp par jour, ou c'est plutôt calme ? »
 - **Salut / hello / bonjour court** alors que **TU as déjà ouvert** la conversation → enchaîne ton fil (répondre / avancer). **INTERDIT** de parler comme s'il t'avait contacté (« ravi de pouvoir échanger », « merci de m'écrire », te présenter à neuf). Tu as initié : continue.
+- **Salut / hello / bonjour** en mode **ENTRANT** (client a initié) → accueil court + question utile produit (taille, modèle, besoin). **INTERDIT** « je vous contacte au sujet de… ».
 - **Objection / hésitation** (« trop cher », « je réfléchis », « plus tard », « je ne suis pas sûr », doute sans refus net) :
   → D’abord **reconnaître** le frein (empathie courte), puis une **piste concrète** liée à CE qu’il a dit — pas un pitch générique.
   → **Ne pousse pas à l’achat à chaque hésitation** : si le ton est prudent / distant, rassure ou laisse une porte ouverte sans CTA ; si le frein est précis (prix, timing, confiance), un argument ciblé OK.
@@ -294,6 +296,8 @@ export async function generateWhatsAppReply(userId: number, input: {
   automationId?: number | null;
   /** Force « conversation déjà engagée » (ex. simulation téléphone). */
   forceOngoing?: boolean;
+  /** Sortant (prospection) vs entrant (support / closing). */
+  conversationMode?: "outbound" | "inbound";
 }): Promise<string> {
   const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
@@ -305,17 +309,29 @@ export async function generateWhatsAppReply(userId: number, input: {
     input.automationId
   );
 
-  const ongoing = input.forceOngoing === true || isOngoingConversation;
-  const prospectStyle = analyzeProspectStyle(input.incomingText);
+  const inbound = input.conversationMode === "inbound";
+  const ongoing = input.forceOngoing === true || isOngoingConversation || inbound;
+  const prospectStyle = analyzeProspectStyle(input.incomingText, {
+    conversationMode: input.conversationMode,
+  });
   const minimalAck = isMinimalProspectAck(input.incomingText);
 
   const hardOverride =
-    ongoing && minimalAck
+    inbound && minimalAck
+      ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
+        `Mode ENTRANT : le client vient d'écrire « ${input.incomingText.trim()} ». Il a initié.\n` +
+        `INTERDIT : intro prospection (« Bonjour, c'est X, je vous contacte au sujet de… »), pitcher l'offre comme un opener.\n` +
+        `Réponds en 1-2 phrases : accueil court + demande concrète (besoin / taille / modèle) liée à l'offre campagne.\n`
+      : ongoing && minimalAck && !inbound
       ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
         `TU as déjà ouvert la conversation. Le prospect répond juste « ${input.incomingText.trim()} ».\n` +
         `INTERDIT : te présenter, « ravi de pouvoir échanger », « merci de votre message », pitcher l'offre.\n` +
         `Réponds en 1 phrase naturelle qui continue TON fil (réagir + 1 question concrète liée à l'objectif).\n`
-      : "";
+      : inbound
+        ? `\n## CADRE ENTRANT\n` +
+          `Le client a contacté le compte. Tu gères le support / closing — pas de cold outreach.\n` +
+          `INTERDIT de commencer par « je vous contacte au sujet de… ».\n`
+        : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
 ${await businessContextBlock(userId)}
@@ -323,8 +339,9 @@ ${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES\n${input.aut
 ${hardOverride}
 ## Contact
 ${input.senderName} (${display})
-Messages échangés : ${Math.max(messageCount, input.forceOngoing ? 2 : 0)}
-Conversation engagée : ${ongoing ? "OUI — ne resalue pas, ne te re-présente pas" : "non — salutation courte OK"}
+Messages échangés : ${Math.max(messageCount, input.forceOngoing || inbound ? 2 : 0)}
+Conversation engagée : ${ongoing ? (inbound ? "OUI (entrant — client a initié)" : "OUI — ne resalue pas, ne te re-présente pas") : "non — salutation courte OK"}
+Mode conversation : ${inbound ? "ENTRANT (support)" : "SORTANT (prospection)"}
 Style du message entrant : ${prospectStyle}
 
 ## Historique
@@ -334,8 +351,12 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 ${input.senderName}: ${input.incomingText}
 
 Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant compte de TOUT l'historique ci-dessus. INTERDIT : réaction vide (« Super. »), titre pro seul, ou prénom/nom SEUL sur une question d'identité (toujours prénom + pourquoi).${
-    ongoing ? " NE RESALUE PAS. NE TE RE-PRÉSENTE PAS." : ""
-  }${minimalAck && ongoing ? " Message réel prioritaire sur tout tour playbook." : " Reste dans le cadre campagne (mission/ton)."}`;
+    ongoing && !inbound ? " NE RESALUE PAS. NE TE RE-PRÉSENTE PAS." : ""
+  }${
+    inbound
+      ? " Mode ENTRANT : pas d'intro « je vous contacte pour… »."
+      : ""
+  }${minimalAck && ongoing && !inbound ? " Message réel prioritaire sur tout tour playbook." : " Reste dans le cadre campagne (mission/ton)."}`;
 
   const response = await callOpenAiWithRetry(() =>
     client.chat.completions.create({
@@ -372,9 +393,13 @@ Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant c
   return styled;
 }
 
-function analyzeProspectStyle(text: string): string {
+function analyzeProspectStyle(
+  text: string,
+  opts?: { conversationMode?: "outbound" | "inbound" }
+): string {
   const t = text.trim();
   const lower = t.toLowerCase();
+  const inbound = opts?.conversationMode === "inbound";
 
   if (/c.?est (toi|vous) qui|pourquoi tu m.?ecri|pourquoi vous m.?ecri/i.test(lower)) {
     return "scepticisme — transparence courte + micro-empathie, pas de pitch";
@@ -428,12 +453,21 @@ function analyzeProspectStyle(text: string): string {
       t
     )
   ) {
+    if (inbound) {
+      return (
+        "salutation client ENTRANT — accueil court + demande en quoi tu peux aider (produit) ; " +
+        "INTERDIT intro « je vous contacte au sujet de… » / pitch d'ouverture prospection"
+      );
+    }
     return (
       "salutation / accusé court — si TU as déjà envoyé le 1er message : " +
       "INTERDIT de te présenter ou de parler comme s'il avait initié " +
       "(« ravi d'échanger », « merci de votre message » type inbound) ; " +
       "enchaîne naturellement (1 question liée à l'objectif OU 1 détail nouveau)"
     );
+  }
+  if (/photo|image|pic|visuel|montre[- ]?(moi )?(la |une )?(photo|image)|voir.*(photo|image|produit)/i.test(lower)) {
+    return "demande média — confirme l'envoi de la photo produit si disponible en campagne ; sinon demande un détail (modèle/taille)";
   }
   if (/\?/.test(t)) return "question — réponse directe en 1 phrase vivante";
   if (/formation|inscription|programme|contenu/i.test(lower)) return "demande d'infos — concret et court";

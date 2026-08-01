@@ -4,6 +4,8 @@ import {
   isLikelyPhoneJid,
   isLidJid,
   resolveInboundChatId,
+  resolvePublicMediaUrl,
+  sendWhatsAppMedia,
   sendWhatsAppMessage,
   sendWhatsAppPresence,
   testEvolutionConnection,
@@ -671,6 +673,8 @@ function buildActiveCampaignContext(
   extras?: { memoryBlock?: string; playbookBlock?: string }
 ): string {
   const cfg = auto.config;
+  const inbound =
+    auto.type === "keyword_sales" || cfg.mode === "inbound_closing";
   const goalLabels: Record<string, string> = {
     payment: "obtenir le paiement",
     delivery: "organiser la livraison",
@@ -684,9 +688,13 @@ function buildActiveCampaignContext(
   const lines = [
     `=== CAMPAGNE ACTIVE : « ${auto.name} » ===`,
     `Type : ${auto.type}`,
+    `Mode : ${inbound ? "ENTRANT (le client écrit en premier — support / closing)" : "SORTANT (tu as initié)"}`,
     `Objectif de la campagne : ${goal}`,
-    cfg.initialMessage
+    !inbound && cfg.initialMessage
       ? `Premier message déjà envoyé au prospect : « ${cfg.initialMessage} »`
+      : "",
+    inbound && cfg.initialMessage
+      ? `Réponse type / ton de référence (PAS un opener sortant) : « ${cfg.initialMessage} »`
       : "",
     cfg.conversationGuide
       ? `TON & APPROCHE (suis à la lettre, c'est le cœur de la campagne) :\n${cfg.conversationGuide}`
@@ -698,6 +706,9 @@ function buildActiveCampaignContext(
     cfg.closingLink
       ? `Lien à envoyer au prospect (URL réelle) : ${cfg.closingLink}`
       : "",
+    cfg.mediaUrl
+      ? `Photo / média produit à envoyer si le client demande une photo/image : ${cfg.mediaUrl}`
+      : "",
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
     cfg.handoffKeywords?.length
       ? `Mots-clés handoff humain (si le prospect les écrit, l'IA s'arrête) : ${cfg.handoffKeywords.join(", ")}`
@@ -705,17 +716,29 @@ function buildActiveCampaignContext(
     extras?.memoryBlock ? `\n${extras.memoryBlock}` : "",
     extras?.playbookBlock ? `\n${extras.playbookBlock}` : "",
     "",
-    `PARCOURS CONVERSATION (identique simulation téléphone — même mission, seuls les mots varient) :`,
-    `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair OU objectif atteint.`,
-    `2. Identité (« c'est qui ? ») → prénom business du contexte + pourquoi on écrit EN UN SOUFFLE (pas nom seul, pas titre LinkedIn). Ex. « Will — j'aide des indépendants sur des automatisations concrètes. Je vous écris pour ça. » Puis question utile si la place reste.`,
-    `3. Accusé minimal (« ok », « okay », « d'accord ») → NE PAS pitcher tout de suite : 1 réaction + 1 question concrète OU 1 détail nouveau (pas le même levier déjà dit).`,
-    `4. Si intéressé / pose des questions → réponds avec substance réelle (pas d'économie d'info artificielle), qualifie, puis avance vers l'objectif (${goal}).`,
-    `5. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
-    `6. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
-    `7. Objectif livraison : une fois adresse notée + confirmation livreur → UNE courte confirmation puis STOP.`,
-    `8. INTERDIT réactions vides (« Ah super », « Ok », « Parfait », « Super. ») et INTERDIT réponses d'un seul mot / nom seul quand une question mérite 1-2 phrases.`,
-    `9. N'utilise PAS le prénom du prospect à tout va.`,
-    `10. Mémoire + playbook = même source que la simulation — ne dérive pas.`,
+    inbound
+      ? [
+          `PARCOURS ENTRANT (support) :`,
+          `1. Le client a initié — accueille / réponds, JAMAIS « Bonjour c'est X, je vous contacte au sujet de… ».`,
+          `2. Salutation courte (« salut ») → accueil + question utile produit (besoin, taille, modèle).`,
+          `3. Demande photo → le système enverra le média campagne si configuré ; confirme brièvement.`,
+          `4. Si intéressé → qualifie puis avance vers l'objectif (${goal}).`,
+          `5. Si prêt → lien/prix/créneau RÉEL. Si refuse → accepte poliment.`,
+          `6. INTERDIT réactions vides et pitch cold outreach.`,
+        ].join("\n")
+      : [
+          `PARCOURS CONVERSATION (identique simulation téléphone — même mission, seuls les mots varient) :`,
+          `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair OU objectif atteint.`,
+          `2. Identité (« c'est qui ? ») → prénom business du contexte + pourquoi on écrit EN UN SOUFFLE (pas nom seul, pas titre LinkedIn). Ex. « Will — j'aide des indépendants sur des automatisations concrètes. Je vous écris pour ça. » Puis question utile si la place reste.`,
+          `3. Accusé minimal (« ok », « okay », « d'accord ») → NE PAS pitcher tout de suite : 1 réaction + 1 question concrète OU 1 détail nouveau (pas le même levier déjà dit).`,
+          `4. Si intéressé / pose des questions → réponds avec substance réelle (pas d'économie d'info artificielle), qualifie, puis avance vers l'objectif (${goal}).`,
+          `5. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
+          `6. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
+          `7. Objectif livraison : une fois adresse notée + confirmation livreur → UNE courte confirmation puis STOP.`,
+          `8. INTERDIT réactions vides (« Ah super », « Ok », « Parfait », « Super. ») et INTERDIT réponses d'un seul mot / nom seul quand une question mérite 1-2 phrases.`,
+          `9. N'utilise PAS le prénom du prospect à tout va.`,
+          `10. Mémoire + playbook = même source que la simulation — ne dérive pas.`,
+        ].join("\n"),
     `RÈGLES : 1-2 phrases naturelles (court ≠ sec), ton WhatsApp, VOUS (jamais tu/ton/ta/te). Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. AUCUN texte entre crochets [ ].`,
   ].filter((l) => l !== undefined && l !== "");
   return lines.join("\n");
@@ -747,7 +770,10 @@ async function buildAutomationContext(
     let playbookBlock = "";
     const pb = activeCampaign.config.livePlaybook;
     if (pb?.turns?.length) {
-      playbookBlock = formatLivePlaybookForWhatsApp(pb);
+      const inbound =
+        activeCampaign.type === "keyword_sales" ||
+        activeCampaign.config.mode === "inbound_closing";
+      playbookBlock = formatLivePlaybookForWhatsApp(pb, { inbound });
     }
 
     parts.push(
@@ -809,7 +835,11 @@ async function buildAutomationContext(
           const mem = await getLinkedMemoryForAutomation(userId, auto.id);
           if (mem) memoryBlock = formatCampaignMemoryForWhatsApp(mem);
           if (auto.config.livePlaybook?.turns?.length) {
-            playbookBlock = formatLivePlaybookForWhatsApp(auto.config.livePlaybook);
+            playbookBlock = formatLivePlaybookForWhatsApp(auto.config.livePlaybook, {
+              inbound:
+                auto.type === "keyword_sales" ||
+                auto.config.mode === "inbound_closing",
+            });
           }
         } catch {
           /* ignore */
@@ -822,6 +852,19 @@ async function buildAutomationContext(
   }
 
   return parts.length ? parts.join("\n\n") : undefined;
+}
+
+/** Client demande une photo / image produit. */
+export function prospectRequestsCampaignMedia(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return false;
+  return (
+    /\b(photo|image|pic|visuel|screenshot|capture)\b/i.test(t) ||
+    /montre[- ]?(moi )?(la |une |les )?(photo|image|visuel)/i.test(t) ||
+    /envoie[- ]?(moi )?(la |une |les )?(photo|image)/i.test(t) ||
+    /voir (la |une )?(photo|image|le produit)/i.test(t) ||
+    /t'as (une |la )?photo|as[- ]tu (une |la )?photo/i.test(t)
+  );
 }
 
 async function runGroupAutoReply(
@@ -1155,8 +1198,24 @@ async function runAutoReply(
         automationContext,
         allowEmojis: activeCampaign?.config.stickersEnabled === true,
         automationId: activeCampaign?.id,
+        conversationMode:
+          activeCampaign &&
+          (activeCampaign.type === "keyword_sales" ||
+            activeCampaign.config.mode === "inbound_closing")
+            ? "inbound"
+            : "outbound",
       });
     }
+
+    const attachMedia =
+      !!activeCampaign?.config.mediaUrl &&
+      prospectRequestsCampaignMedia(text);
+    const mediaUrl = attachMedia
+      ? resolvePublicMediaUrl(String(activeCampaign!.config.mediaUrl))
+      : null;
+    const mediaType =
+      (activeCampaign?.config.mediaType as "image" | "document" | "audio" | undefined) ||
+      "image";
 
     // Closing entrant : file par vagues (sauf STOP/objectif déjà gérés en immédiat plus haut,
     // et sauf confirmation RDV chaude où on envoie tout de suite).
@@ -1179,6 +1238,9 @@ async function runAutoReply(
           recipient: chatId,
           recipientLabel: senderName,
           message: reply,
+          ...(mediaUrl
+            ? { mediaUrl, mediaType: mediaType === "audio" ? "audio" : mediaType }
+            : {}),
           priority: 6,
           sendAt,
           automationId: activeCampaign.id,
@@ -1188,7 +1250,9 @@ async function runAutoReply(
           userId,
           activeCampaign.id,
           "info",
-          `Réponse planifiée pour ${senderName} à ${sendAt} (vague anti-blocage #${queued.id}).`
+          `Réponse planifiée pour ${senderName} à ${sendAt} (vague anti-blocage #${queued.id})${
+            mediaUrl ? " + média produit" : ""
+          }.`
         );
         console.log(
           `📥 Réponse entrante mise en file → ${senderName} à ${sendAt} (queue #${queued.id})`
@@ -1205,13 +1269,22 @@ async function runAutoReply(
         } catch {
           /* best effort */
         }
-        const sent = await sendWhatsAppMessage(userId, chatId, reply, {
-          enableAutoReply: false,
-          outboundProfile: "auto_reply",
-          automationId: activeCampaign.id,
-        });
+        if (mediaUrl) {
+          await sendWhatsAppMedia(
+            userId,
+            chatId,
+            { url: mediaUrl, type: mediaType === "audio" ? "image" : mediaType, caption: reply },
+            { enableAutoReply: false, automationId: activeCampaign.id }
+          );
+        } else {
+          const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+            enableAutoReply: false,
+            outboundProfile: "auto_reply",
+            automationId: activeCampaign.id,
+          });
+          console.log(`✅ Réponse (fallback immédiat) → ${senderName} (${sent.idMessage})`);
+        }
         await incrementMessagesHandled(userId, activeCampaign.id);
-        console.log(`✅ Réponse (fallback immédiat) → ${senderName} (${sent.idMessage})`);
       }
       return;
     }
@@ -1227,15 +1300,31 @@ async function runAutoReply(
       /* best effort — l'envoi suit quand même */
     }
 
-    const sent = await sendWhatsAppMessage(userId, chatId, reply, {
-      enableAutoReply: false,
-      outboundProfile: "auto_reply",
-      automationId: activeCampaign?.id ?? null,
-    });
+    if (mediaUrl && activeCampaign) {
+      await sendWhatsAppMedia(
+        userId,
+        chatId,
+        {
+          url: mediaUrl,
+          type: mediaType === "audio" ? "image" : mediaType,
+          caption: reply,
+        },
+        { enableAutoReply: false, automationId: activeCampaign.id }
+      );
+    } else {
+      const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+        enableAutoReply: false,
+        outboundProfile: "auto_reply",
+        automationId: activeCampaign?.id ?? null,
+      });
+      console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+    }
     if (activeCampaign) {
       await incrementMessagesHandled(userId, activeCampaign.id);
     }
-    console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+    if (mediaUrl) {
+      console.log(`✅ Réponse + média → ${senderName} à ${nowFr()}`);
+    }
 
     if (pendingAppointmentClose && activeCampaign) {
       try {

@@ -1650,7 +1650,11 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
               "Exactement 5 accroches Attention validées avec l'utilisateur : [{id:'v1',message:'…'}, …]. Obligatoire en prospection sortante — UNIQUEMENT après que l'utilisateur a indiqué son angle pour le 1er message et que les 5 variantes ont été proposées dans le chat.",
           },
           sequence_steps: { type: "array", items: { type: "object" } },
-          media_url: { type: "string" },
+          media_url: {
+            type: "string",
+            description:
+              "URL publique photo/image produit (pièce jointe chat). Envoyée auto si le client demande une photo.",
+          },
           media_type: { type: "string", enum: ["image", "document", "audio"] },
         },
         required: ["name", "type"],
@@ -1772,6 +1776,16 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           },
           inbound_batch_size: { type: "number" },
           scheduled_start_at: { type: "string" },
+          media_url: {
+            type: "string",
+            description:
+              "URL publique de la photo/image produit (ex. pièce jointe chat). Envoyée automatiquement si le client demande une photo.",
+          },
+          media_type: {
+            type: "string",
+            enum: ["image", "document", "audio"],
+            description: "Type du média campagne (défaut image)",
+          },
           ab_variants: {
             type: "array",
             items: { type: "object" },
@@ -4673,6 +4687,24 @@ export async function executeTool(
       if (args.scheduled_start_at != null) {
         const raw = String(args.scheduled_start_at).trim();
         merged.scheduledStartAt = raw || undefined;
+      }
+      if (args.media_url != null) {
+        const url = String(args.media_url).trim();
+        if (url) {
+          merged.mediaUrl = url;
+          merged.mediaType =
+            args.media_type === "document" || args.media_type === "audio"
+              ? (String(args.media_type) as "document" | "audio")
+              : "image";
+        } else {
+          merged.mediaUrl = undefined;
+          merged.mediaType = undefined;
+        }
+      } else if (args.media_type != null && merged.mediaUrl) {
+        merged.mediaType =
+          args.media_type === "document" || args.media_type === "audio"
+            ? (String(args.media_type) as "document" | "audio")
+            : "image";
       }
 
       if (args.relance_enabled != null || args.relance_delays_days != null) {

@@ -199,13 +199,13 @@ export function PhoneSimulationPanel({
       return;
     }
 
-    // Restaurer l'état local (effacé / suite interactive) — sinon le reload
-    // réapplique la simu batch depuis le chat.
+    // Restaurer l'état local (suite interactive / support) — sinon le reload
+    // perd la conversation téléphone.
     const stored = loadPersisted(threadId);
-    if (stored?.ignoredSimKey) {
+    if (stored && (stored.bubbles.length > 0 || stored.ignoredSimKey)) {
       setIgnoredSimKey(stored.ignoredSimKey);
-      setPhoneBubbles(Array.isArray(stored.bubbles) ? stored.bubbles : []);
-      lastAppliedSimKeyRef.current = stored.ignoredSimKey;
+      setPhoneBubbles(stored.bubbles);
+      lastAppliedSimKeyRef.current = stored.ignoredSimKey || '';
     } else {
       setPhoneBubbles([]);
       setIgnoredSimKey(null);
@@ -221,7 +221,12 @@ export function PhoneSimulationPanel({
 
   useEffect(() => {
     if (!hydrated || threadId == null) return;
+    // Ne pas effacer le stockage au 1er tick vide avant restauration support.
     if (phoneBubbles.length === 0 && !ignoredSimKey) {
+      // Garde une éventuelle suite déjà sauvée si on vient juste d'hydrater vide
+      // puis qu'un autre effet la recharge — n'efface que si vraiment rien.
+      const existing = loadPersisted(threadId);
+      if (existing && existing.bubbles.length > 0) return;
       clearPersisted(threadId);
       return;
     }

@@ -104,10 +104,17 @@ function buildSimCampaignContext(
   const cfg = auto.config;
   const guide = extras.guideOverride?.trim() || cfg.conversationGuide || "";
   const outbound = extras.mode !== "inbound";
+  const mediaHint = cfg.mediaUrl
+    ? `Photo / média produit disponible (sera envoyé en live si le client demande) : ${cfg.mediaUrl}`
+    : "";
   const lines = [
     `=== CAMPAGNE (simulation = même cadre que le live) : « ${auto.name} » ===`,
-    cfg.initialMessage
-      ? `Premier message : « ${cfg.initialMessage} »`
+    `Mode : ${outbound ? "prospection SORTANTE (tu as initié)" : "support / closing ENTRANT (le client a initié)"}`,
+    outbound && cfg.initialMessage
+      ? `Premier message (opener sortant) : « ${cfg.initialMessage} »`
+      : "",
+    !outbound && cfg.initialMessage
+      ? `Réponse type / ton de référence (PAS un opener à coller) : « ${cfg.initialMessage} »`
       : "",
     guide ? `TON & APPROCHE :\n${guide}` : "",
     cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
@@ -116,6 +123,7 @@ function buildSimCampaignContext(
       : `Prix : NON RENSEIGNÉ — si demandé, dis que tu confirmes juste après.`,
     cfg.closingLink ? `Lien : ${cfg.closingLink}` : "",
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
+    mediaHint,
     extras.memoryBlock ? `\n${extras.memoryBlock}` : "",
     extras.playbookBlock ? `\n${extras.playbookBlock}` : "",
     "",
@@ -123,7 +131,12 @@ function buildSimCampaignContext(
     `IDENTIQUES à ce que tu écrirais à un vrai prospect (même playbook, même ton).`,
     outbound
       ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », NE RECOPIE PAS le prochain tour du playbook (souvent une fausse intro « ravi d'échanger »). Continue ton accroche avec 1 question concrète.`
-      : "",
+      : [
+          `IMPORTANT ENTRANT (support) : LE CLIENT a écrit en premier. Tu gères le compte / la boutique.`,
+          `INTERDIT de parler comme en prospection (« Bonjour, c'est X, je vous contacte au sujet de… », pitch d'ouverture).`,
+          `Si le client dit juste « salut / bonjour / hello » : accueille brièvement + demande en quoi tu peux l'aider (produit / besoin) — 1-2 phrases.`,
+          `Si le client demande une photo et qu'un média est en config : confirme que tu l'envoies (en simu : dis-le en texte).`,
+        ].join(" "),
     `ARRÊT (identique au live) : refus clair / STOP → clôture. Objectif atteint (lien/prix/RDV + ack) → courte confirmation puis stop — pas de question supplémentaire.`,
   ].filter(Boolean);
   return lines.join("\n");
@@ -202,7 +215,9 @@ export async function replyInSimulationPreview(
         let playbookBlock = "";
         const pb = auto.config.livePlaybook;
         if (pb?.turns?.length) {
-          playbookBlock = formatLivePlaybookForWhatsApp(pb);
+          playbookBlock = formatLivePlaybookForWhatsApp(pb, {
+            inbound: mode === "inbound",
+          });
         }
         automationContext = buildSimCampaignContext(auto, {
           memoryBlock,
@@ -230,7 +245,7 @@ export async function replyInSimulationPreview(
       "Reste dans ce cadre. 0 envoi WhatsApp réel.",
       mode === "outbound"
         ? "SORTANT : tu as initié — si réponse « salut/hello », continue ton fil (ne parle pas comme s'il t'avait contacté)."
-        : "",
+        : "ENTRANT : le client a initié — accueille / aide, PAS d'intro « je vous contacte pour… ».",
       "ARRÊT (identique au live) : refus / STOP / objectif atteint → clôture.",
     ]
       .filter(Boolean)
@@ -262,7 +277,8 @@ export async function replyInSimulationPreview(
         const turns = previewHistoryToPlaybookTurns(history);
         if (turns.length >= 2) {
           await persistLivePlaybookForThread(userId, threadId, turns, {
-            syncOpener: history.some((h) => h.role === "you"),
+            // Support : ne pas écraser l'opener campagne avec la 1ʳᵉ réponse agent.
+            syncOpener: mode === "outbound" && history.some((h) => h.role === "you"),
           });
         }
       } catch (err) {
@@ -318,20 +334,28 @@ export async function replyInSimulationPreview(
   try {
     reply = await generateWhatsAppReply(userId, {
       chatId: syntheticChatId,
-      senderName: "Prospect",
+      senderName: mode === "inbound" ? "Client" : "Prospect",
       incomingText: prospectMessage,
       automationContext: enrichedContext,
       allowEmojis: false,
       automationId: null,
-      forceOngoing: history.length > 1,
+      // Inbound : dès le 1er message client, pas de mode « salutation opener sortant ».
+      forceOngoing: mode === "inbound" || history.length > 1,
+      conversationMode: mode,
     });
   } catch {
-    reply = "Merci pour votre message. Vous pouvez m'en dire un peu plus ?";
+    reply =
+      mode === "inbound"
+        ? "Bonjour ! Dites-moi ce dont vous avez besoin."
+        : "Merci pour votre message. Vous pouvez m'en dire un peu plus ?";
   }
 
   reply = sanitizeOutboundWhatsAppText(reply);
   if (!reply) {
-    reply = "Merci pour votre message. Vous pouvez m'en dire un peu plus ?";
+    reply =
+      mode === "inbound"
+        ? "Bonjour ! Dites-moi ce dont vous avez besoin."
+        : "Merci pour votre message. Vous pouvez m'en dire un peu plus ?";
   }
 
   history.push({ role: "you", text: reply });
@@ -342,7 +366,7 @@ export async function replyInSimulationPreview(
       const turns = previewHistoryToPlaybookTurns(history);
       if (turns.length >= 2) {
         await persistLivePlaybookForThread(userId, threadId, turns, {
-          syncOpener: history.some((h) => h.role === "you"),
+          syncOpener: mode === "outbound" && history.some((h) => h.role === "you"),
         });
       }
     } catch (err) {
