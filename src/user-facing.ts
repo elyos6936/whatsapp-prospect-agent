@@ -40,6 +40,22 @@ export function userFacingError(err: unknown): string {
   return raw.trim() || "Je n’ai pas pu terminer cette action. Réessayez dans un instant.";
 }
 
+/** Figure space — même largeur qu'un chiffre (alignement des noms à 10 / 100 / 1000). */
+const FIGURE_SPACE = "\u2007";
+
+/**
+ * Liste numérotée stable pour le chat markdown.
+ * - Padding figure-space : les noms restent alignés quand on passe à 100+.
+ * - Point échappé (`\.`) : évite que ReactMarkdown transforme en `<ol>`
+ *   (sinon les marqueurs CSS 100+ débordent / se décalent dans la bulle).
+ */
+function formatNumberedLines(items: string[]): string {
+  const width = String(Math.max(items.length, 1)).length;
+  return items
+    .map((item, i) => `${String(i + 1).padStart(width, FIGURE_SPACE)}\\. ${item}`)
+    .join("  \n");
+}
+
 export function formatVerticalMemberList(
   groupName: string,
   members: Array<{ display: string; name?: string | null; isAdmin?: boolean }>,
@@ -51,17 +67,15 @@ export function formatVerticalMemberList(
   const total = opts?.total ?? members.length;
   const countLabel =
     total > members.length ? `${members.length} sur ${total}` : String(members.length);
-  // Hard breaks markdown (deux espaces + \n) : évite le collapse en un seul paragraphe
-  // si le parser markdown ne reconnaît pas la liste ordonnée.
-  const lines = members.map((m, i) => {
+  const lines = members.map((m) => {
     const label = (m.name && m.name.trim()) || m.display;
     const admin = m.isAdmin ? " · admin" : "";
     const phone = m.display && m.display !== label ? `  \n   ${m.display}` : "";
-    return `${i + 1}. ${label}${admin}${phone}`;
+    return `${label}${admin}${phone}`;
   });
   return (
     `Voici les membres du groupe « ${groupName} » (${countLabel}) :\n\n` +
-    lines.join("  \n")
+    formatNumberedLines(lines)
   );
 }
 
@@ -69,8 +83,10 @@ export function formatVerticalGroupList(
   groups: Array<{ name: string; id?: string }>
 ): string {
   if (!groups.length) return "Aucun groupe trouvé sur ce compte WhatsApp.";
-  const lines = groups.map((g, i) => `${i + 1}. ${g.name || g.id || "Groupe"}`);
-  return `Voici vos groupes WhatsApp (${groups.length}) :\n\n` + lines.join("  \n");
+  const lines = groups.map((g) => g.name || g.id || "Groupe");
+  return (
+    `Voici vos groupes WhatsApp (${groups.length}) :\n\n` + formatNumberedLines(lines)
+  );
 }
 
 export function formatVerticalContactList(
@@ -78,10 +94,10 @@ export function formatVerticalContactList(
   title = "contacts"
 ): string {
   if (!contacts.length) return `Aucun ${title} trouvé.`;
-  const lines = contacts.map((c, i) => {
+  const lines = contacts.map((c) => {
     const phone = c.display || c.phone || "";
     const name = (c.name && c.name.trim()) || phone || "Sans nom";
-    return phone && phone !== name ? `${i + 1}. ${name}  \n   ${phone}` : `${i + 1}. ${name}`;
+    return phone && phone !== name ? `${name}  \n   ${phone}` : name;
   });
-  return `Voici vos ${title} (${contacts.length}) :\n\n` + lines.join("  \n");
+  return `Voici vos ${title} (${contacts.length}) :\n\n` + formatNumberedLines(lines);
 }

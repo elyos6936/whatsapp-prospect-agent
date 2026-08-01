@@ -288,10 +288,14 @@ section[id] {
 .prose-klanvio ul,
 .prose-klanvio ol {
   margin: 0 0 0.5em;
-  padding-left: 1.25em;
+  /* Assez large pour marqueurs à 3 chiffres (100+) — évite le décalage / coupe à gauche */
+  padding-left: 2.75em;
 }
 .prose-klanvio ul { list-style-type: disc; }
-.prose-klanvio ol { list-style-type: decimal; }
+.prose-klanvio ol {
+  list-style-type: decimal;
+  font-variant-numeric: tabular-nums;
+}
 .prose-klanvio li {
   margin: 0.15em 0;
   display: list-item;
