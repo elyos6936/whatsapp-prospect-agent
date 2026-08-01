@@ -530,16 +530,12 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   const maxMembers = Math.min(Math.max(auto.config.maxMembers ?? 30, 1), 50);
   const groupLabel = group.subject || auto.config.groupName || groupId;
 
-  // Le compte connecté (nous) est presque toujours membre du groupe : on ne se
-  // prospecte jamais soi-même. C'est ce qui explique qu'un groupe à 2 membres
-  // ne charge qu'1 seule cible.
   const ownerId = await getConnectedOwnerId(userId);
   const hardBlockedIds = await getBlockedContactIds(userId);
-  // Exclure : déjà dans CETTE auto OU dans toute autre campagne active (1 fil WhatsApp = 1 campagne)
-  const alreadyEnrolled = new Set<string>([
-    ...(await getAutomationTargetIds(userId, automationId)),
-    ...(await getActiveCampaignTargetIds(userId, automationId)),
-  ]);
+  /** Déjà cible de CETTE campagne (réactivation) — ne pas traiter comme bloquant. */
+  const thisCampaignIds = await getAutomationTargetIds(userId, automationId);
+  /** Autres campagnes actives uniquement (1 fil WhatsApp = 1 campagne). */
+  const otherCampaignIds = await getActiveCampaignTargetIds(userId, automationId);
 
   const matchesAny = (candidate: string, ids: Iterable<string>): boolean => {
     for (const id of ids) {
@@ -555,12 +551,15 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
       const isSelf = !!ownerId && (chatIdsMatch(ownerId, id) || chatIdsMatch(ownerId, rawId));
       const hardBlocked =
         matchesAny(id, hardBlockedIds) || matchesAny(rawId, hardBlockedIds);
-      const enrolled =
-        matchesAny(id, alreadyEnrolled) || matchesAny(rawId, alreadyEnrolled);
+      const onThisCampaign =
+        matchesAny(id, thisCampaignIds) || matchesAny(rawId, thisCampaignIds);
+      const enrolledElsewhere =
+        matchesAny(id, otherCampaignIds) || matchesAny(rawId, otherCampaignIds);
       const contact =
         (await getContact(userId, id)) ||
         (rawId !== id ? await getContact(userId, rawId) : null);
-      const softStopped = !hardBlocked && contact?.status === "stop";
+      const softStopped =
+        !hardBlocked && !onThisCampaign && !enrolledElsewhere && contact?.status === "stop";
       return {
         id,
         name: p.name || contact?.name || chatIdToDisplay(id),
@@ -568,23 +567,27 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
         isSelf,
         hardBlocked,
         softStopped,
-        enrolled,
+        onThisCampaign,
+        enrolledElsewhere,
       };
     })
   );
 
   const selfCount = classified.filter((p) => p.isSelf).length;
   const hardBlockedCount = classified.filter((p) => !p.isSelf && p.hardBlocked).length;
-  const enrolledCount = classified.filter((p) => !p.isSelf && !p.hardBlocked && p.enrolled).length;
+  const onThisCount = classified.filter(
+    (p) => !p.isSelf && !p.hardBlocked && p.onThisCampaign
+  ).length;
+  const enrolledElsewhereCount = classified.filter(
+    (p) => !p.isSelf && !p.hardBlocked && !p.onThisCampaign && p.enrolledElsewhere
+  ).length;
   const softStoppedCount = classified.filter(
-    (p) => !p.isSelf && !p.hardBlocked && !p.enrolled && p.softStopped
+    (p) => !p.isSelf && !p.hardBlocked && p.softStopped
   ).length;
 
-  // Nouvelle campagne groupe : on réinclut les contacts en statut « stop »
-  // (souvent issus d'une ancienne prospection) et on les réactive pour pouvoir envoyer.
-  // Les exclusions explicites (blocked_contacts) restent respectées.
+  // Nouveaux membres seulement (ceux déjà sur CETTE campagne restent en file).
   const participants = classified
-    .filter((p) => !p.isSelf && !p.hardBlocked && !p.enrolled)
+    .filter((p) => !p.isSelf && !p.hardBlocked && !p.onThisCampaign && !p.enrolledElsewhere)
     .slice(0, maxMembers);
 
   if (!group.participants.length) {
@@ -597,18 +600,41 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   }
 
   if (!participants.length) {
+    // Réactivation : cibles déjà chargées pour cette campagne → OK, on reprend la file.
+    if (thisCampaignIds.size > 0 || onThisCount > 0) {
+      const n = Math.max(thisCampaignIds.size, onThisCount);
+      await addAutomationLog(
+        userId,
+        automationId,
+        "info",
+        `Réactivation : ${n} cible(s) déjà en file pour « ${groupLabel} » — aucun nouveau membre à ajouter.`
+      );
+      await updateAutomationStats(userId, automationId, {
+        report: `Campagne reprise sur ${n} cible(s) existante(s).`,
+        lastActionAt: new Date().toISOString(),
+      });
+      return 0;
+    }
+
     const parts = [
       `${group.participants.length} membre(s) dans le groupe`,
       selfCount ? `${selfCount} = vous (exclu)` : null,
       hardBlockedCount ? `${hardBlockedCount} bloqué(s) explicitement` : null,
-      enrolledCount ? `${enrolledCount} déjà dans une campagne active` : null,
+      enrolledElsewhereCount
+        ? `${enrolledElsewhereCount} déjà dans une autre campagne active`
+        : null,
       softStoppedCount ? `${softStoppedCount} stoppé(s)` : null,
     ].filter(Boolean);
+    const tip =
+      enrolledElsewhereCount > 0
+        ? "Mettez l'autre campagne en pause, ou attendez qu'elle se termine."
+        : hardBlockedCount > 0
+          ? "Retirez le numéro de la liste de blocage."
+          : "Ajoutez d'autres membres au groupe.";
     await failAutomationNoTargets(
       userId,
       automationId,
-      `Aucun membre éligible dans « ${groupLabel} » (${parts.join(" · ")}). ` +
-        "Ajoutez d'autres membres au groupe, ou retirez le numéro de la liste de blocage."
+      `Aucun membre éligible dans « ${groupLabel} » (${parts.join(" · ")}). ${tip}`
     );
   }
 
@@ -648,6 +674,20 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   );
 
   if (added === 0) {
+    const existing = await listAutomationTargets(userId, automationId, { limit: 1 });
+    if (existing.length > 0 || thisCampaignIds.size > 0) {
+      await addAutomationLog(
+        userId,
+        automationId,
+        "info",
+        "Membres déjà présents dans cette campagne — reprise de la file existante."
+      );
+      await updateAutomationStats(userId, automationId, {
+        report: "Campagne reprise (cibles déjà en file).",
+        lastActionAt: new Date().toISOString(),
+      });
+      return 0;
+    }
     await failAutomationNoTargets(
       userId,
       automationId,
@@ -678,31 +718,62 @@ export async function bootstrapContactProspectTargets(
     );
   }
 
-  const alreadyEnrolled = new Set<string>([
-    ...(await getAutomationTargetIds(userId, automationId)),
-    ...(await getActiveCampaignTargetIds(userId, automationId)),
-  ]);
+  const thisCampaignIds = await getAutomationTargetIds(userId, automationId);
+  const otherCampaignIds = await getActiveCampaignTargetIds(userId, automationId);
 
   const eligible: Array<{ id: string; label?: string }> = [];
+  let alreadyOnThis = 0;
+  let enrolledElsewhere = 0;
   for (const c of contacts) {
     if (await isContactBlocked(userId, c.id)) continue;
-    let dup = false;
-    for (const tid of alreadyEnrolled) {
+    let onThis = false;
+    for (const tid of thisCampaignIds) {
       if (chatIdsMatch(tid, c.id)) {
-        dup = true;
+        onThis = true;
         break;
       }
     }
-    if (!dup && !eligible.some((e) => chatIdsMatch(e.id, c.id))) {
+    if (onThis) {
+      alreadyOnThis++;
+      continue;
+    }
+    let elsewhere = false;
+    for (const tid of otherCampaignIds) {
+      if (chatIdsMatch(tid, c.id)) {
+        elsewhere = true;
+        break;
+      }
+    }
+    if (elsewhere) {
+      enrolledElsewhere++;
+      continue;
+    }
+    if (!eligible.some((e) => chatIdsMatch(e.id, c.id))) {
       eligible.push(c);
     }
   }
 
   if (!eligible.length) {
+    if (alreadyOnThis > 0 || thisCampaignIds.size > 0) {
+      const n = Math.max(alreadyOnThis, thisCampaignIds.size);
+      await addAutomationLog(
+        userId,
+        automationId,
+        "info",
+        `Réactivation : ${n} contact(s) déjà en file — aucun nouveau à ajouter.`
+      );
+      await updateAutomationStats(userId, automationId, {
+        report: `Campagne reprise sur ${n} contact(s) existant(s).`,
+        lastActionAt: new Date().toISOString(),
+      });
+      return 0;
+    }
     await failAutomationNoTargets(
       userId,
       automationId,
-      "Aucun contact éligible (bloqués ou déjà dans une campagne active)."
+      enrolledElsewhere > 0
+        ? "Aucun contact éligible (déjà dans une autre campagne active). Mettez l'autre campagne en pause."
+        : "Aucun contact éligible (bloqués ou introuvables)."
     );
   }
 
@@ -739,6 +810,20 @@ export async function bootstrapContactProspectTargets(
   );
 
   if (added === 0) {
+    const existing = await listAutomationTargets(userId, automationId, { limit: 1 });
+    if (existing.length > 0 || thisCampaignIds.size > 0) {
+      await addAutomationLog(
+        userId,
+        automationId,
+        "info",
+        "Contacts déjà présents dans cette campagne — reprise de la file existante."
+      );
+      await updateAutomationStats(userId, automationId, {
+        report: "Campagne reprise (contacts déjà en file).",
+        lastActionAt: new Date().toISOString(),
+      });
+      return 0;
+    }
     await failAutomationNoTargets(
       userId,
       automationId,
