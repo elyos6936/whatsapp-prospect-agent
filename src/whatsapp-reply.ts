@@ -41,6 +41,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 18. **INTERDIT RÉACTIONS VIDES** : jamais un message qui n'est que « Super. », « Ok. », « Parfait. », « Ah super », « D'accord. », « Nickel. » — toujours **réagir + avancer** (1 détail utile OU 1 question liée à l'objectif).
 19. **SORTANT** : si TU as envoyé le 1er message, INTERDIT de parler comme un inbound (« ravi de pouvoir échanger », « merci de votre message », te présenter à neuf après un simple « salut »).
 20. **ENTRANT (support / closing)** : si LE CLIENT a écrit en premier, INTERDIT l'intro prospection (« Bonjour, c'est X, je vous contacte au sujet de… »). Accueille / réponds à sa demande ; tu gères le compte, tu ne pitches pas comme un cold outreach.
+21. **INFOS MULTIPLES** : si le client donne plusieurs infos d'un coup (nom + ville + horaire, taille + adresse…), tu notes **tout ce qui est utile** en 1 souffle et tu poses **UNE** question pour la prochaine info encore manquante. **INTERDIT** de répondre seulement « Merci M. X » / « Noté » / « Parfait » sans avancer la mission.
 
 ## Adaptation rapide
 - Identité / « qui es-tu » → prénom **business** (contexte) + **pourquoi on écrit** en 1 souffle (pas un titre LinkedIn seul : « Growth marketer et expert… »). Ex. intention : « Alex — j'aide des pros à sortir du chaos WhatsApp. Je vous écris pour [offre courte]. »
@@ -50,6 +51,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 - Accusé minimal (« oui », « ok », « d'accord », « dac ») → **ne pas pitcher tout de suite** : 1 question concrète OU 1 preuve / détail nouveau (pas le même levier « temps » déjà dit). Ex. « Vous gérez beaucoup de messages WhatsApp par jour, ou c'est plutôt calme ? »
 - **Salut / hello / bonjour court** alors que **TU as déjà ouvert** la conversation → enchaîne ton fil (répondre / avancer). **INTERDIT** de parler comme s'il t'avait contacté (« ravi de pouvoir échanger », « merci de m'écrire », te présenter à neuf). Tu as initié : continue.
 - **Salut / hello / bonjour** en mode **ENTRANT** (client a initié) → accueil court + question utile produit (taille, modèle, besoin). **INTERDIT** « je vous contacte au sujet de… ».
+- **Plusieurs infos d'un coup** (ex. « FAGNON Powell. Livraison Porto-Novo, dispo à 17h ») → « Je note [nom], [lieu], [horaire]. Pour finaliser : [prochaine info manquante] ? » — jamais un simple « Merci M. FAGNON. »
 - **Objection / hésitation** (« trop cher », « je réfléchis », « plus tard », « je ne suis pas sûr », doute sans refus net) :
   → D’abord **reconnaître** le frein (empathie courte), puis une **piste concrète** liée à CE qu’il a dit — pas un pitch générique.
   → **Ne pousse pas à l’achat à chaque hésitation** : si le ton est prudent / distant, rassure ou laisse une porte ouverte sans CTA ; si le frein est précis (prix, timing, confiance), un argument ciblé OK.
@@ -181,6 +183,45 @@ function isMinimalProspectAck(text: string): boolean {
   );
 }
 
+/** Le client dump plusieurs infos utiles d'un coup (nom + lieu + horaire…). */
+export function isInfoDenseProspectMessage(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 35) return false;
+  const clauses = t.split(/[.!?;\n]+/).map((s) => s.trim()).filter((s) => s.length > 6);
+  const factSignals = [
+    /\b(je m'?appelle|nom|m\.|mr\.?|mme)\b/i.test(t) ||
+      /\b[A-ZÀ-Ÿ]{2,}(?:\s+[A-ZÀ-Ÿa-zà-ÿ'-]+){1,3}\b/.test(t),
+    /\b(porto|cotonou|abomey|parakou|calo|ville|quartier|adresse|livr[ei]|chez moi|à domicile)\b/i.test(
+      t
+    ),
+    /\b(\d{1,2}\s*h(?:\d{0,2})?|\d{1,2}:\d{2}|dispo|disponible|cr[eé]neau|apr[eè]s|avant)\b/i.test(
+      t
+    ),
+    /\b(\+?\d[\d\s.-]{7,}\d)\b/.test(t),
+    /\b(pointure|taille|couleur|mod[eè]le|paire)\b/i.test(t),
+  ].filter(Boolean).length;
+  return clauses.length >= 2 || factSignals >= 2;
+}
+
+/** Réponse qui ne fait que remercier / noter un nom — mission non avancée. */
+function isBareThankYouOrNameAck(text: string): boolean {
+  const t = text.trim().replace(/\s+/g, " ");
+  if (!t || t.length > 60) return false;
+  if (/\?/.test(t)) return false;
+  return (
+    /^(merci|parfait|not[ée]|bien not[ée]|compris|d'?accord|ok|okay)([,.]?\s+(m\.|mr\.?|mme\.?|monsieur|madame))?\s*[\wÀ-ÿ'-]+[.!]?\s*$/i.test(
+      t
+    ) ||
+    /^(merci|parfait|not[ée]|bien not[ée]|compris)[.!]?\s*$/i.test(t)
+  );
+}
+
+function fallbackAfterInfoDump(): string {
+  return (
+    "Je note bien ces éléments. Pour finaliser la livraison, j'aurais encore besoin du point exact (quartier / repère) et d'un numéro pour que le livreur vous joigne."
+  );
+}
+
 /** Intro type inbound alors qu'on a déjà ouvert (bug playbook). */
 function isFalseInboundIntro(text: string): boolean {
   return /ravi (de )?(pouvoir )?[eé]changer|heureux de (pouvoir )?[eé]changer|merci de (m.?avoir |votre |m.?écrire|m.?ecrire)|(suite|gr[aâ]ce) [aà] votre (message|demande|contact)|je me pr[eé]sente/i.test(
@@ -265,6 +306,11 @@ function enforceWhatsAppStyle(
     text = sentences.slice(0, 2).join(" ");
   }
 
+  // Après éventuelle coupe : toujours bloquer un simple « Merci M. X » si le client a dumpé des infos
+  if (isInfoDenseProspectMessage(opts.incomingText) && isBareThankYouOrNameAck(text)) {
+    text = fallbackAfterInfoDump();
+  }
+
   return sanitizeOutboundWhatsAppText(text.replace(/\s{2,}/g, " ").trim());
 }
 
@@ -315,9 +361,15 @@ export async function generateWhatsAppReply(userId: number, input: {
     conversationMode: input.conversationMode,
   });
   const minimalAck = isMinimalProspectAck(input.incomingText);
+  const infoDense = isInfoDenseProspectMessage(input.incomingText);
 
   const hardOverride =
-    inbound && minimalAck
+    infoDense
+      ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
+        `Le client vient de donner PLUSIEURS infos d'un coup : « ${input.incomingText.trim()} ».\n` +
+        `INTERDIT : répondre seulement « Merci », « Merci M. X », « Noté », « Parfait » sans avancer.\n` +
+        `En 1-2 phrases : confirme TOUTES les infos utiles (nom, lieu, horaire, taille…) + pose UNE question pour la prochaine info encore manquante vers l'objectif campagne.\n`
+      : inbound && minimalAck
       ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
         `Mode ENTRANT : le client vient d'écrire « ${input.incomingText.trim()} ». Il a initié.\n` +
         `INTERDIT : intro prospection (« Bonjour, c'est X, je vous contacte au sujet de… »), pitcher l'offre comme un opener.\n` +
@@ -351,6 +403,10 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 ${input.senderName}: ${input.incomingText}
 
 Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant compte de TOUT l'historique ci-dessus. INTERDIT : réaction vide (« Super. »), titre pro seul, ou prénom/nom SEUL sur une question d'identité (toujours prénom + pourquoi).${
+    infoDense
+      ? " Le client a donné plusieurs infos : confirme-les TOUTES + UNE question pour la suite — INTERDIT « Merci M. X » seul."
+      : ""
+  }${
     ongoing && !inbound ? " NE RESALUE PAS. NE TE RE-PRÉSENTE PAS." : ""
   }${
     inbound
@@ -468,6 +524,12 @@ function analyzeProspectStyle(
   }
   if (/photo|image|pic|visuel|montre[- ]?(moi )?(la |une )?(photo|image)|voir.*(photo|image|produit)/i.test(lower)) {
     return "demande média — confirme l'envoi de la photo produit si disponible en campagne ; sinon demande un détail (modèle/taille)";
+  }
+  if (isInfoDenseProspectMessage(text)) {
+    return (
+      "infos MULTIPLES d'un coup — note TOUT (nom/lieu/horaire/taille…) en 1 souffle + UNE question pour la prochaine info manquante ; " +
+      "INTERDIT « Merci M. X » / « Noté » seuls"
+    );
   }
   if (/\?/.test(t)) return "question — réponse directe en 1 phrase vivante";
   if (/formation|inscription|programme|contenu/i.test(lower)) return "demande d'infos — concret et court";
