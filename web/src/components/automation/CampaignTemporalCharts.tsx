@@ -31,14 +31,33 @@ function fmtTick(dateKey: string): string {
   return `${d}/${m}`;
 }
 
+/** Nombre de ticks X lisibles (~6–8) selon la longueur de la série. */
+function xTickInterval(pointCount: number): number {
+  if (pointCount <= 8) return 0;
+  return Math.max(0, Math.ceil(pointCount / 7) - 1);
+}
+
 export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsProps) {
   if (!series.length) return null;
 
-  const dense = series.length > 45;
+  const tickInterval = xTickInterval(series.length);
+  const angled = series.length > 14;
   const data = series.map((row) => ({
     ...row,
     label: fmtTick(row.date),
   }));
+
+  const xAxisProps = {
+    dataKey: 'label' as const,
+    tick: { fontSize: 10, fill: '#64748b' },
+    axisLine: false,
+    tickLine: false,
+    interval: tickInterval,
+    minTickGap: 28,
+    ...(angled
+      ? { angle: -35, textAnchor: 'end' as const, height: 48, dy: 8 }
+      : { height: 24 }),
+  };
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -53,7 +72,10 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
         </p>
         <div className="mt-4 h-64 w-full min-w-0">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+            <AreaChart
+              data={data}
+              margin={{ top: 8, right: 8, left: -12, bottom: angled ? 12 : 4 }}
+            >
               <defs>
                 <linearGradient id="gReached" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor="#2057ce" stopOpacity={0.35} />
@@ -65,13 +87,7 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.08)" vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 10, fill: '#64748b' }}
-                axisLine={false}
-                tickLine={false}
-                interval={dense ? Math.ceil(series.length / 8) : 0}
-              />
+              <XAxis {...xAxisProps} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
               <Tooltip
                 labelFormatter={(_, payload) => {
@@ -124,15 +140,12 @@ export function CampaignTemporalCharts({ series, mode }: CampaignTemporalChartsP
         <p className="mt-0.5 text-xs text-text-500">Volume journalier et nouveaux intéressés</p>
         <div className="mt-4 h-64 w-full min-w-0">
           <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={data} margin={{ top: 8, right: 8, left: -12, bottom: 0 }}>
+            <LineChart
+              data={data}
+              margin={{ top: 8, right: 8, left: -12, bottom: angled ? 12 : 4 }}
+            >
               <CartesianGrid strokeDasharray="3 3" stroke="rgba(15,23,42,0.08)" vertical={false} />
-              <XAxis
-                dataKey="label"
-                tick={{ fontSize: 10, fill: '#64748b' }}
-                axisLine={false}
-                tickLine={false}
-                interval={dense ? Math.ceil(series.length / 8) : 0}
-              />
+              <XAxis {...xAxisProps} />
               <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#64748b' }} axisLine={false} tickLine={false} />
               <Tooltip
                 labelFormatter={(_, payload) => {
