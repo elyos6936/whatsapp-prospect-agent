@@ -87,31 +87,32 @@ export function formatCampaignMemoryForWhatsApp(memory: CampaignMemory): string 
 
 export function formatLivePlaybookForWhatsApp(playbook: LivePlaybook): string {
   const lines = [
-    `=== PLAYBOOK SYNCHRONISÉ (simulation = source de vérité des réponses) ===`,
+    `=== PLAYBOOK SYNCHRONISÉ (guide de pacing — PAS un script à recopier) ===`,
     playbook.validatedAt
-      ? `Statut : validé / figé pour les prospects (${playbook.validatedAt.slice(0, 16)}).`
-      : `Statut : brouillon simu — suis TOUT DE MÊME le ton et la trajectoire (priorité absolue).`,
+      ? `Statut : validé (${playbook.validatedAt.slice(0, 16)}).`
+      : `Statut : brouillon simu.`,
     playbook.openerSnapshot
-      ? `Opener déjà envoyé (ou à envoyer) : « ${playbook.openerSnapshot} »`
+      ? `Opener (1er message sortant) : « ${playbook.openerSnapshot} »`
       : "",
     playbook.memoryName ? `Mémoire liée : « ${playbook.memoryName} »` : "",
     "",
-    `Trajectoire de référence OBLIGATOIRE :`,
-    `- Même mission, même ton, mêmes angles / CTAs que ci-dessous.`,
-    `- Tu n'es PAS libre d'improviser un autre script : adapte les MOTS au prospect, pas la trajectoire.`,
+    `Trajectoire de RÉFÉRENCE (ton / mission / CTAs) :`,
+    `- Garde la même mission et le même pacing (Interest → Desire → Action).`,
+    `- Adapte les MOTS au message RÉEL du prospect — priorité au fil réel, pas au prochain tour listé.`,
+    `- Si le prospect dit seulement « salut / ok / hello » alors que TU as initié : INTERDIT de coller le tour « toi » suivant du playbook s'il te présente ou dit « ravi d'échanger ». Continue ton accroche naturellement.`,
     `- Si le prospect sort du cadre : recadre en 1 phrase vers l'objectif campagne.`,
   ];
   for (const turn of playbook.turns.slice(0, 7)) {
     if (turn.speaker === "toi") {
-      lines.push(`- Toi : « ${turn.text} »`);
+      lines.push(`- Toi (exemple) : « ${turn.text} »`);
     } else {
-      lines.push(`- ${turn.name || "Prospect"} : « ${turn.text} »`);
+      lines.push(`- ${turn.name || "Prospect"} (exemple) : « ${turn.text} »`);
     }
   }
   lines.push(
     "",
-    `RÈGLE ABSOLUE : chaque réponse prospect = playbook + mémoire. ` +
-      `Pas de dérive fade (« Super. »), pas de pitch hors trajectoire, pas d'offre inventée.`
+    `RÈGLE : playbook = boussole (ton/objectif). Message réel du prospect = priorité. ` +
+      `Pas de dérive fade (« Super. »), pas d'offre inventée, pas d'intro inbound si tu as déjà ouvert.`
   );
   return lines.filter((l) => l !== undefined).join("\n");
 }

@@ -26,7 +26,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 3. **COURT MAIS VIVANT** : 1 phrase en général, 2 max. Jamais de paragraphe. Jamais plus de 220 caractères sauf question complexe. Court ≠ sec : une phrase complète avec intention, pas un titre pro ni un mot seul.
 4. **DIRECT** : réponds à CE que le prospect vient de dire. Pas de pitch générique.
 5. **HUMAIN** : rythme naturel, formulations simples. Varie les formulations SANS changer l'intention.
-6. **CONTEXTE CAMPAGNE** : suis objectif, ton, approche **et playbook synchronisé**. Si un playbook est fourni, c'est la trajectoire à suivre (mots adaptés au prospect, mission identique).
+6. **CONTEXTE CAMPAGNE** : suis objectif, ton, approche et playbook comme **boussole** (mission / pacing). Le message RÉEL du prospect prime sur le prochain tour listé du playbook — n'applique PAS un script mot à mot si sa réponse diffère.
 7. **PAS DE ROBOT** : interdit « comme mentionné plus tôt », « je suis X et je propose », « n'hésite pas à me le faire savoir », « je suis là pour ça », « comment puis-je vous aider ».
 8. **PAS DE RE-SALUT** si conversation déjà engagée : zéro « Bonjour », « Salut », « Bonsoir » en début.
 9. **ZÉRO CROCHETS** : jamais [prix], [lien], [prénom], etc. Info manquante → « Je vous confirme ça juste après » ou une question utile.
@@ -39,6 +39,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 16. **CLÔTURE** : dès que l'objectif est atteint (lien envoyé, livraison organisée / livreur contacté, RDV fixé) → une courte confirmation puis STOP. N'enchaîne pas de messages de confirmation.
 17. **PAS DE PRÉNOM DU PROSPECT** à tout va (vouvoiement = formule neutre).
 18. **INTERDIT RÉACTIONS VIDES** : jamais un message qui n'est que « Super. », « Ok. », « Parfait. », « Ah super », « D'accord. », « Nickel. » — toujours **réagir + avancer** (1 détail utile OU 1 question liée à l'objectif).
+19. **SORTANT** : si TU as envoyé le 1er message, INTERDIT de parler comme un inbound (« ravi de pouvoir échanger », « merci de votre message », te présenter à neuf après un simple « salut »).
 
 ## Adaptation rapide
 - Identité / « qui es-tu » → prénom **business** (contexte) + **pourquoi on écrit** en 1 souffle (pas un titre LinkedIn seul : « Growth marketer et expert… »). Ex. intention : « Alex — j'aide des pros à sortir du chaos WhatsApp. Je vous écris pour [offre courte]. »
@@ -167,6 +168,38 @@ export async function getHumanReadDelayMs(userId: number, chatId: string): Promi
   return 12_000 + Math.floor(Math.random() * 13_000);
 }
 
+/** Accusé / salutation très courte du prospect. */
+function isMinimalProspectAck(text: string): boolean {
+  const t = text.trim();
+  return (
+    t.length <= 24 &&
+    /^(salut|hello|bonjour|bonsoir|hey|hi|coucou|ok|okay|d'accord|dac|oui|non|bsr|merci)[!?.…]*$/i.test(
+      t
+    )
+  );
+}
+
+/** Intro type inbound alors qu'on a déjà ouvert (bug playbook). */
+function isFalseInboundIntro(text: string): boolean {
+  return /ravi (de )?(pouvoir )?[eé]changer|heureux de (pouvoir )?[eé]changer|merci de (m.?avoir |votre |m.?écrire|m.?ecrire)|(suite|gr[aâ]ce) [aà] votre (message|demande|contact)|je me pr[eé]sente/i.test(
+    text
+  );
+}
+
+/** Pitch offre trop tôt après un accusé minimal. */
+function isEarlyOfferPitch(text: string): boolean {
+  return /je (vous )?propose|solutions? d['']automatisation|pour aider les|gagner du temps|notre (offre|formation|programme)|je suis .{0,40} et je/i.test(
+    text
+  );
+}
+
+function fallbackAfterMinimalAck(incoming: string): string {
+  if (/^(ok|okay|d'accord|dac|oui)[!?.…]*$/i.test(incoming.trim())) {
+    return "Compris. Pour situer : vous gérez plutôt ça en solo, ou avec une petite équipe ?";
+  }
+  return "Ça va de mon côté, merci. Vous êtes plutôt freelance / petite boîte, ou une équipe plus large ?";
+}
+
 /** Nettoie et force le style WhatsApp court. */
 function enforceWhatsAppStyle(
   raw: string,
@@ -194,6 +227,13 @@ function enforceWhatsAppStyle(
       ""
     );
     text = text.replace(/^(bonjour|salut|bonsoir|hello|coucou)[,.!]?\s*/i, "");
+  }
+
+  // Garde-fou dur : playbook qui force une intro inbound / un pitch trop tôt
+  if (opts.isOngoing && isMinimalProspectAck(opts.incomingText)) {
+    if (isFalseInboundIntro(text) || isEarlyOfferPitch(text)) {
+      text = fallbackAfterMinimalAck(opts.incomingText);
+    }
   }
 
   const sentences = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
@@ -251,11 +291,20 @@ export async function generateWhatsAppReply(userId: number, input: {
 
   const ongoing = input.forceOngoing === true || isOngoingConversation;
   const prospectStyle = analyzeProspectStyle(input.incomingText);
+  const minimalAck = isMinimalProspectAck(input.incomingText);
+
+  const hardOverride =
+    ongoing && minimalAck
+      ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
+        `TU as déjà ouvert la conversation. Le prospect répond juste « ${input.incomingText.trim()} ».\n` +
+        `INTERDIT : te présenter, « ravi de pouvoir échanger », « merci de votre message », pitcher l'offre.\n` +
+        `Réponds en 1 phrase naturelle qui continue TON fil (réagir + 1 question concrète liée à l'objectif).\n`
+      : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
 ${await businessContextBlock(userId)}
-${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES (priorité absolue)\n${input.automationContext}\n` : "\n⚠️ Pas de campagne active — réponse courte et générale.\n"}
-
+${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES\n${input.automationContext}\n` : "\n⚠️ Pas de campagne active — réponse courte et générale.\n"}
+${hardOverride}
 ## Contact
 ${input.senderName} (${display})
 Messages échangés : ${Math.max(messageCount, input.forceOngoing ? 2 : 0)}
@@ -269,8 +318,8 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 ${input.senderName}: ${input.incomingText}
 
 Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle et vivante, en tenant compte de TOUT l'historique ci-dessus. INTERDIT : réaction vide (« Super. ») ou titre pro seul.${
-    ongoing ? " NE RESALUE PAS." : ""
-  } Reste STRICTEMENT dans le cadre campagne / playbook.`;
+    ongoing ? " NE RESALUE PAS. NE TE RE-PRÉSENTE PAS." : ""
+  }${minimalAck && ongoing ? " Message réel prioritaire sur tout tour playbook." : " Reste dans le cadre campagne (mission/ton)."}`;
 
   const response = await callOpenAiWithRetry(() =>
     client.chat.completions.create({

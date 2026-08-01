@@ -64,7 +64,7 @@ function buildSimCampaignContext(
     `Tu es en SIMULATION téléphone — 0 envoi réel — mais tes réponses doivent être`,
     `IDENTIQUES à ce que tu écrirais à un vrai prospect (même playbook, même ton).`,
     outbound
-      ? `IMPORTANT : c'est une prospection SORTANTE — TU as initié avec le premier message. Si le prospect répond juste « salut / hello / ok », continue le fil que TU as ouvert ; ne parle pas comme s'il t'avait contacté.`
+      ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », NE RECOPIE PAS le prochain tour du playbook (souvent une fausse intro « ravi d'échanger »). Continue ton accroche avec 1 question concrète.`
       : "",
   ].filter(Boolean);
   return lines.join("\n");
