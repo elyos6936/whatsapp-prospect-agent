@@ -186,10 +186,9 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
 
   const shouldPersonalize =
     auto.type !== "group_broadcast" &&
-    (auto.config.mode === "outbound_prospect" ||
-      auto.type === "group_prospect" ||
-      auto.type === "contact_prospect" ||
-      auto.config.personalizeMessages === true);
+    // 5 variantes validées = texte exact à envoyer (on choisit laquelle, on ne réécrit pas).
+    !(Array.isArray(auto.config.abVariants) && auto.config.abVariants.length >= 2) &&
+    auto.config.personalizeMessages === true;
 
   const isGroupBroadcast =
     auto.type === "group_broadcast" || auto.config.mode === "group_broadcast";

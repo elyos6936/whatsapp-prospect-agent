@@ -148,7 +148,12 @@ function personalizeFallback(input: {
     .replace(/\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)\b/gi, "")
     .replace(/\s{2,}/g, " ")
     .trim();
-  const short = base.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").slice(0, 200);
+  let short = base.split(/(?<=[.!?])\s+/).slice(0, 2).join(" ").trim();
+  if (short.length > 220) {
+    const hard = short.slice(0, 220);
+    const lastSpace = hard.lastIndexOf(" ");
+    short = (lastSpace > 80 ? hard.slice(0, lastSpace) : hard).trim();
+  }
   if (!short) return input.template;
   const swaps: Array<[RegExp, string]> = [
     [/\bBonjour\b/i, "Bonsoir"],

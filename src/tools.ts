@@ -1639,7 +1639,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           personalize_messages: {
             type: "boolean",
             description:
-              "Micro-variation de wording par prospect DANS le cadre de initial_message / ab_variants (pas un nouvel angle). Défaut true en prospection sortante.",
+              "Micro-variation de wording par prospect. Ignoré (forcé false) dès que 5 ab_variants sont validés : on envoie alors le texte exact, seule la variante choisie change.",
           },
           stop_on_dissatisfaction: { type: "boolean" },
           stop_on_unknown_question: { type: "boolean" },
@@ -2162,11 +2162,14 @@ function buildAutomationConfigFromArgs(
     // Défaut OFF : une question sans info en config (prix…) ne doit pas couper un prospect engagé.
     stopOnUnknownQuestion: args.stop_on_unknown_question === true,
     personalizeMessages:
-      args.personalize_messages === false
+      // Avec 5 accroches validées : envoi exact (rotation seulement) — pas de paraphrase IA.
+      Array.isArray(args.ab_variants) && args.ab_variants.length >= 2
         ? false
-        : isOutbound
-          ? true
-          : args.personalize_messages === true,
+        : args.personalize_messages === false
+          ? false
+          : isOutbound
+            ? true
+            : args.personalize_messages === true,
     // Stickers/emojis OFF par défaut — uniquement si l'utilisateur a dit oui
     stickersEnabled: args.stickers_enabled === true,
     thirdPartyNotification: parseThirdPartyNotificationArgs(args),
@@ -4621,6 +4624,16 @@ export async function executeTool(
             message: String(v.message ?? ""),
           })
         );
+      }
+      if (args.personalize_messages === true) merged.personalizeMessages = true;
+      if (args.personalize_messages === false) merged.personalizeMessages = false;
+      // Variantes validées = texte exact (rotation seulement), sauf override explicite.
+      if (
+        Array.isArray(merged.abVariants) &&
+        merged.abVariants.length >= 2 &&
+        args.personalize_messages !== true
+      ) {
+        merged.personalizeMessages = false;
       }
       if (Array.isArray(args.trigger_phrases)) {
         merged.triggerPhrases = args.trigger_phrases.map(String);

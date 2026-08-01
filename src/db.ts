@@ -2061,11 +2061,20 @@ async function hasInboundInEpoch(
   automationId: number | null | undefined,
   epochIso: Date
 ): Promise<boolean> {
+  const digits = phone.replace(/@c\.us|@lid/gi, "").replace(/\D/g, "");
+  const phoneMatch = sql`
+    (contact_phone = ${phone}
+      OR (${digits} != '' AND (
+        contact_phone = ${digits} || '@c.us'
+        OR contact_phone = ${digits} || '@lid'
+        OR replace(replace(contact_phone, '@c.us', ''), '@lid', '') = ${digits}
+      )))
+  `;
   if (automationId != null) {
     const rows = await sql<{ x: number }[]>`
       SELECT 1 as x FROM messages
       WHERE user_id = ${userId}
-        AND contact_phone = ${phone}
+        AND ${phoneMatch}
         AND direction = 'entrant'
         AND automation_id = ${automationId}
         AND created_at >= ${epochIso}
@@ -2076,12 +2085,30 @@ async function hasInboundInEpoch(
   const rows = await sql<{ x: number }[]>`
     SELECT 1 as x FROM messages
     WHERE user_id = ${userId}
-      AND contact_phone = ${phone}
+      AND ${phoneMatch}
       AND direction = 'entrant'
       AND created_at >= ${epochIso}
     LIMIT 1
   `;
   return rows.length > 0;
+}
+
+/**
+ * Vrai si le prospect a déjà écrit dans l'époque courante de cette campagne
+ * (ex. commande / hors-sujet avant l'opener) → ne pas coller un cold opener.
+ */
+export async function hasInboundInCampaignEpoch(
+  userId: number,
+  chatId: string,
+  automationId?: number | null
+): Promise<boolean> {
+  const trimmedChat = chatId.trim();
+  if (trimmedChat.endsWith("@g.us") || trimmedChat.includes("@newsletter")) {
+    return false;
+  }
+  const phone = normalizeContactPhone(chatId);
+  const epochIso = await conversationEpochForContact(userId, phone, automationId);
+  return hasInboundInEpoch(userId, phone, automationId, epochIso);
 }
 
 /**

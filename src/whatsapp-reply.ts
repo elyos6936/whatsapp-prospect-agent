@@ -44,7 +44,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 21. **INFOS MULTIPLES** : si le client donne plusieurs infos d'un coup (nom + ville + horaire, taille + adresse…), tu notes **tout ce qui est utile** en 1 souffle et tu poses **UNE** question pour la prochaine info encore manquante. **INTERDIT** de répondre seulement « Merci M. X » / « Noté » / « Parfait » sans avancer la mission.
 
 ## Adaptation rapide
-- Identité / « qui es-tu » → prénom **business** (contexte) + **pourquoi on écrit** en 1 souffle (pas un titre LinkedIn seul : « Growth marketer et expert… »). Ex. intention : « Alex — j'aide des pros à sortir du chaos WhatsApp. Je vous écris pour [offre courte]. »
+- Identité / « qui es-tu » → prénom **business** (contexte) + **pourquoi on écrit** en 1 souffle (pas un titre LinkedIn seul : « Growth marketer et expert… »). Ex. intention : « Alex, j'aide des pros à sortir du chaos WhatsApp. Je vous écris pour [offre courte]. »
 - « Où avez-vous eu mon numéro / d'où vous me contactez » → transparence **+** micro-empathie (« Légitime de demander ») + source vraie du contexte (groupe, admin, liste…) — **sans** enchaîner le pitch complet dans la même bulle.
 - Prix / détail → chiffre exact du contexte, sinon « Je vous confirme ça juste après »
 - Intérêt / engagement léger → **pousser l'intérêt** : 1 détail utile + question ou prochaine étape
@@ -64,6 +64,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 - **VOUVOIEMENT OBLIGATOIRE** : toujours vous / votre / vos. Jamais tu, ton, ta, tes, te, t'.
 - Pas de bullet points, listes, ni formules corporate.
 - Sonner comme quelqu'un qui écrit vite au téléphone, pas comme une brochure.
+- **PAS DE TIRETS « — » / « – »** pour séparer deux idées (ex. « marketer – je vous écris »). Préfère un point ou une virgule : « Alex, growth marketer. Je vous écris pour… ».
 
 ## Reste dans le sujet
 Hors-sujet (poème, code, « es-tu un robot ? »…) → recadre en 1 phrase, sans entrer dans le jeu.
@@ -78,6 +79,7 @@ Hors-sujet (poème, code, « es-tu un robot ? »…) → recadre en 1 phrase, sa
 - Tutoyer le prospect (tu / ton / ta / te / t').
 - Tâches hors-sujet.
 - Message d'un seul mot / réaction vide.
+- Tirets cadratin / demi-cadratin (— ou –) comme séparateur de phrases.
 
 ## Format
 Réponds UNIQUEMENT avec le texte du message WhatsApp. Rien d'autre.`
@@ -142,7 +144,10 @@ async function formatHistory(
   }
 
   const incomingCount = filtered.filter((m) => m.direction === "entrant").length;
-  const isOngoingConversation = incomingCount >= 1 || filtered.length >= 2;
+  const outboundCount = filtered.filter((m) => m.direction === "sortant").length;
+  // Tout sortant déjà envoyé sur ce fil campagne = conversation engagée (pas de cold opener).
+  const isOngoingConversation =
+    incomingCount >= 1 || outboundCount >= 1 || filtered.length >= 2;
 
   const text = filtered
     .map((m) => {
@@ -265,6 +270,13 @@ function enforceWhatsAppStyle(
   text = text.replace(/\bn'?h[ée]site(z)? pas [àa] me (le )?faire savoir\b[!.]?\s*/gi, "");
   text = text.replace(/\bje suis l[àa] pour [çc]a\b[!.]?\s*/gi, "");
 
+  // Tirets « — / – / - » utilisés comme pause entre deux idées (pas les traits d'union)
+  text = text.replace(/\s+[—–]\s+/g, ". ");
+  text = text.replace(/\s+-\s+(?=[A-Za-zÀ-ÿ])/g, ". ");
+  text = text.replace(/\.\s+([a-zà-ÿ])/g, (_, c: string) => `. ${c.toUpperCase()}`);
+  text = text.replace(/\.\s*\./g, ".");
+  text = text.replace(/\s{2,}/g, " ").trim();
+
   // Réactions vide seule → forcer un minimum de substance (le LLM a triché)
   if (/^(super|ok|okay|parfait|d'?accord|ah super|nickel|top|compris|je vois)[.!]*$/i.test(text.trim())) {
     text =
@@ -277,6 +289,16 @@ function enforceWhatsAppStyle(
       ""
     );
     text = text.replace(/^(bonjour|salut|bonsoir|hello|coucou)[,.!]?\s*/i, "");
+    // Interdit de recoller un opener froid en milieu de fil
+    if (
+      /^(bonjour|salut|bonsoir).{0,40}(minute|instant|secondes?).{0,20}(accorder|consacrer|prendre)/i.test(
+        text
+      ) ||
+      /^(bonjour|salut).{0,30}(allez-vous bien|comment allez-vous).{0,40}\?/i.test(text)
+    ) {
+      text =
+        "Pour en revenir à ce dont on parlait : souhaitez-vous que je vous envoie le détail concret / le lien ?";
+    }
   }
 
   // Garde-fou dur : playbook qui force une intro inbound / un pitch trop tôt
@@ -296,12 +318,24 @@ function enforceWhatsAppStyle(
     text = sentences.slice(0, 2).join(" ");
   }
 
-  // Court entrant : limite douce — JAMAIS couper une identité au seul prénom
-  // (ex. « Will Wanvoesso. » alors que le modèle avait déjà le « pourquoi »).
+  // Court entrant : limite douce — JAMAIS couper au milieu d'un mot
+  // (ex. « sans y passer des he » au lieu de « heures »).
   const isShortIncoming = opts.incomingText.trim().length <= 40;
   if (isShortIncoming && text.length > 120 && !identityQ) {
-    const kept = sentences.slice(0, 2).join(" ");
-    text = kept.length > 0 && kept.length <= 220 ? kept : text.slice(0, 180).trim();
+    const kept = sentences.slice(0, 2).join(" ").trim();
+    if (kept.length > 0 && kept.length <= 280) {
+      text = kept;
+    } else {
+      // Coupe au dernier espace avant 220 car. — jamais slice brut
+      const hard = text.slice(0, 220);
+      const lastSpace = hard.lastIndexOf(" ");
+      text = (lastSpace > 80 ? hard.slice(0, lastSpace) : hard).trim();
+      // Si on a coupé une phrase incomplète (pas de ponctuation finale), retire le dernier fragment
+      if (!/[.!?…]$/.test(text)) {
+        const parts = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
+        if (parts.length >= 2) text = parts.slice(0, -1).join(" ").trim();
+      }
+    }
   } else if (identityQ && sentences.length > 2) {
     text = sentences.slice(0, 2).join(" ");
   }
@@ -364,7 +398,14 @@ export async function generateWhatsAppReply(userId: number, input: {
   const infoDense = isInfoDenseProspectMessage(input.incomingText);
 
   const hardOverride =
-    infoDense
+    // Prospection sortante : un dump commande/livraison hors mission ≠ basculer en support livraison.
+    !inbound && infoDense
+      ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
+        `Mode SORTANT (prospection). Le prospect a écrit un long message (souvent hors-sujet / commande / livraison) : « ${input.incomingText.trim().slice(0, 280)} ».\n` +
+        `INTERDIT : confirmer une livraison, un RDV de réception, un montant cash, ou traiter ce message comme ta mission si ce n'est PAS l'objectif campagne.\n` +
+        `En 1-2 phrases : accusé court si besoin + RECADRE vers l'objectif campagne (masterclass / offre / lien) avec UNE question liée.\n` +
+        `INTERDIT : cold opener (« Bonjour, vous avez une minute… ») si le fil est déjà engagé.\n`
+      : infoDense
       ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
         `Le client vient de donner PLUSIEURS infos d'un coup : « ${input.incomingText.trim()} ».\n` +
         `INTERDIT : répondre seulement « Merci », « Merci M. X », « Noté », « Parfait » sans avancer.\n` +
@@ -377,7 +418,7 @@ export async function generateWhatsAppReply(userId: number, input: {
       : ongoing && minimalAck && !inbound
       ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
         `TU as déjà ouvert la conversation. Le prospect répond juste « ${input.incomingText.trim()} ».\n` +
-        `INTERDIT : te présenter, « ravi de pouvoir échanger », « merci de votre message », pitcher l'offre.\n` +
+        `INTERDIT : te présenter, « ravi de pouvoir échanger », « merci de votre message », pitcher l'offre, cold opener (« Bonjour, vous avez une minute… »).\n` +
         `Réponds en 1 phrase naturelle qui continue TON fil (réagir + 1 question concrète liée à l'objectif).\n`
       : inbound
         ? `\n## CADRE ENTRANT\n` +
@@ -429,9 +470,16 @@ Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant c
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 
-  const reply = extractAssistantContent(response?.choices[0]?.message);
+  const choice = response?.choices[0];
+  let reply = extractAssistantContent(choice?.message);
   if (!reply) {
     throw new Error(`${llmProviderLabel()} n'a pas généré de réponse.`);
+  }
+  // Coupe LLM (max_tokens) : retirer le dernier fragment incomplet plutôt qu'envoyer « … des he »
+  if (choice?.finish_reason === "length" && !/[.!?…]$/.test(reply.trim())) {
+    const trimmed = reply.trim();
+    const lastSpace = trimmed.lastIndexOf(" ");
+    if (lastSpace > 40) reply = trimmed.slice(0, lastSpace).trim();
   }
 
   let styled = enforceWhatsAppStyle(reply, {

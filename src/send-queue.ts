@@ -8,6 +8,7 @@ import {
   formatLocalDateTime,
   getAutomation,
   isStartingNewConversation,
+  hasInboundInCampaignEpoch,
   markQueueCancelled,
   markQueueFailed,
   markQueueSent,
@@ -163,6 +164,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
     }
 
     // Garde-fou : opener déjà en base (autre worker a envoyé entre-temps)
+    // OU prospect a déjà écrit dans ce fil campagne → ne pas coller un cold opener par-dessus
     if (isCampaignOpener) {
       const stillNew = await isStartingNewConversation(
         userId,
@@ -179,6 +181,27 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
             item.automation_id,
             "info",
             `Doublon évité pour ${label} — le premier message était déjà parti.`
+          );
+        }
+        continue;
+      }
+      // Prospect a déjà écrit (souvent hors-sujet / commande) avant l'opener → laisser l'auto-reply
+      if (await hasInboundInCampaignEpoch(userId, item.recipient, item.automation_id)) {
+        const label = item.recipient_label || chatIdToDisplay(item.recipient);
+        await markQueueCancelled(
+          userId,
+          item.id,
+          "Prospect déjà écrit — opener annulé"
+        );
+        console.warn(
+          `⏭️ Queue #${item.id} ignorée (${label}) — inbound déjà présent avant opener`
+        );
+        if (item.automation_id) {
+          await addAutomationLog(
+            userId,
+            item.automation_id,
+            "info",
+            `Opener annulé pour ${label} — le contact avait déjà écrit sur ce fil.`
           );
         }
         continue;
