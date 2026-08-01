@@ -305,6 +305,9 @@ export function selectToolsForAgentTurn(opts: {
     return name != null && needed.has(name);
   });
 
-  // Sécurité : ne jamais descendre sous un set utilisable
-  return selected.length >= 25 ? selected : TOOL_DEFINITIONS;
+  // Jamais retomber sur les ~74 outils complets (coût tokens) — le noyau suffit.
+  return selected.length > 0 ? selected : TOOL_DEFINITIONS.filter((t) => {
+    const name = toolNameOf(t);
+    return name != null && CORE_TOOL_NAMES.has(name);
+  });
 }

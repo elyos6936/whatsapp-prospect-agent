@@ -345,14 +345,23 @@ export function memoryToQuietHours(memory: CampaignMemory): {
   };
 }
 
+/** Plafond injection agent chat (le live WhatsApp garde la mémoire via campaign-sync). */
+const AGENT_MEMORY_INJECT_MAX = 4_000;
+
 /** Texte injecté dans le contexte agent. */
 export function formatMemoryForAgent(memory: CampaignMemory): string {
-  const body = memory.instructions.trim() || legacyFieldsToInstructions(memory);
+  let body = memory.instructions.trim() || legacyFieldsToInstructions(memory);
+  let truncatedNote = "";
+  if (body.length > AGENT_MEMORY_INJECT_MAX) {
+    body = body.slice(0, AGENT_MEMORY_INJECT_MAX).trimEnd();
+    truncatedNote =
+      `\n\n[Mémoire tronquée pour budget tokens — détails complets via get_active_campaign_memory si besoin.]`;
+  }
   return (
     `## Mémoire active — « ${memory.name} »\n` +
     `Source de vérité CE fil. Applique à la lettre ; n'invente pas ; ne repose pas ce qui est déjà écrit. ` +
     `Conflit explicite utilisateur → suis-le. Changer de mémoire → bouton Mémoire / set_campaign_memory.\n\n` +
-    `${body}`
+    `${body}${truncatedNote}`
   );
 }
 

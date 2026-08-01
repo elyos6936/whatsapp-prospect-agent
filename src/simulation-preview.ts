@@ -120,7 +120,9 @@ function buildSimCampaignContext(
     extras.playbookBlock ? `\n${extras.playbookBlock}` : "",
     "",
     `Tu es en SIMULATION téléphone — 0 envoi réel — mais tes réponses doivent être`,
-    `IDENTIQUES à ce que tu écrirais à un vrai prospect (même playbook, même ton).`,
+    `IDENTIQUES au live (même playbook, même ton, même pacing).`,
+    `Identité (« c'est qui ? ») → prénom business + pourquoi on écrit EN UN SOUFFLE (pas nom seul).`,
+    `Accusé minimal (« ok » / « okay ») → pas de pitch immédiat : question concrète OU détail nouveau.`,
     outbound
       ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », NE RECOPIE PAS le prochain tour du playbook (souvent une fausse intro « ravi d'échanger »). Continue ton accroche avec 1 question concrète.`
       : "",

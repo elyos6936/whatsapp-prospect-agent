@@ -23,7 +23,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 ## Règles d'or (non négociables)
 1. **RELIS L'HISTORIQUE** à chaque réponse : tiens compte de TOUT ce qui a déjà été dit (noms, objections, intérêts, infos déjà données). Ne répète pas une question déjà posée. Ne redis pas le même bénéfice (« gagner du temps ») sans angle nouveau.
 2. **PERSONNEL** : adapte le wording à CE prospect — jamais une réponse copiée — mais **reste dans le cadre** ton/approche/objectif campagne.
-3. **COURT MAIS VIVANT** : 1 phrase en général, 2 max. Jamais de paragraphe. Jamais plus de 220 caractères sauf question complexe. Court ≠ sec : une phrase complète avec intention, pas un titre pro ni un mot seul.
+3. **COURT MAIS VIVANT** : 1-2 phrases. Jamais de paragraphe. Court ≠ sec : une phrase complète avec intention — **interdit** un mot seul ou un prénom seul quand la question demande du contexte (identité, objection…).
 4. **DIRECT** : réponds à CE que le prospect vient de dire. Pas de pitch générique.
 5. **HUMAIN** : rythme naturel, formulations simples. Varie les formulations SANS changer l'intention.
 6. **CONTEXTE CAMPAGNE** : suis objectif, ton, approche et playbook comme **boussole** (mission / pacing). Le message RÉEL du prospect prime sur le prochain tour listé du playbook — n'applique PAS un script mot à mot si sa réponse diffère.
@@ -188,8 +188,15 @@ function isFalseInboundIntro(text: string): boolean {
 
 /** Pitch offre trop tôt après un accusé minimal. */
 function isEarlyOfferPitch(text: string): boolean {
-  return /je (vous )?propose|solutions? d['']automatisation|pour aider les|gagner du temps|notre (offre|formation|programme)|je suis .{0,40} et je/i.test(
+  return /je (vous )?(propose|contacte|pr[eé]sente)|je vous [eé]cris (pour|parce)|j['']accompagne|solutions? d['']automatisation|automatisations? concr[eè]tes|pour aider les|gagner du temps|notre (offre|formation|programme|solution)|je suis .{0,40} et je/i.test(
     text
+  );
+}
+
+/** « C'est qui ? » / qui êtes-vous — ne pas couper au prénom seul. */
+function isIdentityQuestion(text: string): boolean {
+  return /qui (etes|êtes)-vous|c'?est qui|votre nom|ton nom|vous [êe]tes qui/i.test(
+    text.trim()
   );
 }
 
@@ -237,14 +244,23 @@ function enforceWhatsAppStyle(
   }
 
   const sentences = text.split(/(?<=[.!?…])\s+/).filter(Boolean);
-  const isComplexQuestion = opts.incomingText.length > 80 || (opts.incomingText.match(/\?/g)?.length ?? 0) > 1;
+  const identityQ = isIdentityQuestion(opts.incomingText);
+  const isComplexQuestion =
+    identityQ ||
+    opts.incomingText.length > 80 ||
+    (opts.incomingText.match(/\?/g)?.length ?? 0) > 1;
   if (sentences.length > 3 && !isComplexQuestion) {
     text = sentences.slice(0, 2).join(" ");
   }
 
+  // Court entrant : limite douce — JAMAIS couper une identité au seul prénom
+  // (ex. « Will Wanvoesso. » alors que le modèle avait déjà le « pourquoi »).
   const isShortIncoming = opts.incomingText.trim().length <= 40;
-  if (isShortIncoming && text.length > 120) {
-    text = sentences[0] ?? text.slice(0, 120);
+  if (isShortIncoming && text.length > 120 && !identityQ) {
+    const kept = sentences.slice(0, 2).join(" ");
+    text = kept.length > 0 && kept.length <= 220 ? kept : text.slice(0, 180).trim();
+  } else if (identityQ && sentences.length > 2) {
+    text = sentences.slice(0, 2).join(" ");
   }
 
   return sanitizeOutboundWhatsAppText(text.replace(/\s{2,}/g, " ").trim());
@@ -317,7 +333,7 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
-Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle et vivante, en tenant compte de TOUT l'historique ci-dessus. INTERDIT : réaction vide (« Super. ») ou titre pro seul.${
+Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant compte de TOUT l'historique ci-dessus. INTERDIT : réaction vide (« Super. »), titre pro seul, ou prénom/nom SEUL sur une question d'identité (toujours prénom + pourquoi).${
     ongoing ? " NE RESALUE PAS. NE TE RE-PRÉSENTE PAS." : ""
   }${minimalAck && ongoing ? " Message réel prioritaire sur tout tour playbook." : " Reste dans le cadre campagne (mission/ton)."}`;
 
@@ -328,7 +344,7 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle et vivante, 
         { role: "system", content: WHATSAPP_REPLY_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 220, { thinkingEnabled: false }),
+      max_tokens: recommendedMaxTokens(config.openaiModel, 260, { thinkingEnabled: false }),
       temperature: 0.72,
       presence_penalty: 0.45,
       frequency_penalty: 0.45,
