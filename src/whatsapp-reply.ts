@@ -26,7 +26,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 3. **COURT MAIS VIVANT** : 1 phrase en général, 2 max. Jamais de paragraphe. Jamais plus de 220 caractères sauf question complexe. Court ≠ sec : une phrase complète avec intention, pas un titre pro ni un mot seul.
 4. **DIRECT** : réponds à CE que le prospect vient de dire. Pas de pitch générique.
 5. **HUMAIN** : rythme naturel, formulations simples. Varie les formulations SANS changer l'intention.
-6. **CONTEXTE CAMPAGNE** : suis objectif, ton et approche.
+6. **CONTEXTE CAMPAGNE** : suis objectif, ton, approche **et playbook synchronisé**. Si un playbook est fourni, c'est la trajectoire à suivre (mots adaptés au prospect, mission identique).
 7. **PAS DE ROBOT** : interdit « comme mentionné plus tôt », « je suis X et je propose », « n'hésite pas à me le faire savoir », « je suis là pour ça », « comment puis-je vous aider ».
 8. **PAS DE RE-SALUT** si conversation déjà engagée : zéro « Bonjour », « Salut », « Bonsoir » en début.
 9. **ZÉRO CROCHETS** : jamais [prix], [lien], [prénom], etc. Info manquante → « Je vous confirme ça juste après » ou une question utile.
@@ -235,6 +235,8 @@ export async function generateWhatsAppReply(userId: number, input: {
   allowEmojis?: boolean;
   /** Isole l'historique à cette automatisation. */
   automationId?: number | null;
+  /** Force « conversation déjà engagée » (ex. simulation téléphone). */
+  forceOngoing?: boolean;
 }): Promise<string> {
   const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
@@ -246,6 +248,7 @@ export async function generateWhatsAppReply(userId: number, input: {
     input.automationId
   );
 
+  const ongoing = input.forceOngoing === true || isOngoingConversation;
   const prospectStyle = analyzeProspectStyle(input.incomingText);
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
@@ -254,19 +257,19 @@ ${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES (priorité a
 
 ## Contact
 ${input.senderName} (${display})
-Messages échangés : ${messageCount}
-Conversation engagée : ${isOngoingConversation ? "OUI — ne resalue pas, ne te re-présente pas" : "non — salutation courte OK"}
+Messages échangés : ${Math.max(messageCount, input.forceOngoing ? 2 : 0)}
+Conversation engagée : ${ongoing ? "OUI — ne resalue pas, ne te re-présente pas" : "non — salutation courte OK"}
 Style du message entrant : ${prospectStyle}
 
 ## Historique
-${historyText}
+${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessus)"}
 
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
 Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle et vivante, en tenant compte de TOUT l'historique ci-dessus. INTERDIT : réaction vide (« Super. ») ou titre pro seul.${
-    isOngoingConversation ? " NE RESALUE PAS." : ""
-  }`;
+    ongoing ? " NE RESALUE PAS." : ""
+  } Reste STRICTEMENT dans le cadre campagne / playbook.`;
 
   const response = await callOpenAiWithRetry(() =>
     client.chat.completions.create({
@@ -276,9 +279,9 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle et vivante, 
         { role: "user", content: userContent },
       ],
       max_tokens: recommendedMaxTokens(config.openaiModel, 220, { thinkingEnabled: false }),
-      temperature: 0.78,
-      presence_penalty: 0.55,
-      frequency_penalty: 0.5,
+      temperature: 0.72,
+      presence_penalty: 0.45,
+      frequency_penalty: 0.45,
       ...deepseekChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
@@ -289,7 +292,7 @@ Rédige UNE réponse WhatsApp courte (1-2 phrases max), personnelle et vivante, 
   }
 
   let styled = enforceWhatsAppStyle(reply, {
-    isOngoing: isOngoingConversation,
+    isOngoing: ongoing,
     incomingText: input.incomingText,
   });
   // Stickers/emojis : refus par défaut sauf autorisation campagne explicite

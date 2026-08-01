@@ -716,6 +716,8 @@ app.post<{
     guide?: string;
     offer?: string;
     mode?: string;
+    threadId?: number;
+    thread_id?: number;
   };
 }>("/api/simulation/preview", async (request, reply) => {
   const userId = requireUserId(request);
@@ -728,6 +730,11 @@ app.post<{
           .map((t) => ({ role: t.role as "you" | "prospect", text: String(t.text) }))
       : [];
     const mode = body.mode === "inbound" ? "inbound" : "outbound";
+    const threadRaw = body.threadId ?? body.thread_id;
+    const threadId =
+      threadRaw != null && Number.isFinite(Number(threadRaw))
+        ? Number(threadRaw)
+        : null;
     const result = await replyInSimulationPreview(userId, {
       opener: String(body.opener ?? ""),
       history,
@@ -735,6 +742,7 @@ app.post<{
       guide: body.guide ? String(body.guide) : undefined,
       offer: body.offer ? String(body.offer) : undefined,
       mode,
+      threadId,
     });
     return result;
   } catch (err) {

@@ -326,11 +326,14 @@ export default function AuthenticatedApp() {
         )}
       </div>
 
-      {overlayView == null && waConnected && (
+      {overlayView == null &&
+        waConnected &&
+        activeThreadId != null &&
+        activeThread?.automation_id != null && (
         <PhoneSimulationPanel
           threadId={activeThreadId}
           purpose={activeThread?.purpose ?? null}
-          automationId={activeThread?.automation_id ?? null}
+          automationId={activeThread.automation_id}
           messages={messages}
         />
       )}

@@ -87,16 +87,19 @@ export function formatCampaignMemoryForWhatsApp(memory: CampaignMemory): string 
 
 export function formatLivePlaybookForWhatsApp(playbook: LivePlaybook): string {
   const lines = [
-    `=== PLAYBOOK SYNCHRONISÉ (simulation + brief) ===`,
+    `=== PLAYBOOK SYNCHRONISÉ (simulation = source de vérité des réponses) ===`,
     playbook.validatedAt
       ? `Statut : validé / figé pour les prospects (${playbook.validatedAt.slice(0, 16)}).`
-      : `Statut : brouillon simu — suis tout de même le ton et la trajectoire.`,
+      : `Statut : brouillon simu — suis TOUT DE MÊME le ton et la trajectoire (priorité absolue).`,
     playbook.openerSnapshot
       ? `Opener déjà envoyé (ou à envoyer) : « ${playbook.openerSnapshot} »`
       : "",
     playbook.memoryName ? `Mémoire liée : « ${playbook.memoryName} »` : "",
     "",
-    `Trajectoire de référence (ne pas recopier mot à mot — rester fidèle au ton, aux angles, aux CTAs) :`,
+    `Trajectoire de référence OBLIGATOIRE :`,
+    `- Même mission, même ton, mêmes angles / CTAs que ci-dessous.`,
+    `- Tu n'es PAS libre d'improviser un autre script : adapte les MOTS au prospect, pas la trajectoire.`,
+    `- Si le prospect sort du cadre : recadre en 1 phrase vers l'objectif campagne.`,
   ];
   for (const turn of playbook.turns.slice(0, 7)) {
     if (turn.speaker === "toi") {
@@ -107,8 +110,8 @@ export function formatLivePlaybookForWhatsApp(playbook: LivePlaybook): string {
   }
   lines.push(
     "",
-    `RÈGLE : chaque réponse prospect doit coller à ce playbook + à la mémoire ci-dessus. ` +
-      `Pas de dérive fade (« Super. ») ni de pitch hors trajectoire.`
+    `RÈGLE ABSOLUE : chaque réponse prospect = playbook + mémoire. ` +
+      `Pas de dérive fade (« Super. »), pas de pitch hors trajectoire, pas d'offre inventée.`
   );
   return lines.filter((l) => l !== undefined).join("\n");
 }
@@ -192,7 +195,7 @@ export async function persistLivePlaybookForThread(
   userId: number,
   threadId: number,
   turns: LivePlaybookTurn[],
-  opts: { markValidated?: boolean } = {}
+  opts: { markValidated?: boolean; syncOpener?: boolean } = {}
 ): Promise<Automation | null> {
   const thread = await getAgentThread(userId, threadId);
   const automationId = thread?.automation_id;
@@ -204,27 +207,105 @@ export async function persistLivePlaybookForThread(
   const mem = await getLinkedCampaignMemory(userId, threadId);
   const now = new Date().toISOString();
   const prev = auto.config.livePlaybook;
+  const firstToi = turns.find((t) => t.speaker === "toi")?.text?.trim() || "";
+  const syncOpener = opts.syncOpener !== false;
 
   const playbook: LivePlaybook = {
     updatedAt: now,
-    validatedAt: opts.markValidated
-      ? now
-      : prev?.validatedAt,
+    validatedAt: opts.markValidated ? now : prev?.validatedAt,
     turns: turns.slice(0, 7),
     openerSnapshot:
-      auto.config.initialMessage ||
-      turns.find((t) => t.speaker === "toi")?.text ||
-      prev?.openerSnapshot,
+      (syncOpener && firstToi
+        ? firstToi
+        : auto.config.initialMessage || prev?.openerSnapshot || firstToi) || undefined,
     guideSnapshot: auto.config.conversationGuide || prev?.guideSnapshot,
     memoryName: mem?.name || prev?.memoryName,
     memoryFingerprint: mem ? fingerprint(mem.instructions) : prev?.memoryFingerprint,
   };
 
+  // Ancre le 1er message campagne sur la simu (source de vérité live).
+  const nextInitial =
+    syncOpener && firstToi
+      ? firstToi
+      : auto.config.initialMessage;
+
+  // Section fidélité dans le guide — remplace une précédente section Klanvio playbook.
+  const fidelityBlock =
+    `=== CADRE PLAYBOOK (ne pas dériver) ===\n` +
+    `Les réponses WhatsApp aux prospects DOIVENT rester dans la trajectoire validée en simulation :\n` +
+    `même ton, mêmes angles, mêmes CTAs, même pacing AIDA.\n` +
+    `INTERDIT : inventer une autre offre, un autre prix, un autre pitch ou un style fade hors trajectoire.\n` +
+    `En cas de doute : coller au playbook + à la mémoire, pas improviser.`;
+
+  const existingGuide = (auto.config.conversationGuide || "").trim();
+  const stripped = existingGuide
+    .replace(/\n*=== CADRE PLAYBOOK[\s\S]*?(?=\n===|\n---|$)/g, "")
+    .trim();
+  const nextGuide = stripped ? `${stripped}\n\n${fidelityBlock}` : fidelityBlock;
+
   return updateAutomationConfig(userId, automationId, {
     ...auto.config,
-    livePlaybook: playbook,
-    ...(opts.markValidated
-      ? { simulationValidatedAt: now }
+    initialMessage: nextInitial || auto.config.initialMessage,
+    conversationGuide: nextGuide,
+    livePlaybook: {
+      ...playbook,
+      guideSnapshot: nextGuide,
+      openerSnapshot: nextInitial || playbook.openerSnapshot,
+    },
+    ...(opts.markValidated ? { simulationValidatedAt: now } : {}),
+  });
+}
+
+/** Convertit un historique preview (you/prospect) en tours playbook. */
+export function previewHistoryToPlaybookTurns(
+  history: Array<{ role: "you" | "prospect"; text: string }>
+): LivePlaybookTurn[] {
+  const out: LivePlaybookTurn[] = [];
+  for (const h of history) {
+    const text = String(h.text ?? "").trim();
+    if (!text) continue;
+    if (h.role === "you") out.push({ speaker: "toi", text });
+    else out.push({ speaker: "prospect", name: "Prospect", text });
+    if (out.length >= 7) break;
+  }
+  return out;
+}
+
+/**
+ * Après update_automation_config : aligne snapshots + 1er tour toi ;
+ * invalide la validation si le cadre a changé (force une re-simu propre).
+ */
+export async function patchPlaybookAfterConfigEdit(
+  userId: number,
+  automationId: number,
+  changed: { opener?: boolean; guide?: boolean }
+): Promise<void> {
+  const auto = await getAutomation(userId, automationId);
+  if (!auto?.config.livePlaybook?.turns?.length) return;
+
+  const pb = auto.config.livePlaybook;
+  const turns = [...pb.turns];
+  if (changed.opener && auto.config.initialMessage?.trim()) {
+    const idx = turns.findIndex((t) => t.speaker === "toi");
+    if (idx >= 0) {
+      turns[idx] = { ...turns[idx]!, text: auto.config.initialMessage.trim() };
+    }
+  }
+
+  const now = new Date().toISOString();
+  await updateAutomationConfig(userId, automationId, {
+    ...auto.config,
+    livePlaybook: {
+      ...pb,
+      turns,
+      updatedAt: now,
+      // Cadre modifié → plus considéré comme « figé » jusqu'à re-validation
+      validatedAt: changed.opener || changed.guide ? undefined : pb.validatedAt,
+      openerSnapshot: auto.config.initialMessage || pb.openerSnapshot,
+      guideSnapshot: auto.config.conversationGuide || pb.guideSnapshot,
+    },
+    ...(changed.opener || changed.guide
+      ? { simulationValidatedAt: undefined }
       : {}),
   });
 }

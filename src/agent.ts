@@ -509,14 +509,36 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       .join("\n\n");
     try {
       let approvedOpener: string | null = null;
+      let campaignBrief: string | null = null;
       if (thread?.automation_id) {
         const auto = await getAutomation(userId, thread.automation_id);
         approvedOpener = auto?.config.initialMessage?.trim() || null;
+        if (auto) {
+          const bits = [
+            auto.config.conversationGuide
+              ? `Guide :\n${auto.config.conversationGuide}`
+              : "",
+            auto.config.productName ? `Produit : ${auto.config.productName}` : "",
+            auto.config.price ? `Prix : ${auto.config.price}` : "",
+            auto.config.closingLink ? `Lien : ${auto.config.closingLink}` : "",
+            auto.config.salesScript ? `Script : ${auto.config.salesScript}` : "",
+          ].filter(Boolean);
+          try {
+            const { formatCampaignMemoryForWhatsApp, getLinkedMemoryForAutomation } =
+              await import("./campaign-sync.js");
+            const mem = await getLinkedMemoryForAutomation(userId, auto.id);
+            if (mem) bits.push(formatCampaignMemoryForWhatsApp(mem));
+          } catch {
+            /* ignore */
+          }
+          campaignBrief = bits.join("\n\n") || null;
+        }
       }
       const sim = await generateCampaignSimulationDirect(client, {
         businessContext,
         recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
         approvedOpener,
+        campaignBrief,
       });
       if (sim?.display?.trim()) {
         try {

@@ -796,8 +796,26 @@ async function buildAutomationContext(
     for (const auto of followups) {
       const target = await findMatchingAutomationTarget(userId, auto.id, chatId);
       if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
-      if (auto.config.conversationGuide || auto.config.initialMessage) {
-        parts.push(buildActiveCampaignContext(auto));
+      if (auto.config.conversationGuide || auto.config.initialMessage || auto.config.livePlaybook?.turns?.length) {
+        let memoryBlock = "";
+        let playbookBlock = "";
+        try {
+          const {
+            formatCampaignMemoryForWhatsApp,
+            formatLivePlaybookForWhatsApp,
+            getLinkedMemoryForAutomation,
+          } = await import("./campaign-sync.js");
+          const mem = await getLinkedMemoryForAutomation(userId, auto.id);
+          if (mem) memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+          if (auto.config.livePlaybook?.turns?.length) {
+            playbookBlock = formatLivePlaybookForWhatsApp(auto.config.livePlaybook);
+          }
+        } catch {
+          /* ignore */
+        }
+        parts.push(
+          buildActiveCampaignContext(auto, { memoryBlock, playbookBlock })
+        );
       }
     }
   }

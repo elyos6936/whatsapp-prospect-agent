@@ -1,8 +1,7 @@
-import { ArrowLeft, BarChart3, Brain, Settings } from 'lucide-react';
+import { ArrowLeft, BarChart3, Settings } from 'lucide-react';
 import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
-import { cn } from '@/lib/utils';
 
 type AppHeaderProps = {
   overlayView: OverlayView;
@@ -28,12 +27,9 @@ export function AppHeader({
   campaignStatus,
   automationId,
   outreachLevel,
-  memoryLinked = false,
-  memoryName,
   onGoToChat,
   onOpenSettings,
   onOpenStats,
-  onOpenMemory,
   onOpenMobileNav,
   onCampaignStatusChange,
 }: AppHeaderProps) {
@@ -87,29 +83,6 @@ export function AppHeader({
             className="!px-2.5 !py-1.5 !text-xs sm:!px-3"
             onUpdated={onCampaignStatusChange}
           />
-        )}
-
-        {onChat && onOpenMemory && (
-          <button
-            type="button"
-            onClick={onOpenMemory}
-            className={cn(
-              'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-medium transition',
-              memoryLinked
-                ? 'border-brand/30 bg-brand/10 text-brand hover:bg-brand/15'
-                : 'border-amber-500/40 bg-amber-500/10 text-amber-800 hover:bg-amber-500/15',
-            )}
-            title={
-              memoryLinked
-                ? `Mémoire : ${memoryName || 'connectée'}`
-                : 'Connecter une mémoire à cette automatisation'
-            }
-          >
-            <Brain className="h-3.5 w-3.5 shrink-0" />
-            <span className="max-w-[7rem] truncate sm:max-w-[10rem]">
-              {memoryLinked ? memoryName || 'Mémoire' : 'Mémoire'}
-            </span>
-          </button>
         )}
 
         {onChat && hasCampaign && onOpenStats && (

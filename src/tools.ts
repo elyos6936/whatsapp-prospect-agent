@@ -4710,6 +4710,11 @@ export async function executeTool(
         }
       }
 
+      const prevOpener = detail.automation.config.initialMessage?.trim() || "";
+      const prevGuide = detail.automation.config.conversationGuide?.trim() || "";
+      const nextOpener = merged.initialMessage?.trim() || "";
+      const nextGuide = merged.conversationGuide?.trim() || "";
+
       const updated = await updateAutomationConfig(userId, id, {
         ...merged,
         enableAutoReply: detail.automation.status === "active" ? true : merged.enableAutoReply !== false,
@@ -4725,8 +4730,13 @@ export async function executeTool(
           : merged.livePlaybook,
       });
       try {
-        const { syncThreadAutomationFromMemory } = await import("./campaign-sync.js");
+        const { syncThreadAutomationFromMemory, patchPlaybookAfterConfigEdit } =
+          await import("./campaign-sync.js");
         await syncThreadAutomationFromMemory(userId, threadId);
+        await patchPlaybookAfterConfigEdit(userId, id, {
+          opener: Boolean(nextOpener && nextOpener !== prevOpener),
+          guide: Boolean(nextGuide && nextGuide !== prevGuide),
+        });
       } catch {
         /* ignore */
       }

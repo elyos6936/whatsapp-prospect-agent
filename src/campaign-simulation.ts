@@ -128,14 +128,21 @@ export async function generateCampaignSimulationDirect(
     recentTranscript: string;
     /** Accroche validée — le 1er tour « toi » doit coller à ce texte (légère reformulation OK). */
     approvedOpener?: string | null;
+    /** Guide / mémoire / prix / lien — même inputs que le live. */
+    campaignBrief?: string | null;
   }
 ): Promise<{ display: string; turns: SimulationTurn[] } | null> {
   const openerRule = opts.approvedOpener?.trim()
     ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 280)} » — micro-variation de mots OK, PAS de nouvel angle, PAS de prix/lien/pitch\n`
     : `- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet, vouvoiement, sans prénom du prospect)\n`;
 
+  const brief = opts.campaignBrief?.trim()
+    ? `\n## Cadre campagne (OBLIGATOIRE — même cadre que les réponses live)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
+    : "";
+
   const system =
     "Tu rédiges une simulation WhatsApp courte pour valider une campagne Klanvio.\n" +
+    "Cette simulation SERA la trajectoire suivie ensuite avec les VRAIS prospects — sois fidèle au cadre.\n" +
     "Réponds UNIQUEMENT avec un JSON valide de la forme :\n" +
     '{"turns":[{"speaker":"toi","text":"..."},{"speaker":"prospect","name":"Prospect","text":"..."},{"speaker":"toi","text":"..."}]}\n' +
     "Règles strictes :\n" +
@@ -146,11 +153,13 @@ export async function generateCampaignSimulationDirect(
     "identité = prénom + pourquoi (pas titre LinkedIn) ; sur oui/ok → question ou détail nouveau ; vouvoiement ; pas le prénom du prospect à tout va\n" +
     "- Textes réels, naturels, sans crochets [ ]\n" +
     "- Inclure prix / lien seulement APRÈS que le prospect a engagé, s'ils sont dans le contexte\n" +
+    "- Respecte le guide / mémoire / offre du cadre campagne\n" +
     "- Aucune phrase hors JSON";
 
   const user =
-    `## Contexte business\n${opts.businessContext.slice(0, 3500)}\n\n` +
-    `## Fil récent (agence)\n${opts.recentTranscript.slice(0, 4000)}\n\n` +
+    `## Contexte business\n${opts.businessContext.slice(0, 3500)}\n` +
+    brief +
+    `\n## Fil récent (agence)\n${opts.recentTranscript.slice(0, 4000)}\n\n` +
     `Génère maintenant la simulation JSON (6 ou 7 turns max).`;
 
   const body: Record<string, unknown> = {
