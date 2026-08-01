@@ -303,26 +303,28 @@ export function MobileMockup({
         <div className="absolute top-32 -right-[5px] h-14 w-[2.5px] rounded-r-sm bg-neutral-700" />
 
         <div className="relative isolate flex h-full w-full transform-gpu flex-col overflow-hidden rounded-[30px] bg-[#efeae2] text-neutral-900">
-          {/* Dynamic Island */}
-          <div
-            className="pointer-events-none absolute top-2.5 left-1/2 z-50 h-[26px] w-[96px] -translate-x-1/2 rounded-full bg-black shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
-            aria-hidden
-          />
-
-          <div className="z-30 flex shrink-0 items-center justify-between bg-[#008069] px-4 pt-[34px] pb-1 text-[11px] font-semibold text-white">
-            <span className="w-10 text-left font-bold tracking-tight tabular-nums">
+          {/* Status bar : heure | Dynamic Island | icônes — même rangée, paddings d’origine */}
+          <div className="relative z-30 flex shrink-0 items-center justify-between bg-[#008069] px-3.5 pt-2 pb-1 text-[11px] font-semibold text-white">
+            <span className="z-10 w-[44px] shrink-0 text-left text-[10.5px] font-bold tracking-tight tabular-nums">
               {displayMessages[displayMessages.length - 1]?.timestamp ?? "10:13"}
             </span>
 
-            <div className="flex items-center justify-end gap-1.5 text-white">
-              <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
+            <div
+              className="pointer-events-none absolute top-1.5 left-1/2 z-20 h-[21px] w-[72px] -translate-x-1/2 rounded-full bg-black"
+              aria-hidden
+            />
+            {/* Espace réservé pour l’island (évite que l’heure / les icônes passent dessous) */}
+            <div className="h-[21px] w-[72px] shrink-0" aria-hidden />
+
+            <div className="z-10 flex w-[44px] shrink-0 items-center justify-end gap-1 text-white">
+              <svg className="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 24 24" aria-hidden>
                 <rect x="2" y="16" width="3.5" height="5" rx="0.5" />
                 <rect x="7.5" y="12" width="3.5" height="9" rx="0.5" />
                 <rect x="13" y="8" width="3.5" height="13" rx="0.5" />
                 <rect x="18.5" y="4" width="3.5" height="17" rx="0.5" />
               </svg>
               <svg
-                className="h-3 w-3"
+                className="h-2.5 w-2.5"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke="currentColor"
@@ -336,7 +338,7 @@ export function MobileMockup({
                 />
               </svg>
               <svg
-                className="h-2.5 w-4"
+                className="h-2 w-3.5"
                 fill="none"
                 viewBox="0 0 24 14"
                 stroke="currentColor"
