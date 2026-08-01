@@ -292,17 +292,15 @@ export function MobileMockup({
       )}
     >
       <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.98 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        transition={{ type: "spring", stiffness: 260, damping: 24 }}
-        className="relative flex h-[560px] w-full transform-gpu flex-col overflow-hidden rounded-[40px] bg-neutral-900 p-2.5"
+        initial={false}
+        className="relative flex h-[560px] w-full flex-col overflow-hidden rounded-[40px] bg-neutral-900 p-2.5"
       >
         <div className="absolute top-24 -left-[5px] h-8 w-[2.5px] rounded-l-sm bg-neutral-700" />
         <div className="absolute top-36 -left-[5px] h-10 w-[2.5px] rounded-l-sm bg-neutral-700" />
         <div className="absolute top-48 -left-[5px] h-10 w-[2.5px] rounded-l-sm bg-neutral-700" />
         <div className="absolute top-32 -right-[5px] h-14 w-[2.5px] rounded-r-sm bg-neutral-700" />
 
-        <div className="relative isolate flex h-full w-full transform-gpu flex-col overflow-hidden rounded-[30px] bg-[#efeae2] text-neutral-900">
+        <div className="relative isolate flex h-full w-full flex-col overflow-hidden rounded-[30px] bg-[#efeae2] text-neutral-900 antialiased">
           {/* Status bar : heure | Dynamic Island | icônes — même rangée, paddings d’origine */}
           <div className="relative z-30 flex shrink-0 items-center justify-between bg-[#008069] px-3.5 pt-2 pb-1 text-[11px] font-semibold text-white">
             <span className="z-10 w-[44px] shrink-0 text-left text-[10.5px] font-bold tracking-tight tabular-nums">
@@ -417,18 +415,10 @@ export function MobileMockup({
                       {displayMessages.map((msg) => (
                         <motion.div
                           key={`${cycleKey}-${msg.id}`}
-                          initial={
-                            interactive
-                              ? false
-                              : { opacity: 0, y: 8, scale: 0.96 }
-                          }
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, scale: 0.9 }}
-                          transition={{
-                            type: "spring",
-                            stiffness: 400,
-                            damping: 25,
-                          }}
+                          initial={interactive ? false : { opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          exit={{ opacity: 0 }}
+                          transition={{ duration: 0.18 }}
                           className={`flex flex-col ${msg.isCurrentUser ? "items-end" : "items-start"}`}
                         >
                           <div
@@ -556,7 +546,7 @@ export function MobileMockup({
                   }}
                   disabled={busy}
                   placeholder={placeholder}
-                  className="max-h-[88px] min-h-[20px] min-w-0 flex-1 resize-none bg-transparent py-0.5 text-[11px] leading-[1.35] text-neutral-800 outline-none placeholder:text-neutral-400"
+                  className="max-h-[88px] min-h-[20px] min-w-0 flex-1 resize-none overflow-y-auto bg-transparent py-0.5 text-[11px] leading-[1.35] text-neutral-800 outline-none placeholder:text-neutral-400 scrollbar-none"
                 />
               </div>
               <button

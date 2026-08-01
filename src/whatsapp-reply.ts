@@ -46,6 +46,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 - Prix / détail → chiffre exact du contexte, sinon « Je vous confirme ça juste après »
 - Intérêt / engagement léger → **pousser l'intérêt** : 1 détail utile + question ou prochaine étape
 - Accusé minimal (« oui », « ok », « d'accord », « dac ») → **ne pas pitcher tout de suite** : 1 question concrète OU 1 preuve / détail nouveau (pas le même levier « temps » déjà dit). Ex. « Vous gérez beaucoup de messages WhatsApp par jour, ou c'est plutôt calme ? »
+- **Salut / hello / bonjour court** alors que **TU as déjà ouvert** la conversation → enchaîne ton fil (répondre / avancer). **INTERDIT** de parler comme s'il t'avait contacté (« ravi de pouvoir échanger », « merci de m'écrire », te présenter à neuf). Tu as initié : continue.
 - **Objection / hésitation** (« trop cher », « je réfléchis », « plus tard », « je ne suis pas sûr », doute sans refus net) :
   → D’abord **reconnaître** le frein (empathie courte), puis une **piste concrète** liée à CE qu’il a dit — pas un pitch générique.
   → **Ne pousse pas à l’achat à chaque hésitation** : si le ton est prudent / distant, rassure ou laisse une porte ouverte sans CTA ; si le frein est précis (prix, timing, confiance), un argument ciblé OK.
@@ -357,12 +358,16 @@ function analyzeProspectStyle(text: string): string {
     );
   }
   if (
-    t.length <= 20 &&
-    /^(ok|okay|d'accord|dac|merci|bsr|bonjour|salut|oui|non|ah bon|je vois|compris)[!?.]*$/i.test(t)
+    t.length <= 24 &&
+    /^(ok|okay|d'accord|dac|merci|bsr|bonjour|salut|hello|hey|coucou|hi|yo|oui|non|ah bon|je vois|compris)[!?.…]*$/i.test(
+      t
+    )
   ) {
     return (
-      "accusé minimal — INTERDIT « Super. » / pitch immédiat ; " +
-      "1 question concrète OU 1 détail/preuve nouveau (pas le même bénéfice déjà dit)"
+      "salutation / accusé court — si TU as déjà envoyé le 1er message : " +
+      "INTERDIT de te présenter ou de parler comme s'il avait initié " +
+      "(« ravi d'échanger », « merci de votre message » type inbound) ; " +
+      "enchaîne naturellement (1 question liée à l'objectif OU 1 détail nouveau)"
     );
   }
   if (/\?/.test(t)) return "question — réponse directe en 1 phrase vivante";

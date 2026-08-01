@@ -284,18 +284,32 @@ export function PhoneSimulationPanel({
 
   function handleClearDiscussion() {
     const keyToIgnore = currentSimKey || lastAppliedSimKeyRef.current || null;
-    setPhoneBubbles([]);
+    // Prospection : remettre le 1er message ; support : vide (le client écrit en premier).
+    const openerText =
+      opener.trim() ||
+      (!isSupport
+        ? simBubbles.find((b) => b.role === 'you')?.text?.trim() ||
+          phoneBubbles.find((b) => b.role === 'you')?.text?.trim() ||
+          ''
+        : '');
+    const resetBubbles: PhoneBubble[] =
+      !isSupport && openerText
+        ? [{ id: 'opener', role: 'you', text: openerText }]
+        : [];
+
+    setPhoneBubbles(resetBubbles);
     setIgnoredSimKey(keyToIgnore);
     setDraft('');
     setError('');
-    lastAppliedSimKeyRef.current = '';
+    // Empêche le flash : ne pas réappliquer la simu batch tant que l'utilisateur teste.
+    lastAppliedSimKeyRef.current = keyToIgnore || '';
     if (threadId != null) {
-      savePersisted(threadId, { bubbles: [], ignoredSimKey: keyToIgnore });
+      savePersisted(threadId, { bubbles: resetBubbles, ignoredSimKey: keyToIgnore });
     }
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       if (inputRef.current) {
-        inputRef.current.style.height = "auto";
+        inputRef.current.style.height = 'auto';
       }
     });
   }
@@ -313,7 +327,7 @@ export function PhoneSimulationPanel({
       { id: `p-${Date.now()}`, role: 'prospect', text, name: 'Prospect' },
     ];
     setPhoneBubbles(withProspect);
-    setIgnoredSimKey(null);
+    // Garder ignoredSimKey : sinon la simu batch réapparaît un instant avant la réponse.
 
     try {
       const history = base.map((b) => ({ role: b.role, text: b.text }));
@@ -344,7 +358,7 @@ export function PhoneSimulationPanel({
       setBusy(false);
       requestAnimationFrame(() => {
         inputRef.current?.focus();
-        if (inputRef.current) inputRef.current.style.height = "auto";
+        if (inputRef.current) inputRef.current.style.height = 'auto';
       });
     }
   }

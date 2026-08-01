@@ -242,6 +242,7 @@ async function buildBusinessContext(
           `- create_automation UNIQUEMENT avec type=\`contact_prospect\` ou \`group_prospect\` (mode \`outbound_prospect\`).\n` +
           `- INTERDIT : keyword_sales / inbound_closing / questions « phrase déclencheur » comme flux principal.\n` +
           `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, puis 5 variantes d'accroche.\n` +
+          `- INTERDIT de demander notif tiers / mots-clés handoff (remboursement, plainte…) — réservé au **Support**.\n` +
           `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Support. Pour du support entrant → ` +
           `**Nouvelle automatisation** → **Support client**.`
       );
@@ -687,11 +688,29 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             continue;
           }
 
-          if (!briefing.thirdPartyQuestionAsked) {
+          // Notif tiers + handoff : obligatoires seulement en support / closing entrant.
+          if (briefing.isInboundClosing && !briefing.thirdPartyQuestionAsked) {
             const block = JSON.stringify({
               error:
-                "INTERDIT de créer le brouillon avant d'avoir demandé si l'utilisateur veut prévenir un tiers (livreur, associé, commercial…) à la conversion. " +
+                "INTERDIT de créer le brouillon support avant d'avoir demandé si l'utilisateur veut prévenir un tiers (livreur, associé, commercial…) à la conversion. " +
                 "Pose la question oui/non — ne saute pas cette étape même si le brief parle déjà de livraison.",
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
+
+          if (briefing.isInboundClosing && !briefing.handoffKeywordsQuestionAsked) {
+            const block = JSON.stringify({
+              error:
+                "INTERDIT de créer le brouillon support avant d'avoir demandé les mots-clés handoff " +
+                "(quand l'IA doit arrêter et passer la main — remboursement, plainte…). " +
+                "Pose la question, ou [] si aucun.",
             });
             messages.push({
               role: "tool",

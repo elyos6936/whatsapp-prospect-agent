@@ -458,26 +458,26 @@ export function buildBriefingNudge(
       );
     }
 
-    if (!assessment.thirdPartyQuestionAsked) {
-      return (
-        "Briefing campagne : pose UNE question OBLIGATOIRE — « Quand un prospect convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial…) sur WhatsApp ? (oui/non) ». " +
-        "Si oui : récupère numéro + rôle + infos (une question à la fois). " +
-        "INTERDIT : create_automation / simulation / variantes tant que cette question n'est pas posée. " +
-        "Ne considère PAS qu'elle est posée juste parce que le brief parle de livraison ou de livreur."
-      );
-    }
-
-    if (!assessment.handoffKeywordsQuestionAsked) {
-      return (
-        "Briefing campagne : pose UNE question OBLIGATOIRE — « Y a-t-il des mots ou phrases pour lesquels je dois **arrêter** de répondre et te **passer la main** " +
-        "(ex. remboursement, plainte, parler à un humain) ? Liste-les, ou dis « non » s'il n'y en a pas. » " +
-        "Puis ARRÊTE-TOI. INTERDIT create_automation / simulation / variantes tant que cette question n'est pas posée. " +
-        "Quand tu créeras le brouillon : passe `handoff_keywords` (tableau de strings, ou [] si non)."
-      );
-    }
-
-    // Closing entrant : pacing vagues + délais gérés en arrière-plan (pas de question user).
+    // Notif tiers + handoff = support / closing entrant uniquement (pas la prospection sortante).
     if (assessment.isInboundClosing) {
+      if (!assessment.thirdPartyQuestionAsked) {
+        return (
+          "Briefing support : pose UNE question OBLIGATOIRE — « Quand un client convertit / objectif atteint, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial…) sur WhatsApp ? (oui/non) ». " +
+          "Si oui : récupère numéro + rôle + infos (une question à la fois). " +
+          "INTERDIT : create_automation / simulation tant que cette question n'est pas posée."
+        );
+      }
+
+      if (!assessment.handoffKeywordsQuestionAsked) {
+        return (
+          "Briefing support : pose UNE question OBLIGATOIRE — « Y a-t-il des mots ou phrases pour lesquels je dois **arrêter** de répondre et te **passer la main** " +
+          "(ex. remboursement, plainte, parler à un humain) ? Liste-les, ou dis « non » s'il n'y en a pas. » " +
+          "Puis ARRÊTE-TOI. INTERDIT create_automation / simulation tant que cette question n'est pas posée. " +
+          "Quand tu créeras le brouillon : passe `handoff_keywords` (tableau de strings, ou [] si non)."
+        );
+      }
+
+      // Closing entrant : pacing vagues + délais gérés en arrière-plan (pas de question user).
       if (assessment.inboundCatchAll) {
         return (
           "Campagne support COMPTE ENTIER (tous les messages privés) : stickers + notification tiers + mots-clés handoff couverts. " +
@@ -506,7 +506,8 @@ export function buildBriefingNudge(
         "Briefing campagne : avant toute variante, pose UNE question sur le **premier message** souhaité — " +
         "ex. « Comment tu veux aborder le premier contact ? (ton direct, question ouverte, mystère, formel…) — donne-moi une idée ou une phrase type. » " +
         "Puis ARRÊTE-TOI et attends sa réponse. " +
-        "**INTERDIT ABSOLU** : lister 5 variantes, proposer des accroches, ou mélanger récap + variantes dans ce message."
+        "**INTERDIT ABSOLU** : lister 5 variantes, proposer des accroches, ou mélanger récap + variantes dans ce message. " +
+        "INTERDIT aussi de poser notif tiers / handoff (remboursement, plainte…) — ça concerne le **support**, pas la prospection."
       );
     }
 
@@ -528,8 +529,8 @@ export function buildBriefingNudge(
 
     return (
       "Les 5 variantes ont été proposées — attends le choix ou la validation de l'utilisateur. " +
-      "Puis create_automation draft avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes, " +
-      "et handoff_keywords (liste fournie, ou [] si non). " +
+      "Puis create_automation draft avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes " +
+      "(handoff_keywords=[] et third_party_notification_enabled=false par défaut en prospection — ne les demande pas). " +
       "Propose ensuite la simulation (6-7 messages via show_campaign_simulation)."
     );
   }

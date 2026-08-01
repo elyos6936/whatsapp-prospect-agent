@@ -36,10 +36,16 @@ export function extractOpenerFromPlan(plan: {
 
 function buildSimCampaignContext(
   auto: Automation,
-  extras: { memoryBlock?: string; playbookBlock?: string; guideOverride?: string }
+  extras: {
+    memoryBlock?: string;
+    playbookBlock?: string;
+    guideOverride?: string;
+    mode?: "outbound" | "inbound";
+  }
 ): string {
   const cfg = auto.config;
   const guide = extras.guideOverride?.trim() || cfg.conversationGuide || "";
+  const outbound = extras.mode !== "inbound";
   const lines = [
     `=== CAMPAGNE (simulation = même cadre que le live) : « ${auto.name} » ===`,
     cfg.initialMessage
@@ -57,6 +63,9 @@ function buildSimCampaignContext(
     "",
     `Tu es en SIMULATION téléphone — 0 envoi réel — mais tes réponses doivent être`,
     `IDENTIQUES à ce que tu écrirais à un vrai prospect (même playbook, même ton).`,
+    outbound
+      ? `IMPORTANT : c'est une prospection SORTANTE — TU as initié avec le premier message. Si le prospect répond juste « salut / hello / ok », continue le fil que TU as ouvert ; ne parle pas comme s'il t'avait contacté.`
+      : "",
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -137,6 +146,7 @@ export async function replyInSimulationPreview(
           memoryBlock,
           playbookBlock,
           guideOverride: input.guide,
+          mode,
         });
       }
     }
@@ -153,6 +163,9 @@ export async function replyInSimulationPreview(
       price ? `Prix : ${price}` : "",
       guide ? `Guide :\n${guide}` : "",
       "Reste dans ce cadre. 0 envoi WhatsApp réel.",
+      mode === "outbound"
+        ? "SORTANT : tu as initié — si réponse « salut/hello », continue ton fil (ne parle pas comme s'il t'avait contacté)."
+        : "",
     ]
       .filter(Boolean)
       .join("\n");
