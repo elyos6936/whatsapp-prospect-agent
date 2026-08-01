@@ -108,6 +108,13 @@ const FORCE_SIMULATION_NUDGE =
   "INTERDIT ABSOLU d'appeler send_whatsapp_message / send_whatsapp_* / schedule_* / message_all_* : " +
   "aucun envoi WhatsApp réel.";
 
+const DECLINE_SIMULATION_NUDGE =
+  "L'utilisateur REFUSE la simulation (non / pas maintenant / sans simu…). " +
+  "INTERDIT d'appeler show_campaign_simulation. INTERDIT d'insister. " +
+  "Accepte en 1–2 phrases : on peut activer directement, ou retester plus tard. " +
+  "Propose clairement : bouton **Lancer** / « lance maintenant », ou « montre la simulation » s'il change d'avis. " +
+  "N'appelle activate_automation QUE s'il demande explicitement d'activer / lancer.";
+
 /** Après une simu déjà là : modifs / questions = pas de nouveau fil ni de fenêtre. */
 const SILENT_TWEAK_AFTER_SIM_NUDGE =
   "Une simulation a DÉJÀ été montrée. L'utilisateur demande une modification ou pose une question. " +
@@ -557,6 +564,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
   if (forceSim) {
     messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
+  } else if (turnMode === "decline_sim") {
+    messages.push({ role: "system", content: DECLINE_SIMULATION_NUDGE });
   } else if (silentTweakAfterSim) {
     messages.push({ role: "system", content: SILENT_TWEAK_AFTER_SIM_NUDGE });
   } else if (turnMode === "activation_confirm") {
@@ -611,6 +620,19 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
         if (toolCall.function.name === "show_campaign_simulation") {
           forcedSimUsed = true;
+        }
+
+        if (turnMode === "decline_sim" && toolCall.function.name === "show_campaign_simulation") {
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({
+              error:
+                "L'utilisateur a refusé la simulation. INTERDIT de la lancer. " +
+                "Accepte et propose d'activer directement ou de simuler plus tard.",
+            }),
+          });
+          continue;
         }
 
         // INTERDIT d'extraire le carnet WhatsApp sauf demande explicite

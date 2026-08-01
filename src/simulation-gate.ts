@@ -3,7 +3,7 @@
  * Source de vérité pour agent.ts + tests.
  */
 import type { AgentMessage } from "./db.js";
-import { wantsCampaignSimulation } from "./campaign-briefing.js";
+import { declinesCampaignSimulation, wantsCampaignSimulation } from "./campaign-briefing.js";
 
 /** Retire fences code / plan pour ne pas confondre JSON avec un fil de simu. */
 function stripCodeFences(text: string): string {
@@ -157,6 +157,7 @@ export function shouldBlockDuplicateSimulation(
 
 export type SimulationTurnMode =
   | "force_sim"
+  | "decline_sim"
   | "silent_tweak"
   | "activation_confirm"
   | "activation_nudge"
@@ -169,6 +170,8 @@ export function resolveSimulationTurnMode(
   history: AgentMessage[],
   userMessage: string
 ): SimulationTurnMode {
+  if (declinesCampaignSimulation(userMessage, history)) return "decline_sim";
+
   const hasSimAlready = recentHistoryHasSimulation(history);
   const wantsSim = wantsCampaignSimulation(userMessage, history);
   const forceSim =

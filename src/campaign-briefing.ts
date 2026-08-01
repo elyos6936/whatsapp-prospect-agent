@@ -23,6 +23,9 @@ const SIMULATION_ACCEPT_RE =
 const SIMULATION_YES_RE =
   /^(oui|ouais|ok|okay|d'accord|dac|vas[- ]y|go|avec\s+plaisir|carr[eé]ment|volontiers|nickel|parfait)(\s|[!.]|$)/i;
 
+const SIMULATION_DECLINE_RE =
+  /^(non|nan|no|nop|passe|skip)([!.\s]|$)|pas\s+(besoin|envie|maintenant)|plus\s+tard|sans\s+(simu|simulation)|pas\s+(de\s+)?(simu|simulation)|ne\s+(veux|veut|veux)\s+pas.*(simu|tester|aper[cç]u)/i;
+
 export function isCampaignIntent(text: string): boolean {
   return CAMPAIGN_INTENT_RE.test(text);
 }
@@ -31,6 +34,7 @@ export function isCampaignIntent(text: string): boolean {
 export function wantsCampaignSimulation(userMessage: string, history: AgentMessage[]): boolean {
   const t = userMessage.trim();
   if (!t) return false;
+  if (declinesCampaignSimulation(t, history)) return false;
   if (SIMULATION_ACCEPT_RE.test(t)) return true;
   if (/\b(aper[cç]u|exemple\s+de\s+(fil|conversation)|montre[- ]moi)\b/i.test(t)) return true;
 
@@ -49,6 +53,33 @@ export function wantsCampaignSimulation(userMessage: string, history: AgentMessa
     break;
   }
   return false;
+}
+
+/** L'utilisateur refuse la simulation proposée. */
+export function declinesCampaignSimulation(
+  userMessage: string,
+  history: AgentMessage[]
+): boolean {
+  const t = userMessage.trim();
+  if (!t) return false;
+  if (!SIMULATION_DECLINE_RE.test(t)) return false;
+  // « non » générique : seulement juste après une offre de simulation
+  if (/^(non|nan|no|nop)([!.\s]|$)/i.test(t) && !/\b(simu|simulation|aper[cç]u|tester)\b/i.test(t)) {
+    for (let i = history.length - 1; i >= 0 && i >= history.length - 6; i--) {
+      const m = history[i];
+      if (m?.role !== "assistant") continue;
+      if (
+        /veux-tu (tester )?une?\s*\*?\*?simulation|tester une \*\*simulation\*\*|simulation sur le t[ée]l[ée]phone|avant le lancement/i.test(
+          m.content
+        )
+      ) {
+        return true;
+      }
+      break;
+    }
+    return false;
+  }
+  return true;
 }
 
 export type BriefingAssessment = {

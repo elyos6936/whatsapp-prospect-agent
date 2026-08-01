@@ -188,9 +188,26 @@ export function PhoneSimulationPanel({
     setOffer('');
     lastAppliedSimKeyRef.current = '';
     setHydrated(false);
-    // Vide jusqu'à show_campaign_simulation (évite un fil fantôme avant le « oui »).
-    setPhoneBubbles([]);
-    setIgnoredSimKey(null);
+
+    if (threadId == null) {
+      setPhoneBubbles([]);
+      setIgnoredSimKey(null);
+      setCollapsed(false);
+      setHydrated(true);
+      return;
+    }
+
+    // Restaurer l'état local (effacé / suite interactive) — sinon le reload
+    // réapplique la simu batch depuis le chat.
+    const stored = loadPersisted(threadId);
+    if (stored?.ignoredSimKey) {
+      setIgnoredSimKey(stored.ignoredSimKey);
+      setPhoneBubbles(Array.isArray(stored.bubbles) ? stored.bubbles : []);
+      lastAppliedSimKeyRef.current = stored.ignoredSimKey;
+    } else {
+      setPhoneBubbles([]);
+      setIgnoredSimKey(null);
+    }
     setCollapsed(false);
     setHydrated(true);
   }, [threadId, purpose]);
