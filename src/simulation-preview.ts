@@ -27,6 +27,8 @@ import {
 import {
   isCampaignObjectiveReached,
   wasVerballyClosed,
+  isAffirmingPendingSendOffer,
+  ensurePendingLinkInReply,
 } from "./lead-scoring.js";
 import {
   getObjectiveReachedReply,
@@ -332,6 +334,10 @@ export async function replyInSimulationPreview(
 
   let reply = "";
   try {
+    const affirmingLink = isAffirmingPendingSendOffer(
+      prospectMessage,
+      priorPolicyHistory
+    );
     reply = await generateWhatsAppReply(userId, {
       chatId: syntheticChatId,
       senderName: mode === "inbound" ? "Client" : "Prospect",
@@ -342,7 +348,15 @@ export async function replyInSimulationPreview(
       // Inbound : dès le 1er message client, pas de mode « salutation opener sortant ».
       forceOngoing: mode === "inbound" || history.length > 1,
       conversationMode: mode,
+      closingLink: campaignConfig?.closingLink,
+      forceDeliverPendingLink: affirmingLink,
     });
+    reply = ensurePendingLinkInReply(
+      reply,
+      campaignConfig?.closingLink,
+      prospectMessage,
+      priorPolicyHistory
+    );
   } catch {
     reply =
       mode === "inbound"

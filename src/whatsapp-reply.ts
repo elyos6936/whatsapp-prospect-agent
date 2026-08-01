@@ -5,6 +5,10 @@ import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens, deepseekChatExtras } from "./llm.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
+import {
+  isAffirmingPendingSendOffer,
+  ensurePendingLinkInReply,
+} from "./lead-scoring.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté (Afrique francophone) qui répond comme un **vrai humain** — jamais comme un bot.
 
@@ -48,7 +52,7 @@ Si le prospect demande explicitement **juste un message**, **juste le lien**, **
 - « Où avez-vous eu mon numéro / d'où vous me contactez » → transparence **+** micro-empathie (« Légitime de demander ») + source vraie du contexte (groupe, admin, liste…) — **sans** enchaîner le pitch complet dans la même bulle.
 - Prix / détail → chiffre exact du contexte, sinon « Je vous confirme ça juste après »
 - Intérêt / engagement léger → **pousser l'intérêt** : 1 détail utile + question ou prochaine étape
-- Accusé minimal (« oui », « ok », « d'accord », « dac ») → **ne pas pitcher tout de suite** : 1 question concrète OU 1 preuve / détail nouveau (pas le même levier « temps » déjà dit). Ex. « Vous gérez beaucoup de messages WhatsApp par jour, ou c'est plutôt calme ? »
+- Accusé minimal (« oui », « ok », « d'accord », « dac ») → **si tu venais de proposer d'envoyer le lien / une action** : EXÉCUTE (envoie le lien réel). Sinon **ne pas pitcher tout de suite** : 1 question concrète OU 1 preuve / détail nouveau (pas le même levier « temps » déjà dit). Ex. « Vous gérez beaucoup de messages WhatsApp par jour, ou c'est plutôt calme ? »
 - **Salut / hello / bonjour court** alors que **TU as déjà ouvert** la conversation → enchaîne ton fil (répondre / avancer). **INTERDIT** de parler comme s'il t'avait contacté (« ravi de pouvoir échanger », « merci de m'écrire », te présenter à neuf). Tu as initié : continue.
 - **Salut / hello / bonjour** en mode **ENTRANT** (client a initié) → accueil court + question utile produit (taille, modèle, besoin). **INTERDIT** « je vous contacte au sujet de… ».
 - **Plusieurs infos d'un coup** (ex. « FAGNON Powell. Livraison Porto-Novo, dispo à 17h ») → « Je note [nom], [lieu], [horaire]. Pour finaliser : [prochaine info manquante] ? » — jamais un simple « Merci M. FAGNON. »
@@ -258,7 +262,12 @@ function fallbackAfterMinimalAck(incoming: string): string {
 /** Nettoie et force le style WhatsApp court. */
 function enforceWhatsAppStyle(
   raw: string,
-  opts: { isOngoing: boolean; incomingText: string }
+  opts: {
+    isOngoing: boolean;
+    incomingText: string;
+    /** Quand le prospect dit oui à une offre d'envoi de lien. */
+    skipMinimalAckGuard?: boolean;
+  }
 ): string {
   let text = raw.trim();
   text = text.replace(/^["'«「]|["'»」]$/g, "");
@@ -302,7 +311,12 @@ function enforceWhatsAppStyle(
   }
 
   // Garde-fou dur : playbook qui force une intro inbound / un pitch trop tôt
-  if (opts.isOngoing && isMinimalProspectAck(opts.incomingText)) {
+  // (sauf si le prospect vient d'accepter l'envoi du lien — là on DOIT livrer).
+  if (
+    opts.isOngoing &&
+    !opts.skipMinimalAckGuard &&
+    isMinimalProspectAck(opts.incomingText)
+  ) {
     if (isFalseInboundIntro(text) || isEarlyOfferPitch(text)) {
       text = fallbackAfterMinimalAck(opts.incomingText);
     }
@@ -378,6 +392,13 @@ export async function generateWhatsAppReply(userId: number, input: {
   forceOngoing?: boolean;
   /** Sortant (prospection) vs entrant (support / closing). */
   conversationMode?: "outbound" | "inbound";
+  /** Lien campagne à livrer si le prospect dit oui à une offre d'envoi. */
+  closingLink?: string | null;
+  /**
+   * Force le mode « oui → envoyer le lien » (ex. simulation où l'historique
+   * n'est pas encore en base).
+   */
+  forceDeliverPendingLink?: boolean;
 }): Promise<string> {
   const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
@@ -389,6 +410,16 @@ export async function generateWhatsAppReply(userId: number, input: {
     input.automationId
   );
 
+  const policyHistory = await getContactChatHistory(
+    userId,
+    input.chatId,
+    20,
+    input.automationId
+  );
+  const affirmingPendingSend =
+    input.forceDeliverPendingLink === true ||
+    isAffirmingPendingSendOffer(input.incomingText, policyHistory);
+
   const inbound = input.conversationMode === "inbound";
   const ongoing = input.forceOngoing === true || isOngoingConversation || inbound;
   const prospectStyle = analyzeProspectStyle(input.incomingText, {
@@ -398,8 +429,15 @@ export async function generateWhatsAppReply(userId: number, input: {
   const infoDense = isInfoDenseProspectMessage(input.incomingText);
 
   const hardOverride =
-    // Prospection sortante : un dump commande/livraison hors mission ≠ basculer en support livraison.
-    !inbound && infoDense
+    // « Oui » après « Je vous envoie le lien ? » → LIVRER le lien, pas clôturer ni rediscuter.
+    affirmingPendingSend
+      ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
+        `Tu viens de proposer d'envoyer le lien / l'accès. Le prospect répond « ${input.incomingText.trim()} » (= oui).\n` +
+        `OBLIGATOIRE : envoie MAINTENANT le lien campagne (URL exacte du contexte CAMPAGNE).\n` +
+        `INTERDIT : « Parfait merci », « c'est noté », « bonne continuation », une question de qualification, ou un message sans le lien.\n` +
+        `Format : 1 phrase courte + le lien sur la même bulle (ou juste après).\n`
+      : // Prospection sortante : un dump commande/livraison hors mission ≠ basculer en support livraison.
+      !inbound && infoDense
       ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
         `Mode SORTANT (prospection). Le prospect a écrit un long message (souvent hors-sujet / commande / livraison) : « ${input.incomingText.trim().slice(0, 280)} ».\n` +
         `INTERDIT : confirmer une livraison, un RDV de réception, un montant cash, ou traiter ce message comme ta mission si ce n'est PAS l'objectif campagne.\n` +
@@ -419,7 +457,7 @@ export async function generateWhatsAppReply(userId: number, input: {
       ? `\n## PRIORITÉ ABSOLUE (écrase le playbook)\n` +
         `TU as déjà ouvert la conversation. Le prospect répond juste « ${input.incomingText.trim()} ».\n` +
         `INTERDIT : te présenter, « ravi de pouvoir échanger », « merci de votre message », pitcher l'offre, cold opener (« Bonjour, vous avez une minute… »).\n` +
-        `Réponds en 1 phrase naturelle qui continue TON fil (réagir + 1 question concrète liée à l'objectif).\n`
+        `Si tu venais de poser une question oui/non liée à l'objectif (lien, RDV, envoi) : EXÉCUTE (envoie le lien / confirme l'étape). Sinon : 1 phrase qui continue TON fil (réagir + 1 question concrète).\n`
       : inbound
         ? `\n## CADRE ENTRANT\n` +
           `Le client a contacté le compte. Tu gères le support / closing — pas de cold outreach.\n` +
@@ -453,7 +491,11 @@ Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant c
     inbound
       ? " Mode ENTRANT : pas d'intro « je vous contacte pour… »."
       : ""
-  }${minimalAck && ongoing && !inbound ? " Message réel prioritaire sur tout tour playbook." : " Reste dans le cadre campagne (mission/ton)."}`;
+  }${minimalAck && ongoing && !inbound && !affirmingPendingSend ? " Message réel prioritaire sur tout tour playbook." : ""}${
+    affirmingPendingSend
+      ? " Le prospect a dit OUI : inclus l'URL campagne dans ta réponse."
+      : " Reste dans le cadre campagne (mission/ton)."
+  }`;
 
   const response = await callOpenAiWithRetry(() =>
     client.chat.completions.create({
@@ -485,6 +527,8 @@ Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant c
   let styled = enforceWhatsAppStyle(reply, {
     isOngoing: ongoing,
     incomingText: input.incomingText,
+    // Ne pas remplacer une livraison de lien par une question de qualification
+    skipMinimalAckGuard: affirmingPendingSend,
   });
   // Stickers/emojis : refus par défaut sauf autorisation campagne explicite
   if (input.allowEmojis === true) {
@@ -494,6 +538,21 @@ Rédige UNE réponse WhatsApp (1-2 phrases), personnelle et vivante, en tenant c
     const { stripEmojis } = await import("./sticker-consent.js");
     styled = stripEmojis(styled);
   }
+  styled = ensurePendingLinkInReply(
+    styled,
+    input.closingLink,
+    input.incomingText,
+    // Si forceDeliverPendingLink : fabriquer un historique minimal pour le filet URL
+    input.forceDeliverPendingLink
+      ? [
+          ...policyHistory,
+          {
+            direction: "sortant",
+            body: "Je vous envoie le lien tout de suite ?",
+          },
+        ]
+      : policyHistory
+  );
   return styled;
 }
 

@@ -51,6 +51,7 @@ import {
   isCampaignObjectiveReached,
   wasVerballyClosed,
   isAppointmentSlotConfirmed,
+  ensurePendingLinkInReply,
 } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
@@ -730,7 +731,7 @@ function buildActiveCampaignContext(
           `PARCOURS CONVERSATION (identique simulation téléphone — même mission, seuls les mots varient) :`,
           `1. Après le 1er message, POURSUIS l'échange — ne coupe jamais sauf refus clair OU objectif atteint.`,
           `2. Identité (« c'est qui ? ») → prénom business du contexte + pourquoi on écrit EN UN SOUFFLE (pas nom seul, pas titre LinkedIn). Ex. « Will — j'aide des indépendants sur des automatisations concrètes. Je vous écris pour ça. » Puis question utile si la place reste.`,
-          `3. Accusé minimal (« ok », « okay », « d'accord ») → NE PAS pitcher tout de suite : 1 réaction + 1 question concrète OU 1 détail nouveau (pas le même levier déjà dit).`,
+          `3. Accusé minimal (« ok », « okay », « d'accord ») → si tu venais de proposer d'envoyer le lien / une action : EXÉCUTE (envoie le lien RÉEL). Sinon : 1 réaction + 1 question concrète OU 1 détail nouveau (pas le même levier déjà dit).`,
           `4. Si intéressé / pose des questions → réponds avec substance réelle (pas d'économie d'info artificielle), qualifie, puis avance vers l'objectif (${goal}).`,
           `5. Si prêt à avancer → envoie le lien/prix/créneau RÉEL du contexte (pas de placeholder).`,
           `6. Si refuse clairement → accepte poliment (le système gère l'arrêt).`,
@@ -1198,6 +1199,7 @@ async function runAutoReply(
         automationContext,
         allowEmojis: activeCampaign?.config.stickersEnabled === true,
         automationId: activeCampaign?.id,
+        closingLink: activeCampaign?.config.closingLink,
         conversationMode:
           activeCampaign &&
           (activeCampaign.type === "keyword_sales" ||
@@ -1205,6 +1207,15 @@ async function runAutoReply(
             ? "inbound"
             : "outbound",
       });
+      // Filet : oui après offre de lien → URL absente de la réponse LLM → on l'ajoute.
+      if (activeCampaign?.config.closingLink) {
+        reply = ensurePendingLinkInReply(
+          reply,
+          activeCampaign.config.closingLink,
+          text,
+          history
+        );
+      }
     }
 
     const attachMedia =

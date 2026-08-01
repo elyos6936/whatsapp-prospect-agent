@@ -18,11 +18,103 @@ const HANDOFF_KEYWORDS =
 
 /** Accusé de réception court après envoi d'un lien / prix / créneau / handoff livraison. */
 const SHORT_ACK =
-  /^(ok|okay|oui|ouais|d['']accord|dac|parfait|super|merci|top|nickel|impeccable|c['']est (bon|not[eé])|re[cç]u|bien re[cç]u|je (vais )?regarder|je regarde|partant|volontiers)([\s!.?,;:]|$)/i;
+  /^(ok|okay|oui|ouais|d['']accord|dac|parfait|super|merci|top|nickel|impeccable|c['']est (bon|not[eé])|re[cç]u|bien re[cç]u|je (vais )?regarder|je regarde|partant|volontiers|vas[- ]y|go|envoie[rz]?)([\s!.?,;:]|$)/i;
 
-/** L'agent a envoyé quelque chose d'actionnable (lien, paiement, RDV, handoff livreur). */
-const ACTION_OFFERED =
-  /https?:\/\/|wa\.me\/|chat\.whatsapp\.com\/|bit\.ly\/|calendly\.|fcfa|lien (ici|ci[- ]dessous|suivant)|voici (mon |le )?lien|pour (r[eé]server|payer|rejoindre)|je (lui |vous |te )?(envoie|transmets)|je (vais )?(contacter|pr[eé]venir|appeler).{0,50}livreur|livreur.{0,60}(appelle|contactera|contact)|adresse (not[eé]e|re[cç]ue)|point exact|en arrivant (à|au|chez)/i;
+/** Affirmation courte (pas « non », pas « merci » seul de politesse). */
+const SHORT_YES =
+  /^(ok|okay|oui|ouais|d['']accord|dac|parfait|super|top|nickel|partant|volontiers|vas[- ]y|go|envoie[rz]?)([\s!.?,;:]|$)/i;
+
+/** URL réellement livrée dans un message sortant. */
+const URL_DELIVERED =
+  /https?:\/\/\S+|wa\.me\/\S*|chat\.whatsapp\.com\/\S+|bit\.ly\/\S+|calendly\.\S+/i;
+
+/** Prix concret déjà communiqué. */
+const PRICE_DELIVERED = /\b\d[\d\s.,]{2,}\s*(fcfa|€|euros?)\b/i;
+
+/**
+ * Handoff livraison déjà fait (pas une simple proposition « le livreur peut… ? »).
+ */
+const DELIVERY_HANDOFF_DONE =
+  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé]).{0,50}livreur|le livreur (vous |t['']|te )?(appelle|contactera)|adresse (not[eé]e|re[cç]ue)|c['']est (not[eé]|confirm[eé]).{0,40}(livraison|livreur)/i;
+
+/**
+ * L'agent a PROPOSÉ d'envoyer un lien / d'agir, sans l'avoir encore livré
+ * (ex. « Je vous l'envoie tout de suite ? »).
+ */
+const PENDING_SEND_OFFER =
+  /(?:je (?:peux |vais )?(?:vous |te )?(?:l['']?)?(?:envoyer|envoie)|(?:vous |te )(?:l['']?)envoie|envoyer (?:le )?lien|lien (?:du )?groupe|je (?:vous |te )(?:envoie|transmets) (?:le )?lien)/i;
+
+/**
+ * Action RÉELLEMENT livrée — pas une offre (« je vous envoie ? »).
+ * Un « oui » après une offre ne doit PAS clôturer la mission.
+ */
+export function outboundDeliveredAction(body: string): boolean {
+  const t = body.trim();
+  if (!t) return false;
+  if (URL_DELIVERED.test(t)) return true;
+  if (PRICE_DELIVERED.test(t)) return true;
+  if (DELIVERY_HANDOFF_DONE.test(t) && !/\?\s*$/.test(t)) return true;
+  // « Voici le lien » sans URL seulement si ce n'est pas une question d'offre
+  if (
+    /voici (mon |le )?lien|lien (ici|ci[- ]dessous|suivant)/i.test(t) &&
+    !/\?/.test(t) &&
+    !PENDING_SEND_OFFER.test(t)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/** True si le dernier sortant proposait d'envoyer le lien / l'action sans l'avoir livré. */
+export function hasPendingSendOffer(
+  history: { direction: string; body: string }[]
+): boolean {
+  const recentOut = history
+    .filter((m) => m.direction === "sortant")
+    .slice(-4)
+    .map((m) => m.body);
+  if (!recentOut.length) return false;
+  // Le plus récent compte le plus : offre sans URL livrée
+  for (let i = recentOut.length - 1; i >= 0; i--) {
+    const body = recentOut[i];
+    if (outboundDeliveredAction(body)) return false;
+    if (PENDING_SEND_OFFER.test(body)) return true;
+  }
+  return false;
+}
+
+/**
+ * Prospect dit « oui / ok / d'accord » alors que l'agent venait de proposer
+ * d'envoyer le lien (sans l'avoir encore envoyé) → il faut LIVRER, pas clôturer.
+ */
+export function isAffirmingPendingSendOffer(
+  text: string,
+  history: { direction: string; body: string }[]
+): boolean {
+  const t = text.trim();
+  if (!t || t.startsWith("[") || /^non\b/i.test(t)) return false;
+  if (!SHORT_YES.test(t) && !SHORT_YES.test(normalizeText(t))) return false;
+  return hasPendingSendOffer(history);
+}
+
+/**
+ * Si le prospect a affirmé une offre d'envoi et que la réponse n'a pas l'URL,
+ * on l'ajoute (filet dur — le LLM oublie parfois).
+ */
+export function ensurePendingLinkInReply(
+  reply: string,
+  closingLink: string | null | undefined,
+  text: string,
+  history: { direction: string; body: string }[]
+): string {
+  const link = closingLink?.trim();
+  if (!link) return reply;
+  if (!isAffirmingPendingSendOffer(text, history)) return reply;
+  if (URL_DELIVERED.test(reply) || reply.includes(link)) return reply;
+  const base = reply.trim();
+  if (!base) return link;
+  return `${base}\n${link}`;
+}
 
 /**
  * L'agent a déjà annoncé la clôture verbale (transmission faite / livreur qui appelle).
@@ -108,8 +200,9 @@ const ASKED_FOR_SLOT =
 
 /**
  * Objectif campagne atteint — règles simples, pas de LLM.
- * Lien / paiement / RDV / handoff livraison déjà proposé par l'agent + « ok »
- * du prospect = on arrête (on n'attend pas qu'il confirme sur un site externe).
+ * Lien / paiement / RDV / handoff livraison déjà LIVRÉ par l'agent + « ok »
+ * du prospect = on arrête.
+ * Une simple offre (« Je vous l'envoie ? ») + « oui » ≠ objectif atteint.
  */
 export function isCampaignObjectiveReached(
   text: string,
@@ -123,12 +216,15 @@ export function isCampaignObjectiveReached(
   if (!t || t.startsWith("[")) return false;
   if (!SHORT_ACK.test(t) && !SHORT_ACK.test(normalizeText(t))) return false;
 
+  // « Oui » à une offre d'envoi → on doit encore livrer le lien, pas clôturer.
+  if (isAffirmingPendingSendOffer(t, history)) return false;
+
   const recentOut = history
     .filter((m) => m.direction === "sortant")
     .slice(-6)
     .map((m) => m.body);
 
-  return recentOut.some((body) => ACTION_OFFERED.test(body));
+  return recentOut.some((body) => outboundDeliveredAction(body));
 }
 
 /** True si un message sortant récent a déjà clôturé à l'oral (évite double confirmation). */
