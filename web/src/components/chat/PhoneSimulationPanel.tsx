@@ -132,6 +132,7 @@ export function PhoneSimulationPanel({
   const [ignoredSimKey, setIgnoredSimKey] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
+  const [conversationClosed, setConversationClosed] = useState(false);
   const [error, setError] = useState('');
   const [hydrated, setHydrated] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -183,6 +184,7 @@ export function PhoneSimulationPanel({
   useEffect(() => {
     setDraft('');
     setError('');
+    setConversationClosed(false);
     setOpener('');
     setGuide('');
     setOffer('');
@@ -278,6 +280,8 @@ export function PhoneSimulationPanel({
 
     lastAppliedSimKeyRef.current = currentSimKey;
     setIgnoredSimKey(null);
+    setConversationClosed(false);
+    setError('');
     setPhoneBubbles(isContinuation ? storedBubbles : simBubbles);
     setCollapsed(false);
   }, [hydrated, currentSimKey, simBubbles, ignoredSimKey, threadId]);
@@ -318,6 +322,7 @@ export function PhoneSimulationPanel({
     setIgnoredSimKey(keyToIgnore);
     setDraft('');
     setError('');
+    setConversationClosed(false);
     // Empêche le flash : ne pas réappliquer la simu batch tant que l'utilisateur teste.
     lastAppliedSimKeyRef.current = keyToIgnore || '';
     if (threadId != null) {
@@ -333,7 +338,7 @@ export function PhoneSimulationPanel({
 
   async function sendAsProspect() {
     const text = draft.trim();
-    if (!text || busy) return;
+    if (!text || busy || conversationClosed) return;
     setBusy(true);
     setError('');
     setDraft('');
@@ -367,7 +372,10 @@ export function PhoneSimulationPanel({
         next.push({ id: `r-${Date.now()}`, role: 'you', text: result.reply.trim() });
       }
       setPhoneBubbles(next);
-      if (result.done && result.feedbackPrompt) setError(result.feedbackPrompt);
+      if (result.done) {
+        setConversationClosed(true);
+        if (result.feedbackPrompt) setError(result.feedbackPrompt);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Simulation impossible.');
       setPhoneBubbles(base);
@@ -390,13 +398,15 @@ export function PhoneSimulationPanel({
 
   const canClear = phoneBubbles.length > 0;
   const awaitingSim = !isSupport && !currentSimKey && phoneBubbles.length === 0;
-  const helpLine = isSupport
-    ? 'Écrivez comme un client pour tester la réponse.'
-    : purpose === 'groupes'
-      ? 'Aperçu groupe — aucun envoi réel.'
-      : awaitingSim
-        ? 'Dis « oui » dans le chat pour lancer la simulation.'
-        : 'Testez ici · rien n’est envoyé sur WhatsApp.';
+  const helpLine = conversationClosed
+    ? 'Fil clôturé (comme en live) — Effacer pour retester.'
+    : isSupport
+      ? 'Écrivez comme un client pour tester la réponse.'
+      : purpose === 'groupes'
+        ? 'Aperçu groupe — aucun envoi réel.'
+        : awaitingSim
+          ? 'Dis « oui » dans le chat pour lancer la simulation.'
+          : 'Testez ici · rien n’est envoyé sur WhatsApp.';
 
   return (
     <aside
@@ -475,8 +485,14 @@ export function PhoneSimulationPanel({
               draft={draft}
               onDraftChange={setDraft}
               onSend={() => void sendAsProspect()}
-              busy={busy}
-              placeholder={isSupport ? 'Message du client…' : 'Répondre comme le prospect…'}
+              busy={busy || conversationClosed}
+              placeholder={
+                conversationClosed
+                  ? 'Fil clôturé — Effacer pour retester'
+                  : isSupport
+                    ? 'Message du client…'
+                    : 'Répondre comme le prospect…'
+              }
               inputRef={inputRef}
               scrollRef={scrollRef}
               emptyHint={

@@ -849,6 +849,7 @@ export async function postSimulationPreview(input: {
   history: Array<{ role: 'you' | 'prospect'; text: string }>;
   done: boolean;
   feedbackPrompt: string | null;
+  stopReason?: string | null;
 }> {
   return request('/api/simulation/preview', {
     method: 'POST',

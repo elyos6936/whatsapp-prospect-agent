@@ -1,15 +1,22 @@
 /**
  * Simulation interactive (panneau droit) — AUCUN envoi WhatsApp.
- * Même cerveau que les réponses live (`generateWhatsAppReply` + contexte campagne/playbook).
+ * Même cerveau que les réponses live (`generateWhatsAppReply` + contexte campagne/playbook)
+ * + mêmes garde-fous d'arrêt (STOP / désintérêt / objectif atteint).
  */
 import {
   getAgentThread,
   getAppSettings,
   getAutomation,
   type Automation,
+  type AutomationConfig,
+  type AppSettings,
 } from "./db.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
-import { generateWhatsAppReply } from "./whatsapp-reply.js";
+import {
+  generateWhatsAppReply,
+  getStopConfirmationReply,
+  isStopRequest,
+} from "./whatsapp-reply.js";
 import {
   formatCampaignMemoryForWhatsApp,
   formatLivePlaybookForWhatsApp,
@@ -17,13 +24,64 @@ import {
   persistLivePlaybookForThread,
   previewHistoryToPlaybookTurns,
 } from "./campaign-sync.js";
+import {
+  isCampaignObjectiveReached,
+  wasVerballyClosed,
+} from "./lead-scoring.js";
+import {
+  getObjectiveReachedReply,
+  getStopFarewellReply,
+  shouldStopConversation,
+  stopReasonLabel,
+  type StopReason,
+} from "./stop-policy.js";
 
 export type SimPreviewTurn = {
   role: "you" | "prospect";
   text: string;
 };
 
+export type SimPreviewStopReason =
+  | "max_turns"
+  | "stop_keyword"
+  | "objective_reached"
+  | StopReason;
+
 const MAX_TURNS = 20;
+
+function toPolicyHistory(
+  turns: SimPreviewTurn[]
+): Array<{ direction: string; body: string }> {
+  return turns.map((t) => ({
+    direction: t.role === "you" ? "sortant" : "entrant",
+    body: t.text,
+  }));
+}
+
+function stopFeedback(reason: SimPreviewStopReason): string {
+  if (reason === "max_turns") {
+    return (
+      "Fin de la simulation (max 20 messages).\n\n" +
+      "Dis-moi ce qui va / ce qu'il faut changer (ton, accroche, CTA…), puis on recommence ici. Si c'est bon, valide dans le chat du milieu."
+    );
+  }
+  if (reason === "stop_keyword") {
+    return (
+      "Simulation clôturée (comme en live) : le prospect a demandé d'arrêter.\n\n" +
+      "Dis dans le chat ce qu'il faut ajuster, ou « c'est bon »."
+    );
+  }
+  if (reason === "objective_reached") {
+    return (
+      "Simulation clôturée (comme en live) : objectif campagne atteint.\n\n" +
+      "Dis dans le chat ce qu'il faut ajuster, ou « c'est bon »."
+    );
+  }
+  return (
+    `Simulation clôturée (comme en live) : ${stopReasonLabel(reason)}.\n\n` +
+    "Dis dans le chat ce qu'il faut ajuster, ou « c'est bon »."
+  );
+}
 
 export function extractOpenerFromPlan(plan: {
   nodes?: Array<{ kind?: string; label?: string; subtitle?: string }>;
@@ -66,6 +124,7 @@ function buildSimCampaignContext(
     outbound
       ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », NE RECOPIE PAS le prochain tour du playbook (souvent une fausse intro « ravi d'échanger »). Continue ton accroche avec 1 question concrète.`
       : "",
+    `ARRÊT (identique au live) : refus clair / STOP → clôture. Objectif atteint (lien/prix/RDV + ack) → courte confirmation puis stop — pas de question supplémentaire.`,
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -87,6 +146,7 @@ export async function replyInSimulationPreview(
   history: SimPreviewTurn[];
   done: boolean;
   feedbackPrompt: string | null;
+  stopReason?: SimPreviewStopReason | null;
 }> {
   const prospectMessage = String(input.prospectMessage ?? "").trim();
   if (!prospectMessage) {
@@ -111,8 +171,8 @@ export async function replyInSimulationPreview(
       reply: "",
       history: history.slice(0, MAX_TURNS),
       done: true,
-      feedbackPrompt:
-        "Fin de la simulation (max 20 messages).\n\nDis-moi ce qui va / ce qu'il faut changer (ton, accroche, CTA…), puis on recommence ici. Si c'est bon, valide dans le chat du milieu.",
+      stopReason: "max_turns",
+      feedbackPrompt: stopFeedback("max_turns"),
     };
   }
 
@@ -122,14 +182,16 @@ export async function replyInSimulationPreview(
       : null;
 
   let automationContext = "";
-  let automationId: number | null = null;
+  let campaignConfig: AutomationConfig | undefined;
+  let settings: AppSettings | null = null;
 
   if (threadId != null) {
     const thread = await getAgentThread(userId, threadId);
-    automationId = thread?.automation_id ?? null;
+    const automationId = thread?.automation_id ?? null;
     if (automationId != null) {
       const auto = await getAutomation(userId, automationId);
       if (auto) {
+        campaignConfig = auto.config;
         let memoryBlock = "";
         try {
           const mem = await getLinkedMemoryForAutomation(userId, automationId);
@@ -152,8 +214,11 @@ export async function replyInSimulationPreview(
     }
   }
 
+  if (!settings) {
+    settings = await getAppSettings(userId);
+  }
+
   if (!automationContext) {
-    const settings = await getAppSettings(userId);
     const offer = input.offer?.trim() || settings.business_offer || "";
     const price = settings.business_price || "";
     const guide = input.guide?.trim() || "";
@@ -166,9 +231,74 @@ export async function replyInSimulationPreview(
       mode === "outbound"
         ? "SORTANT : tu as initié — si réponse « salut/hello », continue ton fil (ne parle pas comme s'il t'avait contacté)."
         : "",
+      "ARRÊT (identique au live) : refus / STOP / objectif atteint → clôture.",
     ]
       .filter(Boolean)
       .join("\n");
+  }
+
+  // Même ordre que runAutoReply (live) — avant le LLM.
+  const priorPolicyHistory = toPolicyHistory(history.slice(0, -1));
+  const business = {
+    offer: settings.business_offer,
+    price: settings.business_price,
+    ownerName: settings.business_owner_name,
+  };
+
+  const finishClosed = async (
+    replyText: string,
+    reason: SimPreviewStopReason
+  ): Promise<{
+    reply: string;
+    history: SimPreviewTurn[];
+    done: boolean;
+    feedbackPrompt: string | null;
+    stopReason: SimPreviewStopReason;
+  }> => {
+    const reply = sanitizeOutboundWhatsAppText(replyText);
+    if (reply) history.push({ role: "you", text: reply });
+    if (threadId != null && history.length >= 2) {
+      try {
+        const turns = previewHistoryToPlaybookTurns(history);
+        if (turns.length >= 2) {
+          await persistLivePlaybookForThread(userId, threadId, turns, {
+            syncOpener: history.some((h) => h.role === "you"),
+          });
+        }
+      } catch (err) {
+        console.warn("[simulation-preview] persist playbook:", err);
+      }
+    }
+    return {
+      reply,
+      history,
+      done: true,
+      stopReason: reason,
+      feedbackPrompt: stopFeedback(reason),
+    };
+  };
+
+  if (isStopRequest(prospectMessage)) {
+    return finishClosed(getStopConfirmationReply(), "stop_keyword");
+  }
+
+  const softStop = shouldStopConversation(
+    prospectMessage,
+    business,
+    campaignConfig,
+    priorPolicyHistory
+  );
+  const actionableStop =
+    softStop && softStop !== "unknown_question" ? softStop : null;
+  if (actionableStop) {
+    return finishClosed(getStopFarewellReply(actionableStop), actionableStop);
+  }
+
+  if (isCampaignObjectiveReached(prospectMessage, priorPolicyHistory, campaignConfig)) {
+    if (wasVerballyClosed(priorPolicyHistory)) {
+      return finishClosed("", "objective_reached");
+    }
+    return finishClosed(getObjectiveReachedReply(), "objective_reached");
   }
 
   // Historique factice pour le formatage du prompt live (même moteur).
@@ -225,8 +355,7 @@ export async function replyInSimulationPreview(
     reply,
     history,
     done,
-    feedbackPrompt: done
-      ? "Fin de la simulation (max 20 messages). Dis dans le chat ce qu'il faut changer, ou « c'est bon »."
-      : null,
+    stopReason: done ? "max_turns" : null,
+    feedbackPrompt: done ? stopFeedback("max_turns") : null,
   };
 }
