@@ -560,7 +560,9 @@ export function buildBriefingNudge(
 
     return (
       "Les 5 variantes ont été proposées — attends le choix ou la validation de l'utilisateur. " +
-      "Puis create_automation draft avec personalize_messages=true, initial_message=variante choisie, ab_variants=les 5 textes " +
+      "Quand il valide (n° choisi OU « les 5 me vont ») : create_automation draft avec " +
+      "initial_message = variante choisie (ou v1), ET ab_variants = les **5 textes complets** " +
+      "proposés juste avant (jamais un seul message). personalize_messages=false. " +
       "(handoff_keywords=[] et third_party_notification_enabled=false par défaut en prospection — ne les demande pas). " +
       "Propose ensuite la simulation (6-7 messages via show_campaign_simulation)."
     );

@@ -114,7 +114,7 @@ import {
   unblockContact,
 } from "./db.js";
 import { getContactPresence } from "./notifications.js";
-import { formatAttentionOpenerError, isValidAttentionOpener } from "./opener-frame.js";
+import { formatAttentionOpenerError, isValidAttentionOpener, validateOutboundAbVariants } from "./opener-frame.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
 import {
@@ -1647,7 +1647,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "array",
             items: { type: "object" },
             description:
-              "Exactement 5 accroches Attention validées avec l'utilisateur : [{id:'v1',message:'…'}, …]. Obligatoire en prospection sortante — UNIQUEMENT après que l'utilisateur a indiqué son angle pour le 1er message et que les 5 variantes ont été proposées dans le chat.",
+              "Exactement 5 accroches Attention DISTINCTES validées avec l'utilisateur : [{id:'v1',message:'…'}, … {id:'v5',message:'…'}]. Obligatoire en prospection sortante. Même si l'utilisateur n'en choisit qu'une pour initial_message, tu DOIS passer les 5 textes — ne garde jamais un seul message.",
           },
           sequence_steps: { type: "array", items: { type: "object" } },
           media_url: {
@@ -4249,21 +4249,10 @@ export async function executeTool(
         });
       }
       const abVariantsExplicit = Array.isArray(args.ab_variants);
-      if (isOutbound && (!explicitAutomationId || abVariantsExplicit)) {
-        const variants = (config.abVariants ?? []).filter((v) => v.message?.trim());
-        if (variants.length !== 5) {
-          return JSON.stringify({
-            error:
-              "Prospection sortante : ab_variants doit contenir exactement 5 accroches Attention validées avec l'utilisateur (après avoir demandé son angle pour le 1er message, puis proposé les 5 variantes dans le chat). initial_message = la variante choisie.",
-          });
-        }
-        for (const v of variants) {
-          if (!isValidAttentionOpener(v.message)) {
-            return JSON.stringify({
-              error: formatAttentionOpenerError(`ab_variants.${v.id}`, v.message),
-            });
-          }
-        }
+      // Pré-contrôle si ab_variants est fourni (évite un merge inutile)
+      if (isOutbound && abVariantsExplicit) {
+        const early = validateOutboundAbVariants(config.abVariants);
+        if (early) return JSON.stringify({ error: early });
       }
 
       /** Persist draft — update existing if reusable, else create. */
@@ -4301,6 +4290,13 @@ export async function executeTool(
               abVariants: cfg.abVariants ?? reusable.config.abVariants,
             }
           : { ...cfg, enableAutoReply: true };
+
+        // Toujours 5 variantes en sortant (après merge) — empêche de ne garder que initial_message
+        if (isOutbound) {
+          const abErr = validateOutboundAbVariants(merged.abVariants);
+          if (abErr) return JSON.stringify({ error: abErr });
+          merged.personalizeMessages = false;
+        }
 
         if (reusable) {
           await updateAutomationConfig(userId, reusable.id, merged);
@@ -4758,19 +4754,22 @@ export async function executeTool(
         });
       }
       if (Array.isArray(args.ab_variants)) {
-        const variants = (merged.abVariants ?? []).filter((v) => v.message?.trim());
-        if (variants.length !== 5) {
-          return JSON.stringify({
-            error: "ab_variants doit contenir exactement 5 accroches Attention.",
-          });
-        }
-        for (const v of variants) {
-          if (!isValidAttentionOpener(v.message)) {
-            return JSON.stringify({
-              error: formatAttentionOpenerError(`ab_variants.${v.id}`, v.message),
-            });
-          }
-        }
+        const abErr = validateOutboundAbVariants(merged.abVariants);
+        if (abErr) return JSON.stringify({ error: abErr });
+        merged.personalizeMessages = false;
+      } else if (
+        (detail.automation.type === "contact_prospect" ||
+          detail.automation.type === "group_prospect" ||
+          merged.mode === "outbound_prospect") &&
+        !(merged.abVariants ?? []).filter((v) => v.message?.trim()).length
+      ) {
+        // Sortant sans aucune variante en config : refuse de laisser un seul initial_message
+        return JSON.stringify({
+          error:
+            "Cette campagne sortante n'a pas encore ses 5 ab_variants. " +
+            "Passe ab_variants avec les 5 accroches validées dans le chat " +
+            "(pas seulement initial_message).",
+        });
       }
 
       const prevOpener = detail.automation.config.initialMessage?.trim() || "";

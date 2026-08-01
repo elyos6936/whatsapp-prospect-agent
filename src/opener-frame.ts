@@ -42,3 +42,44 @@ export function formatAttentionOpenerError(label: string, text: string): string 
     `les détails dans conversation_guide.`
   );
 }
+
+/**
+ * Prospection sortante : exactement 5 accroches Attention DISTINCTES.
+ * Empêche de ne garder que initial_message (ou 5 copies du même texte).
+ */
+export function validateOutboundAbVariants(
+  variants: Array<{ id?: string; message?: string }> | null | undefined
+): string | null {
+  const cleaned = (variants ?? [])
+    .map((v, i) => ({
+      id: v.id || `v${i + 1}`,
+      message: String(v.message ?? "").trim(),
+    }))
+    .filter((v) => v.message.length > 0);
+
+  if (cleaned.length !== 5) {
+    return (
+      `Prospection sortante : ab_variants doit contenir exactement 5 accroches Attention ` +
+      `(reçu : ${cleaned.length}). Quand l'utilisateur valide, repasse TOUTES les 5 formulations ` +
+      `proposées dans le chat — pas seulement celle choisie pour initial_message. ` +
+      `Format : [{id:"v1",message:"…"}, … {id:"v5",message:"…"}].`
+    );
+  }
+
+  for (const v of cleaned) {
+    if (!isValidAttentionOpener(v.message)) {
+      return formatAttentionOpenerError(`ab_variants.${v.id}`, v.message);
+    }
+  }
+
+  const unique = new Set(cleaned.map((v) => v.message.toLowerCase().replace(/\s+/g, " ")));
+  if (unique.size < 3) {
+    return (
+      `Les 5 ab_variants sont trop similaires (${unique.size} formulation(s) distincte(s)). ` +
+      `Il faut 5 formulations DIFFÉRENTES (au moins 3 textes clairement distincts) — ` +
+      `ne duplique pas le même message 5 fois. Reprends les 5 pistes proposées dans le chat.`
+    );
+  }
+
+  return null;
+}

@@ -305,15 +305,19 @@ async function buildBusinessContext(
         );
         if (auto.config.initialMessage?.trim()) {
           const variants = (auto.config.abVariants ?? [])
-            .map((v) => v.message?.trim())
-            .filter(Boolean)
+            .map((v) => ({ id: v.id, message: v.message?.trim() || "" }))
+            .filter((v) => v.message)
             .slice(0, 5);
           lines.push(
-            `## Accroche validée\n` +
-              `« ${auto.config.initialMessage.trim()} »\n` +
-              (variants.length
-                ? `(${variants.length} variantes A/B en config — micro-variation OK, pas de pitch au 1er message.)`
-                : `Pas de pitch complet au 1er message.`)
+            `## Accroches validées (1er message)\n` +
+              `initial_message (variante de référence / simu) :\n« ${auto.config.initialMessage.trim()} »\n` +
+              (variants.length === 5
+                ? `ab_variants (les 5 — à ROTATION exacte, ne pas en supprimer) :\n` +
+                  variants.map((v, i) => `${i + 1}. [${v.id}] « ${v.message} »`).join("\n") +
+                  `\nSi l'utilisateur change le choix : update avec initial_message=choisie ET ab_variants=les MÊMES 5 textes.`
+                : variants.length
+                  ? `⚠ Seulement ${variants.length}/5 variantes en config — corrige via update_automation_config avec les 5 textes complets.`
+                  : `⚠ Aucune ab_variants — OBLIGATOIRE d'enregistrer les 5 accroches proposées (pas seulement initial_message).`)
           );
         }
       }
