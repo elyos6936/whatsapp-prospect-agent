@@ -97,6 +97,7 @@ function clearPersisted(threadId: number): void {
 }
 
 function loadCollapsed(): boolean {
+  // Ouvert par défaut — ne se ferme que si l'utilisateur a explicitement réduit.
   try {
     return localStorage.getItem(COLLAPSE_KEY) === '1';
   } catch {
@@ -187,32 +188,17 @@ export function PhoneSimulationPanel({
     setOffer('');
     lastAppliedSimKeyRef.current = '';
     setHydrated(false);
-
-    if (threadId == null) {
-      setPhoneBubbles([]);
-      setIgnoredSimKey(null);
-      setHydrated(true);
-      return;
-    }
-
-    const stored = loadPersisted(threadId);
-    const bubbles = stored?.bubbles ?? [];
-    if (purpose === 'support') {
-      const inboundTest = bubbles.some((b) => b.role === 'prospect');
-      setPhoneBubbles(inboundTest ? bubbles : []);
-      setIgnoredSimKey(inboundTest ? stored?.ignoredSimKey ?? null : null);
-      if (inboundTest && bubbles.length) lastAppliedSimKeyRef.current = simKeyOf(bubbles);
-    } else {
-      const ok =
-        bubbles.length === 0 ||
-        (bubbles.length === 1 && bubbles[0]?.role === 'you') ||
-        (bubbles.some((b) => b.role === 'you') && bubbles.some((b) => b.role === 'prospect'));
-      setPhoneBubbles(ok ? bubbles : []);
-      setIgnoredSimKey(ok ? stored?.ignoredSimKey ?? null : null);
-      if (ok && bubbles.length) lastAppliedSimKeyRef.current = simKeyOf(bubbles);
-    }
+    // Vide jusqu'à show_campaign_simulation (évite un fil fantôme avant le « oui »).
+    setPhoneBubbles([]);
+    setIgnoredSimKey(null);
+    setCollapsed(false);
     setHydrated(true);
   }, [threadId, purpose]);
+
+  // Panneau toujours ouvert à l'apparition d'une campagne (brouillon / simu).
+  useEffect(() => {
+    if (automationId != null) setCollapsed(false);
+  }, [automationId]);
 
   useEffect(() => {
     if (!hydrated || threadId == null) return;
@@ -261,34 +247,34 @@ export function PhoneSimulationPanel({
     if (!hydrated || !currentSimKey || simBubbles.length < 2) return;
     if (currentSimKey === ignoredSimKey) return;
     if (currentSimKey === lastAppliedSimKeyRef.current) return;
+
+    // Reprendre une suite interactive locale si elle prolonge cette simulation.
+    const stored = threadId != null ? loadPersisted(threadId) : null;
+    const simPrefix = simKeyOf(simBubbles);
+    const storedBubbles = stored?.bubbles ?? [];
+    const storedKey = storedBubbles.length ? simKeyOf(storedBubbles) : '';
+    const isContinuation =
+      stored != null &&
+      stored.ignoredSimKey !== currentSimKey &&
+      storedKey.startsWith(simPrefix) &&
+      storedBubbles.length > simBubbles.length;
+
     lastAppliedSimKeyRef.current = currentSimKey;
     setIgnoredSimKey(null);
-    setPhoneBubbles(simBubbles);
-  }, [hydrated, currentSimKey, simBubbles, ignoredSimKey]);
+    setPhoneBubbles(isContinuation ? storedBubbles : simBubbles);
+    setCollapsed(false);
+  }, [hydrated, currentSimKey, simBubbles, ignoredSimKey, threadId]);
 
+  // Support inbound : pas de sim batch — on peut reprendre un test local.
   useEffect(() => {
-    if (!hydrated || isSupport) return;
-    if (currentSimKey && currentSimKey !== ignoredSimKey) return;
-    if (ignoredSimKey) return;
-
-    const looksValid =
-      phoneBubbles.length === 0 ||
-      (phoneBubbles.length === 1 && phoneBubbles[0]?.role === 'you') ||
-      (phoneBubbles.some((b) => b.role === 'you') &&
-        phoneBubbles.some((b) => b.role === 'prospect'));
-
-    if (!looksValid) {
-      setPhoneBubbles(
-        opener.trim() ? [{ id: 'opener', role: 'you', text: opener.trim() }] : [],
-      );
-      lastAppliedSimKeyRef.current = '';
-      return;
-    }
-
-    if (!opener.trim()) return;
+    if (!hydrated || !isSupport || threadId == null) return;
     if (phoneBubbles.length > 0) return;
-    setPhoneBubbles([{ id: 'opener', role: 'you', text: opener.trim() }]);
-  }, [hydrated, isSupport, phoneBubbles, ignoredSimKey, opener, currentSimKey]);
+    const stored = loadPersisted(threadId);
+    const bubbles = stored?.bubbles ?? [];
+    if (!bubbles.some((b) => b.role === 'prospect')) return;
+    setPhoneBubbles(bubbles);
+    setIgnoredSimKey(stored?.ignoredSimKey ?? null);
+  }, [hydrated, isSupport, threadId, phoneBubbles.length]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -372,11 +358,14 @@ export function PhoneSimulationPanel({
   }));
 
   const canClear = phoneBubbles.length > 0;
+  const awaitingSim = !isSupport && !currentSimKey && phoneBubbles.length === 0;
   const helpLine = isSupport
     ? 'Écrivez comme un client pour tester la réponse.'
     : purpose === 'groupes'
       ? 'Aperçu groupe — aucun envoi réel.'
-      : 'Testez ici · rien n’est envoyé sur WhatsApp.';
+      : awaitingSim
+        ? 'Dis « oui » dans le chat pour lancer la simulation.'
+        : 'Testez ici · rien n’est envoyé sur WhatsApp.';
 
   return (
     <aside
@@ -444,7 +433,7 @@ export function PhoneSimulationPanel({
             </button>
           </div>
 
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto px-2 pb-3">
+          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-2 pb-3">
             <MobileMockup
               interactive
               autoPlay={false}
@@ -462,7 +451,9 @@ export function PhoneSimulationPanel({
               emptyHint={
                 isSupport
                   ? 'Tapez un message client pour tester.'
-                  : 'Le premier message apparaîtra ici.'
+                  : awaitingSim
+                    ? 'Dis « oui » dans le chat pour lancer la simulation ici.'
+                    : 'Tapez un message comme le prospect pour continuer.'
               }
             />
           </div>

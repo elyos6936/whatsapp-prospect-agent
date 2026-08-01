@@ -75,35 +75,6 @@ const MoreVerticalIcon = ({
   </svg>
 );
 
-const PaperclipIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
-  <svg
-    className={className}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-  </svg>
-);
-
-const CameraIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
-  <svg
-    className={className}
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth={2}
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-    <circle cx="12" cy="13" r="4" />
-  </svg>
-);
-
 const MicrophoneIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
   <svg
     className={className}
@@ -332,7 +303,13 @@ export function MobileMockup({
         <div className="absolute top-32 -right-[5px] h-14 w-[2.5px] rounded-r-sm bg-neutral-700" />
 
         <div className="relative isolate flex h-full w-full transform-gpu flex-col overflow-hidden rounded-[30px] bg-[#efeae2] text-neutral-900">
-          <div className="z-30 flex shrink-0 items-center justify-between bg-[#008069] px-4 pt-2 pb-1 text-[11px] font-semibold text-white">
+          {/* Dynamic Island */}
+          <div
+            className="pointer-events-none absolute top-2.5 left-1/2 z-50 h-[26px] w-[96px] -translate-x-1/2 rounded-full bg-black shadow-[inset_0_0_0_1px_rgba(255,255,255,0.06)]"
+            aria-hidden
+          />
+
+          <div className="z-30 flex shrink-0 items-center justify-between bg-[#008069] px-4 pt-[34px] pb-1 text-[11px] font-semibold text-white">
             <span className="w-10 text-left font-bold tracking-tight tabular-nums">
               {displayMessages[displayMessages.length - 1]?.timestamp ?? "10:13"}
             </span>
@@ -410,131 +387,133 @@ export function MobileMockup({
 
           <div className="relative flex min-h-0 flex-1 flex-col overflow-hidden bg-[#efeae2] p-2.5">
             {children ? (
-              <div className="relative z-10 h-full w-full overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+              <div className="relative z-10 h-full w-full overflow-y-auto scrollbar-none">
                 {children}
               </div>
             ) : (
               <>
-                {displayMessages.length > 0 ? (
-                  <div className="relative z-10 mx-auto mb-1.5 rounded-full bg-white/90 px-2.5 py-0.5 text-[9px] font-medium text-neutral-600">
-                    Aujourd’hui
-                  </div>
-                ) : null}
-
                 <div
                   ref={scrollRef}
-                  className="relative z-10 flex flex-1 flex-col justify-end space-y-1.5 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+                  className="relative z-10 min-h-0 flex-1 overflow-y-auto overscroll-contain scrollbar-none"
                 >
-                  {displayMessages.length === 0 && interactive ? (
-                    <div className="flex flex-1 items-center justify-center px-3 text-center">
-                      <p className="rounded-lg bg-white/90 px-2.5 py-1.5 text-[10px] leading-snug text-neutral-600">
-                        {emptyHint ?? "Écrivez un message pour tester."}
-                      </p>
-                    </div>
-                  ) : null}
+                  <div className="flex min-h-full flex-col justify-end space-y-1.5 pb-0.5">
+                    {displayMessages.length > 0 ? (
+                      <div className="mx-auto mb-1.5 rounded-full bg-white/90 px-2.5 py-0.5 text-[9px] font-medium text-neutral-600">
+                        Aujourd’hui
+                      </div>
+                    ) : null}
 
-                  <AnimatePresence mode="sync">
-                    {displayMessages.map((msg) => (
-                      <motion.div
-                        key={`${cycleKey}-${msg.id}`}
-                        initial={
-                          interactive
-                            ? false
-                            : { opacity: 0, y: 8, scale: 0.96 }
-                        }
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, scale: 0.9 }}
-                        transition={{
-                          type: "spring",
-                          stiffness: 400,
-                          damping: 25,
-                        }}
-                        className={`flex flex-col ${msg.isCurrentUser ? "items-end" : "items-start"}`}
-                      >
-                        <div
-                          className={cn(
-                            "relative flex max-w-[85%] flex-col rounded-xl px-2.5 py-1 text-[11px]",
-                            msg.isCurrentUser
-                              ? "rounded-tr-none bg-[#dcf8c6] text-neutral-900"
-                              : "rounded-tl-none bg-white text-neutral-900",
-                          )}
+                    {displayMessages.length === 0 && interactive ? (
+                      <div className="flex flex-1 items-center justify-center px-3 text-center">
+                        <p className="rounded-lg bg-white/90 px-2.5 py-1.5 text-[10px] leading-snug text-neutral-600">
+                          {emptyHint ?? "Écrivez un message pour tester."}
+                        </p>
+                      </div>
+                    ) : null}
+
+                    <AnimatePresence mode="sync">
+                      {displayMessages.map((msg) => (
+                        <motion.div
+                          key={`${cycleKey}-${msg.id}`}
+                          initial={
+                            interactive
+                              ? false
+                              : { opacity: 0, y: 8, scale: 0.96 }
+                          }
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, scale: 0.9 }}
+                          transition={{
+                            type: "spring",
+                            stiffness: 400,
+                            damping: 25,
+                          }}
+                          className={`flex flex-col ${msg.isCurrentUser ? "items-end" : "items-start"}`}
                         >
-                          {msg.isImage ? (
-                            <div className="flex min-w-[150px] flex-col gap-1">
-                              <div className="relative max-h-[100px] overflow-hidden rounded-lg">
-                                <img
-                                  src={msg.imageUrl}
-                                  alt="Attached media"
-                                  className="h-22 w-full object-cover"
-                                />
+                          <div
+                            className={cn(
+                              "relative flex max-w-[85%] flex-col rounded-xl px-2.5 py-1 text-[11px]",
+                              msg.isCurrentUser
+                                ? "rounded-tr-none bg-[#dcf8c6] text-neutral-900"
+                                : "rounded-tl-none bg-white text-neutral-900",
+                            )}
+                          >
+                            {msg.isImage ? (
+                              <div className="flex min-w-[150px] flex-col gap-1">
+                                <div className="relative max-h-[100px] overflow-hidden rounded-lg">
+                                  <img
+                                    src={msg.imageUrl}
+                                    alt="Attached media"
+                                    className="h-22 w-full object-cover"
+                                  />
+                                </div>
+                                {msg.imageCaption && (
+                                  <p className="mt-0.5 px-0.5 text-[10.5px] leading-tight">
+                                    {msg.imageCaption}
+                                  </p>
+                                )}
                               </div>
-                              {msg.imageCaption && (
-                                <p className="mt-0.5 px-0.5 text-[10.5px] leading-tight">
-                                  {msg.imageCaption}
-                                </p>
+                            ) : (
+                              <p className="whitespace-pre-wrap break-words text-[11px] leading-tight">
+                                {!msg.isCurrentUser && msg.sender ? (
+                                  <span className="mb-0.5 block text-[10px] font-semibold text-emerald-700">
+                                    {msg.sender}
+                                  </span>
+                                ) : null}
+                                {msg.text}
+                              </p>
+                            )}
+
+                            <div className="mt-0.5 flex items-center justify-end gap-1 self-end">
+                              <span
+                                className={cn(
+                                  "text-[8.5px]",
+                                  msg.isCurrentUser
+                                    ? "text-emerald-800/70"
+                                    : "text-neutral-400",
+                                )}
+                              >
+                                {msg.timestamp}
+                              </span>
+                              {msg.isCurrentUser && (
+                                <DoubleCheckIcon className="h-3 w-3 text-[#34b7f1]" />
                               )}
                             </div>
-                          ) : (
-                            <p className="whitespace-pre-wrap break-words text-[11px] leading-tight">
-                              {!msg.isCurrentUser && msg.sender ? (
-                                <span className="mb-0.5 block text-[10px] font-semibold text-emerald-700">
-                                  {msg.sender}
-                                </span>
-                              ) : null}
-                              {msg.text}
-                            </p>
-                          )}
+                          </div>
+                        </motion.div>
+                      ))}
 
-                          <div className="mt-0.5 flex items-center justify-end gap-1 self-end">
-                            <span
-                              className={cn(
-                                "text-[8.5px]",
-                                msg.isCurrentUser
-                                  ? "text-emerald-800/70"
-                                  : "text-neutral-400",
-                              )}
-                            >
-                              {msg.timestamp}
+                      {(showTyping || (interactive && busy)) && (
+                        <motion.div
+                          initial={{ opacity: 0, y: 6 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          className="flex items-center justify-start"
+                        >
+                          <div className="flex items-center gap-1.5 rounded-xl rounded-tl-none bg-white px-3 py-2">
+                            <span className="text-[10px] font-semibold text-emerald-600">
+                              …
                             </span>
-                            {msg.isCurrentUser && (
-                              <DoubleCheckIcon className="h-3 w-3 text-[#34b7f1]" />
-                            )}
+                            <div className="flex items-center gap-1">
+                              {[0, 1, 2].map((dotIndex) => (
+                                <motion.span
+                                  key={dotIndex}
+                                  className="h-1.5 w-1.5 rounded-full bg-emerald-500"
+                                  animate={{
+                                    y: [0, -3, 0],
+                                    opacity: [0.4, 1, 0.4],
+                                  }}
+                                  transition={{
+                                    duration: 0.6,
+                                    repeat: Infinity,
+                                    delay: dotIndex * 0.15,
+                                  }}
+                                />
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      </motion.div>
-                    ))}
-
-                    {(showTyping || (interactive && busy)) && (
-                      <motion.div
-                        initial={{ opacity: 0, y: 6 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="flex items-center justify-start"
-                      >
-                        <div className="flex items-center gap-1.5 rounded-xl rounded-tl-none bg-white px-3 py-2">
-                          <span className="text-[10px] font-semibold text-emerald-600">
-                            …
-                          </span>
-                          <div className="flex items-center gap-1">
-                            {[0, 1, 2].map((dotIndex) => (
-                              <motion.span
-                                key={dotIndex}
-                                className="h-1.5 w-1.5 rounded-full bg-emerald-500"
-                                animate={{
-                                  y: [0, -3, 0],
-                                  opacity: [0.4, 1, 0.4],
-                                }}
-                                transition={{
-                                  duration: 0.6,
-                                  repeat: Infinity,
-                                  delay: dotIndex * 0.15,
-                                }}
-                              />
-                            ))}
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
+                  </div>
                 </div>
               </>
             )}
@@ -577,10 +556,6 @@ export function MobileMockup({
                   placeholder={placeholder}
                   className="max-h-[88px] min-h-[20px] min-w-0 flex-1 resize-none bg-transparent py-0.5 text-[11px] leading-[1.35] text-neutral-800 outline-none placeholder:text-neutral-400"
                 />
-                <div className="mb-0.5 ml-1 flex shrink-0 items-center gap-2 self-end text-neutral-400">
-                  <PaperclipIcon />
-                  <CameraIcon />
-                </div>
               </div>
               <button
                 type={canSend ? "submit" : "button"}
@@ -602,12 +577,8 @@ export function MobileMockup({
               <button type="button" className="p-1 text-neutral-600" tabIndex={-1} aria-hidden>
                 <EmojiIcon />
               </button>
-              <div className="flex flex-1 items-center justify-between rounded-full bg-white px-3 py-1.5 text-xs text-neutral-400">
+              <div className="flex flex-1 items-center rounded-full bg-white px-3 py-1.5 text-xs text-neutral-400">
                 <span className="truncate">Message</span>
-                <div className="flex items-center gap-2 text-neutral-400">
-                  <PaperclipIcon />
-                  <CameraIcon />
-                </div>
               </div>
               <button
                 type="button"
