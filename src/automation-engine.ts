@@ -157,7 +157,8 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     return;
   }
 
-  const ab = pickAbVariant(auto);
+  const freshAuto = (await getAutomation(userId, auto.id)) ?? auto;
+  const ab = pickAbVariant(freshAuto);
   let message = ab.message.trim();
   if (!message) {
     await updateAutomationStatus(userId, auto.id, "failed");
@@ -185,13 +186,13 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   }
 
   const shouldPersonalize =
-    auto.type !== "group_broadcast" &&
+    freshAuto.type !== "group_broadcast" &&
     // 5 variantes validées = texte exact à envoyer (on choisit laquelle, on ne réécrit pas).
-    !(Array.isArray(auto.config.abVariants) && auto.config.abVariants.length >= 2) &&
-    auto.config.personalizeMessages === true;
+    !(Array.isArray(freshAuto.config.abVariants) && freshAuto.config.abVariants.length >= 2) &&
+    freshAuto.config.personalizeMessages === true;
 
   const isGroupBroadcast =
-    auto.type === "group_broadcast" || auto.config.mode === "group_broadcast";
+    freshAuto.type === "group_broadcast" || freshAuto.config.mode === "group_broadcast";
 
   if (shouldPersonalize) {
     try {
@@ -199,8 +200,8 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       message = await generatePersonalizedOpener(userId, {
         template: message,
         memberName: target.target_label || chatIdToDisplay(target.target_id),
-        groupName: auto.config.groupName || "groupe",
-        conversationGuide: auto.config.conversationGuide,
+        groupName: freshAuto.config.groupName || "groupe",
+        conversationGuide: freshAuto.config.conversationGuide,
         recentOpeners,
       });
     } catch (err) {
@@ -270,8 +271,8 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       recipient: target.target_id,
       recipientLabel: googleName ?? target.target_label ?? undefined,
       message: sanitizeOutboundWhatsAppText(message),
-      mediaUrl: auto.config.mediaUrl,
-      mediaType: auto.config.mediaType,
+      mediaUrl: freshAuto.config.mediaUrl,
+      mediaType: freshAuto.config.mediaType,
       priority,
       automationId: auto.id,
       abVariant: ab.variantId,
