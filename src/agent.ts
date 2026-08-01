@@ -12,7 +12,7 @@ import {
   type AppSettings,
 } from "./db.js";
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
-import { executeTool, TOOL_DEFINITIONS } from "./tools.js";
+import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
 import {
@@ -44,10 +44,16 @@ import {
   isGroupActionNotCatalogRequest,
   wantsExplicitGroupCatalog,
 } from "./group-list-intent.js";
+import {
+  compactAgentHistory,
+  selectToolsForAgentTurn,
+  slimToolResultForLlm,
+} from "./agent-context-budget.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
 const MAX_TOOL_ROUNDS = 12;
-const CHAT_HISTORY_LIMIT = 24;
+/** 18 + compaction : assez de fil conducteur sans pavés simu/plan. */
+const CHAT_HISTORY_LIMIT = 18;
 
 const MEMORY_REQUIRED_REPLY =
   "Avant de continuer, connecte une **mémoire** à cette automatisation.\n\n" +
@@ -120,12 +126,11 @@ const SILENT_TWEAK_AFTER_SIM_NUDGE =
   "Une simulation a DÉJÀ été montrée. L'utilisateur demande une modification ou pose une question. " +
   "INTERDIT d'écrire un fil Toi → / Prospect → dans le chat. " +
   "INTERDIT de coller un planDisplay / fence de plan dans ta réponse. " +
-  "Si modif (ton, accroche, prix, relances, vouvoiement…) → applique via update_automation_config " +
-  "(et initial_message / conversation_guide si besoin), puis appelle show_campaign_simulation " +
-  "pour actualiser le **téléphone à droite** (sauf s'il dit de ne pas re-simuler). " +
-  "Confirme en 1–2 phrases courtes + « c'est bon » pour activer. " +
-  "Si question seule → réponds clairement, sans outil de simulation. " +
-  "Ne régénère PAS une simulation sauf après une modif de config ou demande explicite (« refais »).";
+  "Si modif (ton, accroche, prix, relances, vouvoiement…) → applique UNIQUEMENT via update_automation_config " +
+  "(et initial_message / conversation_guide si besoin). Confirme en 1–2 phrases. " +
+  "INTERDIT d'appeler show_campaign_simulation sauf demande explicite (« refais la simulation », « reteste »). " +
+  "Propose « refais la simulation » ou « c'est bon » pour activer. " +
+  "Si question seule → réponds clairement, sans outil de simulation.";
 
 /** Outils d'envoi réel — bloqués pendant une demande de simulation. */
 const OUTBOUND_SEND_TOOLS = new Set([
@@ -185,29 +190,12 @@ async function buildBusinessContext(
     }`
   );
   lines.push(
-    `## Profil business (RAPPEL TECHNIQUE — PAS une vérité absolue)\n` +
-      `Prénom / nom enregistré : ${settings.business_owner_name || "(non configuré — INTERDIT d'inventer un prénom ; rester neutre)"}\n` +
-      `Offre enregistrée (peut être OBSOLÈTE) : ${settings.business_offer || "(non configuré)"}\n` +
-      `Tarif enregistré : ${settings.business_price || "(non communiqué)"}\n\n` +
-      `⚠️ RÈGLE STRICTE : ce profil est un **indice optionnel**, PAS la source de vérité pour une campagne.\n` +
-      `- Pour une **NOUVELLE campagne** : pose TOUJOURS une question ouverte sur l'offre actuelle ` +
-      `("Qu'est-ce que tu proposes concrètement à ces personnes ?"). ` +
-      `N'affirme JAMAIS "tu vends X" / "produits cosmétiques" / etc. d'après ce profil.\n` +
-      `- Tu peux mentionner l'ancienne offre SEULEMENT comme question de confirmation : ` +
-      `"Ton profil indiquait autrefois « … » — c'est toujours ça, ou ça a changé ?"\n` +
-      `- N'utilise l'offre/prix du profil dans create_automation / messages WhatsApp ` +
-      `QUE si l'utilisateur les a **confirmés explicitement** dans cette conversation.\n` +
-      `- **Identité** : si prénom non configuré, ne te présente JAMAIS avec un nom (Will, etc.). Reste neutre.`
+    `## Profil business (indice optionnel — PAS source de vérité campagne)\n` +
+      `Nom : ${settings.business_owner_name || "(non configuré — ne pas inventer)"}\n` +
+      `Offre enregistrée (peut être obsolète) : ${settings.business_offer || "(non configuré)"}\n` +
+      `Tarif : ${settings.business_price || "(non communiqué)"}\n` +
+      `Nouvelle campagne → question ouverte sur l'offre actuelle. Utilise offre/prix ici SEULEMENT si confirmés dans CE chat. Mémoire active = priorité.`
   );
-  lines.push(
-    `## Rappel campagnes\n` +
-      `Parle comme un pro WhatsApp humain, créatif et concis — sans te donner de prénom inventé. ` +
-      `Prospection / support / closing = briefing progressif (≥5 questions, une à la fois). ` +
-      `Après « nouvelle campagne » → 1ʳᵉ question = offre ACTUELLE (ouverte, sans inventer). ` +
-      `Demande aussi la fenêtre horaire d'envoi et le jour/heure de lancement. ` +
-      `Objectif RDV → lien de réservation. Après brief : demande d'abord le 1er message souhaité, puis propose 5 variantes d'accroche, fais valider, puis create avec ab_variants. ` +
-      `Simulation = 6-7 messages max + feedback (1er tour = accroche validée).`
-    );
 
   try {
     const quota = await getOutreachQuotaSnapshot(userId);
@@ -279,18 +267,16 @@ async function buildBusinessContext(
           custom_followup: "suivi",
           group_broadcast: "diffusion groupes",
         };
-        const linesAuto = allAutos.map((a) => {
+        const linesAuto = allAutos.slice(0, 12).map((a) => {
           const linkedHere = thread?.automation_id === a.id ? " ← CE FIL" : "";
-          return `- « ${a.name} » [${a.status}] ${typeLabel[a.type] ?? a.type}${linkedHere} (id interne ${a.id})`;
+          return `- « ${a.name} » [${a.status}] ${typeLabel[a.type] ?? a.type}${linkedHere}`;
         });
+        const more =
+          allAutos.length > 12 ? `\n(+${allAutos.length - 12} autres — list_automations si besoin)` : "";
         lines.push(
-          `## Campagnes existantes (compte)\n` +
-            `${linesAuto.join("\n")}\n\n` +
-            `Règles :\n` +
-            `- Tu peux **citer les noms + statuts** à l'utilisateur (liste verticale). N'affiche PAS les id numériques.\n` +
-            `- Tu ne peux **modifier / activer** que la campagne marquée « CE FIL » (ou après create_automation sur ce fil).\n` +
-            `- Campagne d'un **autre** fil → invite à l'ouvrir dans la barre latérale (même nom). ` +
-            `INTERDIT de dire que tu la modifies depuis ici.`
+          `## Campagnes (compte)\n` +
+            `${linesAuto.join("\n")}${more}\n` +
+            `Modifier/activer = seulement « CE FIL ». Autre fil → barre latérale. Pas d'id numérique à l'utilisateur.`
         );
       } else {
         lines.push(
@@ -323,14 +309,11 @@ async function buildBusinessContext(
             .filter(Boolean)
             .slice(0, 5);
           lines.push(
-            `## Accroche validée (cadre strict)\n` +
-              `initial_message : « ${auto.config.initialMessage.trim()} »\n` +
+            `## Accroche validée\n` +
+              `« ${auto.config.initialMessage.trim()} »\n` +
               (variants.length
-                ? `ab_variants (${variants.length}) :\n` +
-                  variants.map((m, i) => `${i + 1}. « ${m} »`).join("\n") +
-                  "\n"
-                : "") +
-              `En simulation et en envoi : rester dans CE cadre (micro-variation OK). Pas de pitch complet au 1er message.`
+                ? `(${variants.length} variantes A/B en config — micro-variation OK, pas de pitch au 1er message.)`
+                : `Pas de pitch complet au 1er message.`)
           );
         }
       }
@@ -449,11 +432,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
 
   const client = await getOpenAiClient(userId);
-  const [settings, history, thread] = await Promise.all([
+  const [settings, historyRaw, thread] = await Promise.all([
     getAppSettings(userId),
     getRecentAgentMessages(userId, threadId, CHAT_HISTORY_LIMIT),
     getAgentThread(userId, threadId),
   ]);
+  const history = compactAgentHistory(historyRaw);
 
   const businessContext = await buildBusinessContext(userId, settings, connection, threadId);
   const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
@@ -483,17 +467,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     messages.push({ role: "system", content: memoryNudge });
   }
 
-  // Rappel tour-par-tour : fidélité mémoire + chat + exécution exacte
+  // Rappel court : fidélité mémoire (détail déjà dans businessContext)
   if (linkedMemory) {
     messages.push({
       role: "system",
       content:
-        `## Rappel tour — fidélité & exécution\n` +
-        `Mémoire liée : « ${linkedMemory.name} ». La section « Mémoire active » du contexte est la version à jour ` +
-        `(rechargée à chaque message — y compris après édition en live). Respecte-la à la lettre.\n` +
-        `Demande utilisateur (ce tour) : exécute EXACTEMENT ce qu'il demande. ` +
-        `Utilise les faits déjà donnés dans ce fil et dans la mémoire. Ne change pas de sujet. ` +
-        `Ne propose pas d'alternative non demandée. Une question max si une info critique manque, sinon agis.`,
+        `Mémoire « ${linkedMemory.name} » = source de vérité (rechargée ce tour). ` +
+        `Exécute exactement la demande utilisateur ; une question max si info critique manquante.`,
     });
   }
 
@@ -508,6 +488,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const turnMode = resolveSimulationTurnMode(history, userMessage);
   const forceSim = turnMode === "force_sim";
   const silentTweakAfterSim = turnMode === "silent_tweak";
+
+  const toolsForTurn = selectToolsForAgentTurn({
+    purpose: thread?.purpose,
+    userMessage,
+    recentHistory: history,
+  });
 
   // Chemin fiable : simu sans tools / sans tool_choice (DeepSeek v4 thinking = 400 sinon).
   if (forceSim) {
@@ -591,7 +577,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         client.chat.completions.create({
         model: config.openaiModel,
         messages,
-        tools: TOOL_DEFINITIONS,
+        tools: toolsForTurn,
         tool_choice: "auto",
           temperature: 0.65,
           max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
@@ -869,9 +855,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         // Si l'outil a déjà formaté le fil de simulation / le plan, on l'affiche tel quel
         if (toolCall.function.name === "show_campaign_simulation") {
           try {
-            const parsed = JSON.parse(result) as { success?: boolean; display?: string };
-            if (parsed.success && parsed.display?.trim()) {
-              return parsed.display.trim();
+            const parsed = JSON.parse(result) as {
+              success?: boolean;
+              display?: string;
+              _uiDisplay?: string;
+            };
+            const ui = parsed._uiDisplay?.trim() || parsed.display?.trim();
+            if (parsed.success && ui) {
+              return ui;
             }
           } catch {
             /* fall through */
@@ -902,7 +893,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
               messages.push({
                 role: "tool",
                 tool_call_id: toolCall.id,
-                content: result,
+                content: slimToolResultForLlm(toolCall.function.name, result),
               });
               return parsed.planDisplay.trim();
             }
@@ -914,7 +905,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         messages.push({
           role: "tool",
           tool_call_id: toolCall.id,
-          content: result,
+          content: slimToolResultForLlm(toolCall.function.name, result),
         });
       }
 

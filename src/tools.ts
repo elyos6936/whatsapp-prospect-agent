@@ -4306,10 +4306,19 @@ export async function executeTool(
             name: fresh?.automation.name,
             type: fresh?.automation.type,
             status: fresh?.automation.status,
-            config: fresh?.automation.config,
+            configSummary: {
+              initialMessage: fresh?.automation.config.initialMessage ?? null,
+              price: fresh?.automation.config.price ?? null,
+              productName: fresh?.automation.config.productName ?? null,
+              closingLink: fresh?.automation.config.closingLink ?? null,
+              abVariantsCount: fresh?.automation.config.abVariants?.length ?? 0,
+              guideChars: fresh?.automation.config.conversationGuide?.length ?? 0,
+            },
             resolvedContacts: extra?.resolvedCount,
             unresolved: extra?.unresolved,
-            plan,
+            plan: plan
+              ? { title: plan.title, automationId: plan.automationId, type: plan.type }
+              : undefined,
             planDisplay: plan
               ? formatPlanDisplay(
                   plan,
@@ -4344,13 +4353,22 @@ export async function executeTool(
           name: auto.name,
           type: auto.type,
           status: "draft",
-          config: auto.config,
+          configSummary: {
+            initialMessage: auto.config.initialMessage ?? null,
+            price: auto.config.price ?? null,
+            productName: auto.config.productName ?? null,
+            closingLink: auto.config.closingLink ?? null,
+            abVariantsCount: auto.config.abVariants?.length ?? 0,
+            guideChars: auto.config.conversationGuide?.length ?? 0,
+          },
           resolvedContacts: extra?.resolvedCount,
           unresolved: extra?.unresolved,
           otherActiveCampaigns: otherActive.map((a) => ({ id: a.id, name: a.name })),
           keepAsDraft: true,
           doNotActivateYet: otherActive.length > 0,
-          plan,
+          plan: plan
+            ? { title: plan.title, automationId: plan.automationId, type: plan.type }
+            : undefined,
           planDisplay: plan
             ? formatPlanDisplay(
                 plan,
@@ -4747,8 +4765,19 @@ export async function executeTool(
       return JSON.stringify({
         success: true,
         automationId: id,
-        config: updated?.config,
-        plan,
+        configSummary: {
+          initialMessage: updated?.config.initialMessage ?? null,
+          price: updated?.config.price ?? null,
+          productName: updated?.config.productName ?? null,
+          closingLink: updated?.config.closingLink ?? null,
+          closingGoal: updated?.config.closingGoal ?? null,
+          abVariantsCount: updated?.config.abVariants?.length ?? 0,
+          guideChars: updated?.config.conversationGuide?.length ?? 0,
+          livePlaybookTurns: updated?.config.livePlaybook?.turns?.length ?? 0,
+        },
+        plan: plan
+          ? { title: plan.title, automationId: plan.automationId, type: plan.type }
+          : undefined,
         // Pas de planDisplay : évite de re-coller le fence / re-simuler à chaque tweak.
         message:
           `Campagne « ${detail.automation.name} » mise à jour` +
@@ -4858,14 +4887,27 @@ export async function executeTool(
         type: automation.type,
         status: automation.status,
         summary: automation.summary,
-        config: automation.config,
+        configSummary: {
+          initialMessage: automation.config.initialMessage ?? null,
+          price: automation.config.price ?? null,
+          productName: automation.config.productName ?? null,
+          closingLink: automation.config.closingLink ?? null,
+          closingGoal: automation.config.closingGoal ?? null,
+          triggerPhrases: automation.config.triggerPhrases ?? automation.config.keywords ?? null,
+          inboundCatchAll: automation.config.inboundCatchAll ?? false,
+          abVariantsCount: automation.config.abVariants?.length ?? 0,
+          guideChars: automation.config.conversationGuide?.length ?? 0,
+          stickersEnabled: automation.config.stickersEnabled ?? false,
+          quietHoursStart: automation.config.quietHoursStart ?? null,
+          quietHoursEnd: automation.config.quietHoursEnd ?? null,
+        },
         stats: automation.stats,
         budgetFcfa: automation.budget_fcfa,
         targetsTotal: targets.length,
         targetsPending: targets.filter((t) => t.status === "pending").length,
         targetsContacted: targets.filter((t) => t.status === "contacted").length,
         targetsReplied: targets.filter((t) => t.status === "replied").length,
-        recentLogs: logs.slice(0, 15).map((l) => ({
+        recentLogs: logs.slice(0, 8).map((l) => ({
           level: l.level,
           message: l.message,
           at: l.created_at,
@@ -4991,10 +5033,14 @@ export async function executeTool(
       }
       return JSON.stringify({
         success: true,
-        display,
         turns: turns.length,
         message:
-          "Simulation prête (téléphone). Playbook synchronisé avec la campagne / réponses prospects.",
+          "Simulation prête (téléphone). Playbook synchronisé avec la campagne / réponses prospects. " +
+          "Confirme en 1–2 phrases — le fil est sur le téléphone, ne le recolle pas dans le chat.",
+        // display réservé à l'early-return agent (UI) — omis ici pour ne pas le réinjecter en boucle LLM
+        display:
+          "```klanvio-sim\n[Simulation compactée — affichée sur le téléphone.]\n```",
+        _uiDisplay: display,
       });
     }
 
