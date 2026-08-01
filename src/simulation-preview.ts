@@ -132,7 +132,7 @@ function buildSimCampaignContext(
     `Tu es en SIMULATION téléphone — 0 envoi réel — mais tes réponses doivent être`,
     `IDENTIQUES à ce que tu écrirais à un vrai prospect (même playbook, même ton).`,
     outbound
-      ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », NE RECOPIE PAS le prochain tour du playbook (souvent une fausse intro « ravi d'échanger »). Continue ton accroche avec 1 question concrète.`
+      ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », INTERDIT de te présenter (nom + bio). Enchaîne 1 question concrète liée à la mission.`
       : [
           `IMPORTANT ENTRANT (support) : LE CLIENT a écrit en premier. Tu gères le compte / la boutique.`,
           `INTERDIT de parler comme en prospection (« Bonjour, c'est X, je vous contacte au sujet de… », pitch d'ouverture).`,

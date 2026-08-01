@@ -169,11 +169,13 @@ export function legacyFieldsToInstructions(fields: {
   if (owner) {
     lines.push(
       intro
-        ? `- Je me présente comme ${owner} (« ${intro} »).`
-        : `- Je me présente comme ${owner}.`
+        ? `- Identité (SEULEMENT si on demande qui tu es) : ${owner} (« ${intro} »). INTERDIT de te présenter après un simple « salut / ok ».`
+        : `- Identité (SEULEMENT si on demande qui tu es) : ${owner}. INTERDIT de te présenter après un simple « salut / ok ».`
     );
   } else {
-    lines.push("- Je me présente comme [prénom], [rôle] de [entreprise].");
+    lines.push(
+      "- Identité : [prénom] — à donner SEULEMENT si on demande qui tu es (pas après « salut / ok »)."
+    );
   }
   const tone = memoryToneLabel(normalizeTone(fields.tone)).toLowerCase();
   const note = (fields.toneNote ?? "").trim();

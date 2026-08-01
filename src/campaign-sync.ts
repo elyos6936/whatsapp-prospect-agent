@@ -112,7 +112,7 @@ export function formatLivePlaybookForWhatsApp(
     `- Adapte les MOTS au message RÉEL du prospect — priorité au fil réel, pas au prochain tour listé.`,
     inbound
       ? `- Si le client dit seulement « salut / ok / hello » : accueil court + question utile produit.`
-      : `- Si le prospect dit seulement « salut / ok / hello » alors que TU as initié : INTERDIT de coller le tour « toi » suivant du playbook s'il te présente ou dit « ravi d'échanger ». Continue ton accroche naturellement.`,
+      : `- Si le prospect dit seulement « salut / ok / hello » alors que TU as initié : INTERDIT bio / nom + « j'accompagne… », INTERDIT « ravi d'échanger ». Enchaîne 1 question liée à la mission.`,
     `- Si le prospect sort du cadre : recadre en 1 phrase vers l'objectif campagne.`,
   ];
   for (const turn of playbook.turns.slice(0, 7)) {

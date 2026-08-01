@@ -39,6 +39,7 @@ Si le prospect demande **juste** le lien / le prix / un seul message :
 3. **COURT** : 1-2 phrases vivantes (court ≠ sec).
 4. **PAS DE RE-SALUT / RE-PRÉSENTATION** si le fil est déjà engagé (sauf s'il demande explicitement qui tu es).
 5. **SORTANT** : si TU as ouvert, n'agis jamais comme s'il t'avait contacté (« ravi d'échanger », « merci de votre message »).
+5b. **Après « Salut / Hello / Ok »** (TU as déjà ouvert) : INTERDIT de balancer ton nom + bio (« Will… J'accompagne… »). Enchaîne directement 1 question / point lié à la mission.
 6. **ENTRANT** : le client a initié — accueil / support, pas de cold outreach.
 7. **ZÉRO CROCHETS** [prix], [lien], etc.
 8. **VOUVOIEMENT**. Pas de prénom du prospect à tout va.
@@ -49,6 +50,7 @@ Si le prospect demande **juste** le lien / le prix / un seul message :
 
 ## Intentions utiles (exemples — adapte, ne copie pas)
 - Qui es-tu → prénom business + pourquoi on écrit (1 souffle).
+- Salut / hello / ok après TON opener → enchaîner la mission (1 question), **pas** de présentation.
 - Où as-tu eu mon numéro → transparence + source vraie du contexte.
 - Confusion / « je ne comprends pas » → clarifier **ton** dernier message.
 - Oui après offre de lien → envoyer le lien réel.
@@ -350,16 +352,24 @@ export async function generateWhatsAppReply(userId: number, input: {
   const ongoing = input.forceOngoing === true || isOngoingConversation || inbound;
   const lastOut = [...policyHistory].reverse().find((m) => m.direction === "sortant");
   const lastOutSnippet = lastOut?.body?.trim().slice(0, 180) || "";
+  const shortAck =
+    input.incomingText.trim().length <= 24 &&
+    /^(salut|hello|bonjour|bonsoir|hey|hi|coucou|ok|okay|d'accord|dac|bsr|oui)[!?.…]*$/i.test(
+      input.incomingText.trim()
+    );
 
-  // Un seul filet produit critique : oui après offre de lien → livrer l'URL.
-  // Le reste = raisonnement IA sur l'historique (pas de scripts cas-par-cas).
+  // Filets critiques seulement — le reste = raisonnement IA.
   const hardOverride = affirmingPendingSend
     ? `\n## ACTION REQUISE\n` +
       `Tu as proposé d'envoyer le lien. Le prospect dit « ${input.incomingText.trim()} ». ` +
       `Inclus MAINTENANT l'URL campagne du contexte. Pas de clôture sans lien.\n`
-    : inbound
-      ? `\n## Mode ENTRANT\nLe client a initié — support/closing, pas de cold outreach.\n`
-      : "";
+    : !inbound && ongoing && shortAck
+      ? `\n## ACTION REQUISE\n` +
+        `TU as déjà ouvert. Il répond juste « ${input.incomingText.trim()} ». ` +
+        `INTERDIT : te présenter (nom + bio / « j'accompagne… »). Enchaîne 1 question liée à la mission.\n`
+      : inbound
+        ? `\n## Mode ENTRANT\nLe client a initié — support/closing, pas de cold outreach.\n`
+        : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
 ${await businessContextBlock(userId)}
@@ -379,6 +389,10 @@ ${input.senderName}: ${input.incomingText}
 
 Raisonne : que signifie sa réponse par rapport à TON dernier message ? Réponds en 1-2 phrases WhatsApp, mission campagne. Inattendu → clarifie/recadre, jamais de reset.${
     affirmingPendingSend ? " Inclus l'URL campagne." : ""
+  }${
+    !inbound && ongoing && shortAck && !affirmingPendingSend
+      ? " Pas de présentation / bio."
+      : ""
   }`;
 
   const response = await callOpenAiWithRetry(() =>
