@@ -40,14 +40,12 @@ import {
 } from "./campaign-memory.js";
 import {
   detectQuickGroupMembersIntent,
-  detectQuickGroupProspectIntent,
   detectQuickListIntent,
   isGroupActionNotCatalogRequest,
   wantsExplicitGroupCatalog,
 } from "./group-list-intent.js";
 import {
   compactAgentHistory,
-  resolveMaxToolRounds,
   selectToolsForAgentTurn,
   slimToolResultForLlm,
 } from "./agent-context-budget.js";
@@ -58,8 +56,8 @@ import {
   stripDsmlMarkup,
 } from "./dsml-tool-calls.js";
 
-/** Tours LLM+outils : plafond dynamique via resolveMaxToolRounds (3–8). */
-const MAX_TOOL_ROUNDS_HARD_CAP = 8;
+/** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
+const MAX_TOOL_ROUNDS = 12;
 /** 18 + compaction : assez de fil conducteur sans pavés simu/plan. */
 const CHAT_HISTORY_LIMIT = 18;
 
@@ -382,47 +380,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     );
   }
 
-  // Chemin rapide : prospection membres d'un groupe nommé (0 tour LLM pour le fetch)
-  const prospectQuick = detectQuickGroupProspectIntent(userMessage);
-  if (prospectQuick) {
-    const mem = await getLinkedCampaignMemory(userId, threadId).catch(() => null);
-    if (!mem) {
-      return MEMORY_REQUIRED_REPLY;
-    }
-    try {
-      const found = await findGroupByNameOrId(userId, prospectQuick.groupQuery);
-      if (!found) {
-        return (
-          `Groupe introuvable : « ${prospectQuick.groupQuery} ».\n\n` +
-          `Vérifie le nom exact (copier-coller depuis WhatsApp) ou demande « liste mes groupes ».`
-        );
-      }
-      const data = await getGroupMembers(userId, found.id);
-      const members = data.participants;
-      const adminCount = members.filter((p) => p.isAdmin).length;
-      const groupLabel = data.subject || found.name;
-      const preview = members.slice(0, 8).map((p) => {
-        const label = (p.name || chatIdToDisplay(p.id)).trim();
-        return p.isAdmin ? `${label} (admin)` : label;
-      });
-      const previewBlock =
-        preview.length > 0
-          ? `\nAperçu : ${preview.join(" · ")}${members.length > 8 ? "…" : ""}\n`
-          : "\n";
-      return (
-        `Groupe **« ${groupLabel} »** trouvé — **${members.length} membres**` +
-        (adminCount ? ` (dont ${adminCount} admin)` : "") +
-        `.\n` +
-        previewBlock +
-        `\nOn part sur une campagne **group_prospect** (DM aux membres). ` +
-        `Mémoire **« ${mem.name} »** = source de vérité.\n\n` +
-        `Une question pour avancer : **qu'est-ce que tu proposes concrètement à ces personnes ?**`
-      );
-    } catch (err) {
-      return userFacingError(err);
-    }
-  }
-
   // Chemin rapide : extraction membres d'un groupe nommé
   const membersQuick = detectQuickGroupMembersIntent(userMessage);
   if (membersQuick) {
@@ -548,14 +505,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     userMessage,
     recentHistory: history,
   });
-  const maxToolRounds = Math.min(
-    MAX_TOOL_ROUNDS_HARD_CAP,
-    resolveMaxToolRounds({
-      userMessage,
-      forceSim,
-      turnMode,
-    })
-  );
 
   // Chemin fiable : simu sans tools / sans tool_choice (DeepSeek v4 thinking = 400 sinon).
   if (forceSim) {
@@ -629,7 +578,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   let simFixAttempts = 0;
   let forcedSimUsed = false;
 
-  while (rounds < maxToolRounds) {
+  while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
 
     // Toujours "auto" : DeepSeek thinking refuse tool_choice forcé (HTTP 400).
@@ -672,7 +621,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         console.warn(
           `[agent] DSML récupéré → ${recovered.toolCalls.map((t) => t.function.name).join(", ")}`
         );
-      } else if (rounds < maxToolRounds) {
+      } else if (rounds < MAX_TOOL_ROUNDS) {
         messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       } else {
@@ -917,14 +866,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         }
 
         // Listes préformatées : afficher `display` tel quel (évite le rewrite LLM en mur de texte).
-        // get_group_members : dump UI seulement si l'utilisateur LISTE (pas prospecte).
+        // get_group_members : TOUJOURS (même si « action » sur un groupe).
         // catalogue groupes : seulement si demandé explicitement.
-        const listingMembersOnly =
-          toolCall.function.name === "get_group_members" &&
-          !/\bprospect/i.test(userMessage) &&
-          !detectQuickGroupProspectIntent(userMessage);
         const preferToolDisplay =
-          listingMembersOnly ||
+          toolCall.function.name === "get_group_members" ||
           toolCall.function.name === "list_personal_contacts" ||
           toolCall.function.name === "list_contacts" ||
           toolCall.function.name === "list_prospected_contacts" ||
@@ -1012,14 +957,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     let text = extractAssistantContent(assistantMsg);
     if (containsDsmlToolMarkup(text)) {
       const cleaned = stripDsmlMarkup(text);
-      if (!cleaned && rounds < maxToolRounds) {
+      if (!cleaned && rounds < MAX_TOOL_ROUNDS) {
         messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       }
       text = cleaned;
     }
     if (!text) {
-      if (forceSim && !forcedSimUsed && rounds < maxToolRounds) {
+      if (forceSim && !forcedSimUsed && rounds < MAX_TOOL_ROUNDS) {
         messages.push({
           role: "system",
           content: FORCE_SIMULATION_NUDGE,
@@ -1030,7 +975,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
 
     // Garde-fou : annonce se terminant par « : » sans contenu.
-    if (isDanglingAnnouncement(text) && rounds < maxToolRounds) {
+    if (isDanglingAnnouncement(text) && rounds < MAX_TOOL_ROUNDS) {
       messages.push({ role: "assistant", content: text });
       messages.push({
         role: "system",
@@ -1044,7 +989,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     if (
       shouldBlockDuplicateSimulation(history, userMessage) &&
       (hasSimulationThread(text) || isBrokenSimulationPreview(text)) &&
-      rounds < maxToolRounds
+      rounds < MAX_TOOL_ROUNDS
     ) {
       messages.push({ role: "assistant", content: text });
       messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
@@ -1052,7 +997,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
 
     // Garde-fou simulation vide / incomplète.
-    if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < maxToolRounds) {
+    if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < MAX_TOOL_ROUNDS) {
       simFixAttempts++;
       messages.push({ role: "assistant", content: text });
       messages.push({
@@ -1064,7 +1009,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
 
     // Si on forçait la simulation et qu'on a du texte sans fil → forcer l'outil
-    if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < maxToolRounds) {
+    if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < MAX_TOOL_ROUNDS) {
       messages.push({ role: "assistant", content: text });
       messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
       continue;

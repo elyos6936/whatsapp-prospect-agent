@@ -156,45 +156,6 @@ export function slimToolResultForLlm(toolName: string, rawJson: string): string 
     };
   }
 
-  // get_group_members : aperçu seulement (create_automation group_prospect utilise le nom/id)
-  if (toolName === "get_group_members" && Array.isArray(obj.members)) {
-    const members = obj.members as Array<{
-      display?: string;
-      name?: string | null;
-      isAdmin?: boolean;
-      id?: string;
-    }>;
-    const total =
-      typeof obj.size === "number"
-        ? obj.size
-        : typeof obj.shown === "number"
-          ? Math.max(Number(obj.shown), members.length)
-          : members.length;
-    const admins = members.filter((m) => m.isAdmin);
-    const preview = members.slice(0, 20).map((m) => ({
-      display: m.display ?? m.id ?? "?",
-      name: m.name ?? null,
-      isAdmin: Boolean(m.isAdmin),
-    }));
-    delete obj.members;
-    obj.display =
-      `Groupe « ${String(obj.name ?? "?")} » — ${total} membres` +
-      (admins.length ? ` (${admins.length} admin)` : "") +
-      `. Aperçu ${preview.length}/${total} (reste omis pour budget tokens). ` +
-      `Pour prospecter : create_automation(type=group_prospect, group_id=nom du groupe).`;
-    obj.totalMembers = total;
-    obj.adminCount = admins.length;
-    obj.adminsPreview = admins.slice(0, 8).map((m) => ({
-      display: m.display ?? m.id,
-      name: m.name ?? null,
-    }));
-    obj.membersPreview = preview;
-    obj.membersOmitted = Math.max(0, total - preview.length);
-    obj.hint =
-      "Ne recopie PAS tous les numéros. Confirme le total + le nom du groupe. " +
-      "create_automation group_prospect avec group_id = nom/id du groupe.";
-  }
-
   // get_automation_report : targets/logs déjà bornés ; config slimée ci-dessus
   if (toolName === "get_automation_report" && Array.isArray(obj.recentLogs)) {
     obj.recentLogs = obj.recentLogs.slice(0, 8);
@@ -207,15 +168,25 @@ export function slimToolResultForLlm(toolName: string, rawJson: string): string 
   return out;
 }
 
-/** Noyau minimal campagne / brief — ~18 outils (pas les ~40 send/admin). */
-const PROSPECT_LEAN_TOOL_NAMES = new Set([
+const CORE_TOOL_NAMES = new Set([
   "check_whatsapp_connection",
   "list_whatsapp_groups",
-  "get_group_members",
-  "get_group_info",
+  "list_whatsapp_channels",
   "list_personal_contacts",
   "list_contacts",
+  "get_group_members",
+  "get_group_info",
+  "send_whatsapp_message",
+  "schedule_whatsapp_message",
+  "message_all_group_members",
+  "save_contact",
   "list_prospected_contacts",
+  "set_auto_reply",
+  "block_contact",
+  "unblock_contact",
+  "check_whatsapp_number",
+  "get_contact_conversation",
+  "get_daily_bilan",
   "get_outreach_status",
   "save_business_profile",
   "get_business_profile",
@@ -234,40 +205,8 @@ const PROSPECT_LEAN_TOOL_NAMES = new Set([
   "list_typeform_responses",
   "list_connected_sheets",
   "read_google_sheet",
-]);
-
-const CORE_TOOL_NAMES = new Set([
-  ...PROSPECT_LEAN_TOOL_NAMES,
-  "list_whatsapp_channels",
-  "send_whatsapp_message",
-  "schedule_whatsapp_message",
-  "message_all_group_members",
-  "save_contact",
-  "set_auto_reply",
-  "block_contact",
-  "unblock_contact",
-  "check_whatsapp_number",
-  "get_contact_conversation",
-  "get_daily_bilan",
   "mark_chat_read",
   "search_messages",
-]);
-
-const SEND_TOOL_NAMES = new Set([
-  "send_whatsapp_message",
-  "schedule_whatsapp_message",
-  "message_all_group_members",
-  "send_whatsapp_media",
-  "send_whatsapp_voice",
-  "send_whatsapp_sticker",
-  "send_whatsapp_status",
-  "send_whatsapp_reaction",
-  "send_location",
-  "send_contact",
-  "send_whatsapp_poll",
-  "send_whatsapp_list",
-  "send_channel_message",
-  "send_presence",
 ]);
 
 const MEDIA_TOOL_NAMES = new Set([
@@ -314,41 +253,6 @@ function toolNameOf(t: OpenAI.Chat.Completions.ChatCompletionTool): string | nul
 }
 
 /**
- * Plafond de tours LLM+outils selon l'intention.
- * Listes / actions simples → 3–4 ; brief campagne → 6 ; défaut 8 (plus 12).
- */
-export function resolveMaxToolRounds(opts: {
-  userMessage: string;
-  forceSim?: boolean;
-  turnMode?: string;
-}): number {
-  if (opts.forceSim) return 4;
-  if (opts.turnMode === "activation_confirm" || opts.turnMode === "silent_tweak") return 4;
-  if (opts.turnMode === "decline_sim") return 2;
-
-  const t = opts.userMessage.trim().toLowerCase();
-  if (!t) return 6;
-
-  const isListOnly =
-    /\b(liste|lister|montre|afficher|voir|bilan|statut|combien)\b/i.test(t) &&
-    !/\b(prospect|campagne|crée|creer|activ|simul|automatis)/i.test(t);
-  if (isListOnly) return 3;
-
-  if (
-    /\b(envoie|envoyer|programme|schedule|message)\b/i.test(t) &&
-    !/\b(prospect|campagne|automatis|simul)/i.test(t)
-  ) {
-    return 4;
-  }
-
-  if (/\b(prospect|campagne|brief|accroche|variante|automatis|simul)/i.test(t)) {
-    return 6;
-  }
-
-  return 8;
-}
-
-/**
  * Sous-ensemble d'outils pour le tour — le noyau campagne/WhatsApp reste toujours là.
  * Les outils rares (média, admin groupe, privacy) s'ajoutent si le fil / message les évoque.
  */
@@ -364,33 +268,11 @@ export function selectToolsForAgentTurn(opts: {
     .join("\n")
     .toLowerCase();
 
-  const wantsProspectLean =
-    opts.purpose === "prospection" ||
-    opts.purpose === "support" ||
-    /\b(prospect|campagne|accroche|variante|brief|automatisation|simul|closing|support)/i.test(
-      blob
-    );
+  const needed = new Set(CORE_TOOL_NAMES);
 
-  const needed = new Set(wantsProspectLean ? PROSPECT_LEAN_TOOL_NAMES : CORE_TOOL_NAMES);
-
-  if (
-    /\b(envoie|envoyer|programme|schedule|poste|publie|message[_ ]all)\b/i.test(blob) ||
-    opts.purpose === "groupes"
-  ) {
-    for (const n of SEND_TOOL_NAMES) {
-      if (CORE_TOOL_NAMES.has(n) || MEDIA_TOOL_NAMES.has(n)) needed.add(n);
-    }
-    needed.add("send_whatsapp_message");
-    needed.add("schedule_whatsapp_message");
-    needed.add("message_all_group_members");
-  }
-
-  // Admin groupe : purpose groupes OU action admin explicite (pas le seul mot « groupe »)
   if (
     opts.purpose === "groupes" ||
-    /\b(crée(r)?\s+(un\s+)?groupe|invitation|quitter\s+le\s+groupe|promouvoi|rétrograd|ajoute\s+au\s+groupe|retire\s+du\s+groupe|admin\s+du\s+groupe)\b/i.test(
-      blob
-    )
+    /\b(groupe|admin|participant|invitation|quitter le groupe|crée(r)? un groupe)\b/i.test(blob)
   ) {
     for (const n of GROUP_ADMIN_TOOL_NAMES) needed.add(n);
   }
@@ -411,6 +293,7 @@ export function selectToolsForAgentTurn(opts: {
     for (const n of PROFILE_PRIVACY_TOOL_NAMES) needed.add(n);
   }
 
+  // Filet : si un nom d'outil hors noyau apparaît déjà dans l'historique récent, le garder
   for (const t of TOOL_DEFINITIONS) {
     const name = toolNameOf(t);
     if (!name || needed.has(name)) continue;
@@ -422,9 +305,9 @@ export function selectToolsForAgentTurn(opts: {
     return name != null && needed.has(name);
   });
 
-  if (selected.length > 0) return selected;
-  return TOOL_DEFINITIONS.filter((t) => {
+  // Jamais retomber sur les ~74 outils complets (coût tokens) — le noyau suffit.
+  return selected.length > 0 ? selected : TOOL_DEFINITIONS.filter((t) => {
     const name = toolNameOf(t);
-    return name != null && PROSPECT_LEAN_TOOL_NAMES.has(name);
+    return name != null && CORE_TOOL_NAMES.has(name);
   });
 }
