@@ -55,7 +55,7 @@ import {
 } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
-import { createKeywordHandoff, findMatchingHandoffKeyword, KEYWORD_HANDOFF_PROSPECT_REPLY, maybeCreateHandoff } from "./handoff.js";
+import { createKeywordHandoff, findMatchingHandoffKeyword, maybeCreateHandoff } from "./handoff.js";
 import { passesReplyGate, findActiveOutboundCampaign } from "./campaign-gating.js";
 import {
   detectInboundMedia,
@@ -1075,28 +1075,14 @@ async function runAutoReply(
           activeCampaign.id,
           "assistant",
           `🙋 Handoff humain — ${senderName} (${chatIdToDisplay(chatId)}) a écrit « ${matchedHandoffKw} ». ` +
-            `Campagne « ${activeCampaign.name} ». L'IA a arrêté ; reprenez la conversation depuis WhatsApp.`
+            `Campagne « ${activeCampaign.name} ». L'IA s'est arrêtée en silence (rien envoyé au contact) ; ` +
+            `reprenez depuis WhatsApp.`
         );
-        reply = KEYWORD_HANDOFF_PROSPECT_REPLY;
         console.log(
-          `🙋 Handoff mot-clé « ${matchedHandoffKw} » → ${senderName} (IA stoppée)`
+          `🙋 Handoff mot-clé « ${matchedHandoffKw} » → ${senderName} (IA stoppée, pas de msg prospect)`
         );
-        // Envoi immédiat du court message, puis return (pas de génération LLM)
-        try {
-          const typingMs = clampPresenceMs(
-            ANTI_BAN.presenceMinMs +
-              Math.floor(Math.random() * (ANTI_BAN.presenceMaxMs - ANTI_BAN.presenceMinMs + 1))
-          );
-          await sendWhatsAppPresence(userId, chatId, "composing", typingMs);
-        } catch {
-          /* best effort */
-        }
-        const sent = await sendWhatsAppMessage(userId, chatId, reply, {
-          enableAutoReply: false,
-          outboundProfile: "auto_reply",
-          automationId: activeCampaign.id,
-        });
-        console.log(`✅ Handoff notifié prospect → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+        // Silence côté client : pas d'annonce de transfert (révèlerait l'IA).
+        // Le propriétaire est déjà notifié sur son propre numéro.
         return;
       }
 
@@ -1189,7 +1175,20 @@ async function runAutoReply(
         automationContext,
       });
       if (handoff) {
-        console.log(`🙋 Handoff créé pour ${senderName} (score ${scoring.newScore})`);
+        console.log(`🙋 Handoff créé pour ${senderName} (score ${scoring.newScore}) — silence prospect`);
+        await cancelPendingSendQueueForRecipient(userId, chatId).catch(() => {});
+        if (activeCampaign) {
+          await saveAgentMessageForAutomation(
+            userId,
+            activeCampaign.id,
+            "assistant",
+            `🙋 Handoff humain — ${senderName} (${chatIdToDisplay(chatId)}). ` +
+              `${scoring.handoffReason || "Intervention recommandée"}. ` +
+              `L'IA s'est arrêtée en silence ; reprenez depuis WhatsApp.`
+          );
+        }
+        // Pas de réponse au contact : éviter de révéler le transfert / l'IA.
+        return;
       }
 
       reply = await generateWhatsAppReply(userId, {

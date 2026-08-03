@@ -1304,6 +1304,11 @@ export async function sendWhatsAppMessage(
     outboundGap?: import("./anti-ban.js").OutboundGapOpts;
     /** Tag mémoire / historique isolé par automatisation */
     automationId?: number | null;
+    /**
+     * Alerte système (ex. handoff → numéro propriétaire) :
+     * ignore STOP / plafond nouveau fil. Toujours coupler à countsTowardQuota: false.
+     */
+    bypassOutboundGates?: boolean;
   } = {}
 ): Promise<{ idMessage: string; chatId: string }> {
   const creds = await getEvolutionCredentials(userId);
@@ -1311,15 +1316,18 @@ export async function sendWhatsAppMessage(
 
   await assertGroupAdminBeforeSend(userId, chatId);
 
-  const newKind = await classifyNewConversationKind(
-    userId,
-    chatId,
-    opts.automationId ?? null
-  );
-  await assertCanSendTo(userId, chatId, {
-    automationId: opts.automationId ?? null,
-    forceKind: newKind === "none" ? undefined : newKind,
-  });
+  let newKind: Awaited<ReturnType<typeof classifyNewConversationKind>> = "none";
+  if (!opts.bypassOutboundGates) {
+    newKind = await classifyNewConversationKind(
+      userId,
+      chatId,
+      opts.automationId ?? null
+    );
+    await assertCanSendTo(userId, chatId, {
+      automationId: opts.automationId ?? null,
+      forceKind: newKind === "none" ? undefined : newKind,
+    });
+  }
 
   const gapOpts =
     opts.outboundProfile === "auto_reply"
