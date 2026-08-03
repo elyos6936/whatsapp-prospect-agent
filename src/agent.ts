@@ -14,7 +14,7 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
+import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -169,7 +169,7 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) {
     throw new Error(
-      `Clé ${llmProviderLabel()} manquante. Définissez DEEPSEEK_API_KEY (ou OPENAI_API_KEY) sur le serveur.`
+      `Clé ${llmProviderLabel()} manquante. Définissez MISTRAL_API_KEY sur le serveur.`
     );
   }
   return createLlmClient(key);
@@ -500,7 +500,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     recentHistory: history,
   });
 
-  // Chemin fiable : simu sans tools / sans tool_choice (DeepSeek v4 thinking = 400 sinon).
+  // Simulation hors boucle outils (génération directe JSON).
   if (forceSim) {
     const recentTranscript = history
       .slice(-16)
@@ -575,7 +575,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
 
-    // Toujours "auto" : DeepSeek thinking refuse tool_choice forcé (HTTP 400).
+    // tool_choice auto : l'agent choisit les outils selon le brief.
     let response: OpenAI.Chat.Completions.ChatCompletion;
     try {
       response = await callOpenAiWithRetry(() =>
@@ -585,10 +585,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         tools: toolsForTurn,
         tool_choice: "auto",
           temperature: 0.65,
-          max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
-            thinkingEnabled: false,
-          }),
-          ...deepseekChatExtras({ enableThinking: false }),
+          max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
@@ -603,7 +600,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     const assistantMsg = choice.message;
 
     if (assistantMsg.tool_calls?.length) {
-      // DeepSeek thinking : rejouer reasoning_content avec les tool_calls
       messages.push(toAssistantHistoryMessage(assistantMsg));
 
       for (const toolCall of assistantMsg.tool_calls) {
@@ -987,10 +983,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         model: config.openaiModel,
         messages,
         temperature: 0.5,
-        max_tokens: recommendedMaxTokens(config.openaiModel, 500, {
-          thinkingEnabled: false,
-        }),
-        ...deepseekChatExtras({ enableThinking: false }),
+        max_tokens: recommendedMaxTokens(config.openaiModel, 500),
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();

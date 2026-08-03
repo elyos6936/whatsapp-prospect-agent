@@ -89,7 +89,7 @@ export function describeOpenAiError(err: unknown): string {
   const name = PROVIDER();
   if (err instanceof OpenAI.APIError) {
     if (err.status === 401) {
-      return `Clé API ${name} invalide (401). Vérifiez DEEPSEEK_API_KEY / OPENAI_API_KEY sur le serveur.`;
+      return `Clé API ${name} invalide (401). Vérifiez MISTRAL_API_KEY sur le serveur.`;
     }
     if (isQuotaError(err)) {
       return (

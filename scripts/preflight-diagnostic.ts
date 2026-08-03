@@ -13,11 +13,11 @@ async function main() {
 
   // 1. Modèle LLM
   const model = config.openaiModel;
-  const isPro = model === "deepseek-v4-pro" || (!/flash/i.test(model) && /pro|v4/i.test(model));
+  const isMistral = config.llmProvider === "mistral" && model === "mistral-medium-3-5";
   checks.push({
     name: "Modèle LLM",
-    ok: isPro && !/flash/i.test(model),
-    detail: `${config.llmProvider} / ${model}${/flash/i.test(model) ? " ⚠️ FLASH" : ""}`,
+    ok: isMistral,
+    detail: `${config.llmProvider} / ${model}`,
   });
 
   // 2. Health prod
@@ -36,8 +36,8 @@ async function main() {
       }),
     });
     checks.push({
-      name: "API prod = DeepSeek Pro",
-      ok: String(health.model) === "deepseek-v4-pro",
+      name: "API prod = Mistral Medium 3.5",
+      ok: String(health.model) === "mistral-medium-3-5",
       detail: `model=${health.model}`,
     });
   } catch (e) {
@@ -159,11 +159,11 @@ async function main() {
     detail: "règle confidentialité technique",
   });
 
-  // 12. DeepSeek Pro forcé
+  // 12. Mistral Medium 3.5
   const configSrc = fs.readFileSync(path.join(root, "src/config.ts"), "utf8");
   checks.push({
-    name: "Flash bloqué",
-    ok: configSrc.includes("jamais Flash") || configSrc.includes("deepseek-v4-pro"),
+    name: "Config Mistral",
+    ok: configSrc.includes("mistral-medium-3-5") && configSrc.includes("MISTRAL_API_KEY"),
     detail: "config LLM",
   });
 

@@ -1,12 +1,11 @@
 /**
- * Simulation campagne : formatage + génération directe (sans tool_choice).
- * DeepSeek v4 thinking refuse tool_choice forcé → on génère hors boucle outils.
+ * Simulation campagne : formatage + génération directe (sans tool calling).
  */
 import type OpenAI from "openai";
 import { config } from "./config.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
-import { isThinkingModel, recommendedMaxTokens } from "./llm.js";
+import { recommendedMaxTokens } from "./llm.js";
 
 export type SimulationTurn = {
   speaker: "toi" | "prospect";
@@ -119,7 +118,7 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
 }
 
 /**
- * Génère la simulation sans outils ni tool_choice (évite le 400 DeepSeek thinking).
+ * Génère la simulation sans outils (JSON direct).
  */
 export async function generateCampaignSimulationDirect(
   client: OpenAI,
@@ -168,13 +167,8 @@ export async function generateCampaignSimulationDirect(
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    max_tokens: recommendedMaxTokens(config.openaiModel, 900, { thinkingEnabled: false }),
+    max_tokens: recommendedMaxTokens(config.openaiModel, 900),
   };
-
-  // Désactive le thinking pour cette requête isolée (pas d'outils) → plus fiable.
-  if (isThinkingModel(config.openaiModel)) {
-    body.thinking = { type: "disabled" };
-  }
 
   const response = await callOpenAiWithRetry(() =>
     client.chat.completions.create(

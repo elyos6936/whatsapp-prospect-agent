@@ -16,43 +16,25 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 }
 
 function resolveLlmApiKey(): string {
-  const deepseek = process.env.DEEPSEEK_API_KEY?.trim() || "";
-  const openai = process.env.OPENAI_API_KEY?.trim() || "";
-  const provider = (process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek") as "deepseek" | "openai";
-
-  if (provider === "deepseek") {
-    if (deepseek) return deepseek;
-    // Une clé OpenAI (sk-proj-…) envoyée à DeepSeek provoque un 401 trompeur.
-    if (openai.startsWith("sk-proj-") || openai.startsWith("sk-svcacct-")) {
-      console.error(
-        "❌ DEEPSEEK_API_KEY manquante : OPENAI_API_KEY (OpenAI) ne peut pas être utilisée avec DeepSeek."
-      );
-      return "";
-    }
-    // Anciennes clés DeepSeek parfois mises dans OPENAI_API_KEY
-    return openai;
-  }
-  return openai || deepseek;
+  return process.env.MISTRAL_API_KEY?.trim() || "";
 }
 
 function resolveLlmModel(): string {
-  const provider = (process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek") as
-    | "deepseek"
-    | "openai";
-  const raw = process.env.LLM_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "";
-  if (provider === "openai") {
-    return raw || "gpt-4o";
+  return process.env.LLM_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "mistral-medium-3-5";
+}
+
+function resolveLlmProvider(): "mistral" {
+  const raw = process.env.LLM_PROVIDER?.trim().toLowerCase() || "mistral";
+  if (raw && raw !== "mistral") {
+    console.warn(`⚠️ LLM_PROVIDER="${raw}" ignoré — seul mistral est supporté.`);
   }
-  // DeepSeek : Pro uniquement — jamais Flash (thinking désactivé côté agent pour vitesse/cohérence)
-  if (!raw || /flash/i.test(raw)) {
-    if (/flash/i.test(raw)) {
-      console.warn(
-        `⚠️ LLM_MODEL="${raw}" (Flash) ignoré → deepseek-v4-pro.`
-      );
-    }
-    return "deepseek-v4-pro";
-  }
-  return raw;
+  return "mistral";
+}
+
+function resolveLlmBaseUrl(): string {
+  const fromEnv = process.env.LLM_BASE_URL?.trim();
+  if (fromEnv) return fromEnv.replace(/\/$/, "");
+  return "https://api.mistral.ai/v1";
 }
 
 /**
@@ -139,17 +121,12 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
   /**
-   * Fournisseur LLM. DeepSeek = API compatible OpenAI (baseURL + modèle).
-   * Clé : DEEPSEEK_API_KEY prioritaire, sinon OPENAI_API_KEY (rétrocompat).
+   * Fournisseur LLM — Mistral uniquement (API compatible OpenAI).
+   * Clé : MISTRAL_API_KEY.
    */
-  llmProvider: (process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek") as "deepseek" | "openai",
-  llmBaseUrl: (
-    process.env.LLM_BASE_URL?.trim() ||
-    (process.env.LLM_PROVIDER?.trim().toLowerCase() === "openai"
-      ? "https://api.openai.com/v1"
-      : "https://api.deepseek.com")
-  ).replace(/\/$/, ""),
-  /** Modèle chat + tool calling. Toujours DeepSeek V4 Pro (jamais Flash). */
+  llmProvider: resolveLlmProvider(),
+  llmBaseUrl: resolveLlmBaseUrl(),
+  /** Modèle chat + tool calling (défaut : Mistral Medium 3.5). */
   openaiModel: resolveLlmModel(),
   /** Login Google (GIS / ID token) — client distinct des intégrations. */
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",

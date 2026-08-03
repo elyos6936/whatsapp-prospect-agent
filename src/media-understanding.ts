@@ -1,11 +1,10 @@
 /**
  * Interprétation des médias entrants WhatsApp.
  *
- * Sur OpenAI : Whisper (audio) + vision (images).
- * Sur DeepSeek : pas d'API Whisper/vision équivalente → on saute (pas de coût inutile).
+ * Images : vision Mistral Medium 3.5.
+ * Audio : pas d'API Whisper côté Mistral → skip (note vocale ignorée).
  */
 
-import OpenAI, { toFile } from "openai";
 import { getMessageMediaBase64 } from "./evolutionapi.js";
 import { getAppSettings } from "./db.js";
 import { config } from "./config.js";
@@ -155,32 +154,16 @@ export async function transcribeChatAudio(
   return text ?? "";
 }
 
-// ─── Implémentations OpenAI ───────────────────────────────────────────────────
+// ─── Implémentations LLM ──────────────────────────────────────────────────────
 
 async function transcribeAudio(
-  apiKey: string,
-  base64: string,
-  mimetype: string,
+  _apiKey: string,
+  _base64: string,
+  _mimetype: string,
 ): Promise<string | null> {
-  // DeepSeek n'expose pas Whisper — éviter un appel facturé / en erreur.
-  if (config.llmProvider === "deepseek") {
-    console.warn("[media] Transcription audio indisponible avec DeepSeek — note vocale ignorée.");
-    return null;
-  }
-  const openai = new OpenAI({ apiKey, baseURL: config.llmBaseUrl });
-  const clean = baseMimetype(mimetype);
-  const ext = mimeToExt(clean) ?? "ogg";
-  const buffer = Buffer.from(base64, "base64");
-  const file = await toFile(buffer, `audio.${ext}`, { type: clean || "audio/ogg" });
-
-  const result = await openai.audio.transcriptions.create({
-    model: "whisper-1",
-    file,
-    language: "fr",
-  });
-
-  const text = result.text?.trim();
-  return text || null;
+  // Mistral Medium 3.5 n'expose pas Whisper — éviter un appel en erreur.
+  console.warn("[media] Transcription audio indisponible avec Mistral — note vocale ignorée.");
+  return null;
 }
 
 async function describeImage(
@@ -188,16 +171,12 @@ async function describeImage(
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  if (config.llmProvider === "deepseek") {
-    console.warn("[media] Description d'image indisponible avec DeepSeek — image ignorée.");
-    return null;
-  }
   const openai = createLlmClient(apiKey);
   const clean = baseMimetype(mimetype) || "image/jpeg";
   const dataUrl = `data:${clean};base64,${base64}`;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: config.openaiModel,
     messages: [
       {
         role: "user",
@@ -220,18 +199,3 @@ async function describeImage(
   return text || null;
 }
 
-// ─── Utilitaires ──────────────────────────────────────────────────────────────
-
-function mimeToExt(mime: string): string | null {
-  const map: Record<string, string> = {
-    "audio/ogg":  "ogg",
-    "audio/mpeg": "mp3",
-    "audio/mp4":  "mp4",
-    "audio/wav":  "wav",
-    "audio/webm": "webm",
-    "audio/aac":  "aac",
-    "audio/opus": "opus",
-    "audio/amr":  "amr",
-  };
-  return map[mime.toLowerCase()] ?? null;
-}

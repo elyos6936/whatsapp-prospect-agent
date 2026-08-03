@@ -7,7 +7,7 @@ import {
   updateContactAutomationMemory,
   updateContactMemory,
 } from "./db.js";
-import { createLlmClient, deepseekChatExtras } from "./llm.js";
+import { createLlmClient } from "./llm.js";
 import type OpenAI from "openai";
 
 export async function getMemoryContextBlock(
@@ -69,7 +69,6 @@ export async function refreshContactMemory(
     ],
     max_tokens: 300,
     temperature: 0.3,
-    ...deepseekChatExtras({ enableThinking: false }),
   } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
   const summary = response.choices[0]?.message?.content?.trim();
   if (!summary) return;
