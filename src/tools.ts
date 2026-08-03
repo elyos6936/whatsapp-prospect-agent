@@ -2464,16 +2464,23 @@ export async function executeTool(
           Number.isFinite(limRaw) && limRaw > 0
             ? Math.min(500, Math.max(1, Math.round(limRaw)))
             : undefined;
-        const members = limit != null ? allMembers.slice(0, limit) : allMembers;
+        // Sans limite explicite : plafonner le payload outil (create_automation utilise le nom/id).
+        const hardCap = limit ?? 80;
+        const members = allMembers.slice(0, hardCap);
         const groupName = data.subject || String(args.group_id ?? "groupe");
+        const omitted = Math.max(0, allMembers.length - members.length);
         return JSON.stringify({
           groupId: data.groupId,
           name: groupName,
-          size: data.size,
+          size: data.size || allMembers.length,
           shown: members.length,
+          membersOmitted: omitted,
           members,
           display: formatVerticalMemberList(groupName, members, { total: allMembers.length }),
-          hint: "Présente le champ display tel quel à l'utilisateur (liste verticale numérotée). Respecte la limite demandée.",
+          hint:
+            omitted > 0
+              ? `Liste tronquée (${members.length}/${allMembers.length}). Pour prospecter : create_automation(type=group_prospect, group_id=nom) — pas besoin de toute la liste.`
+              : "Présente le champ display tel quel à l'utilisateur (liste verticale numérotée). Respecte la limite demandée.",
         });
       } catch (err) {
         return JSON.stringify({ error: userFacingError(err) });

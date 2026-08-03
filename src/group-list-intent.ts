@@ -127,14 +127,61 @@ function cleanGroupQuery(raw: string): string | null {
   return q;
 }
 
+export type QuickGroupProspectIntent = {
+  groupQuery: string;
+};
+
+/**
+ * Prospection des membres d'un groupe nommé — hors boucle LLM
+ * (fetch Evolution + 1 question de brief, pas 12 tours d'outils).
+ */
+export function detectQuickGroupProspectIntent(msg: string): QuickGroupProspectIntent | null {
+  const t = msg.trim();
+  if (!t || t.length > 280) return null;
+  if (!/\bprospect/i.test(t)) return null;
+  // Besoin d'une cible groupe / membres (pas « prospecte +229… »)
+  if (!/\b(membres?|participants?|groupes?)\b/i.test(t) && !extractQuotedGroupName(t)) {
+    return null;
+  }
+  if (/\+?\d[\d\s.\-]{7,}\d/.test(t) && !/\bgroupes?\b/i.test(t)) {
+    return null;
+  }
+
+  const quoted = extractQuotedGroupName(t);
+  if (quoted) return { groupQuery: quoted };
+
+  const patterns = [
+    /\b(?:membres?|participants?|contacts?)\s+(?:du|de|dans)\s+(?:ce|cet|ces|le|la|les|mon|ma)?\s*groupes?\s+(.+)$/i,
+    /\bprospect(?:er|e|e[sz]|ation)?\s+(?:les\s+)?(?:membres?|participants?)\s+(?:du|de|dans)\s+(?:ce|cet|ces|le|la|les|mon|ma)?\s*groupes?\s+(.+)$/i,
+    /\bprospect(?:er|e|e[sz]|ation)?\s+(?:dans\s+|sur\s+)?(?:ce|cet|le|la|les|mon|ma)?\s*groupes?\s+(.+)$/i,
+    /\b(?:du|de|dans)\s+(?:ce|cet|ces|le|la|les|mon|ma)?\s*groupes?\s+(.+)$/i,
+    /\bgroupes?\s+(.+)$/i,
+  ];
+  for (const re of patterns) {
+    const m = re.exec(t);
+    if (m?.[1]) {
+      let raw = m[1].replace(/^(?:le|la|les|ce|cet|ces|mon|ma|mes)?\s*groupes?\s+/i, "");
+      raw = raw.replace(/\b(maintenant|svp|s'il te pla[iî]t|aujourd'?hui)\s*$/i, "").trim();
+      const q = cleanGroupQuery(raw);
+      if (q && !/^(?:ce|cet|ces|le|la|les|mon|ma|mes)$/i.test(q)) {
+        return { groupQuery: q };
+      }
+    }
+  }
+  return null;
+}
+
 /**
  * Extraction membres / contacts d'un groupe nommé.
  * Gère pluriel FR (« groupes »), guillemets, limite (« deux membres »),
  * et formulations sans le mot « groupe » (« Deux membres de Team MASK »).
+ * N'inclut PAS la prospection (→ detectQuickGroupProspectIntent).
  */
 export function detectQuickGroupMembersIntent(msg: string): QuickGroupMembersIntent | null {
   const t = msg.trim();
   if (!t || t.length > 240) return null;
+  // Prospection membres → autre chemin (pas de dump de liste)
+  if (/\bprospect/i.test(t)) return null;
 
   const hasGroupWord = /\bgroupes?\b/i.test(t);
   const hasMemberWord = /\b(membres?|participants?)\b/i.test(t);
