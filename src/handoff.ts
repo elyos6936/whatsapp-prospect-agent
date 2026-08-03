@@ -1,5 +1,5 @@
 import { createHandoffEvent } from "./db.js";
-import { matchesTriggerPhrase } from "./phrase-matching.js";
+import { matchesHandoffKeyword } from "./phrase-matching.js";
 import { generateWhatsAppReply } from "./whatsapp-reply.js";
 import type { ScoringResult } from "./lead-scoring.js";
 
@@ -18,7 +18,7 @@ export function findMatchingHandoffKeyword(
   for (const kw of keywords) {
     const cleaned = String(kw ?? "").trim();
     if (!cleaned) continue;
-    if (matchesTriggerPhrase(text, cleaned)) return cleaned;
+    if (matchesHandoffKeyword(text, cleaned)) return cleaned;
   }
   return null;
 }

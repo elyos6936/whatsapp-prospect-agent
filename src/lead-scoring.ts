@@ -14,7 +14,7 @@ const PRICE_KEYWORDS = /prix|tarif|combien|fcfa|franc|co[uû]t|budget/i;
 const NEGATIVE_KEYWORDS =
   /pas int[eé]ress|non merci|laisse|occup[eé]|arnaque|scam|plainte|r[eé]clamation|avocat|police/i;
 const HANDOFF_KEYWORDS =
-  /parler (à|a) (un |une )?humain|responsable|g[eé]rant|directeur|plainte|remboursement|r[eé]clamation urgente/i;
+  /parler (à|a) (un |une )?humain|responsable|g[eé]rant|directeur|plaint|plaindre|remboursement|r[eé]clamation urgente/i;
 
 /** Accusé de réception court après envoi d'un lien / prix / créneau / handoff livraison. */
 const SHORT_ACK =
