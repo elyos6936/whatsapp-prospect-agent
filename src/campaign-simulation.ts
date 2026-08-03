@@ -5,7 +5,7 @@ import type OpenAI from "openai";
 import { config } from "./config.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
-import { recommendedMaxTokens } from "./llm.js";
+import { extractAssistantContent, mistralChatExtras, recommendedMaxTokens } from "./llm.js";
 
 export type SimulationTurn = {
   speaker: "toi" | "prospect";
@@ -168,6 +168,8 @@ export async function generateCampaignSimulationDirect(
       { role: "user", content: user },
     ],
     max_tokens: recommendedMaxTokens(config.openaiModel, 900),
+    temperature: 0.7,
+    ...mistralChatExtras(),
   };
 
   const response = await callOpenAiWithRetry(() =>
@@ -176,7 +178,7 @@ export async function generateCampaignSimulationDirect(
     )
   );
 
-  const content = response.choices[0]?.message?.content?.trim() ?? "";
+  const content = extractAssistantContent(response.choices[0]?.message);
   const turns = parseTurnsFromModelText(content);
   if (!turns) {
     console.warn("[simulation] parse failed, raw:", content.slice(0, 400));

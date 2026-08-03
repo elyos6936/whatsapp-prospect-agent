@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import { getAppSettings } from "./db.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel } from "./llm.js";
+import { createLlmClient, extractAssistantContent, llmProviderLabel, mistralChatExtras } from "./llm.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 import type OpenAI from "openai";
 
@@ -112,12 +112,13 @@ export async function generatePersonalizedOpener(
             temperature: attempt === 1 ? 0.55 : 0.7,
             presence_penalty: 0.25,
             frequency_penalty: 0.3,
+            ...mistralChatExtras({ enableThinking: false }),
           } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
         { maxRetries: 4 }
       );
 
       text = sanitizeOutboundWhatsAppText(
-        response.choices[0]?.message?.content?.trim() || ""
+        extractAssistantContent(response.choices[0]?.message) || ""
       );
       if (!text) continue;
       if (driftsFromTemplate(text, input.template)) continue;

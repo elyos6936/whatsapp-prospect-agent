@@ -8,7 +8,8 @@
 import { getMessageMediaBase64 } from "./evolutionapi.js";
 import { getAppSettings } from "./db.js";
 import { config } from "./config.js";
-import { createLlmClient } from "./llm.js";
+import { createLlmClient, extractAssistantContent, mistralChatExtras } from "./llm.js";
+import type OpenAI from "openai";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -193,9 +194,10 @@ async function describeImage(
       },
     ],
     max_tokens: 200,
-  });
+    ...mistralChatExtras({ enableThinking: false }),
+  } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
 
-  const text = response.choices[0]?.message?.content?.trim();
+  const text = extractAssistantContent(response.choices[0]?.message);
   return text || null;
 }
 

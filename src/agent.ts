@@ -14,7 +14,7 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
+import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, recommendedMaxTokens, extractAssistantContent, mistralChatExtras } from "./llm.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -580,12 +580,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     try {
       response = await callOpenAiWithRetry(() =>
         client.chat.completions.create({
-        model: config.openaiModel,
-        messages,
-        tools: toolsForTurn,
-        tool_choice: "auto",
-          temperature: 0.65,
+          model: config.openaiModel,
+          messages,
+          tools: toolsForTurn,
+          tool_choice: "auto",
+          temperature: 0.7,
           max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS),
+          ...mistralChatExtras(),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
@@ -982,8 +983,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       client.chat.completions.create({
         model: config.openaiModel,
         messages,
-        temperature: 0.5,
+        temperature: 0.7,
         max_tokens: recommendedMaxTokens(config.openaiModel, 500),
+        ...mistralChatExtras(),
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();

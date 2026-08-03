@@ -22,6 +22,7 @@ import {
   createLlmClient,
   extractAssistantContent,
   llmProviderLabel,
+  mistralChatExtras,
   recommendedMaxTokens,
 } from "./llm.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
@@ -121,7 +122,8 @@ export async function generateThirdPartyNotificationMessage(
         { role: "user", content: userContent },
       ],
       max_tokens: recommendedMaxTokens(config.openaiModel, 280),
-      temperature: 0.4,
+      temperature: 0.7,
+      ...mistralChatExtras(),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 
