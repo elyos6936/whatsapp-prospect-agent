@@ -4,30 +4,6 @@ export function sanitizeAssistantText(text: string): string {
 
   let out = text;
 
-  // DeepSeek DSML / fuites d'appels d'outils — jamais afficher à l'utilisateur
-  if (
-    /(?:<\s*[|｜]\s*DSML\s*[|｜]|\[\s*DSML\s*\]|\bDSML\b\s*[|｜:]?\s*(?:tool_calls|invoke)|invoke\s*[:=]\s*name\s*=)/i.test(
-      out,
-    )
-  ) {
-    out = out
-      .replace(/\uFF5C/g, '|')
-      .replace(/<\s*\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?(?:<\/\s*\|?\s*DSML\s*\|?\s*tool_calls\s*>|$)/gi, '')
-      .replace(/<\s*\|?\s*DSML\s*\|?\s*invoke[\s\S]*?(?:<\/\s*\|?\s*DSML\s*\|?\s*invoke\s*>|$)/gi, '')
-      .replace(/<\s*\|?\s*DSML\s*\|?\s*parameter[\s\S]*?(?:<\/\s*\|?\s*DSML\s*\|?\s*parameter\s*>|$)/gi, '')
-      .replace(/<\s*\|?\s*DSML\s*\|?[^>]*>/gi, '')
-      .replace(/<\/\s*\|?\s*DSML\s*\|?\s*\w*\s*>/gi, '')
-      .replace(/\|\s*DSML\s*\|\s*(?:tool_calls|invoke|parameter)[^\n]*/gi, '')
-      .replace(/\[\s*DSML\s*\][^\n]*/gi, '')
-      .replace(/\binvoke\s*[:=]\s*name\s*=\s*["'][^"']+["'][^\n]*/gi, '')
-      .replace(/\btool_calls\s*:?\s*/gi, '')
-      .replace(/^\s*[+|]+\s*$/gm, '')
-      .trim();
-    if (!out) {
-      return "Je finalise l'action… Relance-moi si rien ne bouge.";
-    }
-  }
-
   // Uniquement les footers techniques d'outil (pas un séparateur markdown « --- »
   // suivi d'une simulation / contenu utile — ça coupait le fil de conversation).
   out = out.replace(/\n---\s*\n(?:STATUT|DETAIL|Outil|Tool|Résultat|Result)\b[\s\S]*$/im, '').trimEnd();
