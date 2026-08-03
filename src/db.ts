@@ -2943,6 +2943,8 @@ export async function resumeAutomationMessaging(
   let enabledContacts = 0;
   for (const t of targets) {
     if (t.status === "stopped" || t.status === "error") continue;
+    // Jamais traiter un @g.us comme contact prospect
+    if (t.target_id.endsWith("@g.us") || t.target_id.includes("@newsletter")) continue;
     try {
       await setContactAutoReply(userId, t.target_id, true);
       await saveContact(userId, {
@@ -2991,18 +2993,22 @@ export async function pauseOtherActiveAutomations(
   return paused;
 }
 
-/** Reprise : active + auto-reply OBLIGATOIRE pour les prospects de la campagne. */
+/** Reprise : active + auto-reply pour les prospects (sauf diffusion groupes). */
 export async function resumeAutomation(userId: number, id: number): Promise<Automation | null> {
   const current = await getAutomation(userId, id);
   if (!current) return null;
   // Une seule campagne active : l'ancienne passe en pause
   await pauseOtherActiveAutomations(userId, id);
+  const isGroupBroadcast =
+    current.type === "group_broadcast" || current.config.mode === "group_broadcast";
   await updateAutomationConfig(userId, id, {
     ...current.config,
-    enableAutoReply: true,
+    enableAutoReply: isGroupBroadcast ? false : true,
   });
   // Réactive aussi l'interrupteur GLOBAL (peut être OFF après un arrêt d'urgence)
-  await setAutoReplyEnabled(userId, true);
+  if (!isGroupBroadcast) {
+    await setAutoReplyEnabled(userId, true);
+  }
   const updated = await updateAutomationStatus(userId, id, "active");
   if (!updated) return null;
 
@@ -3644,9 +3650,11 @@ export async function enqueueSend(userId: number, input: {
   automationId?: number;
   sequenceId?: number;
   abVariant?: string;
+  /** Si true : ne pas annuler les autres pending du même destinataire (posts multi-jours groupes). */
+  keepOtherPending?: boolean;
 }): Promise<QueueItem> {
-  // Anti-doublon : une seule ligne pending par destinataire (sauf urgence manuelle).
-  if ((input.priority ?? 5) < 10) {
+  // Anti-doublon : une seule ligne pending par destinataire (sauf urgence manuelle / multi-posts groupes).
+  if ((input.priority ?? 5) < 10 && !input.keepOtherPending) {
     await cancelPendingSendQueueForRecipient(userId, input.recipient);
   }
   const sendAt = input.sendAt ?? formatLocalDateTime(new Date());

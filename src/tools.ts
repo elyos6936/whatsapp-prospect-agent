@@ -1489,7 +1489,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
               "group_broadcast",
             ],
             description:
-              "group_prospect = DM membres d'un groupe ; contact_prospect = DM contacts ; keyword_sales = support entrant ; group_broadcast = publier dans des groupes (admin only)",
+              "group_prospect = DM membres d'un groupe ; contact_prospect = DM contacts ; keyword_sales = support entrant ; group_broadcast = publier dans des groupes (admin only), avec sequence_steps pour posts multi-jours",
           },
           summary: { type: "string", description: "Résumé en une phrase" },
           group_id: { type: "string", description: "ID ou nom du groupe (@g.us ou nom) — group_prospect" },
@@ -1508,7 +1508,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           initial_message: {
             type: "string",
             description:
-              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases, ≤200 car., vouvoiement, SANS prénom du prospect). INTERDIT : prix, lien, pitch complet. Choisir parmi les 5 variantes validées avec l'utilisateur.",
+              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases, ≤200 car., vouvoiement, SANS prénom du prospect). INTERDIT : prix, lien, pitch complet. Choisir parmi les 5 variantes validées avec l'utilisateur. Pour group_broadcast : 1er post dans le(s) groupe(s).",
           },
           max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
           max_per_day: {
@@ -1649,7 +1649,12 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description:
               "Exactement 5 accroches Attention DISTINCTES validées avec l'utilisateur : [{id:'v1',message:'…'}, … {id:'v5',message:'…'}]. Obligatoire en prospection sortante. Même si l'utilisateur n'en choisit qu'une pour initial_message, tu DOIS passer les 5 textes — ne garde jamais un seul message.",
           },
-          sequence_steps: { type: "array", items: { type: "object" } },
+          sequence_steps: {
+            type: "array",
+            items: { type: "object" },
+            description:
+              "Posts planifiés après le 1er message. group_broadcast : [{delayDays:1,message:'…'},{delayDays:3,message:'…'}]. Prospection DM : préférer relance / ne pas auto-enchaîner à l'opener.",
+          },
           media_url: {
             type: "string",
             description:
@@ -2036,6 +2041,22 @@ async function requireThreadAutomationId(
     };
   }
   return { ok: true, automationId: linked };
+}
+
+/** Publier / programmer DANS un @g.us : uniquement sur fil purpose=groupes. */
+async function assertGroupMessagingAllowed(
+  userId: number,
+  threadId: number,
+  chatId: string
+): Promise<string | null> {
+  if (!chatId.endsWith("@g.us")) return null;
+  const thread = await getAgentThread(userId, threadId);
+  if (thread?.purpose === "groupes") return null;
+  return (
+    "Pour envoyer ou programmer un message DANS un groupe WhatsApp, " +
+    "ouvre Nouvelle automatisation → Groupes WhatsApp. " +
+    "Ici tu peux seulement lister les groupes ou en extraire les membres."
+  );
 }
 
 async function persistVisualPlan(
@@ -3030,6 +3051,8 @@ export async function executeTool(
         const chatId = await resolveRecipient(userId, recipient);
 
         if (chatId.endsWith("@g.us")) {
+          const gate = await assertGroupMessagingAllowed(userId, threadId, chatId);
+          if (gate) return JSON.stringify({ error: gate });
           await assertUserIsGroupAdmin(userId, chatId);
         }
 
@@ -3689,6 +3712,8 @@ export async function executeTool(
 
       const chatId = await resolveRecipient(userId, recipientRaw);
       if (chatId.endsWith("@g.us")) {
+        const gate = await assertGroupMessagingAllowed(userId, threadId, chatId);
+        if (gate) return JSON.stringify({ error: gate });
         try {
           await assertUserIsGroupAdmin(userId, chatId);
         } catch (err) {

@@ -53,7 +53,7 @@ export function NewAutomationModal({
     purpose === 'support'
       ? 'Ex. Répondre quand quelqu’un écrit « je suis intéressé » et closer la vente.'
       : purpose === 'groupes'
-        ? 'Ex. Publier des annonces dans les groupes WhatsApp où je suis admin.'
+        ? 'Ex. Publier une annonce puis un rappel J+1 / J+3 dans mes groupes admin.'
         : 'Ex. Prospecter les membres du groupe et proposer la cure minceur naturelle.';
 
   return (
@@ -110,7 +110,7 @@ export function NewAutomationModal({
                 />
                 <span className="text-sm font-semibold text-text-100">Prospection</span>
                 <span className="text-[11px] leading-snug text-text-500">
-                  Vous contactez des prospects (groupe ou liste).
+                  Contacter des prospects en privé (liste ou membres d&apos;un groupe).
                 </span>
               </button>
               <button
@@ -156,7 +156,7 @@ export function NewAutomationModal({
                 />
                 <span className="text-sm font-semibold text-text-100">Groupes WhatsApp</span>
                 <span className="text-[11px] leading-snug text-text-500">
-                  Publier des messages dans les groupes où vous êtes administrateur.
+                  Publier et programmer des messages dans les groupes (admin).
                 </span>
               </button>
             </div>

@@ -28,6 +28,7 @@ import {
   countAutomationMessagesInRange,
   countUserMessagesInRange,
   type Automation,
+  type AutomationConfig,
 } from "./db.js";
 import { pickAbVariant, recordAbSent } from "./ab-testing.js";
 import { getActiveCampaignTargetIds } from "./campaign-gating.js";
@@ -53,6 +54,42 @@ import {
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
+
+/** Posts planifiés après le 1er message (diffusion groupes uniquement). */
+function groupBroadcastFollowUps(
+  config: AutomationConfig
+): Array<{ delayDays: number; message: string }> {
+  if (Array.isArray(config.sequenceSteps) && config.sequenceSteps.length) {
+    return config.sequenceSteps
+      .map((s) => ({
+        delayDays: Math.max(0, Number(s.delayDays) || 0),
+        message: String(s.message ?? "").trim(),
+      }))
+      .filter((s) => s.message.length > 0);
+  }
+  if (config.relance?.enabled && Array.isArray(config.relance.messages)) {
+    const delays = config.relance.delaysDays?.length
+      ? config.relance.delaysDays
+      : [1, 3];
+    return config.relance.messages
+      .map((msg, i) => ({
+        delayDays: Math.max(1, Number(delays[i] ?? delays[delays.length - 1] ?? i + 1) || 1),
+        message: String(msg ?? "").trim(),
+      }))
+      .filter((s) => s.message.length > 0);
+  }
+  return [];
+}
+
+function sendAtAfterDays(delayDays: number, hour: number): string {
+  const d = new Date();
+  d.setDate(d.getDate() + delayDays);
+  d.setHours(Math.max(0, Math.min(23, hour)), 0, 0, 0);
+  if (d.getTime() <= Date.now() + 30_000) {
+    d.setTime(Date.now() + 60_000);
+  }
+  return formatLocalDateTime(d);
+}
 
 async function failAutomationNoTargets(
   userId: number,
@@ -90,15 +127,21 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
     }
   }
 
-  const quota = await canSendOutbound(userId);
-  if (!quota.ok) {
-    await addAutomationLog(
-      userId,
-      auto.id,
-      "info",
-      quota.reason ?? "Plafond nouveaux fils atteint — reprise demain (fils ouverts non bloqués)."
-    );
-    return;
+  const isBroadcastEarly =
+    auto.type === "group_broadcast" || auto.config.mode === "group_broadcast";
+
+  // Diffusion groupe : hors plafond « nouveaux fils » prospects
+  if (!isBroadcastEarly) {
+    const quota = await canSendOutbound(userId);
+    if (!quota.ok) {
+      await addAutomationLog(
+        userId,
+        auto.id,
+        "info",
+        quota.reason ?? "Plafond nouveaux fils atteint — reprise demain (fils ouverts non bloqués)."
+      );
+      return;
+    }
   }
 
   // Plafond quotidien propre à la campagne (anti-blocage).
@@ -276,7 +319,34 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       priority,
       automationId: auto.id,
       abVariant: ab.variantId,
+      // Diffusion : ne pas annuler d'autres posts planifiés sur le même @g.us
+      keepOtherPending: isGroupBroadcast,
     });
+
+    // Diffusion groupes : enchaîner les posts multi-jours (sequence_steps / relance).
+    // Prospection DM : PAS de relance auto à l'opener (attendre la réponse).
+    let followUpCount = 0;
+    if (isGroupBroadcast) {
+      const followUps = groupBroadcastFollowUps(freshAuto.config);
+      const hour =
+        freshAuto.config.relance?.hour ??
+        (freshAuto.config.quietHoursStart != null
+          ? (freshAuto.config.quietHoursStart + 1) % 24
+          : 9);
+      for (const step of followUps) {
+        await enqueueSend(userId, {
+          recipient: target.target_id,
+          recipientLabel: target.target_label ?? undefined,
+          message: sanitizeOutboundWhatsAppText(step.message),
+          priority: 10,
+          sendAt: sendAtAfterDays(step.delayDays, hour),
+          automationId: auto.id,
+          abVariant: `group-d${step.delayDays}`,
+          keepOtherPending: true,
+        });
+        followUpCount += 1;
+      }
+    }
 
     if (!isGroupBroadcast) {
       // Campagne active = auto-reply OBLIGATOIRE (réponses UNIQUEMENT si le prospect écrit)
@@ -289,10 +359,6 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       });
     }
 
-    // PAS de séquence / relance auto au moment de l'opener.
-    // Règle produit : 1 seul premier message → attendre la réponse → auto-reply.
-    // Les relances froid (sans réponse) causaient des rafales de messages.
-
     await updateAutomationTarget(userId, auto.id, target.target_id, { status: "contacted" });
     await updateAutomationTargetAb(userId, auto.id, target.target_id, ab.variantId);
     await recordAbSent(userId, auto.id, ab.variantId);
@@ -303,7 +369,9 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       auto.id,
       "success",
       isGroupBroadcast
-        ? `Message programmé dans le groupe « ${label} »`
+        ? followUpCount > 0
+          ? `Message programmé dans « ${label} » (+ ${followUpCount} post(s) planifié(s))`
+          : `Message programmé dans le groupe « ${label} »`
         : `Message programmé pour ${label}${ab.variantId !== "default" ? ` [A/B ${ab.variantId}]` : ""}`
     );
 
@@ -320,7 +388,11 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
 }
 
 async function processAutomation(userId: number, auto: Automation): Promise<void> {
-  if (auto.type === "group_prospect" || auto.type === "contact_prospect") {
+  if (
+    auto.type === "group_prospect" ||
+    auto.type === "contact_prospect" ||
+    auto.type === "group_broadcast"
+  ) {
     await processGroupProspect(userId, auto);
   }
 }

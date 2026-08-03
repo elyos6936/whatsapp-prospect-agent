@@ -135,9 +135,19 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
     }
 
     const isInboundReply = item.ab_variant === INBOUND_REPLY_AB_VARIANT;
+    const isGroupOrChannel =
+      item.recipient.endsWith("@g.us") || item.recipient.includes("@newsletter");
+    const isGroupFollowUp =
+      isGroupOrChannel &&
+      typeof item.ab_variant === "string" &&
+      item.ab_variant.startsWith("group-d");
     // Opener campagne = toujours un nouveau fil (époque fraîche juste avant envoi)
+    // Diffusion groupe / posts planifiés : pas un « opener contact »
     const isCampaignOpener =
-      item.automation_id != null && item.sequence_id == null && !isInboundReply;
+      item.automation_id != null &&
+      item.sequence_id == null &&
+      !isInboundReply &&
+      !isGroupOrChannel;
 
     // Skip si le prospect a déjà reçu une réponse entre-temps (closing entrant)
     if (isInboundReply) {
@@ -209,15 +219,18 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
     }
 
     // Check plafond AVANT beginFresh (éviter de reset l'époque si on reporte)
+    // Groupes / chaînes : hors quotas « nouveau fil » prospects
     let newKind: "none" | "outbound" | "inbound" = "none";
-    if (isCampaignOpener) {
-      newKind = "outbound";
-    } else {
-      newKind = await classifyNewConversationKind(
-        userId,
-        item.recipient,
-        item.automation_id ?? null
-      );
+    if (!isGroupOrChannel) {
+      if (isCampaignOpener) {
+        newKind = "outbound";
+      } else {
+        newKind = await classifyNewConversationKind(
+          userId,
+          item.recipient,
+          item.automation_id ?? null
+        );
+      }
     }
 
     if (newKind !== "none") {
@@ -241,8 +254,8 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
     }
 
     // Sécurité : jamais 2 sortants d'affilée sans réponse — scopé à la campagne
-    // (les réponses closing entrant sont déjà filtrées plus haut via skip-if-replied)
-    if (!isInboundReply) {
+    // (inapplicable aux posts dans un groupe / chaîne)
+    if (!isInboundReply && !isGroupOrChannel) {
       const gate = await shouldBlockOutboundWhileAwaitingReply(userId, item);
       if (gate.block) {
         await markQueueFailed(userId, item.id, gate.reason || "En attente de réponse");
@@ -261,6 +274,8 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       }
     }
 
+    const allowAutoReply = item.automation_id != null && !isGroupOrChannel;
+
     try {
       if (item.media_url && item.media_type) {
         await sendWhatsAppMedia(userId, item.recipient, {
@@ -268,10 +283,10 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           type: item.media_type as "image" | "document" | "audio",
           caption: item.message ?? undefined,
         }, {
-          enableAutoReply: item.automation_id != null,
+          enableAutoReply: allowAutoReply,
           automationId: item.automation_id,
         });
-        if (item.automation_id != null && !item.recipient.endsWith("@g.us")) {
+        if (allowAutoReply) {
           try {
             const { setContactAutoReply, saveContact } = await import("./db.js");
             await setContactAutoReply(userId, item.recipient, true);
@@ -295,7 +310,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
             const total =
               (auto?.stats.pending ?? 0) + (auto?.stats.contacted ?? 0);
             outboundGap = {
-              profile: "campaign",
+              profile: isGroupOrChannel ? "campaign" : "campaign",
               minDelaySeconds: auto?.config.minDelaySeconds,
               maxDelaySeconds: auto?.config.maxDelaySeconds,
               prospectCount: total > 0 ? total : undefined,
@@ -305,7 +320,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
           }
         }
         await sendWhatsAppMessage(userId, item.recipient, item.message, {
-          enableAutoReply: item.automation_id != null,
+          enableAutoReply: allowAutoReply,
           outboundProfile: isInboundReply
             ? "auto_reply"
             : item.automation_id != null
@@ -313,6 +328,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
               : undefined,
           outboundGap,
           automationId: item.automation_id,
+          countsTowardQuota: !isGroupOrChannel && !isGroupFollowUp,
         });
         if (isInboundReply && item.automation_id != null) {
           try {
