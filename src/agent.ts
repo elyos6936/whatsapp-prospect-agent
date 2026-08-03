@@ -245,8 +245,9 @@ async function buildBusinessContext(
       lines.push(
         `## TYPE DE FIL — GROUPES WHATSAPP (OBLIGATOIRE)\n` +
           `Ce fil est destiné à **publier des messages dans des groupes** où le compte est **administrateur**.\n` +
-          `- Envoi immédiat : \`send_whatsapp_message\` (recipient = nom du groupe ou @g.us). **Ne passe PAS** par save_contact / prospects.\n` +
-          `- Programmation : \`schedule_whatsapp_message\` (delay_minutes OU send_at_local) vers le groupe.\n` +
+          `- Envoi immédiat : \`send_whatsapp_message\` (recipient = nom du groupe ou @g.us). **Ne passe PAS** par save_contact / prospects / get_group_members.\n` +
+          `- Programmation : \`schedule_whatsapp_message\` (delay_minutes OU send_at_local) vers le groupe — même si plusieurs horaires, appelle l'outil plusieurs fois.\n` +
+          `- INTERDIT d'appeler get_group_members quand l'utilisateur demande d'envoyer/programmer un message dans le groupe.\n` +
           `- Campagne multi-groupes / rythme : create_automation type=\`group_broadcast\`.\n` +
           `- list_whatsapp_groups avec admin_only=true — INTERDIT de proposer un groupe où l'utilisateur n'est pas admin.\n` +
           `- Si l'outil renvoie une erreur « pas administrateur » → refuse clairement, ne contourne pas.\n` +

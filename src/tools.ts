@@ -230,7 +230,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "get_group_members",
       description:
-        "Récupère les membres d'un groupe WhatsApp par son ID (xxx@g.us) ou son nom. " +
+        "Liste UNIQUEMENT les membres d'un groupe WhatsApp (ID @g.us ou nom). " +
+        "Ne sert PAS à envoyer ni programmer un message dans le groupe — pour ça : send_whatsapp_message / schedule_whatsapp_message. " +
         "Si l'utilisateur demande N membres seulement (ex. « deux membres »), passe limit=N.",
       parameters: {
         type: "object",
@@ -718,7 +719,9 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "send_whatsapp_message",
       description:
-        "Envoie UN message texte WhatsApp. Destinataire : numéro personnel (+229…), chatId (@c.us), ID de groupe (@g.us), OU nom de groupe (ex. Automax). Pour poster DANS un groupe, utiliser cet outil — PAS message_all_group_members. Supporte aussi : répondre en citant un message (reply_to_message_id), mentionner des membres (mentions + @numéro dans le texte), mentionner tout le monde (mention_everyone, groupes), et l'aperçu de lien (link_preview).",
+        "Envoie UN message texte WhatsApp. Destinataire : numéro personnel (+229…), chatId (@c.us), ID de groupe (@g.us), OU nom de groupe (ex. Automax). " +
+        "Pour poster DANS un groupe maintenant, utiliser cet outil directement avec le nom du groupe — PAS get_group_members, PAS message_all_group_members. " +
+        "Supporte aussi : répondre en citant un message (reply_to_message_id), mentionner des membres (mentions + @numéro dans le texte), mentionner tout le monde (mention_everyone, groupes), et l'aperçu de lien (link_preview).",
       parameters: {
         type: "object",
         properties: {
@@ -918,7 +921,9 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "schedule_whatsapp_message",
       description:
-        "Programme l'envoi automatique d'un message WhatsApp (personne ou groupe). Utiliser delay_minutes (ex. 2) OU send_at_local (ex. 06:30, heure locale).",
+        "Programme l'envoi automatique d'un message WhatsApp à une personne OU DANS un groupe (recipient = nom du groupe ou @g.us). " +
+        "Utiliser delay_minutes (ex. 2) OU send_at_local (ex. 06:30, heure locale). " +
+        "Pour poster dans un groupe à heure fixe : cet outil — pas get_group_members.",
       parameters: {
         type: "object",
         properties: {
@@ -2353,8 +2358,8 @@ export async function executeTool(
               ? "Groupes où le compte est admin uniquement. Présente le champ display. Pour créer une diffusion : create_automation(type=group_broadcast, group_ids=[…], initial_message=…)."
               : "N'affiche PAS ces groupes à l'utilisateur sauf s'il a demandé explicitement la liste. " +
                 "Si demandé : présente le champ display tel quel (liste verticale). " +
-                "Pour agir sur un groupe nommé / lister ses membres, utilise get_group_members — " +
-                "PAS ce catalogue.",
+                "Pour lister les membres d'un groupe nommé : get_group_members. " +
+                "Pour ENVOYER ou PROGRAMMER un message dans le groupe : send_whatsapp_message / schedule_whatsapp_message (recipient = nom du groupe) — PAS get_group_members.",
       });
     }
 
