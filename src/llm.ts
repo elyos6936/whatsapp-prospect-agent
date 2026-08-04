@@ -1,22 +1,33 @@
 import OpenAI from "openai";
-import { config } from "./config.js";
+import { config, type LlmProvider } from "./config.js";
+import {
+  createLlmClientForRole,
+  llmExtrasForRole,
+  llmRoleLabel,
+  recommendedMaxTokensForRole,
+} from "./llm-router.js";
+
+export type { LlmRole } from "./llm-router.js";
+export {
+  createLlmClientForRole,
+  llmExtrasForRole,
+  llmRoleLabel,
+  recommendedMaxTokensForRole,
+  resolveLlmRoleModel,
+  resolveLlmRoleProvider,
+  supportsForcedToolChoiceForRole,
+} from "./llm-router.js";
 
 /**
- * Client LLM unique (API compatible OpenAI : DeepSeek / MiniMax / Mistral / OpenAI).
- * Infra inchangée : baseURL + clé + modèle via env.
+ * Client LLM chat (DeepSeek / MiniMax / Mistral / OpenAI).
+ * Pour la boucle outils, préférer createLlmClientForRole("tools").
  */
 export function createLlmClient(apiKey: string): OpenAI {
-  return new OpenAI({
-    apiKey,
-    baseURL: config.llmBaseUrl,
-  });
+  return createLlmClientForRole("chat", apiKey);
 }
 
 export function llmProviderLabel(): string {
-  if (config.llmProvider === "deepseek") return "DeepSeek";
-  if (config.llmProvider === "minimax") return "MiniMax";
-  if (config.llmProvider === "mistral") return "Mistral";
-  return "OpenAI";
+  return llmRoleLabel("chat");
 }
 
 /** Chunks Mistral (ThinkChunk + TextChunk) quand reasoning_effort=high. */
@@ -37,15 +48,12 @@ function isContentChunkArray(content: unknown): content is MistralContentChunk[]
 export function stripInternalThinking(text: string): string {
   if (!text) return "";
   let out = text;
-  // MiniMax / modèles ouverts : balises think
   out = out.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, "");
   out = out.replace(/<\/?think\b[^>]*>/gi, "");
-  // Variantes redacted_thinking
   out = out.replace(
     /<\s*redacted_?thinking\b[^>]*>[\s\S]*?<\s*\/\s*redacted_?thinking\s*>/gi,
     "",
   );
-  // Filets orphelins / fuites partielles
   out = out.replace(/^\s*thinking\s*\n+/i, "");
   return out.replace(/\n{3,}/g, "\n\n").trim();
 }
@@ -61,7 +69,6 @@ export function extractAssistantContent(
     return stripInternalThinking(content);
   }
 
-  // Mistral : ne garder que les chunks `text` (ignorer `thinking`)
   if (isContentChunkArray(content)) {
     const texts: string[] = [];
     for (const chunk of content) {
@@ -87,17 +94,17 @@ export function extractReasoningContent(
 /**
  * Message assistant à renvoyer dans le contexte multi-tours.
  * DeepSeek thinking : reasoning_content DOIT être rejoué (sinon HTTP 400).
- * Mistral / MiniMax : content (+ tool_calls) suffit.
  */
 export function toAssistantHistoryMessage(
-  message: OpenAI.Chat.Completions.ChatCompletionMessage
+  message: OpenAI.Chat.Completions.ChatCompletionMessage,
+  provider: LlmProvider = config.llmProvider
 ): OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam {
   const base: OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam = {
     role: "assistant",
     content: message.content ?? null,
     ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
   };
-  if (config.llmProvider !== "deepseek") return base;
+  if (provider !== "deepseek") return base;
   const reasoning = extractReasoningContent(message);
   if (!reasoning) return base;
   return {
@@ -112,79 +119,31 @@ export function isThinkingModel(model: string = config.openaiModel): boolean {
   return m.includes("v4") || m.includes("reasoner") || m.includes("r1");
 }
 
-/**
- * Params provider à merger dans chat.completions.create.
- * - MiniMax : thinking TOUJOURS off (évite fuites `<think>` + latence).
- * - Mistral : reasoning_effort selon opts (défaut high côté agent si non précisé).
- * - DeepSeek : thinking enabled/disabled selon opts.
- */
+/** Params provider chat (rétrocompat). */
 export function llmChatExtras(opts?: { enableThinking?: boolean }): Record<string, unknown> {
-  const provider = config.llmProvider;
-
-  if (provider === "minimax") {
-    // Toujours désactivé pour Klanvio (SaaS : vitesse + pas de fuite thinking).
-    // Passé en top-level (SDK Node sérialise le body tel quel) — équivalent Python extra_body.
-    return {
-      thinking: { type: "disabled" },
-      // Filet : si un proxy ignore `thinking`, le contenu thinking reste séparable.
-      reasoning_split: true,
-    };
-  }
-
-  if (provider === "mistral") {
-    const enable = opts?.enableThinking !== false;
-    if (!enable) return { reasoning_effort: "none" };
-    return { reasoning_effort: "high", top_p: 0.95 };
-  }
-
-  if (provider === "deepseek") {
-    if (!isThinkingModel(config.openaiModel)) return {};
-    const enable = opts?.enableThinking !== false;
-    return { thinking: { type: enable ? "enabled" : "disabled" } };
-  }
-
-  return {};
+  return llmExtrasForRole("chat", opts);
 }
 
-/** Alias rétrocompat — tous les call sites passent par llmChatExtras. */
 export function deepseekChatExtras(opts?: { enableThinking?: boolean }): Record<string, unknown> {
-  return llmChatExtras(opts);
+  return llmExtrasForRole("chat", opts);
 }
 
-/** Alias rétrocompat (code Will / origin). */
 export function mistralChatExtras(opts?: { enableThinking?: boolean }): Record<string, unknown> {
-  return llmChatExtras(opts);
+  return llmExtrasForRole("chat", opts);
 }
 
-/**
- * DeepSeek thinking refuse tool_choice forcé. MiniMax / Mistral / OpenAI : OK.
- */
 export function supportsForcedToolChoice(model: string = config.openaiModel): boolean {
   if (config.llmProvider === "deepseek") return !isThinkingModel(model);
   return true;
 }
 
-/**
- * Budget max_tokens. Pas de marge thinking pour MiniMax (thinking forcé off).
- */
 export function recommendedMaxTokens(
   model: string,
   desiredOutput: number,
   opts?: { thinkingEnabled?: boolean }
 ): number {
-  if (config.llmProvider === "minimax") {
-    return desiredOutput;
+  if (config.toolLlmConfigured && model === config.toolLlmModel) {
+    return recommendedMaxTokensForRole("tools", desiredOutput, opts);
   }
-  if (config.llmProvider === "mistral") {
-    const thinking = opts?.thinkingEnabled !== false;
-    if (thinking) return Math.max(desiredOutput + 800, 1200);
-    return desiredOutput;
-  }
-  const m = model.toLowerCase();
-  const thinking =
-    opts?.thinkingEnabled !== false && (m.includes("v4") || m.includes("reasoner"));
-  if (thinking) {
-    return Math.max(desiredOutput + 800, 1200);
-  }
-  return desiredOutput;
+  return recommendedMaxTokensForRole("chat", desiredOutput, opts);
 }

@@ -15,7 +15,13 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   process.exit(1);
 }
 
-type LlmProvider = "deepseek" | "openai" | "minimax" | "mistral";
+export type LlmProvider = "deepseek" | "openai" | "minimax" | "mistral";
+
+function parseProvider(raw: string | undefined, fallback: LlmProvider): LlmProvider {
+  const v = (raw || "").trim().toLowerCase();
+  if (v === "openai" || v === "minimax" || v === "deepseek" || v === "mistral") return v;
+  return fallback;
+}
 
 function resolveLlmProvider(): LlmProvider {
   const base = (process.env.LLM_BASE_URL || "").toLowerCase();
@@ -26,7 +32,6 @@ function resolveLlmProvider(): LlmProvider {
   ).toLowerCase();
 
   // Endpoint / modèle MiniMax gagnent toujours (même si LLM_PROVIDER=openai|mistral).
-  // Sinon thinking MiniMax reste ON et le chat fuit des blocs <think>.
   if (base.includes("minimax") || model.includes("minimax")) {
     return "minimax";
   }
@@ -40,15 +45,27 @@ function resolveLlmProvider(): LlmProvider {
   return "deepseek";
 }
 
-function resolveLlmApiKey(): string {
+function defaultBaseUrl(provider: LlmProvider): string {
+  if (provider === "openai") return "https://api.openai.com/v1";
+  if (provider === "minimax") return "https://api.minimax.io/v1";
+  if (provider === "mistral") return "https://api.mistral.ai/v1";
+  return "https://api.deepseek.com";
+}
+
+function defaultModel(provider: LlmProvider): string {
+  if (provider === "openai") return "gpt-4o";
+  if (provider === "minimax") return "MiniMax-M3";
+  if (provider === "mistral") return "mistral-medium-3-5";
+  return "deepseek-v4-pro";
+}
+
+function resolveApiKeyForProvider(provider: LlmProvider): string {
   const deepseek = process.env.DEEPSEEK_API_KEY?.trim() || "";
   const openai = process.env.OPENAI_API_KEY?.trim() || "";
   const minimax = process.env.MINIMAX_API_KEY?.trim() || "";
   const mistral = process.env.MISTRAL_API_KEY?.trim() || "";
-  const provider = resolveLlmProvider();
 
   if (provider === "minimax") {
-    // Prod actuelle (Will) ne lit que MISTRAL_API_KEY — on accepte les 3 pour bascule douce
     return minimax || openai || mistral || deepseek;
   }
   if (provider === "mistral") {
@@ -56,25 +73,27 @@ function resolveLlmApiKey(): string {
   }
   if (provider === "deepseek") {
     if (deepseek) return deepseek;
-    // Une clé OpenAI (sk-proj-…) envoyée à DeepSeek provoque un 401 trompeur.
     if (openai.startsWith("sk-proj-") || openai.startsWith("sk-svcacct-")) {
       console.error(
         "❌ DEEPSEEK_API_KEY manquante : OPENAI_API_KEY (OpenAI) ne peut pas être utilisée avec DeepSeek."
       );
       return "";
     }
-    // Anciennes clés DeepSeek parfois mises dans OPENAI_API_KEY
     return openai;
   }
   return openai || deepseek || minimax || mistral;
 }
 
+function resolveLlmApiKey(): string {
+  return resolveApiKeyForProvider(resolveLlmProvider());
+}
+
 function resolveLlmModel(): string {
   const provider = resolveLlmProvider();
   const raw = process.env.LLM_MODEL?.trim() || process.env.OPENAI_MODEL?.trim() || "";
-  if (provider === "openai") return raw || "gpt-4o";
-  if (provider === "minimax") return raw || "MiniMax-M3";
-  if (provider === "mistral") return raw || "mistral-medium-3-5";
+  if (provider === "openai") return raw || defaultModel(provider);
+  if (provider === "minimax") return raw || defaultModel(provider);
+  if (provider === "mistral") return raw || defaultModel(provider);
   if (!raw || /flash/i.test(raw)) {
     if (/flash/i.test(raw)) {
       console.warn(`⚠️ LLM_MODEL="${raw}" (Flash) ignoré → deepseek-v4-pro.`);
@@ -87,11 +106,39 @@ function resolveLlmModel(): string {
 function resolveLlmBaseUrl(): string {
   const explicit = process.env.LLM_BASE_URL?.trim();
   if (explicit) return explicit.replace(/\/$/, "");
-  const provider = resolveLlmProvider();
-  if (provider === "openai") return "https://api.openai.com/v1";
-  if (provider === "minimax") return "https://api.minimax.io/v1";
-  if (provider === "mistral") return "https://api.mistral.ai/v1";
-  return "https://api.deepseek.com";
+  return defaultBaseUrl(resolveLlmProvider());
+}
+
+/** Filet outils (DeepSeek recommandé). Si non configuré → même LLM que le chat. */
+function resolveToolLlmProvider(): LlmProvider {
+  const explicit = process.env.TOOL_LLM_PROVIDER?.trim().toLowerCase();
+  if (explicit) return parseProvider(explicit, "deepseek");
+  // Défaut : DeepSeek si clé présente, sinon chat
+  if (process.env.DEEPSEEK_API_KEY?.trim()) return "deepseek";
+  return resolveLlmProvider();
+}
+
+function resolveToolLlmBaseUrl(): string {
+  const explicit = process.env.TOOL_LLM_BASE_URL?.trim();
+  if (explicit) return explicit.replace(/\/$/, "");
+  return defaultBaseUrl(resolveToolLlmProvider());
+}
+
+function resolveToolLlmModel(): string {
+  const raw = process.env.TOOL_LLM_MODEL?.trim() || "";
+  if (raw) return raw;
+  return defaultModel(resolveToolLlmProvider());
+}
+
+function resolveToolLlmApiKey(): string {
+  return resolveApiKeyForProvider(resolveToolLlmProvider());
+}
+
+function isToolLlmConfigured(): boolean {
+  // Actif si TOOL_LLM_* explicite OU DEEPSEEK_API_KEY présente (filet auto)
+  if (process.env.TOOL_LLM_PROVIDER?.trim()) return Boolean(resolveToolLlmApiKey());
+  if (process.env.DEEPSEEK_API_KEY?.trim()) return true;
+  return false;
 }
 
 /**
@@ -178,13 +225,19 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
   /**
-   * Fournisseur LLM (API compatible OpenAI : DeepSeek | MiniMax | Mistral | OpenAI).
-   * La clé est résolue selon le fournisseur sélectionné.
+   * Fournisseur LLM chat (API compatible OpenAI : DeepSeek | MiniMax | Mistral | OpenAI).
+   * Les outils critiques (sim/activate) sont déterministes ; filet tools = toolLlm*.
    */
   llmProvider: resolveLlmProvider(),
   llmBaseUrl: resolveLlmBaseUrl(),
-  /** Modèle chat + tool calling. */
+  /** Modèle chat (dialogue, accroches). */
   openaiModel: resolveLlmModel(),
+  /** Filet tool-calling (DeepSeek si DEEPSEEK_API_KEY / TOOL_LLM_*). */
+  toolLlmConfigured: isToolLlmConfigured(),
+  toolLlmProvider: resolveToolLlmProvider(),
+  toolLlmBaseUrl: resolveToolLlmBaseUrl(),
+  toolLlmModel: resolveToolLlmModel(),
+  toolLlmApiKey: resolveToolLlmApiKey(),
   /** Login Google (GIS / ID token) — client distinct des intégrations. */
   googleClientId: process.env.GOOGLE_CLIENT_ID?.trim() || "",
   /**

@@ -845,7 +845,14 @@ try {
   await app.listen({ port: config.port, host: "0.0.0.0" });
   console.log(`\n🚀 WhatsApp Agent : http://localhost:${config.port}`);
   console.log(`🕐 Fuseau horaire : ${config.timezone} (process.env.TZ=${process.env.TZ})`);
-  console.log(`   LLM : ${config.llmProvider} (${config.openaiModel}) @ ${config.llmBaseUrl}`);
+  console.log(`   LLM chat : ${config.llmProvider} (${config.openaiModel}) @ ${config.llmBaseUrl}`);
+  if (config.toolLlmConfigured) {
+    console.log(
+      `   LLM tools : ${config.toolLlmProvider} (${config.toolLlmModel}) @ ${config.toolLlmBaseUrl}`
+    );
+  } else {
+    console.log(`   LLM tools : (même que chat — définir DEEPSEEK_API_KEY ou TOOL_LLM_* pour le filet)`);
+  }
   console.log(`   Ouvrez l'app → Connexions → Evolution API + WhatsApp QR\n`);
   startNotificationPoller(12_000);
   startScheduler(5000);

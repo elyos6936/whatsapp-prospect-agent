@@ -14,7 +14,13 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, llmChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
+import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, extractAssistantContent, createLlmClientForRole, llmExtrasForRole, recommendedMaxTokensForRole, resolveLlmRoleModel, resolveLlmRoleProvider } from "./llm.js";
+import {
+  runDeterministicActivation,
+  runDeterministicSimulation,
+  shouldDeterministicActivate,
+  shouldDeterministicSimulate,
+} from "./deterministic-campaign.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -186,6 +192,14 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
     );
   }
   return createLlmClient(key);
+}
+
+/** Client boucle outils (DeepSeek filet si configuré, sinon chat). */
+async function getToolLlmClient(userId: number): Promise<OpenAI> {
+  if (config.toolLlmConfigured && config.toolLlmApiKey) {
+    return createLlmClientForRole("tools", config.toolLlmApiKey);
+  }
+  return getOpenAiClient(userId);
 }
 
 async function buildBusinessContext(
@@ -513,6 +527,41 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     recentHistory: history,
   });
 
+  // ── Routeur déterministe (pas de boucle LLM) ─────────────────────────────
+  // Activation : « lancer » / « active » / oui après question d'activation
+  const bareValidation =
+    isShortCampaignValidation(userMessage) &&
+    !/\b(lance|lancer|active|activer|démarre|demarre)\b/i.test(userMessage);
+  if (
+    shouldDeterministicActivate(history, userMessage) &&
+    turnMode !== "decline_sim" &&
+    !(bareValidation && !hasSimAlready)
+  ) {
+    try {
+      const activated = await runDeterministicActivation({ userId, threadId });
+      if (activated) return activated;
+    } catch (err) {
+      console.warn("[agent] deterministic activate failed:", err);
+    }
+  }
+
+  // Simulation : « simule » / force_sim / resimule
+  if (shouldDeterministicSimulate(history, userMessage) || forceSim) {
+    try {
+      const sim = await runDeterministicSimulation({
+        userId,
+        threadId,
+        client,
+        businessContext,
+        history,
+        userMessage,
+      });
+      if (sim?.trim()) return sim;
+    } catch (err) {
+      console.warn("[agent] deterministic simulation failed:", err);
+    }
+  }
+
   // Chemin déterministe : « oui » après les 5 variantes → brouillon + simulation
   // (évite les boucles tool-calling MiniMax qui laissent l'UI sur « L'agent réfléchit… »).
   if (
@@ -524,7 +573,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     !hasSimAlready &&
     turnMode !== "decline_sim" &&
     turnMode !== "activation_confirm" &&
-    turnMode !== "activation_nudge"
+    turnMode !== "activation_nudge" &&
+    !shouldDeterministicActivate(history, userMessage)
   ) {
     const variants = extractOpenerVariantsFromHistory(history);
     if (variants && variants.length === 5) {
@@ -627,58 +677,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Simulation hors boucle outils (génération directe JSON).
-  if (forceSim) {
-    const recentTranscript = history
-      .slice(-16)
-      .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
-      .join("\n\n");
-    try {
-      let approvedOpener: string | null = null;
-      let campaignBrief: string | null = null;
-      if (thread?.automation_id) {
-        const auto = await getAutomation(userId, thread.automation_id);
-        approvedOpener = auto?.config.initialMessage?.trim() || null;
-        if (auto) {
-          const bits = [
-            auto.config.conversationGuide
-              ? `Guide :\n${auto.config.conversationGuide}`
-              : "",
-            auto.config.productName ? `Produit : ${auto.config.productName}` : "",
-            auto.config.price ? `Prix : ${auto.config.price}` : "",
-            auto.config.closingLink ? `Lien : ${auto.config.closingLink}` : "",
-            auto.config.salesScript ? `Script : ${auto.config.salesScript}` : "",
-          ].filter(Boolean);
-          try {
-            const { formatCampaignMemoryForWhatsApp, getLinkedMemoryForAutomation } =
-              await import("./campaign-sync.js");
-            const mem = await getLinkedMemoryForAutomation(userId, auto.id);
-            if (mem) bits.push(formatCampaignMemoryForWhatsApp(mem));
-          } catch {
-            /* ignore */
-          }
-          campaignBrief = bits.join("\n\n") || null;
-        }
-      }
-      const sim = await generateCampaignSimulationDirect(client, {
-        businessContext,
-        recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
-        approvedOpener,
-        campaignBrief,
-      });
-      if (sim?.display?.trim()) {
-        try {
-          const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
-          await persistLivePlaybookForThread(userId, threadId, sim.turns);
-        } catch (err) {
-          console.warn("[agent] persist playbook:", err);
-        }
-        return sim.display.trim();
-      }
-    } catch (err) {
-      console.warn("[agent] simulation directe échouée, fallback boucle outils:", err);
-    }
-  }
+  // Simulation LLM fallback déjà tentée via runDeterministicSimulation plus haut.
 
   if (forceSim) {
     messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
@@ -699,8 +698,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   let simFixAttempts = 0;
   let forcedSimUsed = false;
 
+  // Boucle outils : DeepSeek (filet) si configuré, sinon modèle chat
+  const toolClient = await getToolLlmClient(userId);
+  const toolModel = resolveLlmRoleModel("tools");
+  const toolProvider = resolveLlmRoleProvider("tools");
+
   const forceCreateDraftTool =
-    config.llmProvider === "minimax" &&
     !briefing.isInboundClosing &&
     briefing.readyForDraft &&
     briefing.openerVariantsProposed &&
@@ -713,22 +716,22 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     rounds++;
 
     // tool_choice auto : l'agent choisit les outils selon le brief.
-    // MiniMax : forcer create_automation après « oui » sur les 5 variantes (filet si fast path a échoué).
+    // Filet : forcer create_automation après « oui » sur les 5 variantes.
     let response: OpenAI.Chat.Completions.ChatCompletion;
     try {
       response = await callOpenAiWithRetry(() =>
-        client.chat.completions.create({
-          model: config.openaiModel,
+        toolClient.chat.completions.create({
+          model: toolModel,
           messages,
           tools: toolsForTurn,
           tool_choice: forceCreateDraftTool && rounds === 1
             ? { type: "function", function: { name: "create_automation" } }
             : "auto",
-          temperature: config.llmProvider === "minimax" ? 1 : 0.7,
-          max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
+          temperature: toolProvider === "minimax" ? 1 : 0.7,
+          max_tokens: recommendedMaxTokensForRole("tools", CHAT_MAX_TOKENS, {
             thinkingEnabled: false,
           }),
-          ...llmChatExtras({ enableThinking: false }),
+          ...llmExtrasForRole("tools", { enableThinking: false }),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
@@ -770,7 +773,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
 
     if (assistantMsg.tool_calls?.length) {
-      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
 
       for (const toolCall of assistantMsg.tool_calls) {
         if (toolCall.type !== "function") continue;
@@ -1131,7 +1134,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     // Garde-fou : annonce se terminant par « : » sans contenu.
     if (isDanglingAnnouncement(text) && rounds < MAX_TOOL_ROUNDS) {
       // Rejouer le message assistant complet (ThinkChunks inclus) — doc Mistral multi-tours.
-      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
       messages.push({
         role: "system",
         content:
@@ -1146,7 +1149,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       (hasSimulationThread(text) || isBrokenSimulationPreview(text)) &&
       rounds < MAX_TOOL_ROUNDS
     ) {
-      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
       messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
       continue;
     }
@@ -1154,7 +1157,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     // Garde-fou simulation vide / incomplète.
     if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < MAX_TOOL_ROUNDS) {
       simFixAttempts++;
-      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
       messages.push({
         role: "system",
         content:
@@ -1165,7 +1168,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     // Si on forçait la simulation et qu'on a du texte sans fil → forcer l'outil
     if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < MAX_TOOL_ROUNDS) {
-      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
       messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
       continue;
     }
@@ -1179,7 +1182,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       (!briefing.openerSingleProposed || !briefing.openerSingleValidated) &&
       rounds < MAX_TOOL_ROUNDS
     ) {
-      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
       messages.push({
         role: "system",
         content:
@@ -1204,14 +1207,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   });
   try {
     const wrapUp = await callOpenAiWithRetry(() =>
-      client.chat.completions.create({
-        model: config.openaiModel,
+      toolClient.chat.completions.create({
+        model: toolModel,
         messages,
-        temperature: 0.7,
-        max_tokens: recommendedMaxTokens(config.openaiModel, 500, {
+        temperature: toolProvider === "minimax" ? 1 : 0.7,
+        max_tokens: recommendedMaxTokensForRole("tools", 500, {
           thinkingEnabled: false,
         }),
-        ...llmChatExtras({ enableThinking: false }),
+        ...llmExtrasForRole("tools", { enableThinking: false }),
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();
