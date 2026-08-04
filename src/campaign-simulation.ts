@@ -1,12 +1,11 @@
 /**
- * Simulation campagne : formatage + génération directe (sans tool_choice).
- * DeepSeek v4 thinking refuse tool_choice forcé → on génère hors boucle outils.
+ * Simulation campagne : formatage + génération directe (sans tool calling).
  */
 import type OpenAI from "openai";
 import { config } from "./config.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
-import { llmChatExtras, recommendedMaxTokens, stripInternalThinking } from "./llm.js";
+import { extractAssistantContent, llmChatExtras, recommendedMaxTokens } from "./llm.js";
 
 export type SimulationTurn = {
   speaker: "toi" | "prospect";
@@ -119,7 +118,7 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
 }
 
 /**
- * Génère la simulation sans outils ni tool_choice (évite le 400 DeepSeek thinking).
+ * Génère la simulation sans outils (JSON direct).
  */
 export async function generateCampaignSimulationDirect(
   client: OpenAI,
@@ -169,6 +168,7 @@ export async function generateCampaignSimulationDirect(
       { role: "user", content: user },
     ],
     max_tokens: recommendedMaxTokens(config.openaiModel, 900, { thinkingEnabled: false }),
+    temperature: 0.7,
     ...llmChatExtras({ enableThinking: false }),
   };
 
@@ -178,7 +178,7 @@ export async function generateCampaignSimulationDirect(
     )
   );
 
-  const content = stripInternalThinking(response.choices[0]?.message?.content?.trim() ?? "");
+  const content = extractAssistantContent(response.choices[0]?.message);
   const turns = parseTurnsFromModelText(content);
   if (!turns) {
     console.warn("[simulation] parse failed, raw:", content.slice(0, 400));

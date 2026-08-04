@@ -1,23 +1,55 @@
 import { getAutomation, updateAutomationStats, type Automation } from "./db.js";
+import { sql } from "./pg.js";
 
 export interface AbPick {
   variantId: string;
   message: string;
 }
 
+/** Compteurs A/B déjà assignés aux cibles (source de vérité, indépendante de stats_json). */
+export async function countAbVariantsAssigned(
+  userId: number,
+  automationId: number
+): Promise<Record<string, number>> {
+  const rows = await sql<Array<{ ab_variant: string; n: number }>>`
+    SELECT ab_variant, COUNT(*)::int AS n
+    FROM automation_targets
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND ab_variant IS NOT NULL
+      AND ab_variant <> ''
+      AND ab_variant NOT LIKE 'group-%'
+    GROUP BY ab_variant
+  `;
+  const out: Record<string, number> = {};
+  for (const row of rows) {
+    out[String(row.ab_variant)] = Number(row.n) || 0;
+  }
+  return out;
+}
+
 /**
  * Choisit l'accroche A/B à envoyer.
  * Rotation équitable : d'abord les moins envoyées ; à égalité, round-robin
  * (évite de coller indéfiniment sur v1 quand tous les taux de réponse sont 0).
+ *
+ * `assignedCounts` (cibles) prime sur `stats.abResults` si fourni — plus fiable
+ * si un recompute a déjà écrasé abResults.
  */
-export function pickAbVariant(auto: Automation): AbPick {
+export function pickAbVariant(
+  auto: Automation,
+  assignedCounts?: Record<string, number>
+): AbPick {
   const variants = (auto.config.abVariants ?? []).filter((v) => v.message?.trim());
   if (!variants.length) {
     return { variantId: "default", message: auto.config.initialMessage?.trim() || "" };
   }
 
   const stats = auto.stats.abResults ?? {};
-  const sentOf = (id: string) => stats[id]?.sent ?? 0;
+  const sentOf = (id: string) =>
+    assignedCounts && Object.keys(assignedCounts).length > 0
+      ? assignedCounts[id] ?? 0
+      : stats[id]?.sent ?? 0;
   const minSent = Math.min(...variants.map((v) => sentOf(v.id)));
   const totalSent = variants.reduce((n, v) => n + sentOf(v.id), 0);
 

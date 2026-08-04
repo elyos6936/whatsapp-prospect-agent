@@ -121,8 +121,10 @@ export async function generateThirdPartyNotificationMessage(
         { role: "system", content: THIRD_PARTY_NOTIFICATION_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 280, { thinkingEnabled: false }),
-      temperature: 0.4,
+      max_tokens: recommendedMaxTokens(config.openaiModel, 260, {
+        thinkingEnabled: false,
+      }),
+      temperature: 0.5,
       ...llmChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );

@@ -33,6 +33,7 @@ import {
 import {
   getObjectiveReachedReply,
   getStopFarewellReply,
+  shouldSilenceAfterFarewell,
   shouldStopConversation,
   stopReasonLabel,
   type StopReason,
@@ -139,7 +140,7 @@ function buildSimCampaignContext(
           `Si le client dit juste « salut / bonjour / hello » : accueille brièvement + demande en quoi tu peux l'aider (produit / besoin) — 1-2 phrases.`,
           `Si le client demande une photo et qu'un média est en config : confirme que tu l'envoies (en simu : dis-le en texte).`,
         ].join(" "),
-    `ARRÊT (identique au live) : refus clair / STOP → clôture. Objectif atteint (lien/prix/RDV + ack) → courte confirmation puis stop — pas de question supplémentaire.`,
+    `ARRÊT (identique au live) : refus d'intérêt (« ça vous intéresse ? » → non) / STOP → clôture. « Non » à une Q diagnostic → continue. Objectif atteint (lien/prix/RDV + ack) → courte confirmation puis stop. Ne répète jamais une question déjà posée.`,
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -309,6 +310,9 @@ export async function replyInSimulationPreview(
   const actionableStop =
     softStop && softStop !== "unknown_question" ? softStop : null;
   if (actionableStop) {
+    if (shouldSilenceAfterFarewell(prospectMessage, priorPolicyHistory)) {
+      return finishClosed("", actionableStop);
+    }
     return finishClosed(getStopFarewellReply(actionableStop), actionableStop);
   }
 

@@ -1,7 +1,7 @@
 import { config } from "./config.js";
 import { getAppSettings } from "./db.js";
 import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, llmChatExtras } from "./llm.js";
+import { createLlmClient, extractAssistantContent, llmProviderLabel, llmChatExtras } from "./llm.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 import type OpenAI from "openai";
 
@@ -118,7 +118,7 @@ export async function generatePersonalizedOpener(
       );
 
       text = sanitizeOutboundWhatsAppText(
-        response.choices[0]?.message?.content?.trim() || ""
+        extractAssistantContent(response.choices[0]?.message) || ""
       );
       if (!text) continue;
       if (driftsFromTemplate(text, input.template)) continue;

@@ -30,7 +30,8 @@ import {
   type Automation,
   type AutomationConfig,
 } from "./db.js";
-import { pickAbVariant, recordAbSent } from "./ab-testing.js";
+import { pickAbVariant, recordAbSent, countAbVariantsAssigned } from "./ab-testing.js";
+import { validateOutboundAbVariants } from "./opener-frame.js";
 import { getActiveCampaignTargetIds } from "./campaign-gating.js";
 import {
   chatIdToDisplay,
@@ -201,7 +202,23 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
   }
 
   const freshAuto = (await getAutomation(userId, auto.id)) ?? auto;
-  const ab = pickAbVariant(freshAuto);
+  const isOutboundProspect =
+    freshAuto.type === "contact_prospect" || freshAuto.type === "group_prospect";
+  if (isOutboundProspect) {
+    const abErr = validateOutboundAbVariants(freshAuto.config.abVariants ?? []);
+    if (abErr) {
+      await updateAutomationStatus(userId, auto.id, "failed");
+      await addAutomationLog(
+        userId,
+        auto.id,
+        "error",
+        `Campagne stoppée : ${abErr}`
+      );
+      return;
+    }
+  }
+  const assignedCounts = await countAbVariantsAssigned(userId, auto.id);
+  const ab = pickAbVariant(freshAuto, assignedCounts);
   let message = ab.message.trim();
   if (!message) {
     await updateAutomationStatus(userId, auto.id, "failed");

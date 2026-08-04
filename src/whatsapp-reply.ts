@@ -9,6 +9,7 @@ import {
   isAffirmingPendingSendOffer,
   ensurePendingLinkInReply,
 } from "./lead-scoring.js";
+import { shouldSilenceAfterFarewell } from "./stop-policy.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté (Afrique francophone) qui répond comme un **vrai humain** — jamais comme un bot.
 
@@ -18,7 +19,7 @@ export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté
 2. Déduis son intention (accord, refus, confusion, question, objection, hors-sujet, info utile…).
 3. Réponds à **CETTE** intention, en restant sur la mission campagne — pas de script générique, pas de question inventée hors fil.
 4. Si c'est inattendu : clarifie ou recadre en 1 phrase humaine. **JAMAIS** de reset (te re-présenter, cold opener, « je suis allé trop vite + je suis X », changer de sujet).
-5. Si tu as **proposé** quelque chose (lien, détail, envoi) et qu'il dit oui / ok / d'accord → **exécute** (envoie le lien / l'info), ne clôture pas.
+5. Si tu as **proposé** quelque chose (lien, détail, envoi, montrer un exemple) et qu'il dit oui / ok / d'accord → **exécute** (envoie le lien / l'exemple / la prochaine info), ne clôture pas et **ne repose pas** une question déjà posée.
 
 Tu dois pouvoir t'en sortir seul face à des réponses imprévues. Les exemples ci-dessous sont des **intentions**, pas des phrases à recopier.
 
@@ -34,23 +35,29 @@ Si le prospect demande **juste** le lien / le prix / un seul message :
 → Envoie UNIQUEMENT l'info demandée. Pas de question ni de relance.
 
 ## Règles d'or
-1. **HISTORIQUE d'abord** : tout ce qui a déjà été dit compte. Ne répète pas une question déjà posée.
+1. **HISTORIQUE d'abord** : tout ce qui a déjà été dit compte. **Ne répète JAMAIS** une question déjà posée dans le fil (même reformulée à l'identique).
 2. **DIRECT** : réponds à CE qu'il vient de dire, dans le cadre campagne.
 3. **COURT** : 1-2 phrases vivantes (court ≠ sec).
 4. **PAS DE RE-SALUT / RE-PRÉSENTATION** si le fil est déjà engagé (sauf s'il demande explicitement qui tu es).
 5. **SORTANT** : si TU as ouvert, n'agis jamais comme s'il t'avait contacté (« ravi d'échanger », « merci de votre message »).
-5b. **Après « Salut / Hello / Ok »** (TU as déjà ouvert) : INTERDIT de balancer ton nom + bio (« Will… J'accompagne… »). Enchaîne directement 1 question / point lié à la mission.
+5b. **Messages très courts** (ok / oui / salut) : lis TON dernier message. Si tu proposais déjà d'avancer → exécute. Sinon → 1 point / question **nouvelle**. INTERDIT bio / re-présentation / question déjà posée.
 6. **ENTRANT** : le client a initié — accueil / support, pas de cold outreach.
 7. **ZÉRO CROCHETS** [prix], [lien], etc.
 8. **VOUVOIEMENT**. Pas de prénom du prospect à tout va.
 9. **Pas de réaction vide** (« Super. », « Ok. ») : réagir + avancer la mission.
 10. **Infors multiples** d'un coup → noter l'utile + UNE question manquante (pas « Merci M. X » seul).
-11. Refus clair → clôture polie. Objectif atteint → confirmation courte puis stop.
+11. **Refus vs réponse utile** :
+   - « non » / « non merci » / « pas intéressé » à une demande d'intérêt (« ça vous intéresse ? », « ouvert à un échange ? ») → clôture polie UNE fois puis STOP.
+   - « non » à une question de qualification (« utilisez-vous déjà… ? », « avez-vous des tâches… ? ») → **continue** : note le fait et avance (souvent une opportunité), ne clôture PAS.
+   - Après un adieu (« Bonne journée », « je ne vous dérange plus ») : si le prospect dit seulement ok / okay / merci → **n'envoie RIEN**.
 12. Emojis : aucun par défaut (max 1 s'il en utilise). Texte seulement.
 
 ## Intentions utiles (exemples — adapte, ne copie pas)
 - Qui es-tu → prénom business + pourquoi on écrit (1 souffle).
-- Salut / hello / ok après TON opener → enchaîner la mission (1 question), **pas** de présentation.
+- Salut / hello / ok après TON opener → enchaîner la mission (1 question **nouvelle**), **pas** de présentation.
+- Okay après « je peux vous montrer… » → montrer un exemple concret / prochaine info, **pas** reposer la question d'avant.
+- « Non » à « utilisez-vous déjà des outils ? » → « Pas de souci — justement… » + avancer, pas d'adieu.
+- « Non » à « ça vous intéresse ? » → clôturer poliment.
 - Où as-tu eu mon numéro → transparence + source vraie du contexte.
 - Confusion / « je ne comprends pas » → clarifier **ton** dernier message.
 - Oui après offre de lien → envoyer le lien réel.
@@ -344,6 +351,12 @@ export async function generateWhatsAppReply(userId: number, input: {
     20,
     input.automationId
   );
+
+  // Filet anti-relance : adieu déjà envoyé + ack court → silence (pas de LLM / pas de lien).
+  if (shouldSilenceAfterFarewell(input.incomingText, policyHistory)) {
+    return "";
+  }
+
   const affirmingPendingSend =
     input.forceDeliverPendingLink === true ||
     isAffirmingPendingSendOffer(input.incomingText, policyHistory);
@@ -352,29 +365,51 @@ export async function generateWhatsAppReply(userId: number, input: {
   const ongoing = input.forceOngoing === true || isOngoingConversation || inbound;
   const lastOut = [...policyHistory].reverse().find((m) => m.direction === "sortant");
   const lastOutSnippet = lastOut?.body?.trim().slice(0, 180) || "";
+  const lastOutBody = lastOut?.body?.trim() || "";
   const shortAck =
     input.incomingText.trim().length <= 24 &&
     /^(salut|hello|bonjour|bonsoir|hey|hi|coucou|ok|okay|d'accord|dac|bsr|oui)[!?.…]*$/i.test(
       input.incomingText.trim()
     );
+  /** Dernier message proposait déjà d'avancer → « ok » = exécuter, pas reposer une Q. */
+  const lastOutWasForwardOffer =
+    /\b(je (peux |vais )?(vous |te )?(montrer|expliquer|envoyer|partager)|voici (un |le )?exemple|justement[, ]|on peut |si vous voulez)\b/i.test(
+      lastOutBody
+    );
+  const askedQuestions = policyHistory
+    .filter((m) => m.direction === "sortant")
+    .flatMap((m) => m.body.match(/[^.!?\n]{8,}\?/g) ?? [])
+    .map((q) => q.trim().replace(/\s+/g, " "))
+    .filter((q, i, arr) => arr.indexOf(q) === i)
+    .slice(-6);
+  const askedBlock =
+    askedQuestions.length > 0
+      ? `\n## Questions DÉJÀ posées (INTERDIT de les reformuler / répéter)\n- ${askedQuestions.join("\n- ")}\n`
+      : "";
 
   // Filets critiques seulement — le reste = raisonnement IA.
   const hardOverride = affirmingPendingSend
     ? `\n## ACTION REQUISE\n` +
       `Tu as proposé d'envoyer le lien. Le prospect dit « ${input.incomingText.trim()} ». ` +
       `Inclus MAINTENANT l'URL campagne du contexte. Pas de clôture sans lien.\n`
-    : !inbound && ongoing && shortAck
+    : !inbound && ongoing && shortAck && lastOutWasForwardOffer
       ? `\n## ACTION REQUISE\n` +
-        `TU as déjà ouvert. Il répond juste « ${input.incomingText.trim()} ». ` +
-        `INTERDIT : te présenter (nom + bio / « j'accompagne… »). Enchaîne 1 question liée à la mission.\n`
-      : inbound
-        ? `\n## Mode ENTRANT\nLe client a initié — support/closing, pas de cold outreach.\n`
-        : "";
+        `Le prospect accepte (« ${input.incomingText.trim()} »). Ton dernier message proposait déjà d'avancer : ` +
+        `**exécute** maintenant (exemple concret / prochaine info utile, 1-2 phrases). ` +
+        `INTERDIT : reposer une question déjà dans l'historique, te présenter, ou repartir de zéro.\n`
+      : !inbound && ongoing && shortAck
+        ? `\n## ACTION REQUISE\n` +
+          `TU as déjà ouvert. Il répond juste « ${input.incomingText.trim()} ». ` +
+          `INTERDIT : te présenter (nom + bio / « j'accompagne… »). ` +
+          `Avance avec 1 point ou 1 question **NOUVELLE** (jamais une question déjà posée).\n`
+        : inbound
+          ? `\n## Mode ENTRANT\nLe client a initié — support/closing, pas de cold outreach. Messages courts : réponds à son besoin, n'invente pas un script prospection.\n`
+          : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
 ${await businessContextBlock(userId)}
 ${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES\n${input.automationContext}\n` : "\n⚠️ Pas de campagne active — réponse courte et générale.\n"}
-${hardOverride}
+${hardOverride}${askedBlock}
 ## Contact
 ${input.senderName} (${display})
 Messages échangés : ${Math.max(messageCount, input.forceOngoing || inbound ? 2 : 0)}
@@ -387,11 +422,13 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
-Raisonne : que signifie sa réponse par rapport à TON dernier message ? Réponds en 1-2 phrases WhatsApp, mission campagne. Inattendu → clarifie/recadre, jamais de reset.${
+Raisonne : que signifie sa réponse par rapport à TON dernier message ? Réponds en 1-2 phrases WhatsApp, mission campagne. Inattendu → clarifie/recadre, jamais de reset. Ne répète aucune question déjà posée.${
     affirmingPendingSend ? " Inclus l'URL campagne." : ""
   }${
     !inbound && ongoing && shortAck && !affirmingPendingSend
-      ? " Pas de présentation / bio."
+      ? lastOutWasForwardOffer
+        ? " Exécute la suite proposée — pas de nouvelle question déjà vue."
+        : " Pas de présentation / bio. Question ou point nouveau seulement."
       : ""
   }`;
 
@@ -402,8 +439,10 @@ Raisonne : que signifie sa réponse par rapport à TON dernier message ? Répond
         { role: "system", content: WHATSAPP_REPLY_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 260, { thinkingEnabled: false }),
-      temperature: 0.72,
+      max_tokens: recommendedMaxTokens(config.openaiModel, 220, {
+        thinkingEnabled: false,
+      }),
+      temperature: 0.65,
       presence_penalty: 0.45,
       frequency_penalty: 0.45,
       ...llmChatExtras({ enableThinking: false }),

@@ -7,7 +7,7 @@ import {
   updateContactAutomationMemory,
   updateContactMemory,
 } from "./db.js";
-import { createLlmClient, llmChatExtras } from "./llm.js";
+import { createLlmClient, extractAssistantContent, llmChatExtras } from "./llm.js";
 import type OpenAI from "openai";
 
 export async function getMemoryContextBlock(
@@ -71,7 +71,7 @@ export async function refreshContactMemory(
     temperature: 0.3,
     ...llmChatExtras({ enableThinking: false }),
   } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
-  const summary = response.choices[0]?.message?.content?.trim();
+  const summary = extractAssistantContent(response.choices[0]?.message) || undefined;
   if (!summary) return;
 
   if (automationId != null && Number.isFinite(automationId)) {

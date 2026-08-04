@@ -2806,6 +2806,9 @@ async function recomputeAutomationStats(userId: number, automationId: number): P
     stats.conversions = auto.stats.conversions;
     stats.revenueFcfa = auto.stats.revenueFcfa;
     stats.openersDone = auto.stats.openersDone;
+    // Ne JAMAIS écraser la rotation A/B (sinon toujours v1 au prochain envoi).
+    stats.abResults = auto.stats.abResults;
+    stats.openAiCostEstimateFcfa = auto.stats.openAiCostEstimateFcfa;
   }
 
   await sql`

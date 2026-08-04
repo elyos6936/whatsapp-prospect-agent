@@ -11,20 +11,49 @@ export type StopReason =
   | "off_topic";
 
 const DISSATISFACTION_PATTERNS =
-  /pas content|pas satisf|mecontent|insatisf|arnaque|escroc|hors de question|nul\b|mauvais service|inacceptable|scandale|vous abusez|laissez-moi tranquille|plus jamais|je me plains/i;
+  /pas content|pas satisf|mecontent|insatisf|arnaque|escroc|hors de question|nul\b|mauvais service|inacceptable|scandale|vous abusez|laissez-moi tranquille|plus jamais|je me plains|tu me soules|vous me soules|tu me saoules|vous me saoules|casse[- ]?les[- ]?pieds|fais chier|fous[- ]?moi la paix|lache[- ]?moi|l[aâ]che[- ]?moi/i;
 
 const ESCALATION_PATTERNS =
   /parler a un humain|parler a une personne|un responsable|votre patron|votre chef|appeler|telephone direct|numero direct|je veux parler (a|à|avec) (un |une )?(humain|personne|responsable)/i;
 
-/** Refus clair uniquement — pas les « non » ambigus ni le scepticisme de curiosité. */
+/**
+ * Refus explicite (phrases longues).
+ * Les « non » seuls sont gérés à part via le contexte (dernière question sortante).
+ */
 const NOT_INTERESTED_PATTERNS =
-  /pas (du tout )?interesse|pas int[eé]ress[eée]?(\s|$|!|\.)|non merci|ca m.?interesse pas|cela m.?interesse pas|je (ne )?suis pas interesse|pas pour moi|pas besoin(\s|$)|je n.?ai pas besoin|fiche moi la paix|fichez-moi la paix|ne m.?ecri(s|ve|vez) plus|plus de message|j.?ai pas demande|je n.?ai pas demande|arrete(z)? (de )?(m.?ecri|me contacter)|stop (les? )?messages/i;
+  /pas (du tout )?interesse|pas int[eé]ress[eée]?(\s|$|!|\.)|non merci|ca m.?interesse pas|cela m.?interesse pas|je (ne )?suis pas interesse|pas pour moi|pas besoin(\s|$)|je n.?ai pas besoin|fiche moi la paix|fichez-moi la paix|ne m.?ecri(s|ve|vez) plus|plus de message|j.?ai pas demande|je n.?ai pas demande|arrete(z)? (de )?(m.?ecri|me contacter)|stop (les? )?messages|non je (pense|crois) (que )?pas|je (ne )?(pense|crois) pas(\s|$|!|\.)|pas vraiment(\s|$|!|\.)|non pas vraiment|bof(\s|$|!|\.)|mouais/i;
+
+/** « non » / « nan » seul (après une demande de consentement — voir detectContextualRefusal). */
+const BARE_NO_RE = /^\s*(non|nan|nn|nope)([!.…\s]*)$/i;
+
+/**
+ * Dernier sortant = demande de CONSENTIR à poursuivre (intérêt / pitch / échange).
+ * PAS une question de qualification (« utilisez-vous déjà… », « avez-vous des tâches… »).
+ * Un « non » à une Q diagnostic = info utile → on continue. Un « non » ici = stop.
+ */
+const OUTBOUND_CONSENT_ASK_RE =
+  /(ca|ça)?\s*vous\s+int[eé]resse|vous\s+int[eé]resse\s*\?|int[eé]ress[eée]?\s*\?|ouvert\s+(a|à)\s+(un\s+)?[eé]change|on\s+(en\s+)?(parle|discute)\s*\?|(je\s+)?(peux|vais)\s+(vous|te)\s+(expliquer|montrer|envoyer)|gagner\s+du\s+temps.{0,80}\?|ca\s+vous\s+parle|ça\s+vous\s+parle|ça\s+vous\s+dit|ca\s+vous\s+dit|partant\s*\?|on\s+continue\s*\?|voulez[- ]vous|vous\s+voulez\s+|souhaitez[- ]vous|d['’]accord\s+pour|ok\s+pour\s+(qu|que|un)|disponible\s+pour\s+(un|une|en)\b|avez[- ]vous\s+\d+\s*(min|minutes?|secondes?)|vous\s+avez\s+\d+\s*(min|minutes?|secondes?)/i;
+
+/** Question de qualification / diagnostic — un « non » n'est PAS un refus d'intérêt. */
+const OUTBOUND_DIAGNOSTIC_ASK_RE =
+  /utilisez[- ]vous|vous\s+utilisez|avez[- ]vous\s+(des|de\s+la|du)|vous\s+avez\s+(des|de\s+la|du)|vous\s+voyez|c['’]est\s+quoi\s+votre|quel(le)?\s+(outil|logiciel|crm|process)|depuis\s+combien|combien\s+de\s+(temps|employ|personne|client)|vous\s+faites\s+(du|de\s+la)|travaillez[- ]vous/i;
+
+/**
+ * Clôture verbale déjà envoyée par l'agent (refus / au revoir).
+ * Après ça, un « ok / okay / merci » doit rester silencieux.
+ */
+export const AGENT_FAREWELL_RE =
+  /je (ne )?(vous |te )?(d[eé]range|contacte|ecri(s|rai)?|embete) plus|bonne (journ[eé]e|continuation|soir[eé]e)|n['’]?h[eé]sitez pas.{0,60}recontact|je (m['’]?arr[eê]te|reste disponible si besoin)|passez une excellente|compris.? je (ne )?(vous |te )?d[eé]range|d['’]accord.? je (note|ne vous)/i;
+
+/** Ack court après un adieu — pas une relance d'intérêt. */
+const SHORT_POST_FAREWELL_ACK_RE =
+  /^\s*(ok|okay|oui|ouais|merci|d['’]accord|dac|parfait|bonne journ[eé]e|bonne continuation|ok merci|merci (beaucoup|bien))([!.…\s]*)$/i;
 
 const SKEPTICISM_SOFT_PATTERNS =
   /c.?est (toi|vous) qui (vient|venez|m.?a|m.?ont)|pourquoi tu m.?ecri|pourquoi vous m.?ecri|je (ne )?(te|vous) connais pas|c.?est quoi ce truc|bon c.?est toi qui|qui (etes|êtes)-vous|tu es qui|vous etes qui/i;
 
 const SKEPTICISM_HOSTILE_PATTERNS =
-  /spam|harcelement|harc[eè]lement|tu m.?enerve|vous m.?enerve|arrete(z)? (de m.?ecri|ca)|fiche(z)?[- ]?moi la paix/i;
+  /spam|harcelement|harc[eè]lement|tu m.?enerve|vous m.?enerve|tu me soules|vous me soules|arrete(z)? (de m.?ecri|ca)|fiche(z)?[- ]?moi la paix/i;
 
 const PRICE_QUESTION = /combien|prix|tarif|co[uû]t|fcfa|franc|budget|payer combien/i;
 const DELIVERY_QUESTION = /livraison|livrer|adresse|ou est|delai de livraison|frais de port/i;
@@ -48,6 +77,10 @@ const DIGITAL_CREATIVE_CAMPAIGN =
 const INTEREST_SIGNAL =
   /int[eé]ress|curieux|en savoir plus|dites-moi|comment|combien|prix|rdv|rendez-vous|appel|disponible|oui|ok|d'accord|formation|inscription|acheter|commander|lien|payer|commander/i;
 
+/** Intérêt réel (hors « ok » / « oui » seuls) — pour exiger un 2e refus. */
+const STRONG_INTEREST_SIGNAL =
+  /int[eé]ress|curieux|en savoir plus|combien|prix|rdv|rendez-vous|appel|inscription|acheter|commander|lien|payer|disponible pour|je veux|partant|volontiers/i;
+
 function normalizeText(text: string): string {
   return text
     .toLowerCase()
@@ -66,6 +99,63 @@ export function detectEscalationRequest(text: string): boolean {
 
 export function detectNotInterested(text: string): boolean {
   return NOT_INTERESTED_PATTERNS.test(normalizeText(text));
+}
+
+/** Dernier sortant = demande de consentement à poursuivre (pas une Q diagnostic). */
+export function isOutboundConsentAsk(body: string): boolean {
+  const t = normalizeText(body);
+  if (!t) return false;
+  // Diagnostic prioritaire : « utilisez-vous déjà… ? » ≠ consentement même avec « ? ».
+  if (OUTBOUND_DIAGNOSTIC_ASK_RE.test(t)) return false;
+  return OUTBOUND_CONSENT_ASK_RE.test(t);
+}
+
+/** Dernier sortant = question de qualification (réponse oui/non = info, pas stop). */
+export function isOutboundDiagnosticAsk(body: string): boolean {
+  return OUTBOUND_DIAGNOSTIC_ASK_RE.test(normalizeText(body));
+}
+
+/**
+ * « non » seul = refus UNIQUEMENT après une demande de consentement
+ * (« ça vous intéresse ? », « ouvert à un échange ? »…).
+ * Après une Q diagnostic (« utilisez-vous déjà… ? ») → false (on continue).
+ */
+export function detectContextualRefusal(
+  text: string,
+  history?: Array<{ direction: string; body: string }>
+): boolean {
+  const raw = text.trim();
+  if (!raw) return false;
+  const t = normalizeText(raw);
+
+  if (!BARE_NO_RE.test(raw) && !BARE_NO_RE.test(t)) return false;
+  if (!history?.length) return false;
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.direction !== "sortant") continue;
+    return isOutboundConsentAsk(m.body);
+  }
+  return false;
+}
+
+/** L'agent a déjà dit au revoir / clôturé le fil. */
+export function detectAgentFarewell(body: string): boolean {
+  return AGENT_FAREWELL_RE.test(normalizeText(body));
+}
+
+/**
+ * Après un adieu agent, un ack court (« ok », « okay ») ne doit PAS relancer :
+ * on arrête (silence côté runtime si adieu déjà envoyé).
+ */
+export function shouldSilenceAfterFarewell(
+  text: string,
+  history?: Array<{ direction: string; body: string }>
+): boolean {
+  if (!history?.length) return false;
+  if (!SHORT_POST_FAREWELL_ACK_RE.test(text.trim())) return false;
+  const recentOut = history.filter((m) => m.direction === "sortant").slice(-4);
+  return recentOut.some((m) => detectAgentFarewell(m.body));
 }
 
 export function detectSkepticism(text: string): boolean {
@@ -135,10 +225,6 @@ export function detectUnknownQuestion(
   return false;
 }
 
-function countNotInterestedInbound(history: Array<{ direction: string; body: string }>): number {
-  return history.filter((m) => m.direction === "entrant" && detectNotInterested(m.body)).length;
-}
-
 function countHostileInbound(history: Array<{ direction: string; body: string }>): number {
   return history.filter((m) => m.direction === "entrant" && detectHostileSkepticism(m.body)).length;
 }
@@ -194,18 +280,29 @@ export function shouldStopConversation(
 ): StopReason | null {
   if (detectOffTopic(text)) return "off_topic";
 
-  if (detectNotInterested(text)) {
-    const prior = history ? countNotInterestedInbound(history) : 0;
-    // Premier refus net : on coupe.
-    // Si intérêt positif antérieur (hors messages de refus), exige 2 refus.
-    const hadInterestBefore =
+  // Adieu déjà envoyé + ack court → coupe (évite relance après « Bonne journée »).
+  if (shouldSilenceAfterFarewell(text, history)) {
+    return "not_interested";
+  }
+
+  if (detectNotInterested(text) || detectContextualRefusal(text, history)) {
+    const prior = history
+      ? history.filter(
+          (m) =>
+            m.direction === "entrant" &&
+            (detectNotInterested(m.body) || detectContextualRefusal(m.body, history))
+        ).length
+      : 0;
+    // Si intérêt FORT antérieur (pas un simple « ok »), exige un 2e refus.
+    const hadStrongInterestBefore =
       history?.some(
         (m) =>
           m.direction === "entrant" &&
-          hasInterestSignal(m.body) &&
-          !detectNotInterested(m.body),
+          STRONG_INTEREST_SIGNAL.test(normalizeText(m.body)) &&
+          !detectNotInterested(m.body) &&
+          !detectContextualRefusal(m.body, history)
       ) ?? false;
-    if (hadInterestBefore && prior < 1) return null;
+    if (hadStrongInterestBefore && prior < 1) return null;
     return "not_interested";
   }
 
@@ -214,8 +311,9 @@ export function shouldStopConversation(
     return "out_of_scope";
   }
 
-  // Question ou signal d'intérêt → poursuivre (sauf hors-sujet déjà géré).
-  // Uniquement si ce n'est PAS un refus (déjà traité ci-dessus).
+  // Question ou signal d'intérêt → poursuivre (sauf hors-sujet / refus déjà gérés).
+  // IMPORTANT : ne pas traiter « ok » / « okay » seuls comme intérêt s'ils suivent un adieu
+  // (déjà géré ci-dessus). Un ok isolé hors adieu reste de l'intérêt léger.
   if (looksLikeQuestion(text) || hasInterestSignal(text)) {
     return null;
   }
@@ -232,6 +330,10 @@ export function shouldStopConversation(
     if (detectHostileSkepticism(text)) {
       const priorHostile = countHostileInbound(history);
       if (priorHostile >= 1) return "skepticism";
+      // Première hostilité nette (« tu me soules ») : coupe aussi (prod screenshots).
+      if (/soule|saoule|fais chier|casse.?les.?pieds/i.test(normalizeText(text))) {
+        return "skepticism";
+      }
     }
     if (detectConversationStall(history, text)) {
       return "conversation_stall";

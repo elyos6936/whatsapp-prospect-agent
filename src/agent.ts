@@ -18,6 +18,7 @@ import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, llmChatEx
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
+  hasNumberedOpenerList,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
 } from "./campaign-briefing.js";
@@ -49,6 +50,12 @@ import {
   selectToolsForAgentTurn,
   slimToolResultForLlm,
 } from "./agent-context-budget.js";
+import {
+  containsDsmlToolMarkup,
+  DSML_RETRY_NUDGE,
+  parseDsmlToolCalls,
+  stripDsmlMarkup,
+} from "./dsml-tool-calls.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
 const MAX_TOOL_ROUNDS = 12;
@@ -93,8 +100,8 @@ const ACTIVATION_AFTER_SIMULATION_NUDGE =
   "Étape suivante : dans CE chat, demande clairement s’il veut **activer maintenant** " +
   "ou s’il a encore des **modifications** (accroche, ton, relances…). " +
   "N'appelle activate_automation QUE si l'utilisateur répond clairement oui / lance / active / vas-y. " +
-  "S’il veut des modifs → update_automation_config en silence, confirme brièvement, " +
-  "propose « refais la simulation » ou « c'est bon » pour activer — INTERDIT de régénérer une simulation tout seul. " +
+  "S’il veut des modifs → update_automation_config, **confirme d'abord** ce qui a changé (valeur concrète), " +
+  "puis propose doucement « refais la simulation » ou « c'est bon » pour activer — INTERDIT de régénérer une simulation tout seul. " +
   "Il peut aussi cliquer **Lancer** dans l'en-tête. Activer = simulation déjà validée.";
 
 const CONFIRM_ACTIVATE_NOW_NUDGE =
@@ -105,7 +112,7 @@ const CONFIRM_ACTIVATE_NOW_NUDGE =
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
-  "Le 1er tour « toi » = l'accroche validée (initial_message / variante choisie) — Attention seulement, PAS de prix/lien/pitch. " +
+  "Le 1er tour « toi » = l'accroche validée (initial_message) — Attention seulement, PAS de prix/lien/pitch. " +
   "Les tours suivants : même mission / pacing (pousser l'intérêt, pas de « Ah super » / « Super. » vide), vouvoiement, sans prénom du prospect à tout va. " +
   "Identité = prénom + pourquoi ; sur oui/ok = question ou détail nouveau (pas pitch immédiat). " +
   "La simulation s'affiche UNIQUEMENT sur le **téléphone à droite** — INTERDIT de recopier le fil Toi → / Prospect → dans ta réponse chat. " +
@@ -126,11 +133,15 @@ const SILENT_TWEAK_AFTER_SIM_NUDGE =
   "Une simulation a DÉJÀ été montrée. L'utilisateur demande une modification ou pose une question. " +
   "INTERDIT d'écrire un fil Toi → / Prospect → dans le chat. " +
   "INTERDIT de coller un planDisplay / fence de plan dans ta réponse. " +
-  "Si modif (ton, accroche, prix, relances, vouvoiement…) → applique UNIQUEMENT via update_automation_config " +
-  "(et initial_message / conversation_guide si besoin). Confirme en 1–2 phrases. " +
+  "Si modif (fenêtre horaire, ton, accroche, prix, relances, vouvoiement…) → applique via update_automation_config " +
+  "(et initial_message / conversation_guide si besoin). " +
+  "OBLIGATOIRE dans ta réponse chat : **réponds d'abord** à sa question / confirme **explicitement** ce qui a changé " +
+  "avec la valeur concrète (ex. « Oui — fenêtre d'envoi réglée sur 6h–20h. »). " +
+  "Si c'est seulement « c'est fait ? » / « tu as changé… ? » → OUI ou NON + détail ; " +
+  "**INTERDIT** de répondre uniquement par « Veux-tu activer la campagne maintenant ? » sans confirmer la modif. " +
+  "Ensuite seulement, une proposition **douce et optionnelle** : « Tu peux refaire la simulation, ou dire c'est bon pour activer. » " +
   "INTERDIT d'appeler show_campaign_simulation sauf demande explicite (« refais la simulation », « reteste »). " +
-  "Propose « refais la simulation » ou « c'est bon » pour activer. " +
-  "Si question seule → réponds clairement, sans outil de simulation.";
+  "Si question seule (sans demande de modif) → réponds clairement, sans outil de simulation.";
 
 /** Outils d'envoi réel — bloqués pendant une demande de simulation. */
 const OUTBOUND_SEND_TOOLS = new Set([
@@ -236,7 +247,7 @@ async function buildBusinessContext(
           `Ce fil a été créé en mode **Prospection**. Vous contactez les prospects en premier.\n` +
           `- create_automation UNIQUEMENT avec type=\`contact_prospect\` ou \`group_prospect\` (mode \`outbound_prospect\`).\n` +
           `- INTERDIT : keyword_sales / inbound_closing / questions « phrase déclencheur » comme flux principal.\n` +
-          `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, puis 5 variantes d'accroche.\n` +
+          `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, **UNE accroche** à valider, puis **5 variantes** (rotation).\n` +
           `- INTERDIT de demander notif tiers / mots-clés handoff (remboursement, plainte…) — réservé au **Support**.\n` +
           `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Support. Pour du support entrant → ` +
           `**Nouvelle automatisation** → **Support client**.`
@@ -313,9 +324,9 @@ async function buildBusinessContext(
             `## Accroches validées (1er message)\n` +
               `initial_message (variante de référence / simu) :\n« ${auto.config.initialMessage.trim()} »\n` +
               (variants.length === 5
-                ? `ab_variants (les 5 — à ROTATION exacte, ne pas en supprimer) :\n` +
+                ? `ab_variants (les 5 — rotation à l'envoi, ne pas en supprimer) :\n` +
                   variants.map((v, i) => `${i + 1}. [${v.id}] « ${v.message} »`).join("\n") +
-                  `\nSi l'utilisateur change le choix : update avec initial_message=choisie ET ab_variants=les MÊMES 5 textes.`
+                  `\nSi l'utilisateur change l'accroche de référence : update avec initial_message=nouvelle ET ab_variants=les 5 textes (éventuellement régénérés).`
                 : variants.length
                   ? `⚠ Seulement ${variants.length}/5 variantes en config — corrige via update_automation_config avec les 5 textes complets.`
                   : `⚠ Aucune ab_variants — OBLIGATOIRE d'enregistrer les 5 accroches proposées (pas seulement initial_message).`)
@@ -500,7 +511,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     recentHistory: history,
   });
 
-  // Chemin fiable : simu sans tools / sans tool_choice (DeepSeek v4 thinking = 400 sinon).
+  // Simulation hors boucle outils (génération directe JSON).
   if (forceSim) {
     const recentTranscript = history
       .slice(-16)
@@ -575,16 +586,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
 
-    // Toujours "auto" : DeepSeek thinking refuse tool_choice forcé (HTTP 400).
+    // tool_choice auto : l'agent choisit les outils selon le brief.
     let response: OpenAI.Chat.Completions.ChatCompletion;
     try {
       response = await callOpenAiWithRetry(() =>
         client.chat.completions.create({
-        model: config.openaiModel,
-        messages,
-        tools: toolsForTurn,
-        tool_choice: "auto",
-          temperature: 0.65,
+          model: config.openaiModel,
+          messages,
+          tools: toolsForTurn,
+          tool_choice: "auto",
+          temperature: 0.7,
           max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
             thinkingEnabled: false,
           }),
@@ -602,8 +613,34 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     const assistantMsg = choice.message;
 
+    // Fuite outils en DSML dans content (DeepSeek / parfois Mistral) au lieu de tool_calls.
+    const rawContentForDsml =
+      typeof assistantMsg.content === "string"
+        ? assistantMsg.content
+        : extractAssistantContent(assistantMsg);
+    if (
+      (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) &&
+      containsDsmlToolMarkup(rawContentForDsml)
+    ) {
+      const recovered = parseDsmlToolCalls(rawContentForDsml);
+      if (recovered.toolCalls.length > 0) {
+        assistantMsg.tool_calls = recovered.toolCalls as typeof assistantMsg.tool_calls;
+        assistantMsg.content = recovered.contentWithoutDsml.trim() || null;
+        console.warn(
+          `[agent] DSML récupéré → ${recovered.toolCalls.map((t) => t.function.name).join(", ")}`
+        );
+      } else if (rounds < MAX_TOOL_ROUNDS) {
+        messages.push({ role: "system", content: DSML_RETRY_NUDGE });
+        continue;
+      } else {
+        return "Je n'ai pas pu appeler l'outil correctement. Réessaie en une phrase (ex. « crée le brouillon »).";
+      }
+    } else if (containsDsmlToolMarkup(rawContentForDsml)) {
+      const cleaned = stripDsmlMarkup(rawContentForDsml).trim();
+      assistantMsg.content = cleaned || null;
+    }
+
     if (assistantMsg.tool_calls?.length) {
-      // DeepSeek thinking : rejouer reasoning_content avec les tool_calls
       messages.push(toAssistantHistoryMessage(assistantMsg));
 
       for (const toolCall of assistantMsg.tool_calls) {
@@ -736,11 +773,36 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           }
 
           // Closing entrant : pas d'opener sortant → skip variantes.
-          if (!briefing.isInboundClosing && !briefing.openerDirectionCollected) {
+          // Si variantes déjà proposées OU choix 1–5 → angle considéré collecté.
+          if (
+            !briefing.isInboundClosing &&
+            !briefing.openerDirectionCollected &&
+            !briefing.openerVariantsProposed
+          ) {
             const block = JSON.stringify({
               error:
                 "INTERDIT de créer le brouillon avant que l'utilisateur ait indiqué comment il veut aborder le premier message. " +
-                "Pose UNE question sur son angle / ton / idée, attends sa réponse, puis propose 5 variantes.",
+                "Pose UNE question sur son angle / ton / idée, attends sa réponse, puis propose UNE accroche.",
+            });
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: block,
+            });
+            const nudge = buildBriefingNudge(briefing, history, userMessage);
+            if (nudge) messages.push({ role: "system", content: nudge });
+            continue;
+          }
+
+          if (
+            !briefing.isInboundClosing &&
+            !briefing.openerSingleValidated &&
+            !briefing.openerVariantsProposed
+          ) {
+            const block = JSON.stringify({
+              error:
+                "INTERDIT de créer le brouillon avant d'avoir proposé UNE accroche et obtenu la validation de l'utilisateur. " +
+                "Ensuite seulement : montrer les 5 variantes.",
             });
             messages.push({
               role: "tool",
@@ -755,7 +817,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           if (!briefing.isInboundClosing && !briefing.openerVariantsProposed) {
             const block = JSON.stringify({
               error:
-                "INTERDIT de créer le brouillon avant d'avoir proposé les 5 variantes d'accroche dans le chat et d'avoir obtenu le choix de l'utilisateur.",
+                "INTERDIT de créer le brouillon avant d'avoir montré les 5 variantes d'accroche (rotation) dans le chat après validation de l'accroche unique.",
             });
             messages.push({
               role: "tool",
@@ -782,7 +844,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         ) {
           result = JSON.stringify({
             error: silentTweakAfterSim
-              ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler) et confirme brièvement : propose « refais la simulation » ou « c'est bon » pour activer."
+              ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler). Dans ta réponse : confirme d'abord ce qui a changé (valeur concrète), puis propose doucement « refais la simulation » ou « c'est bon » pour activer — n'agresse pas avec « activer maintenant » seul."
               : "Simulation déjà sur le téléphone. Ne la répète pas dans le chat : résume et demande s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
           });
           messages.push({
@@ -917,7 +979,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       continue;
     }
 
-    const text = extractAssistantContent(assistantMsg);
+    let text = extractAssistantContent(assistantMsg);
+    if (containsDsmlToolMarkup(text)) {
+      const cleaned = stripDsmlMarkup(text);
+      if (!cleaned && rounds < MAX_TOOL_ROUNDS) {
+        messages.push({ role: "system", content: DSML_RETRY_NUDGE });
+        continue;
+      }
+      text = cleaned;
+    }
     if (!text) {
       if (forceSim && !forcedSimUsed && rounds < MAX_TOOL_ROUNDS) {
         messages.push({
@@ -931,7 +1001,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     // Garde-fou : annonce se terminant par « : » sans contenu.
     if (isDanglingAnnouncement(text) && rounds < MAX_TOOL_ROUNDS) {
-      messages.push({ role: "assistant", content: text });
+      // Rejouer le message assistant complet (ThinkChunks inclus) — doc Mistral multi-tours.
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({
         role: "system",
         content:
@@ -946,7 +1017,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       (hasSimulationThread(text) || isBrokenSimulationPreview(text)) &&
       rounds < MAX_TOOL_ROUNDS
     ) {
-      messages.push({ role: "assistant", content: text });
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
       continue;
     }
@@ -954,7 +1025,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     // Garde-fou simulation vide / incomplète.
     if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < MAX_TOOL_ROUNDS) {
       simFixAttempts++;
-      messages.push({ role: "assistant", content: text });
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({
         role: "system",
         content:
@@ -965,8 +1036,29 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     // Si on forçait la simulation et qu'on a du texte sans fil → forcer l'outil
     if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < MAX_TOOL_ROUNDS) {
-      messages.push({ role: "assistant", content: text });
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
+      continue;
+    }
+
+    // Garde-fou briefing sortant : ne jamais sauter l'étape « UNE accroche à valider ».
+    if (
+      briefing.inCampaignFlow &&
+      !briefing.isInboundClosing &&
+      briefing.readyForDraft &&
+      hasNumberedOpenerList(text) &&
+      (!briefing.openerSingleProposed || !briefing.openerSingleValidated) &&
+      rounds < MAX_TOOL_ROUNDS
+    ) {
+      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push({
+        role: "system",
+        content:
+          "INTERDIT de proposer les 5 variantes maintenant. " +
+          "Tu dois d'abord proposer UNE seule accroche Attention (1-2 phrases, sans prix/lien), " +
+          "demander validation, puis attendre. " +
+          "Réécris ton message en UNE accroche unique + question de validation.",
+      });
       continue;
     }
 
@@ -986,7 +1078,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       client.chat.completions.create({
         model: config.openaiModel,
         messages,
-        temperature: 0.5,
+        temperature: 0.7,
         max_tokens: recommendedMaxTokens(config.openaiModel, 500, {
           thinkingEnabled: false,
         }),
@@ -994,7 +1086,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();
-    if (wrapText) return wrapText;
+    if (wrapText) {
+      if (containsDsmlToolMarkup(wrapText)) {
+        const cleaned = stripDsmlMarkup(wrapText);
+        if (cleaned) return cleaned;
+      } else {
+        return wrapText;
+      }
+    }
   } catch {
     /* fall through */
   }

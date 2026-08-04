@@ -1,15 +1,15 @@
 /**
  * Interprétation des médias entrants WhatsApp.
  *
- * Sur OpenAI : Whisper (audio) + vision (images).
- * Sur DeepSeek : pas d'API Whisper/vision équivalente → on saute (pas de coût inutile).
+ * Images : vision Mistral Medium 3.5.
+ * Audio : pas d'API Whisper côté Mistral → skip (note vocale ignorée).
  */
 
 import OpenAI, { toFile } from "openai";
 import { getMessageMediaBase64 } from "./evolutionapi.js";
 import { getAppSettings } from "./db.js";
 import { config } from "./config.js";
-import { createLlmClient } from "./llm.js";
+import { createLlmClient, extractAssistantContent, llmChatExtras } from "./llm.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -155,14 +155,13 @@ export async function transcribeChatAudio(
   return text ?? "";
 }
 
-// ─── Implémentations OpenAI ───────────────────────────────────────────────────
+// ─── Implémentations LLM ──────────────────────────────────────────────────────
 
 async function transcribeAudio(
   apiKey: string,
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  // Providers sans Whisper / vision OpenAI native
   if (config.llmProvider !== "openai") {
     console.warn(
       `[media] Transcription audio indisponible avec ${config.llmProvider} — note vocale ignorée.`,
@@ -190,7 +189,7 @@ async function describeImage(
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  if (config.llmProvider !== "openai") {
+  if (config.llmProvider === "deepseek") {
     console.warn(
       `[media] Description d'image indisponible avec ${config.llmProvider} — image ignorée.`,
     );
@@ -201,7 +200,7 @@ async function describeImage(
   const dataUrl = `data:${clean};base64,${base64}`;
 
   const response = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
+    model: config.openaiModel,
     messages: [
       {
         role: "user",
@@ -218,24 +217,23 @@ async function describeImage(
       },
     ],
     max_tokens: 200,
-  });
+    ...llmChatExtras({ enableThinking: false }),
+  } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming);
 
-  const text = response.choices[0]?.message?.content?.trim();
+  const text = extractAssistantContent(response.choices[0]?.message);
   return text || null;
 }
 
-// ─── Utilitaires ──────────────────────────────────────────────────────────────
-
 function mimeToExt(mime: string): string | null {
   const map: Record<string, string> = {
-    "audio/ogg":  "ogg",
+    "audio/ogg": "ogg",
     "audio/mpeg": "mp3",
-    "audio/mp4":  "mp4",
-    "audio/wav":  "wav",
+    "audio/mp4": "mp4",
+    "audio/wav": "wav",
     "audio/webm": "webm",
-    "audio/aac":  "aac",
+    "audio/aac": "aac",
     "audio/opus": "opus",
-    "audio/amr":  "amr",
+    "audio/amr": "amr",
   };
   return map[mime.toLowerCase()] ?? null;
 }

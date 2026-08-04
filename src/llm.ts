@@ -179,7 +179,7 @@ export function recommendedMaxTokens(
   const thinking =
     opts?.thinkingEnabled !== false && (m.includes("v4") || m.includes("reasoner"));
   if (thinking) {
-    return Math.max(desiredOutput + 650, 800);
+    return Math.max(desiredOutput + 800, 1200);
   }
   return desiredOutput;
 }
