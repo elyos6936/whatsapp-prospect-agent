@@ -217,6 +217,15 @@ export async function passesReplyGate(
   // Gestion du compte entier : répondre à tout message privé dès l'activation
   const catchAll = await findCatchAllInboundCampaign(userId);
   if (catchAll) {
+    const stoppedCatchAll = await findMatchingAutomationTarget(userId, catchAll.id, chatId, [
+      "stopped",
+    ]);
+    if (stoppedCatchAll) {
+      return {
+        allow: false,
+        reason: `support compte entier « ${catchAll.name} » — contact stoppé`,
+      };
+    }
     try {
       await beginFreshCampaignConversation(userId, chatId, catchAll.id);
       await setContactAutoReply(userId, chatId, true);

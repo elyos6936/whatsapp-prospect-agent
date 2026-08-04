@@ -9,6 +9,7 @@ import {
   isAffirmingPendingSendOffer,
   ensurePendingLinkInReply,
 } from "./lead-scoring.js";
+import { shouldSilenceAfterFarewell } from "./stop-policy.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté (Afrique francophone) qui répond comme un **vrai humain** — jamais comme un bot.
 
@@ -45,7 +46,7 @@ Si le prospect demande **juste** le lien / le prix / un seul message :
 8. **VOUVOIEMENT**. Pas de prénom du prospect à tout va.
 9. **Pas de réaction vide** (« Super. », « Ok. ») : réagir + avancer la mission.
 10. **Infors multiples** d'un coup → noter l'utile + UNE question manquante (pas « Merci M. X » seul).
-11. Refus clair → clôture polie. Objectif atteint → confirmation courte puis stop.
+11. Refus clair (« non », « non merci », « pas intéressé », « je pense pas ») → clôture polie UNE fois puis STOP total. Après un adieu (« Bonne journée », « je ne vous dérange plus ») : si le prospect dit seulement ok / okay / merci → **n'envoie RIEN**. Interdit de relancer, de poser une nouvelle question, ou d'envoyer un lien.
 12. Emojis : aucun par défaut (max 1 s'il en utilise). Texte seulement.
 
 ## Intentions utiles (exemples — adapte, ne copie pas)
@@ -344,6 +345,12 @@ export async function generateWhatsAppReply(userId: number, input: {
     20,
     input.automationId
   );
+
+  // Filet anti-relance : adieu déjà envoyé + ack court → silence (pas de LLM / pas de lien).
+  if (shouldSilenceAfterFarewell(input.incomingText, policyHistory)) {
+    return "";
+  }
+
   const affirmingPendingSend =
     input.forceDeliverPendingLink === true ||
     isAffirmingPendingSendOffer(input.incomingText, policyHistory);
@@ -359,6 +366,7 @@ export async function generateWhatsAppReply(userId: number, input: {
     );
 
   // Filets critiques seulement — le reste = raisonnement IA.
+  // Jamais forcer « 1 question mission » ni un lien après un adieu (déjà filtré plus haut).
   const hardOverride = affirmingPendingSend
     ? `\n## ACTION REQUISE\n` +
       `Tu as proposé d'envoyer le lien. Le prospect dit « ${input.incomingText.trim()} ». ` +

@@ -94,6 +94,17 @@ export function isAffirmingPendingSendOffer(
   const t = text.trim();
   if (!t || t.startsWith("[") || /^non\b/i.test(t)) return false;
   if (!SHORT_YES.test(t) && !SHORT_YES.test(normalizeText(t))) return false;
+  // Après un adieu / clôture refus → « ok » n'est PAS un consentement à envoyer le lien.
+  const recentOut = history.filter((m) => m.direction === "sortant").slice(-6);
+  if (
+    recentOut.some((m) =>
+      /je (ne )?(vous |te )?(d[eé]range|contacte|ecri) plus|bonne (journ[eé]e|continuation)|n['’]?h[eé]sitez pas.{0,40}recontact|passez une excellente/i.test(
+        m.body
+      )
+    )
+  ) {
+    return false;
+  }
   return hasPendingSendOffer(history);
 }
 
@@ -122,7 +133,7 @@ export function ensurePendingLinkInReply(
  * Ne match PAS une simple offre (« le livreur peut passer… ? »).
  */
 export const VERBAL_CLOSE_DONE =
-  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé])|le livreur (vous |t['’]|te )?(appelle|contactera)|il (vous |te )contactera|dans quelques minutes|bonne continuation|c['’]est not[eé] de mon c[oô]t[eé]/i;
+  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé])|le livreur (vous |t['’]|te )?(appelle|contactera)|il (vous |te )contactera|dans quelques minutes|bonne continuation|bonne journ[eé]e|c['’]est not[eé] de mon c[oô]t[eé]|je (ne )?(vous |te )?(d[eé]range|contacte|ecri) plus|n['’]?h[eé]sitez pas.{0,40}recontact|passez une excellente/i;
 
 export interface ScoringResult {
   newScore: number;
@@ -219,10 +230,20 @@ export function isCampaignObjectiveReached(
   // « Oui » à une offre d'envoi → on doit encore livrer le lien, pas clôturer.
   if (isAffirmingPendingSendOffer(t, history)) return false;
 
+  // Adieu / refus déjà dit → un « ok » n'est PAS une conversion.
   const recentOut = history
     .filter((m) => m.direction === "sortant")
     .slice(-6)
     .map((m) => m.body);
+  if (
+    recentOut.some((body) =>
+      /je (ne )?(vous |te )?(d[eé]range|contacte|ecri) plus|bonne (journ[eé]e|continuation)|n['’]?h[eé]sitez pas.{0,40}recontact/i.test(
+        body
+      )
+    )
+  ) {
+    return false;
+  }
 
   return recentOut.some((body) => outboundDeliveredAction(body));
 }

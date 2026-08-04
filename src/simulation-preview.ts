@@ -33,6 +33,7 @@ import {
 import {
   getObjectiveReachedReply,
   getStopFarewellReply,
+  shouldSilenceAfterFarewell,
   shouldStopConversation,
   stopReasonLabel,
   type StopReason,
@@ -309,6 +310,9 @@ export async function replyInSimulationPreview(
   const actionableStop =
     softStop && softStop !== "unknown_question" ? softStop : null;
   if (actionableStop) {
+    if (shouldSilenceAfterFarewell(prospectMessage, priorPolicyHistory)) {
+      return finishClosed("", actionableStop);
+    }
     return finishClosed(getStopFarewellReply(actionableStop), actionableStop);
   }
 

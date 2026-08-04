@@ -40,6 +40,7 @@ import {
   incrementMessagesHandled,
   stopAutomationTargetForContact,
   setConversationCampaignId,
+  setContactAutoReply,
   enqueueSend,
   cancelPendingSendQueueForRecipient,
 } from "./db.js";
@@ -72,7 +73,7 @@ import {
 } from "./whatsapp-reply.js";
 import { enqueueAutoReply } from "./auto-reply-queue.js";
 import { ANTI_BAN, clampPresenceMs } from "./anti-ban.js";
-import { shouldStopConversation, stopReasonLabel, getStopFarewellReply, getObjectiveReachedReply } from "./stop-policy.js";
+import { shouldStopConversation, stopReasonLabel, getStopFarewellReply, getObjectiveReachedReply, shouldSilenceAfterFarewell } from "./stop-policy.js";
 import type { Automation } from "./db.js";
 
 function extractEvolutionInboundText(message: unknown): string | null {
@@ -990,6 +991,11 @@ async function runAutoReply(
           "STOP demandé"
         );
         await incrementAutoStopped(userId, activeCampaign.id);
+        try {
+          await setContactAutoReply(userId, chatId, false);
+        } catch {
+          /* best effort */
+        }
         await saveAgentMessageForAutomation(
           userId,
           activeCampaign.id,
@@ -1027,7 +1033,6 @@ async function runAutoReply(
         stopReason && stopReason !== "unknown_question" ? stopReason : null;
 
       if (actionableStop && activeCampaign) {
-        reply = getStopFarewellReply(actionableStop);
         await stopAutomationTargetForContact(
           userId,
           activeCampaign.id,
@@ -1035,6 +1040,11 @@ async function runAutoReply(
           stopReasonLabel(actionableStop)
         );
         await incrementAutoStopped(userId, activeCampaign.id);
+        try {
+          await setContactAutoReply(userId, chatId, false);
+        } catch {
+          /* best effort */
+        }
         await saveAgentMessageForAutomation(
           userId,
           activeCampaign.id,
@@ -1043,6 +1053,13 @@ async function runAutoReply(
         );
         console.log(`🛑 Prospection arrêtée — ${stopReasonLabel(actionableStop)} (${senderName})`);
 
+        // Adieu déjà envoyé + ack court → silence (pas de 2e « Bonne journée »).
+        if (shouldSilenceAfterFarewell(text, history)) {
+          console.log(`🤫 Silence post-adieu → ${senderName}`);
+          return;
+        }
+
+        reply = getStopFarewellReply(actionableStop);
         const sent = await sendWhatsAppMessage(userId, chatId, reply, {
           enableAutoReply: false,
           outboundProfile: "auto_reply",
@@ -1206,6 +1223,11 @@ async function runAutoReply(
             ? "inbound"
             : "outbound",
       });
+      // Silence post-adieu (défense en profondeur si le générateur renvoie vide).
+      if (!reply.trim()) {
+        console.log(`🤫 Silence (réponse vide) → ${senderName}`);
+        return;
+      }
       // Filet : oui après offre de lien → URL absente de la réponse LLM → on l'ajoute.
       if (activeCampaign?.config.closingLink) {
         reply = ensurePendingLinkInReply(

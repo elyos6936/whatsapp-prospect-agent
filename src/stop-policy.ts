@@ -11,20 +11,41 @@ export type StopReason =
   | "off_topic";
 
 const DISSATISFACTION_PATTERNS =
-  /pas content|pas satisf|mecontent|insatisf|arnaque|escroc|hors de question|nul\b|mauvais service|inacceptable|scandale|vous abusez|laissez-moi tranquille|plus jamais|je me plains/i;
+  /pas content|pas satisf|mecontent|insatisf|arnaque|escroc|hors de question|nul\b|mauvais service|inacceptable|scandale|vous abusez|laissez-moi tranquille|plus jamais|je me plains|tu me soules|vous me soules|tu me saoules|vous me saoules|casse[- ]?les[- ]?pieds|fais chier|fous[- ]?moi la paix|lache[- ]?moi|l[aâ]che[- ]?moi/i;
 
 const ESCALATION_PATTERNS =
   /parler a un humain|parler a une personne|un responsable|votre patron|votre chef|appeler|telephone direct|numero direct|je veux parler (a|à|avec) (un |une )?(humain|personne|responsable)/i;
 
-/** Refus clair uniquement — pas les « non » ambigus ni le scepticisme de curiosité. */
+/**
+ * Refus explicite (phrases longues).
+ * Les « non » seuls sont gérés à part via le contexte (dernière question sortante).
+ */
 const NOT_INTERESTED_PATTERNS =
-  /pas (du tout )?interesse|pas int[eé]ress[eée]?(\s|$|!|\.)|non merci|ca m.?interesse pas|cela m.?interesse pas|je (ne )?suis pas interesse|pas pour moi|pas besoin(\s|$)|je n.?ai pas besoin|fiche moi la paix|fichez-moi la paix|ne m.?ecri(s|ve|vez) plus|plus de message|j.?ai pas demande|je n.?ai pas demande|arrete(z)? (de )?(m.?ecri|me contacter)|stop (les? )?messages/i;
+  /pas (du tout )?interesse|pas int[eé]ress[eée]?(\s|$|!|\.)|non merci|ca m.?interesse pas|cela m.?interesse pas|je (ne )?suis pas interesse|pas pour moi|pas besoin(\s|$)|je n.?ai pas besoin|fiche moi la paix|fichez-moi la paix|ne m.?ecri(s|ve|vez) plus|plus de message|j.?ai pas demande|je n.?ai pas demande|arrete(z)? (de )?(m.?ecri|me contacter)|stop (les? )?messages|non je (pense|crois) (que )?pas|je (ne )?(pense|crois) pas(\s|$|!|\.)|pas vraiment(\s|$|!|\.)|non pas vraiment|bof(\s|$|!|\.)|mouais/i;
+
+/** « non » / « nan » seul (après une question / pitch — voir detectContextualRefusal). */
+const BARE_NO_RE = /^\s*(non|nan|nn|nope)([!.…\s]*)$/i;
+
+/** Dernier message sortant = question d'intérêt / poursuite / pitch oui-non. */
+const OUTBOUND_YES_NO_OR_PITCH_RE =
+  /\?|int[eé]ress|ouvert|on (en )?(parle|discute)|je (vous |te )?(explique|montre)|minutes?|secondes?|vous voyez|ca vous parle|partant|dispo|echange|échanger|gagner du temps|automatis|taches?|relances?|on continue|je peux/i;
+
+/**
+ * Clôture verbale déjà envoyée par l'agent (refus / au revoir).
+ * Après ça, un « ok / okay / merci » doit rester silencieux.
+ */
+export const AGENT_FAREWELL_RE =
+  /je (ne )?(vous |te )?(d[eé]range|contacte|ecri(s|rai)?|embete) plus|bonne (journ[eé]e|continuation|soir[eé]e)|n['’]?h[eé]sitez pas.{0,60}recontact|je (m['’]?arr[eê]te|reste disponible si besoin)|passez une excellente|compris.? je (ne )?(vous |te )?d[eé]range|d['’]accord.? je (note|ne vous)/i;
+
+/** Ack court après un adieu — pas une relance d'intérêt. */
+const SHORT_POST_FAREWELL_ACK_RE =
+  /^\s*(ok|okay|oui|ouais|merci|d['’]accord|dac|parfait|bonne journ[eé]e|bonne continuation|ok merci|merci (beaucoup|bien))([!.…\s]*)$/i;
 
 const SKEPTICISM_SOFT_PATTERNS =
   /c.?est (toi|vous) qui (vient|venez|m.?a|m.?ont)|pourquoi tu m.?ecri|pourquoi vous m.?ecri|je (ne )?(te|vous) connais pas|c.?est quoi ce truc|bon c.?est toi qui|qui (etes|êtes)-vous|tu es qui|vous etes qui/i;
 
 const SKEPTICISM_HOSTILE_PATTERNS =
-  /spam|harcelement|harc[eè]lement|tu m.?enerve|vous m.?enerve|arrete(z)? (de m.?ecri|ca)|fiche(z)?[- ]?moi la paix/i;
+  /spam|harcelement|harc[eè]lement|tu m.?enerve|vous m.?enerve|tu me soules|vous me soules|arrete(z)? (de m.?ecri|ca)|fiche(z)?[- ]?moi la paix/i;
 
 const PRICE_QUESTION = /combien|prix|tarif|co[uû]t|fcfa|franc|budget|payer combien/i;
 const DELIVERY_QUESTION = /livraison|livrer|adresse|ou est|delai de livraison|frais de port/i;
@@ -48,6 +69,10 @@ const DIGITAL_CREATIVE_CAMPAIGN =
 const INTEREST_SIGNAL =
   /int[eé]ress|curieux|en savoir plus|dites-moi|comment|combien|prix|rdv|rendez-vous|appel|disponible|oui|ok|d'accord|formation|inscription|acheter|commander|lien|payer|commander/i;
 
+/** Intérêt réel (hors « ok » / « oui » seuls) — pour exiger un 2e refus. */
+const STRONG_INTEREST_SIGNAL =
+  /int[eé]ress|curieux|en savoir plus|combien|prix|rdv|rendez-vous|appel|inscription|acheter|commander|lien|payer|disponible pour|je veux|partant|volontiers/i;
+
 function normalizeText(text: string): string {
   return text
     .toLowerCase()
@@ -66,6 +91,53 @@ export function detectEscalationRequest(text: string): boolean {
 
 export function detectNotInterested(text: string): boolean {
   return NOT_INTERESTED_PATTERNS.test(normalizeText(text));
+}
+
+/** Dernier sortant = question / pitch oui-non → un « non » seul = refus. */
+export function detectContextualRefusal(
+  text: string,
+  history?: Array<{ direction: string; body: string }>
+): boolean {
+  const raw = text.trim();
+  if (!raw) return false;
+  const t = normalizeText(raw);
+
+  // Soft refus même sans question précédente
+  if (
+    /^(non[,\s]+)?(je )?(pense|crois) (que )?pas\b/.test(t) ||
+    /^(pas vraiment|non pas vraiment|bof|mouais)\b/.test(t)
+  ) {
+    return true;
+  }
+
+  if (!BARE_NO_RE.test(raw) && !BARE_NO_RE.test(t)) return false;
+  if (!history?.length) return false;
+
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.direction !== "sortant") continue;
+    return OUTBOUND_YES_NO_OR_PITCH_RE.test(normalizeText(m.body));
+  }
+  return false;
+}
+
+/** L'agent a déjà dit au revoir / clôturé le fil. */
+export function detectAgentFarewell(body: string): boolean {
+  return AGENT_FAREWELL_RE.test(normalizeText(body));
+}
+
+/**
+ * Après un adieu agent, un ack court (« ok », « okay ») ne doit PAS relancer :
+ * on arrête (silence côté runtime si adieu déjà envoyé).
+ */
+export function shouldSilenceAfterFarewell(
+  text: string,
+  history?: Array<{ direction: string; body: string }>
+): boolean {
+  if (!history?.length) return false;
+  if (!SHORT_POST_FAREWELL_ACK_RE.test(text.trim())) return false;
+  const recentOut = history.filter((m) => m.direction === "sortant").slice(-4);
+  return recentOut.some((m) => detectAgentFarewell(m.body));
 }
 
 export function detectSkepticism(text: string): boolean {
@@ -135,10 +207,6 @@ export function detectUnknownQuestion(
   return false;
 }
 
-function countNotInterestedInbound(history: Array<{ direction: string; body: string }>): number {
-  return history.filter((m) => m.direction === "entrant" && detectNotInterested(m.body)).length;
-}
-
 function countHostileInbound(history: Array<{ direction: string; body: string }>): number {
   return history.filter((m) => m.direction === "entrant" && detectHostileSkepticism(m.body)).length;
 }
@@ -194,18 +262,29 @@ export function shouldStopConversation(
 ): StopReason | null {
   if (detectOffTopic(text)) return "off_topic";
 
-  if (detectNotInterested(text)) {
-    const prior = history ? countNotInterestedInbound(history) : 0;
-    // Premier refus net : on coupe.
-    // Si intérêt positif antérieur (hors messages de refus), exige 2 refus.
-    const hadInterestBefore =
+  // Adieu déjà envoyé + ack court → coupe (évite relance après « Bonne journée »).
+  if (shouldSilenceAfterFarewell(text, history)) {
+    return "not_interested";
+  }
+
+  if (detectNotInterested(text) || detectContextualRefusal(text, history)) {
+    const prior = history
+      ? history.filter(
+          (m) =>
+            m.direction === "entrant" &&
+            (detectNotInterested(m.body) || detectContextualRefusal(m.body, history))
+        ).length
+      : 0;
+    // Si intérêt FORT antérieur (pas un simple « ok »), exige un 2e refus.
+    const hadStrongInterestBefore =
       history?.some(
         (m) =>
           m.direction === "entrant" &&
-          hasInterestSignal(m.body) &&
-          !detectNotInterested(m.body),
+          STRONG_INTEREST_SIGNAL.test(normalizeText(m.body)) &&
+          !detectNotInterested(m.body) &&
+          !detectContextualRefusal(m.body, history)
       ) ?? false;
-    if (hadInterestBefore && prior < 1) return null;
+    if (hadStrongInterestBefore && prior < 1) return null;
     return "not_interested";
   }
 
@@ -214,8 +293,9 @@ export function shouldStopConversation(
     return "out_of_scope";
   }
 
-  // Question ou signal d'intérêt → poursuivre (sauf hors-sujet déjà géré).
-  // Uniquement si ce n'est PAS un refus (déjà traité ci-dessus).
+  // Question ou signal d'intérêt → poursuivre (sauf hors-sujet / refus déjà gérés).
+  // IMPORTANT : ne pas traiter « ok » / « okay » seuls comme intérêt s'ils suivent un adieu
+  // (déjà géré ci-dessus). Un ok isolé hors adieu reste de l'intérêt léger.
   if (looksLikeQuestion(text) || hasInterestSignal(text)) {
     return null;
   }
@@ -232,6 +312,10 @@ export function shouldStopConversation(
     if (detectHostileSkepticism(text)) {
       const priorHostile = countHostileInbound(history);
       if (priorHostile >= 1) return "skepticism";
+      // Première hostilité nette (« tu me soules ») : coupe aussi (prod screenshots).
+      if (/soule|saoule|fais chier|casse.?les.?pieds/i.test(normalizeText(text))) {
+        return "skepticism";
+      }
     }
     if (detectConversationStall(history, text)) {
       return "conversation_stall";
