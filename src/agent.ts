@@ -21,6 +21,8 @@ import {
   hasNumberedOpenerList,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
+  extractOpenerVariantsFromHistory,
+  isShortCampaignValidation,
 } from "./campaign-briefing.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
 import {
@@ -511,6 +513,120 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     recentHistory: history,
   });
 
+  // Chemin déterministe : « oui » après les 5 variantes → brouillon + simulation
+  // (évite les boucles tool-calling MiniMax qui laissent l'UI sur « L'agent réfléchit… »).
+  if (
+    !briefing.isInboundClosing &&
+    briefing.readyForDraft &&
+    briefing.openerVariantsProposed &&
+    briefing.stickersQuestionAsked &&
+    isShortCampaignValidation(userMessage) &&
+    !hasSimAlready &&
+    turnMode !== "decline_sim" &&
+    turnMode !== "activation_confirm" &&
+    turnMode !== "activation_nudge"
+  ) {
+    const variants = extractOpenerVariantsFromHistory(history);
+    if (variants && variants.length === 5) {
+      try {
+        const autoType =
+          thread?.purpose === "groupes" ? "group_broadcast" : "contact_prospect";
+        const draftRaw = await executeTool(userId, threadId, "create_automation", {
+          type: autoType,
+          name: thread?.title?.trim() || "Campagne",
+          status: "draft",
+          initial_message: variants[0]!.message,
+          ab_variants: variants,
+          personalize_messages: false,
+          stickers_enabled: false,
+          ...(thread?.automation_id ? { automation_id: thread.automation_id } : {}),
+        });
+        let draftOk = false;
+        try {
+          const parsed = JSON.parse(draftRaw) as {
+            success?: boolean;
+            updated?: boolean;
+            error?: string;
+            automationId?: number;
+            automation_id?: number;
+            id?: number;
+          };
+          draftOk = Boolean(
+            !parsed.error &&
+              (parsed.success ||
+                parsed.updated ||
+                parsed.automationId ||
+                parsed.automation_id ||
+                parsed.id)
+          );
+          if (parsed.error) {
+            console.warn("[agent] fast draft error:", parsed.error);
+          }
+        } catch {
+          draftOk = /success|brouillon|mis à jour|enregistr/i.test(draftRaw);
+        }
+
+        if (draftOk) {
+          const freshThread = await getAgentThread(userId, threadId);
+          let approvedOpener = variants[0]!.message;
+          let campaignBrief: string | null = null;
+          if (freshThread?.automation_id) {
+            const auto = await getAutomation(userId, freshThread.automation_id);
+            approvedOpener = auto?.config.initialMessage?.trim() || approvedOpener;
+            if (auto) {
+              const bits = [
+                auto.config.conversationGuide
+                  ? `Guide :\n${auto.config.conversationGuide}`
+                  : "",
+                auto.config.productName ? `Produit : ${auto.config.productName}` : "",
+                auto.config.price ? `Prix : ${auto.config.price}` : "",
+                auto.config.closingLink ? `Lien : ${auto.config.closingLink}` : "",
+              ].filter(Boolean);
+              try {
+                const { formatCampaignMemoryForWhatsApp, getLinkedMemoryForAutomation } =
+                  await import("./campaign-sync.js");
+                const mem = await getLinkedMemoryForAutomation(userId, auto.id);
+                if (mem) bits.push(formatCampaignMemoryForWhatsApp(mem));
+              } catch {
+                /* ignore */
+              }
+              campaignBrief = bits.join("\n\n") || null;
+            }
+          }
+
+          const recentTranscript = history
+            .slice(-16)
+            .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
+            .join("\n\n");
+          const sim = await generateCampaignSimulationDirect(client, {
+            businessContext,
+            recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
+            approvedOpener,
+            campaignBrief,
+          });
+          if (sim?.display?.trim()) {
+            try {
+              const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
+              await persistLivePlaybookForThread(userId, threadId, sim.turns);
+            } catch (err) {
+              console.warn("[agent] persist playbook (fast path):", err);
+            }
+            return (
+              `Parfait — les 5 accroches sont enregistrées en brouillon.\n\n` +
+              sim.display.trim()
+            );
+          }
+          return (
+            "Parfait — les 5 accroches sont enregistrées en brouillon. " +
+            "Dis « simule » pour l'aperçu sur le téléphone, ou « active » pour lancer."
+          );
+        }
+      } catch (err) {
+        console.warn("[agent] fast path variants→draft/sim:", err);
+      }
+    }
+  }
+
   // Simulation hors boucle outils (génération directe JSON).
   if (forceSim) {
     const recentTranscript = history
@@ -583,10 +699,21 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   let simFixAttempts = 0;
   let forcedSimUsed = false;
 
+  const forceCreateDraftTool =
+    config.llmProvider === "minimax" &&
+    !briefing.isInboundClosing &&
+    briefing.readyForDraft &&
+    briefing.openerVariantsProposed &&
+    briefing.stickersQuestionAsked &&
+    isShortCampaignValidation(userMessage) &&
+    !hasSimAlready &&
+    toolsForTurn.some((t) => t.type === "function" && t.function?.name === "create_automation");
+
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
 
     // tool_choice auto : l'agent choisit les outils selon le brief.
+    // MiniMax : forcer create_automation après « oui » sur les 5 variantes (filet si fast path a échoué).
     let response: OpenAI.Chat.Completions.ChatCompletion;
     try {
       response = await callOpenAiWithRetry(() =>
@@ -594,8 +721,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           model: config.openaiModel,
           messages,
           tools: toolsForTurn,
-          tool_choice: "auto",
-          temperature: 0.7,
+          tool_choice: forceCreateDraftTool && rounds === 1
+            ? { type: "function", function: { name: "create_automation" } }
+            : "auto",
+          temperature: config.llmProvider === "minimax" ? 1 : 0.7,
           max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
             thinkingEnabled: false,
           }),

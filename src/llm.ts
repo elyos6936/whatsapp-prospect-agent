@@ -123,7 +123,12 @@ export function llmChatExtras(opts?: { enableThinking?: boolean }): Record<strin
 
   if (provider === "minimax") {
     // Toujours désactivé pour Klanvio (SaaS : vitesse + pas de fuite thinking).
-    return { thinking: { type: "disabled" } };
+    // Passé en top-level (SDK Node sérialise le body tel quel) — équivalent Python extra_body.
+    return {
+      thinking: { type: "disabled" },
+      // Filet : si un proxy ignore `thinking`, le contenu thinking reste séparable.
+      reasoning_split: true,
+    };
   }
 
   if (provider === "mistral") {

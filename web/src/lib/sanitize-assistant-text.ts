@@ -34,6 +34,14 @@ export function sanitizeAssistantText(text: string): string {
   out = out.replace(/\n+STATUT\s*:\s*[^\n]+/gi, '');
   out = out.replace(/\n+DETAIL\s*:\s*[^\n]+/gi, '');
 
+  // MiniMax / modèles thinking : ne jamais afficher le monologue interne
+  out = out.replace(/<think\b[^>]*>[\s\S]*?<\/think>/gi, '');
+  out = out.replace(/<\/?think\b[^>]*>/gi, '');
+  out = out.replace(
+    /<\s*redacted_?thinking\b[^>]*>[\s\S]*?<\s*\/\s*redacted_?thinking\s*>/gi,
+    '',
+  );
+
   // Masquer les numéros techniques (#56, etc.)
   out = out.replace(/\bcampagne\s*#\s*\d+\b/gi, 'automatisation');
   out = out.replace(/\bautomatisation\s*#\s*\d+\b/gi, 'automatisation');

@@ -160,6 +160,50 @@ export function hasNumberedOpenerList(content: string): boolean {
   return count >= 4;
 }
 
+/** Extrait les 5 textes d'accroche depuis le dernier message assistant qui les liste. */
+export function extractOpenerVariantsFromHistory(
+  history: AgentMessage[]
+): Array<{ id: string; message: string }> | null {
+  for (let i = history.length - 1; i >= 0 && i >= history.length - 24; i--) {
+    const m = history[i];
+    if (m?.role !== "assistant") continue;
+    if (!hasNumberedOpenerList(m.content) && !OPENER_VARIANTS_PROPOSED_RE.test(m.content)) {
+      continue;
+    }
+    const variants: Array<{ id: string; message: string }> = [];
+    for (let n = 1; n <= 5; n++) {
+      const re = new RegExp(
+        `(?:^|\\n)\\s*${n}\\s*[.)]\\s*([\\s\\S]*?)(?=(?:\\n\\s*[1-5]\\s*[.)])|\\n\\n|$)`,
+        "m"
+      );
+      const hit = m.content.match(re);
+      const text = hit?.[1]
+        ?.replace(/^["«]\s*|\s*["»]$/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (!text || text.length < 8) continue;
+      variants.push({ id: `v${n}`, message: text.slice(0, 500) });
+    }
+    if (variants.length >= 4) {
+      // Compléter à 5 si besoin (duplique la dernière)
+      while (variants.length < 5) {
+        const last = variants[variants.length - 1]!;
+        variants.push({
+          id: `v${variants.length + 1}`,
+          message: last.message,
+        });
+      }
+      return variants.slice(0, 5);
+    }
+  }
+  return null;
+}
+
+/** Validation courte type « oui / ok / valide » (accroches ou ensemble). */
+export function isShortCampaignValidation(text: string): boolean {
+  return OPENER_SINGLE_VALIDATE_RE.test(text.trim());
+}
+
 export function isOpenerDelegation(text: string): boolean {
   return OPENER_DELEGATION_RE.test(text.trim());
 }
