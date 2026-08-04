@@ -165,6 +165,10 @@ import {
   parseMemoryHints,
   setThreadCampaignMemory,
 } from "./campaign-memory.js";
+import {
+  resolveInboundQuietHours,
+  resolveOutboundQuietHours,
+} from "./quiet-hours.js";
 
 export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
@@ -2123,6 +2127,30 @@ function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
+function parseAbVariantsArg(
+  raw: unknown
+): Array<{ id: string; message: string }> | undefined {
+  let value: unknown = raw;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    try {
+      value = JSON.parse(trimmed);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  return value.map((v, i) => {
+    if (typeof v === "string") return { id: `v${i + 1}`, message: v };
+    const row = v as { id?: string; message?: string };
+    return {
+      id: row.id || `v${i + 1}`,
+      message: String(row.message ?? ""),
+    };
+  });
+}
+
 function buildAutomationConfigFromArgs(
   args: Record<string, unknown>,
   type: AutomationType
@@ -2189,7 +2217,7 @@ function buildAutomationConfigFromArgs(
     stopOnUnknownQuestion: args.stop_on_unknown_question === true,
     personalizeMessages:
       // Avec 5 accroches validées : envoi exact (rotation seulement) — pas de paraphrase IA.
-      Array.isArray(args.ab_variants) && args.ab_variants.length >= 2
+      (parseAbVariantsArg(args.ab_variants)?.length ?? 0) >= 2
         ? false
         : args.personalize_messages === false
           ? false
@@ -2202,12 +2230,7 @@ function buildAutomationConfigFromArgs(
     handoffKeywords: Array.isArray(args.handoff_keywords)
       ? args.handoff_keywords.map(String).map((s) => s.trim()).filter(Boolean)
       : undefined,
-    abVariants: Array.isArray(args.ab_variants)
-      ? (args.ab_variants as Array<{ id?: string; message?: string }>).map((v, i) => ({
-          id: v.id || `v${i + 1}`,
-          message: String(v.message ?? ""),
-        }))
-      : undefined,
+    abVariants: parseAbVariantsArg(args.ab_variants),
     sequenceSteps: Array.isArray(args.sequence_steps)
       ? (args.sequence_steps as Array<{ delayDays?: number; message?: string; condition?: string }>)
           .map((s) => ({
@@ -2223,25 +2246,23 @@ function buildAutomationConfigFromArgs(
 
   const qStart = args.quiet_hours_start != null ? Number(args.quiet_hours_start) : NaN;
   const qEnd = args.quiet_hours_end != null ? Number(args.quiet_hours_end) : NaN;
-  if (Number.isFinite(qStart) && qStart >= 0 && qStart <= 23) {
-    config.quietHoursStart = Math.round(qStart);
+  if (Number.isFinite(qStart) && Number.isFinite(qEnd)) {
+    const quiet = isOutbound
+      ? resolveOutboundQuietHours(qStart, qEnd)
+      : resolveInboundQuietHours(qStart, qEnd);
+    config.quietHoursStart = quiet.start;
+    config.quietHoursEnd = quiet.end;
   } else if (isOutbound) {
-    config.quietHoursStart = 9;
-  }
-  if (Number.isFinite(qEnd) && qEnd >= 0 && qEnd <= 23) {
-    config.quietHoursEnd = Math.round(qEnd);
-  } else if (isOutbound) {
-    config.quietHoursEnd = 20;
+    const quiet = resolveOutboundQuietHours(undefined, undefined);
+    config.quietHoursStart = quiet.start;
+    config.quietHoursEnd = quiet.end;
   } else if (type === "keyword_sales") {
-    // Closing entrant : défaut 8h–19h (quiet 19→8)
-    config.quietHoursStart = config.quietHoursStart ?? 19;
-    config.quietHoursEnd = 8;
-  }
-  if (type === "keyword_sales" && config.quietHoursStart == null) {
-    config.quietHoursStart = 19;
-  }
-  if (type === "keyword_sales" && config.quietHoursEnd == null) {
-    config.quietHoursEnd = 8;
+    const quiet = resolveInboundQuietHours(
+      Number.isFinite(qStart) ? qStart : undefined,
+      Number.isFinite(qEnd) ? qEnd : undefined
+    );
+    config.quietHoursStart = quiet.start;
+    config.quietHoursEnd = quiet.end;
   }
 
   const waveGap = args.inbound_wave_gap_minutes != null ? Number(args.inbound_wave_gap_minutes) : NaN;
@@ -4278,10 +4299,11 @@ export async function executeTool(
           error: formatAttentionOpenerError("initial_message", config.initialMessage),
         });
       }
-      const abVariantsExplicit = Array.isArray(args.ab_variants);
+      const abVariantsParsed = parseAbVariantsArg(args.ab_variants);
+      const abVariantsExplicit = Boolean(abVariantsParsed);
       // Pré-contrôle si ab_variants est fourni (évite un merge inutile)
       if (isOutbound && abVariantsExplicit) {
-        const early = validateOutboundAbVariants(config.abVariants);
+        const early = validateOutboundAbVariants(abVariantsParsed!);
         if (early) return JSON.stringify({ error: early });
       }
 
@@ -4643,13 +4665,12 @@ export async function executeTool(
 
       if (args.initial_message) merged.initialMessage = String(args.initial_message);
       if (args.conversation_guide) merged.conversationGuide = String(args.conversation_guide);
-      if (Array.isArray(args.ab_variants)) {
-        merged.abVariants = (args.ab_variants as Array<{ id?: string; message?: string }>).map(
-          (v, i) => ({
-            id: v.id || `v${i + 1}`,
-            message: String(v.message ?? ""),
-          })
-        );
+      const updatedAb = parseAbVariantsArg(args.ab_variants);
+      if (updatedAb) {
+        merged.abVariants = updatedAb.map((v, i) => ({
+          id: v.id || `v${i + 1}`,
+          message: String(v.message ?? ""),
+        }));
       }
       if (args.personalize_messages === true) merged.personalizeMessages = true;
       if (args.personalize_messages === false) merged.personalizeMessages = false;
@@ -4711,11 +4732,27 @@ export async function executeTool(
           };
         }
       }
-      if (args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))) {
-        merged.quietHoursStart = Math.round(Number(args.quiet_hours_start));
-      }
-      if (args.quiet_hours_end != null && Number.isFinite(Number(args.quiet_hours_end))) {
-        merged.quietHoursEnd = Math.round(Number(args.quiet_hours_end));
+      if (
+        (args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))) ||
+        (args.quiet_hours_end != null && Number.isFinite(Number(args.quiet_hours_end)))
+      ) {
+        const nextStart =
+          args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))
+            ? Math.round(Number(args.quiet_hours_start))
+            : merged.quietHoursStart;
+        const nextEnd =
+          args.quiet_hours_end != null && Number.isFinite(Number(args.quiet_hours_end))
+            ? Math.round(Number(args.quiet_hours_end))
+            : merged.quietHoursEnd;
+        const isOut =
+          detail.automation.type === "contact_prospect" ||
+          detail.automation.type === "group_prospect" ||
+          detail.automation.type === "group_broadcast";
+        const quiet = isOut
+          ? resolveOutboundQuietHours(nextStart, nextEnd)
+          : resolveInboundQuietHours(nextStart, nextEnd);
+        merged.quietHoursStart = quiet.start;
+        merged.quietHoursEnd = quiet.end;
       }
       if (args.inbound_wave_gap_minutes != null && Number.isFinite(Number(args.inbound_wave_gap_minutes))) {
         merged.inboundWaveGapMinutes = Math.max(60, Math.round(Number(args.inbound_wave_gap_minutes)));
@@ -4783,7 +4820,7 @@ export async function executeTool(
           error: formatAttentionOpenerError("initial_message", merged.initialMessage),
         });
       }
-      if (Array.isArray(args.ab_variants)) {
+      if (parseAbVariantsArg(args.ab_variants)) {
         const abErr = validateOutboundAbVariants(merged.abVariants);
         if (abErr) return JSON.stringify({ error: abErr });
         merged.personalizeMessages = false;

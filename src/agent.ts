@@ -14,7 +14,7 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, deepseekChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
+import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, llmChatExtras, recommendedMaxTokens, extractAssistantContent } from "./llm.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -169,7 +169,7 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) {
     throw new Error(
-      `Clé ${llmProviderLabel()} manquante. Définissez DEEPSEEK_API_KEY (ou OPENAI_API_KEY) sur le serveur.`
+      `Clé ${llmProviderLabel()} manquante. Définissez MINIMAX_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY ou OPENAI_API_KEY sur le serveur.`
     );
   }
   return createLlmClient(key);
@@ -588,7 +588,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           max_tokens: recommendedMaxTokens(config.openaiModel, CHAT_MAX_TOKENS, {
             thinkingEnabled: false,
           }),
-          ...deepseekChatExtras({ enableThinking: false }),
+          ...llmChatExtras({ enableThinking: false }),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
@@ -990,7 +990,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         max_tokens: recommendedMaxTokens(config.openaiModel, 500, {
           thinkingEnabled: false,
         }),
-        ...deepseekChatExtras({ enableThinking: false }),
+        ...llmChatExtras({ enableThinking: false }),
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();

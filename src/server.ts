@@ -223,8 +223,8 @@ app.get("/api/contacts/:phone/thread", async (request, reply) => {
 });
 
 app.post("/api/settings/openai", async () => {
-  // Clé LLM gérée par la plateforme (DEEPSEEK_API_KEY / OPENAI_API_KEY).
-  return { ok: true, message: "Clé IA gérée par la plateforme (DeepSeek)." };
+  // Clé LLM gérée par la plateforme (MINIMAX / DEEPSEEK / OPENAI selon LLM_PROVIDER).
+  return { ok: true, message: `Clé IA gérée par la plateforme (${config.llmProvider}).` };
 });
 
 app.post("/api/settings/evolution", async () => {

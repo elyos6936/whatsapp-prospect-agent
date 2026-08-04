@@ -108,8 +108,20 @@ export function goalAwareStatCards(input: {
   const inboundMsgs = Number(input.period?.inboundMessages ?? handled);
   const periodHint =
     input.periodFiltered && input.period ? 'sur la période' : undefined;
-  const periodOr = <T,>(periodValue: T | null | undefined, lifetime: T): T =>
-    input.periodFiltered ? ((periodValue ?? 0) as T) : lifetime;
+  /** Période à 0 mais lifetime > 0 (envois encore en file / hors fenêtre) → afficher lifetime. */
+  const periodOr = <T,>(periodValue: T | null | undefined, lifetime: T): T => {
+    if (!input.periodFiltered) return lifetime;
+    const p = periodValue ?? (0 as T);
+    if (
+      typeof p === 'number' &&
+      typeof lifetime === 'number' &&
+      p === 0 &&
+      lifetime > 0
+    ) {
+      return lifetime;
+    }
+    return p as T;
+  };
 
   if (isGroupBroadcast) {
     const total = Number(input.stats?.targetsTotal ?? 0);

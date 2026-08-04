@@ -3,7 +3,7 @@ import { config } from "./config.js";
 import { getAppSettings, getContactChatHistory } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens, deepseekChatExtras } from "./llm.js";
+import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens, llmChatExtras } from "./llm.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 import {
   isAffirmingPendingSendOffer,
@@ -406,7 +406,7 @@ Raisonne : que signifie sa réponse par rapport à TON dernier message ? Répond
       temperature: 0.72,
       presence_penalty: 0.45,
       frequency_penalty: 0.45,
-      ...deepseekChatExtras({ enableThinking: false }),
+      ...llmChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 

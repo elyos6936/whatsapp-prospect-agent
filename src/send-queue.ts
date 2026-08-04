@@ -21,49 +21,34 @@ import { chatIdToDisplay, sendWhatsAppMedia, sendWhatsAppMessage } from "./evolu
 import { shouldBlockOutboundWhileAwaitingReply } from "./outbound-safety.js";
 import { INBOUND_REPLY_AB_VARIANT } from "./inbound-reply-batch.js";
 import { listActiveUserIds } from "./users.js";
+import {
+  isWithinQuietHours,
+  resolveOutboundQuietHours,
+  type QuietHours,
+} from "./quiet-hours.js";
 
-const DEFAULT_QUIET_START = 22;
-const DEFAULT_QUIET_END = 7;
 /** Priorité « urgence manuelle » uniquement — les openers campagne NE bypassent PLUS les quiet hours. */
 const QUIET_BYPASS_MIN_PRIORITY = 10;
 
 let queueRunning = false;
 
-function isQuietHours(start = DEFAULT_QUIET_START, end = DEFAULT_QUIET_END): boolean {
-  const hour = new Date().getHours();
-  if (start > end) return hour >= start || hour < end;
-  return hour >= start && hour < end;
-}
-
 function bypassQuietHours(item: QueueItem): boolean {
   return (item.priority ?? 0) >= QUIET_BYPASS_MIN_PRIORITY;
 }
 
-async function quietHoursForItem(
-  userId: number,
-  item: QueueItem
-): Promise<{ start: number; end: number }> {
+async function quietHoursForItem(userId: number, item: QueueItem): Promise<QuietHours> {
   if (!item.automation_id) {
-    return { start: DEFAULT_QUIET_START, end: DEFAULT_QUIET_END };
+    return resolveOutboundQuietHours(22, 7);
   }
   try {
     const auto = await getAutomation(userId, item.automation_id);
-    const start = auto?.config.quietHoursStart;
-    const end = auto?.config.quietHoursEnd;
-    if (
-      typeof start === "number" &&
-      typeof end === "number" &&
-      start >= 0 &&
-      start <= 23 &&
-      end >= 0 &&
-      end <= 23
-    ) {
-      return { start, end };
-    }
+    return resolveOutboundQuietHours(
+      auto?.config.quietHoursStart,
+      auto?.config.quietHoursEnd
+    );
   } catch {
-    /* fallback défaut */
+    return resolveOutboundQuietHours(22, 7);
   }
-  return { start: DEFAULT_QUIET_START, end: DEFAULT_QUIET_END };
 }
 
 function tomorrowMorningLocal(): string {
@@ -129,7 +114,7 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
 
   for (const item of items) {
     const quiet = await quietHoursForItem(userId, item);
-    if (isQuietHours(quiet.start, quiet.end) && !bypassQuietHours(item)) {
+    if (isWithinQuietHours(quiet) && !bypassQuietHours(item)) {
       await rescheduleQuiet(userId, item, quiet.end);
       continue;
     }
@@ -347,6 +332,28 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
       if (item.automation_id) {
         const label = item.recipient_label || chatIdToDisplay(item.recipient);
         await addAutomationLog(userId, item.automation_id, "success", `Message envoyé à ${label}`);
+        // Atteint / stats seulement APRÈS envoi WhatsApp réel (pas à la mise en file).
+        const isFirstCampaignDelivery =
+          !isInboundReply && !isGroupFollowUp;
+        if (isFirstCampaignDelivery) {
+          try {
+            const {
+              updateAutomationTarget,
+              updateAutomationStats,
+              getAutomation,
+            } = await import("./db.js");
+            await updateAutomationTarget(userId, item.automation_id, item.recipient, {
+              status: "contacted",
+            });
+            const stats = (await getAutomation(userId, item.automation_id))?.stats ?? {};
+            await updateAutomationStats(userId, item.automation_id, {
+              outboundUsed: (stats.outboundUsed ?? 0) + 1,
+              lastActionAt: new Date().toISOString(),
+            });
+          } catch (err) {
+            console.warn("[send-queue] post-send target/stats:", err);
+          }
+        }
       }
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

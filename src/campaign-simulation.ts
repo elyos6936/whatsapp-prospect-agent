@@ -6,7 +6,7 @@ import type OpenAI from "openai";
 import { config } from "./config.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
-import { isThinkingModel, recommendedMaxTokens } from "./llm.js";
+import { llmChatExtras, recommendedMaxTokens, stripInternalThinking } from "./llm.js";
 
 export type SimulationTurn = {
   speaker: "toi" | "prospect";
@@ -169,12 +169,8 @@ export async function generateCampaignSimulationDirect(
       { role: "user", content: user },
     ],
     max_tokens: recommendedMaxTokens(config.openaiModel, 900, { thinkingEnabled: false }),
+    ...llmChatExtras({ enableThinking: false }),
   };
-
-  // Désactive le thinking pour cette requête isolée (pas d'outils) → plus fiable.
-  if (isThinkingModel(config.openaiModel)) {
-    body.thinking = { type: "disabled" };
-  }
 
   const response = await callOpenAiWithRetry(() =>
     client.chat.completions.create(
@@ -182,7 +178,7 @@ export async function generateCampaignSimulationDirect(
     )
   );
 
-  const content = response.choices[0]?.message?.content?.trim() ?? "";
+  const content = stripInternalThinking(response.choices[0]?.message?.content?.trim() ?? "");
   const turns = parseTurnsFromModelText(content);
   if (!turns) {
     console.warn("[simulation] parse failed, raw:", content.slice(0, 400));

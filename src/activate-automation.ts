@@ -143,8 +143,15 @@ export async function activateAutomationCore(
     if (!safeConfig.maxPerDay || safeConfig.maxPerDay <= 0) {
       safeConfig.maxPerDay = ANTI_BAN.defaultCampaignMaxPerDay;
     }
-    if (safeConfig.quietHoursStart == null) safeConfig.quietHoursStart = 9;
-    if (safeConfig.quietHoursEnd == null) safeConfig.quietHoursEnd = 20;
+    // Heures CALMES (pas d'envoi) : nuit 20h→9h = activité 9h–20h.
+    // Ancien défaut 9→20 inversait la logique (« hors fenêtre » toute la journée).
+    const { resolveOutboundQuietHours } = await import("./quiet-hours.js");
+    const quiet = resolveOutboundQuietHours(
+      safeConfig.quietHoursStart,
+      safeConfig.quietHoursEnd
+    );
+    safeConfig.quietHoursStart = quiet.start;
+    safeConfig.quietHoursEnd = quiet.end;
     if (
       auto.type !== "group_broadcast" &&
       !safeConfig.relance?.enabled &&
@@ -154,8 +161,13 @@ export async function activateAutomationCore(
     }
   } else if (auto.type === "keyword_sales" || auto.config.mode === "inbound_closing") {
     // Closing entrant : défaut plage 8h–19h, vagues de 50 / gap 2h
-    if (safeConfig.quietHoursStart == null) safeConfig.quietHoursStart = 19;
-    if (safeConfig.quietHoursEnd == null) safeConfig.quietHoursEnd = 8;
+    const { resolveInboundQuietHours } = await import("./quiet-hours.js");
+    const quiet = resolveInboundQuietHours(
+      safeConfig.quietHoursStart,
+      safeConfig.quietHoursEnd
+    );
+    safeConfig.quietHoursStart = quiet.start;
+    safeConfig.quietHoursEnd = quiet.end;
     if (safeConfig.inboundBatchSize == null) safeConfig.inboundBatchSize = 50;
     if (safeConfig.inboundWaveGapMinutes == null) safeConfig.inboundWaveGapMinutes = 120;
   }

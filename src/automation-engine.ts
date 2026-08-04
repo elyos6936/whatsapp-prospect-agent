@@ -359,7 +359,8 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
       });
     }
 
-    await updateAutomationTarget(userId, auto.id, target.target_id, { status: "contacted" });
+    // Reste en « queued » jusqu'à l'envoi WhatsApp réel (send-queue → contacted).
+    // Ne pas gonfler entonnoir / outboundUsed avant livraison.
     await updateAutomationTargetAb(userId, auto.id, target.target_id, ab.variantId);
     await recordAbSent(userId, auto.id, ab.variantId);
 
@@ -375,9 +376,7 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
         : `Message programmé pour ${label}${ab.variantId !== "default" ? ` [A/B ${ab.variantId}]` : ""}`
     );
 
-    const stats = (await getAutomation(userId, auto.id))?.stats ?? {};
     await updateAutomationStats(userId, auto.id, {
-      outboundUsed: (stats.outboundUsed ?? 0) + 1,
       lastActionAt: new Date().toISOString(),
     });
   } catch (err) {

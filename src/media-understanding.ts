@@ -162,9 +162,11 @@ async function transcribeAudio(
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  // DeepSeek n'expose pas Whisper — éviter un appel facturé / en erreur.
-  if (config.llmProvider === "deepseek") {
-    console.warn("[media] Transcription audio indisponible avec DeepSeek — note vocale ignorée.");
+  // Providers sans Whisper / vision OpenAI native
+  if (config.llmProvider !== "openai") {
+    console.warn(
+      `[media] Transcription audio indisponible avec ${config.llmProvider} — note vocale ignorée.`,
+    );
     return null;
   }
   const openai = new OpenAI({ apiKey, baseURL: config.llmBaseUrl });
@@ -188,8 +190,10 @@ async function describeImage(
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  if (config.llmProvider === "deepseek") {
-    console.warn("[media] Description d'image indisponible avec DeepSeek — image ignorée.");
+  if (config.llmProvider !== "openai") {
+    console.warn(
+      `[media] Description d'image indisponible avec ${config.llmProvider} — image ignorée.`,
+    );
     return null;
   }
   const openai = createLlmClient(apiKey);

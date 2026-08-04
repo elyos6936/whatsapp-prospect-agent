@@ -20,7 +20,7 @@ import {
 } from "./evolutionapi.js";
 import {
   createLlmClient,
-  deepseekChatExtras,
+  llmChatExtras,
   extractAssistantContent,
   llmProviderLabel,
   recommendedMaxTokens,
@@ -123,7 +123,7 @@ export async function generateThirdPartyNotificationMessage(
       ],
       max_tokens: recommendedMaxTokens(config.openaiModel, 280, { thinkingEnabled: false }),
       temperature: 0.4,
-      ...deepseekChatExtras({ enableThinking: false }),
+      ...llmChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 
