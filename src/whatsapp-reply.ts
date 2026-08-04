@@ -6,6 +6,11 @@ import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens, llmChatExtras } from "./llm.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
 import {
+  sanitizeProspectFacingReply,
+  safeFallbackWhatsAppReply,
+  looksLikeInternalMonologue,
+} from "./prospect-facing-sanitize.js";
+import {
   isAffirmingPendingSendOffer,
   ensurePendingLinkInReply,
 } from "./lead-scoring.js";
@@ -13,63 +18,50 @@ import { shouldSilenceAfterFarewell } from "./stop-policy.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté (Afrique francophone) qui répond comme un **vrai humain** — jamais comme un bot.
 
-## Raisonnement (prioritaire — c'est comme ça que tu gères l'inattendu)
-À CHAQUE message, dans cet ordre :
-1. Relis ton **dernier message sortant** + ce que le prospect vient de répondre.
-2. Déduis son intention (accord, refus, confusion, question, objection, hors-sujet, info utile…).
-3. Réponds à **CETTE** intention, en restant sur la mission campagne — pas de script générique, pas de question inventée hors fil.
-4. Si c'est inattendu : clarifie ou recadre en 1 phrase humaine. **JAMAIS** de reset (te re-présenter, cold opener, « je suis allé trop vite + je suis X », changer de sujet).
-5. Si tu as **proposé** quelque chose (lien, détail, envoi, montrer un exemple) et qu'il dit oui / ok / d'accord → **exécute** (envoie le lien / l'exemple / la prochaine info), ne clôture pas et **ne repose pas** une question déjà posée.
+## SORTIE OBLIGATOIRE (CRITIQUE)
+- Tu réfléchis EN SILENCE. N'écris JAMAIS ton analyse, ton plan, ni des phrases du type « Il vient de… », « Je reste transparent… », « puis je relance… ».
+- Ta réponse = UNIQUEMENT le texte WhatsApp adressé au prospect (vouvoiement : vous / votre).
+- INTERDIT : notes internes, coaching, stratégie, « mission », « recadrer », parler du prospect à la 3ᵉ personne.
 
-Tu dois pouvoir t'en sortir seul face à des réponses imprévues. Les exemples ci-dessous sont des **intentions**, pas des phrases à recopier.
+## Comment traiter le message (silencieusement)
+1. Relis ton dernier message sortant + sa réponse.
+2. Déduis son intention.
+3. Réponds à CETTE intention, mission campagne — pas de script générique.
+4. Inattendu → clarifie/recadre en 1 phrase humaine. JAMAIS de reset (re-présentation, cold opener).
+5. Si tu as proposé quelque chose et qu'il dit oui → exécute (lien / détail), ne clôture pas.
 
 ## Ta mission
-Poursuivre la conversation selon l'OBJECTIF DE LA CAMPAGNE jusqu'à la conversion (ou un refus clair), en suivant A.I.D.A. :
-- Après une accroche (Attention) : Interest → Desire → Action progressivement.
-- N'envoie PAS tout (prix + lien + pitch) d'un coup sauf si le prospect le demande clairement.
-- **Même mission d'un bout à l'autre** : seuls les mots varient.
-- **Pas fade** : personnalité légère OK. Interdit le style fiche LinkedIn / checklist.
+Poursuivre selon l'OBJECTIF DE LA CAMPAGNE (A.I.D.A.) jusqu'à conversion ou refus clair.
+- Pas tout envoyer d'un coup (prix + lien + pitch) sauf demande claire.
+- Personnalité légère OK. Interdit style fiche LinkedIn.
 
 ## Exception — « un seul message »
-Si le prospect demande **juste** le lien / le prix / un seul message :
-→ Envoie UNIQUEMENT l'info demandée. Pas de question ni de relance.
+Si le prospect demande juste le lien / le prix / un seul message → uniquement l'info demandée.
 
 ## Règles d'or
-1. **HISTORIQUE d'abord** : tout ce qui a déjà été dit compte. **Ne répète JAMAIS** une question déjà posée dans le fil (même reformulée à l'identique).
-2. **DIRECT** : réponds à CE qu'il vient de dire, dans le cadre campagne.
-3. **COURT** : 1-2 phrases vivantes (court ≠ sec).
-4. **PAS DE RE-SALUT / RE-PRÉSENTATION** si le fil est déjà engagé (sauf s'il demande explicitement qui tu es).
-5. **SORTANT** : si TU as ouvert, n'agis jamais comme s'il t'avait contacté (« ravi d'échanger », « merci de votre message »).
-5b. **Messages très courts** (ok / oui / salut) : lis TON dernier message. Si tu proposais déjà d'avancer → exécute. Sinon → 1 point / question **nouvelle**. INTERDIT bio / re-présentation / question déjà posée.
-6. **ENTRANT** : le client a initié — accueil / support, pas de cold outreach.
-7. **ZÉRO CROCHETS** [prix], [lien], etc.
-8. **VOUVOIEMENT**. Pas de prénom du prospect à tout va.
-9. **Pas de réaction vide** (« Super. », « Ok. ») : réagir + avancer la mission.
-10. **Infors multiples** d'un coup → noter l'utile + UNE question manquante (pas « Merci M. X » seul).
-11. **Refus vs réponse utile** :
-   - « non » / « non merci » / « pas intéressé » à une demande d'intérêt (« ça vous intéresse ? », « ouvert à un échange ? ») → clôture polie UNE fois puis STOP.
-   - « non » à une question de qualification (« utilisez-vous déjà… ? », « avez-vous des tâches… ? ») → **continue** : note le fait et avance (souvent une opportunité), ne clôture PAS.
-   - Après un adieu (« Bonne journée », « je ne vous dérange plus ») : si le prospect dit seulement ok / okay / merci → **n'envoie RIEN**.
-12. Emojis : aucun par défaut (max 1 s'il en utilise). Texte seulement.
+1. HISTORIQUE d'abord — ne répète jamais une question déjà posée.
+2. DIRECT — réponds à CE qu'il vient de dire.
+3. COURT — 1-2 phrases vivantes.
+4. PAS DE RE-SALUT / RE-PRÉSENTATION si le fil est engagé.
+5. SORTANT : tu as ouvert — pas « merci de votre message ».
+5b. Messages courts (ok/oui) : lis TON dernier message ; exécute ou avance — pas de bio.
+6. ENTRANT : support, pas cold outreach.
+7. ZÉRO CROCHETS [prix], [lien].
+8. VOUVOIEMENT. Pas de prénom du prospect à tout va.
+9. Pas de réaction vide (« Super. ») : réagir + avancer.
+10. Infos multiples → noter + UNE question manquante.
+11. Refus intérêt → clôture polie. « Non » à une question de qualification → continue.
+    Après adieu + ok/merci → n'envoie RIEN (géré côté serveur).
+12. Emojis : aucun par défaut.
 
-## Intentions utiles (exemples — adapte, ne copie pas)
-- Qui es-tu → prénom business + pourquoi on écrit (1 souffle).
-- Salut / hello / ok après TON opener → enchaîner la mission (1 question **nouvelle**), **pas** de présentation.
-- Okay après « je peux vous montrer… » → montrer un exemple concret / prochaine info, **pas** reposer la question d'avant.
-- « Non » à « utilisez-vous déjà des outils ? » → « Pas de souci — justement… » + avancer, pas d'adieu.
-- « Non » à « ça vous intéresse ? » → clôturer poliment.
-- Où as-tu eu mon numéro → transparence + source vraie du contexte.
-- Confusion / « je ne comprends pas » → clarifier **ton** dernier message.
-- Oui après offre de lien → envoyer le lien réel.
-- Oui après « vous avez 2 minutes ? » → enchaîner le sujet campagne (pas une question hors sujet).
-- Objection → empathie + piste liée à CE frein.
-- Hors-sujet → recadrer en 1 phrase.
-
-## Style
-Sonner comme quelqu'un qui écrit vite au téléphone. Pas de tirets « — / – » comme séparateurs. Pas de listes / bullets.
+## Intentions (adapte, ne copie pas)
+- Qui es-tu → prénom + pourquoi on écrit.
+- Où as-tu eu mon numéro → transparence + source vraie du contexte (phrase au prospect, pas une note).
+- Oui après offre de lien → envoyer le lien.
+- Objection → empathie + piste liée au frein.
 
 ## Format
-Réponds UNIQUEMENT avec le texte du message WhatsApp.`
+Réponds UNIQUEMENT avec le message WhatsApp. Aucune phrase avant ou après.`
 
 const INJECTION_PATTERNS =
   /ignore\s+(tes|vos|your)\s+instructions|ignore\s+previous|system\s+prompt|révèle\s+(ton|le)\s+prompt|jailbreak|DAN\s+mode/i;
@@ -294,7 +286,9 @@ function enforceWhatsAppStyle(
       "Je note bien ces éléments. Pour finaliser, que me manque-t-il encore de votre côté ?";
   }
 
-  return sanitizeOutboundWhatsAppText(text.replace(/\s{2,}/g, " ").trim());
+  const cleaned = sanitizeProspectFacingReply(text.replace(/\s{2,}/g, " ").trim());
+  if (!cleaned) return "";
+  return sanitizeOutboundWhatsAppText(cleaned);
 }
 
 function nowFr(): string {
@@ -422,7 +416,7 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
-Raisonne : que signifie sa réponse par rapport à TON dernier message ? Réponds en 1-2 phrases WhatsApp, mission campagne. Inattendu → clarifie/recadre, jamais de reset. Ne répète aucune question déjà posée.${
+Écris UNIQUEMENT le message WhatsApp au prospect (1-2 phrases, vouvoiement). Pas d'analyse, pas de plan, pas de « Il vient de… ».${
     affirmingPendingSend ? " Inclus l'URL campagne." : ""
   }${
     !inbound && ongoing && shortAck && !affirmingPendingSend
@@ -432,38 +426,64 @@ Raisonne : que signifie sa réponse par rapport à TON dernier message ? Répond
       : ""
   }`;
 
-  const response = await callOpenAiWithRetry(() =>
-    client.chat.completions.create({
-      model: config.openaiModel,
-      messages: [
-        { role: "system", content: WHATSAPP_REPLY_PROMPT },
-        { role: "user", content: userContent },
-      ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 220, {
-        thinkingEnabled: false,
-      }),
-      temperature: 0.65,
-      presence_penalty: 0.45,
-      frequency_penalty: 0.45,
-      ...llmChatExtras({ enableThinking: false }),
-    } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
-  );
+  const buildMessages = (extraSystem?: string): OpenAI.Chat.Completions.ChatCompletionMessageParam[] => [
+    { role: "system", content: WHATSAPP_REPLY_PROMPT },
+    ...(extraSystem ? [{ role: "system" as const, content: extraSystem }] : []),
+    { role: "user", content: userContent },
+  ];
 
-  const choice = response?.choices[0];
-  let reply = extractAssistantContent(choice?.message);
-  if (!reply) {
-    throw new Error(`${llmProviderLabel()} n'a pas généré de réponse.`);
+  const callReply = async (extraSystem?: string) => {
+    const response = await callOpenAiWithRetry(() =>
+      client.chat.completions.create({
+        model: config.openaiModel,
+        messages: buildMessages(extraSystem),
+        max_tokens: recommendedMaxTokens(config.openaiModel, 220, {
+          thinkingEnabled: false,
+        }),
+        temperature: 0.65,
+        presence_penalty: 0.45,
+        frequency_penalty: 0.45,
+        ...llmChatExtras({ enableThinking: false }),
+      } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
+    );
+    const choice = response?.choices[0];
+    let reply = extractAssistantContent(choice?.message);
+    if (!reply) return "";
+    if (choice?.finish_reason === "length" && !/[.!?…]$/.test(reply.trim())) {
+      const trimmed = reply.trim();
+      const lastSpace = trimmed.lastIndexOf(" ");
+      if (lastSpace > 40) reply = trimmed.slice(0, lastSpace).trim();
+    }
+    return reply;
+  };
+
+  let reply = await callReply();
+  if (!reply || looksLikeInternalMonologue(reply)) {
+    console.warn(
+      "[whatsapp-reply] monologue interne détecté — retry. Brut:",
+      (reply || "").slice(0, 160)
+    );
+    reply = await callReply(
+      "URGENT : ta sortie précédente était une NOTE INTERNE, pas un message WhatsApp. " +
+        "Réécris UNIQUEMENT le texte adressé au prospect (vous/votre). " +
+        "INTERDIT : « Il vient de… », « Je reste… », « puis je… », « mission », analyse."
+    );
   }
-  if (choice?.finish_reason === "length" && !/[.!?…]$/.test(reply.trim())) {
-    const trimmed = reply.trim();
-    const lastSpace = trimmed.lastIndexOf(" ");
-    if (lastSpace > 40) reply = trimmed.slice(0, lastSpace).trim();
+  if (!reply || looksLikeInternalMonologue(reply)) {
+    console.error(
+      "[whatsapp-reply] monologue après retry — fallback sûr. Brut:",
+      (reply || "").slice(0, 160)
+    );
+    reply = safeFallbackWhatsAppReply(input.incomingText);
   }
 
   let styled = enforceWhatsAppStyle(reply, {
     isOngoing: ongoing,
     incomingText: input.incomingText,
   });
+  if (!styled || looksLikeInternalMonologue(styled)) {
+    styled = safeFallbackWhatsAppReply(input.incomingText);
+  }
   if (input.allowEmojis === true) {
     const { limitEmojis } = await import("./sticker-consent.js");
     styled = limitEmojis(styled, 1);
