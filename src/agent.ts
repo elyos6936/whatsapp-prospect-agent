@@ -928,7 +928,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     // Garde-fou : annonce se terminant par « : » sans contenu.
     if (isDanglingAnnouncement(text) && rounds < MAX_TOOL_ROUNDS) {
-      messages.push({ role: "assistant", content: text });
+      // Rejouer le message assistant complet (ThinkChunks inclus) — doc Mistral multi-tours.
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({
         role: "system",
         content:
@@ -943,7 +944,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       (hasSimulationThread(text) || isBrokenSimulationPreview(text)) &&
       rounds < MAX_TOOL_ROUNDS
     ) {
-      messages.push({ role: "assistant", content: text });
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
       continue;
     }
@@ -951,7 +952,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     // Garde-fou simulation vide / incomplète.
     if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < MAX_TOOL_ROUNDS) {
       simFixAttempts++;
-      messages.push({ role: "assistant", content: text });
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({
         role: "system",
         content:
@@ -962,7 +963,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     // Si on forçait la simulation et qu'on a du texte sans fil → forcer l'outil
     if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < MAX_TOOL_ROUNDS) {
-      messages.push({ role: "assistant", content: text });
+      messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
       continue;
     }

@@ -402,11 +402,13 @@ Raisonne : que signifie sa réponse par rapport à TON dernier message ? Répond
         { role: "system", content: WHATSAPP_REPLY_PROMPT },
         { role: "user", content: userContent },
       ],
-      max_tokens: recommendedMaxTokens(config.openaiModel, 260),
-      temperature: 0.7,
+      max_tokens: recommendedMaxTokens(config.openaiModel, 220, {
+        thinkingEnabled: false,
+      }),
+      temperature: 0.65,
       presence_penalty: 0.45,
       frequency_penalty: 0.45,
-      ...mistralChatExtras(),
+      ...mistralChatExtras({ enableThinking: false }),
     } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
   );
 

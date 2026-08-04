@@ -61,13 +61,18 @@ export function toAssistantHistoryMessage(
 
 /**
  * Params Mistral à merger dans chat.completions.create.
- * Défaut : reasoning ON (`high`) — recommandé pour agent / outils.
- * Passer `{ enableThinking: false }` pour tâches courtes (mémoire, perso).
+ * Défaut : reasoning ON (`high` + top_p 0.95) — agent / simulation / outils.
+ * Passer `{ enableThinking: false }` pour WhatsApp court, mémoire, perso, vision.
  */
 export function mistralChatExtras(opts?: { enableThinking?: boolean }): Record<string, unknown> {
   const enable = opts?.enableThinking !== false;
+  if (!enable) {
+    return { reasoning_effort: "none" };
+  }
+  // Reco Mistral Medium 3.5 : high → temperature 0.7 (côté call site) + top_p 0.95
   return {
-    reasoning_effort: enable ? "high" : "none",
+    reasoning_effort: "high",
+    top_p: 0.95,
   };
 }
 
