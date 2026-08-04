@@ -99,8 +99,8 @@ const ACTIVATION_AFTER_SIMULATION_NUDGE =
   "Étape suivante : dans CE chat, demande clairement s’il veut **activer maintenant** " +
   "ou s’il a encore des **modifications** (accroche, ton, relances…). " +
   "N'appelle activate_automation QUE si l'utilisateur répond clairement oui / lance / active / vas-y. " +
-  "S’il veut des modifs → update_automation_config, **confirme d'abord** ce qui a changé (valeur concrète), " +
-  "puis propose doucement « refais la simulation » ou « c'est bon » pour activer — INTERDIT de régénérer une simulation tout seul. " +
+  "S’il veut des modifs → update_automation_config en silence, confirme brièvement, " +
+  "propose « refais la simulation » ou « c'est bon » pour activer — INTERDIT de régénérer une simulation tout seul. " +
   "Il peut aussi cliquer **Lancer** dans l'en-tête. Activer = simulation déjà validée.";
 
 const CONFIRM_ACTIVATE_NOW_NUDGE =
@@ -111,7 +111,7 @@ const CONFIRM_ACTIVATE_NOW_NUDGE =
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
-  "Le 1er tour « toi » = l'accroche validée (initial_message) — Attention seulement, PAS de prix/lien/pitch. " +
+  "Le 1er tour « toi » = l'accroche validée (initial_message / variante choisie) — Attention seulement, PAS de prix/lien/pitch. " +
   "Les tours suivants : même mission / pacing (pousser l'intérêt, pas de « Ah super » / « Super. » vide), vouvoiement, sans prénom du prospect à tout va. " +
   "Identité = prénom + pourquoi ; sur oui/ok = question ou détail nouveau (pas pitch immédiat). " +
   "La simulation s'affiche UNIQUEMENT sur le **téléphone à droite** — INTERDIT de recopier le fil Toi → / Prospect → dans ta réponse chat. " +
@@ -132,15 +132,11 @@ const SILENT_TWEAK_AFTER_SIM_NUDGE =
   "Une simulation a DÉJÀ été montrée. L'utilisateur demande une modification ou pose une question. " +
   "INTERDIT d'écrire un fil Toi → / Prospect → dans le chat. " +
   "INTERDIT de coller un planDisplay / fence de plan dans ta réponse. " +
-  "Si modif (fenêtre horaire, ton, accroche, prix, relances, vouvoiement…) → applique via update_automation_config " +
-  "(et initial_message / conversation_guide si besoin). " +
-  "OBLIGATOIRE dans ta réponse chat : **réponds d'abord** à sa question / confirme **explicitement** ce qui a changé " +
-  "avec la valeur concrète (ex. « Oui — fenêtre d'envoi réglée sur 6h–20h. »). " +
-  "Si c'est seulement « c'est fait ? » / « tu as changé… ? » → OUI ou NON + détail ; " +
-  "**INTERDIT** de répondre uniquement par « Veux-tu activer la campagne maintenant ? » sans confirmer la modif. " +
-  "Ensuite seulement, une proposition **douce et optionnelle** : « Tu peux refaire la simulation, ou dire c'est bon pour activer. » " +
+  "Si modif (ton, accroche, prix, relances, vouvoiement…) → applique UNIQUEMENT via update_automation_config " +
+  "(et initial_message / conversation_guide si besoin). Confirme en 1–2 phrases. " +
   "INTERDIT d'appeler show_campaign_simulation sauf demande explicite (« refais la simulation », « reteste »). " +
-  "Si question seule (sans demande de modif) → réponds clairement, sans outil de simulation.";
+  "Propose « refais la simulation » ou « c'est bon » pour activer. " +
+  "Si question seule → réponds clairement, sans outil de simulation.";
 
 /** Outils d'envoi réel — bloqués pendant une demande de simulation. */
 const OUTBOUND_SEND_TOOLS = new Set([
@@ -246,7 +242,7 @@ async function buildBusinessContext(
           `Ce fil a été créé en mode **Prospection**. Vous contactez les prospects en premier.\n` +
           `- create_automation UNIQUEMENT avec type=\`contact_prospect\` ou \`group_prospect\` (mode \`outbound_prospect\`).\n` +
           `- INTERDIT : keyword_sales / inbound_closing / questions « phrase déclencheur » comme flux principal.\n` +
-          `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, **UNE accroche** à valider, puis **5 variantes** (rotation).\n` +
+          `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, puis 5 variantes d'accroche.\n` +
           `- INTERDIT de demander notif tiers / mots-clés handoff (remboursement, plainte…) — réservé au **Support**.\n` +
           `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Support. Pour du support entrant → ` +
           `**Nouvelle automatisation** → **Support client**.`
@@ -323,9 +319,9 @@ async function buildBusinessContext(
             `## Accroches validées (1er message)\n` +
               `initial_message (variante de référence / simu) :\n« ${auto.config.initialMessage.trim()} »\n` +
               (variants.length === 5
-                ? `ab_variants (les 5 — rotation à l'envoi, ne pas en supprimer) :\n` +
+                ? `ab_variants (les 5 — à ROTATION exacte, ne pas en supprimer) :\n` +
                   variants.map((v, i) => `${i + 1}. [${v.id}] « ${v.message} »`).join("\n") +
-                  `\nSi l'utilisateur change l'accroche de référence : update avec initial_message=nouvelle ET ab_variants=les 5 textes (éventuellement régénérés).`
+                  `\nSi l'utilisateur change le choix : update avec initial_message=choisie ET ab_variants=les MÊMES 5 textes.`
                 : variants.length
                   ? `⚠ Seulement ${variants.length}/5 variantes en config — corrige via update_automation_config avec les 5 textes complets.`
                   : `⚠ Aucune ab_variants — OBLIGATOIRE d'enregistrer les 5 accroches proposées (pas seulement initial_message).`)
@@ -779,27 +775,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             const block = JSON.stringify({
               error:
                 "INTERDIT de créer le brouillon avant que l'utilisateur ait indiqué comment il veut aborder le premier message. " +
-                "Pose UNE question sur son angle / ton / idée, attends sa réponse, puis propose UNE accroche.",
-            });
-            messages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: block,
-            });
-            const nudge = buildBriefingNudge(briefing, history, userMessage);
-            if (nudge) messages.push({ role: "system", content: nudge });
-            continue;
-          }
-
-          if (
-            !briefing.isInboundClosing &&
-            !briefing.openerSingleValidated &&
-            !briefing.openerVariantsProposed
-          ) {
-            const block = JSON.stringify({
-              error:
-                "INTERDIT de créer le brouillon avant d'avoir proposé UNE accroche et obtenu la validation de l'utilisateur. " +
-                "Ensuite seulement : montrer les 5 variantes.",
+                "Pose UNE question sur son angle / ton / idée, attends sa réponse, puis propose 5 variantes.",
             });
             messages.push({
               role: "tool",
@@ -814,7 +790,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           if (!briefing.isInboundClosing && !briefing.openerVariantsProposed) {
             const block = JSON.stringify({
               error:
-                "INTERDIT de créer le brouillon avant d'avoir montré les 5 variantes d'accroche (rotation) dans le chat après validation de l'accroche unique.",
+                "INTERDIT de créer le brouillon avant d'avoir proposé les 5 variantes d'accroche dans le chat et d'avoir obtenu le choix de l'utilisateur.",
             });
             messages.push({
               role: "tool",
@@ -841,7 +817,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         ) {
           result = JSON.stringify({
             error: silentTweakAfterSim
-              ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler). Dans ta réponse : confirme d'abord ce qui a changé (valeur concrète), puis propose doucement « refais la simulation » ou « c'est bon » pour activer — n'agresse pas avec « activer maintenant » seul."
+              ? "Simulation déjà affichée. Applique la modif via update_automation_config (sans re-simuler) et confirme brièvement : propose « refais la simulation » ou « c'est bon » pour activer."
               : "Simulation déjà sur le téléphone. Ne la répète pas dans le chat : résume et demande s’il veut activer maintenant ou s’il a d’autres modifs. N'appelle activate_automation que sur oui / lance / active explicite.",
           });
           messages.push({
