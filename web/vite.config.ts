@@ -25,6 +25,8 @@ export default defineConfig({
     },
   },
   build: {
+    // Jamais de .map en prod : DevTools ne doit pas remonter le TypeScript source.
+    sourcemap: false,
     // rolldown-vite hisse tout le graphe asynchrone dans les <link modulepreload>
     // de l'index.html. On retire les gros chunks réservés à l'espace connecté
     // (chat) pour qu'ils ne soient pas téléchargés dès la landing page.

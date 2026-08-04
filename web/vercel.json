@@ -30,6 +30,10 @@
   ],
   "rewrites": [
     {
+      "source": "/:path*.map",
+      "destination": "/404.html"
+    },
+    {
       "source": "/api/:path*",
       "destination": "https://api.klanvio.com/api/:path*"
     },
