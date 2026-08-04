@@ -109,16 +109,47 @@ export type BriefingAssessment = {
 };
 
 const OPENER_DIRECTION_ASK_RE =
-  /\b(premier\s+message|premi[eè]re\s+(approche|accroche|phrase|ouverture)|comment\s+tu\s+veux\s+(aborder|commencer|ouvrir)|quelle\s+approche|quel\s+angle|premier\s+contact|naturel\s+comme\s+premi[eè]re|premi[eè]re\s+fois\s+que\s+tu\s+[ée]cris)\b/i;
+  /\b(premier\s+message|premi[eè]re\s+(approche|accroche|phrase|ouverture|variante)|comment\s+(tu\s+veux|veux[- ]?tu)\s+(aborder|commencer|ouvrir)|abord(?:er|e)\s+(ces\s+)?prospects|quelle\s+approche|quel\s+angle|premier\s+contact|naturel\s+comme\s+premi[eè]re|premi[eè]re\s+fois\s+que\s+tu\s+[ée]cris|ton\s+(direct|formel|d[eé]contract[eé]?|myst[eè]re)|accroche|hook)\b/i;
 
 const OPENER_VARIANTS_PROPOSED_RE =
-  /\b(5\s+(pistes|variantes|accroches)|voici\s+5\s+(pistes|variantes|accroches))\b/i;
+  /\b((voici\s+)?(les\s+)?5\s+(pistes|variantes?|accroches|variations|options|propositions)|cinq\s+(pistes|variantes?|accroches|variations|options)|variantes?\s+(d['']accroche|propos[eé]es?)|voici\s+(mes\s+)?(pistes|variantes|accroches|variations))\b/i;
+
+const OPENER_VARIANT_CHOICE_RE =
+  /^\s*(?:(?:je\s+)?(?:prends?|choisis|valide|garde|pr[eé]f[eè]re)\s+(?:la\s+)?(?:variante\s+|option\s+|n[°o]?\s*)?)?([1-5])(?:\s*[-–).:]|\s*$)/i;
+
+/** L'utilisateur délègue la rédaction de l'accroche à l'agent. */
+const OPENER_DELEGATION_RE =
+  /^\s*(propose([- ]?moi)?|propose\s+(des\s+)?(accroches?|variantes?|messages?)|comme\s+tu\s+veux|\u00e0\s+toi|fais\s+(toi[- ]?m[eê]me|comme\s+tu\s+veux|simple)|invente([- ]?moi)?|surprise|au\s+choix|libre\s+[aà]\s+toi)\s*[.!]?\s*$/i;
 
 function isSubstantiveUserReply(text: string): boolean {
   const t = text.trim();
   if (t.length < 12) return false;
   if (/^(oui|non|ok|ouais|non merci|peu importe|d'accord|vas[- ]y|nickel|parfait)$/i.test(t)) return false;
   return true;
+}
+
+/** Long texte type accroche WhatsApp (pas une liste de numéros / commande courte). */
+export function looksLikeOpenerDraft(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 40) return false;
+  if (OPENER_VARIANT_CHOICE_RE.test(t)) return false;
+  if (/^(oui|non|ok|ouais|maintenant|plus\s+tard|d'accord|vas[- ]y)([!.\s]|$)/i.test(t)) return false;
+  const phones = t.match(/\+?\d[\d\s.-]{7,}\d/g) || [];
+  if (phones.length >= 3) return false;
+  return /[.!?…]|[a-zàâäéèêëïîôùûüç]{12,}/i.test(t);
+}
+
+/** Liste numérotée 1–5 dans un message assistant (≥4 items). */
+export function hasNumberedOpenerList(content: string): boolean {
+  let count = 0;
+  for (let n = 1; n <= 5; n++) {
+    if (new RegExp(`(?:^|\\n)\\s*${n}\\s*[.)]\\s+\\S`, "m").test(content)) count++;
+  }
+  return count >= 4;
+}
+
+export function isOpenerDelegation(text: string): boolean {
+  return OPENER_DELEGATION_RE.test(text.trim());
 }
 
 function lastAssistantMatchIndex(history: AgentMessage[], re: RegExp): number {
@@ -134,11 +165,41 @@ export function hasAgentAskedOpenerDirection(history: AgentMessage[]): boolean {
   return lastAssistantMatchIndex(history, OPENER_DIRECTION_ASK_RE) >= 0;
 }
 
-/** L'utilisateur a répondu avec un angle / une idée après cette question. */
+/** L'utilisateur a choisi une variante 1–5 (message courant ou récent après les variantes). */
+export function hasUserChosenOpenerVariant(
+  history: AgentMessage[],
+  userMessage: string
+): boolean {
+  if (OPENER_VARIANT_CHOICE_RE.test(userMessage.trim())) return true;
+  const recent = history.slice(-12);
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const m = recent[i];
+    if (m?.role === "user" && OPENER_VARIANT_CHOICE_RE.test(m.content.trim())) return true;
+  }
+  return false;
+}
+
+/** L'utilisateur a répondu avec un angle / une idée (après question, ou volontairement). */
 export function hasUserProvidedOpenerDirection(
   history: AgentMessage[],
   userMessage: string
 ): boolean {
+  // Variantes déjà proposées ou choix 1–5 → l'angle est acquis
+  if (hasProposedOpenerVariants(history)) return true;
+  if (hasUserChosenOpenerVariant(history, userMessage)) return true;
+
+  // Délégation explicite (« propose », « comme tu veux »…)
+  if (isOpenerDelegation(userMessage)) return true;
+  for (const m of history.slice(-16)) {
+    if (m.role === "user" && isOpenerDelegation(m.content)) return true;
+  }
+
+  // Opener collé volontairement (sans attendre la question magique)
+  if (looksLikeOpenerDraft(userMessage)) return true;
+  for (const m of history.slice(-16)) {
+    if (m.role === "user" && looksLikeOpenerDraft(m.content)) return true;
+  }
+
   const askIdx = lastAssistantMatchIndex(history, OPENER_DIRECTION_ASK_RE);
   if (askIdx < 0) return false;
 
@@ -155,9 +216,11 @@ export function hasUserProvidedOpenerDirection(
 
 /** Les 5 variantes ont déjà été listées dans le fil. */
 export function hasProposedOpenerVariants(history: AgentMessage[]): boolean {
-  return history
-    .slice(-24)
-    .some((m) => m.role === "assistant" && OPENER_VARIANTS_PROPOSED_RE.test(m.content));
+  return history.slice(-24).some(
+    (m) =>
+      m.role === "assistant" &&
+      (OPENER_VARIANTS_PROPOSED_RE.test(m.content) || hasNumberedOpenerList(m.content))
+  );
 }
 
 /**
@@ -411,12 +474,10 @@ export function assessCampaignBriefing(
     memory != null || hasStickersQuestionAsked(history);
   const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
   const handoffKeywordsQuestionAsked = hasHandoffKeywordsQuestionAsked(history);
+  const openerVariantsProposed = inbound ? true : hasProposedOpenerVariants(history);
   const openerDirectionCollected = inbound
     ? true
-    : hasUserProvidedOpenerDirection(history, userMessage);
-  const openerVariantsProposed = inbound
-    ? true
-    : hasProposedOpenerVariants(history);
+    : openerVariantsProposed || hasUserProvidedOpenerDirection(history, userMessage);
   const inboundPacingAsked = true;
 
   return {
@@ -477,7 +538,7 @@ export function buildMissingMemoryNudge(
 export function buildBriefingNudge(
   assessment: BriefingAssessment,
   history: AgentMessage[],
-  _userMessage: string
+  userMessage: string
 ): string | null {
   if (!assessment.inCampaignFlow) return null;
   if (assessment.readyForDraft) {
@@ -532,7 +593,7 @@ export function buildBriefingNudge(
       );
     }
 
-    if (!hasAgentAskedOpenerDirection(history)) {
+    if (!assessment.openerDirectionCollected && !hasAgentAskedOpenerDirection(history)) {
       return (
         "Briefing campagne : avant toute variante, pose UNE question sur le **premier message** souhaité — " +
         "ex. « Comment tu veux aborder le premier contact ? (ton direct, question ouverte, mystère, formel…) — donne-moi une idée ou une phrase type. » " +
@@ -550,20 +611,30 @@ export function buildBriefingNudge(
     }
 
     if (!assessment.openerVariantsProposed) {
+      const delegated =
+        isOpenerDelegation(userMessage) ||
+        history.slice(-8).some((m) => m.role === "user" && isOpenerDelegation(m.content));
       return (
-        "L'utilisateur a indiqué son angle pour le 1er message. " +
-        "Propose maintenant **exactement 5 variantes** d'accroche A.I.D.A. Attention (liste numérotée 1–5), alignées sur **SA** direction — courtes, SANS prix/lien/pitch, vouvoiement, sans prénom du prospect. " +
+        (delegated
+          ? "L'utilisateur t'a délégué l'accroche (« propose » / « comme tu veux »). "
+          : "L'utilisateur a indiqué son angle pour le 1er message. ") +
+        "Propose maintenant **exactement 5 variantes** d'accroche A.I.D.A. Attention (liste numérotée 1–5)" +
+        (delegated
+          ? " — inventées à partir de la **mémoire / offre** (pas 5 reformulations d'un salut vide)"
+          : ", alignées sur **SA** direction") +
+        " — courtes, SANS prix/lien/pitch, vouvoiement, sans prénom du prospect. " +
         "Attends son choix / validation. Puis create_automation draft (initial_message + ab_variants). " +
         "Ensuite propose la simulation (show_campaign_simulation, 6-7 tours)."
       );
     }
 
     return (
-      "Les 5 variantes ont été proposées — attends le choix ou la validation de l'utilisateur. " +
-      "Quand il valide (n° choisi OU « les 5 me vont ») : create_automation draft avec " +
+      "Les 5 variantes ont été proposées (ou un choix 1–5 a été donné). " +
+      "Crée MAINTENANT create_automation draft avec " +
       "initial_message = variante choisie (ou v1), ET ab_variants = les **5 textes complets** " +
       "proposés juste avant (jamais un seul message). personalize_messages=false. " +
       "(handoff_keywords=[] et third_party_notification_enabled=false par défaut en prospection — ne les demande pas). " +
+      "Utilise le champ tool_calls natif — INTERDIT de coller du DSML / invoke dans le texte. " +
       "Propose ensuite la simulation (6-7 messages via show_campaign_simulation)."
     );
   }

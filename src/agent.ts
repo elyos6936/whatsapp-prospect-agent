@@ -49,6 +49,12 @@ import {
   selectToolsForAgentTurn,
   slimToolResultForLlm,
 } from "./agent-context-budget.js";
+import {
+  containsDsmlToolMarkup,
+  DSML_RETRY_NUDGE,
+  parseDsmlToolCalls,
+  stripDsmlMarkup,
+} from "./dsml-tool-calls.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
 const MAX_TOOL_ROUNDS = 12;
@@ -600,6 +606,33 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     const assistantMsg = choice.message;
 
+    // Fuite outils en DSML dans content (DeepSeek / parfois Mistral) au lieu de tool_calls.
+    const rawContentForDsml =
+      typeof assistantMsg.content === "string"
+        ? assistantMsg.content
+        : extractAssistantContent(assistantMsg);
+    if (
+      (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) &&
+      containsDsmlToolMarkup(rawContentForDsml)
+    ) {
+      const recovered = parseDsmlToolCalls(rawContentForDsml);
+      if (recovered.toolCalls.length > 0) {
+        assistantMsg.tool_calls = recovered.toolCalls as typeof assistantMsg.tool_calls;
+        assistantMsg.content = recovered.contentWithoutDsml.trim() || null;
+        console.warn(
+          `[agent] DSML récupéré → ${recovered.toolCalls.map((t) => t.function.name).join(", ")}`
+        );
+      } else if (rounds < MAX_TOOL_ROUNDS) {
+        messages.push({ role: "system", content: DSML_RETRY_NUDGE });
+        continue;
+      } else {
+        return "Je n'ai pas pu appeler l'outil correctement. Réessaie en une phrase (ex. « crée le brouillon »).";
+      }
+    } else if (containsDsmlToolMarkup(rawContentForDsml)) {
+      const cleaned = stripDsmlMarkup(rawContentForDsml).trim();
+      assistantMsg.content = cleaned || null;
+    }
+
     if (assistantMsg.tool_calls?.length) {
       messages.push(toAssistantHistoryMessage(assistantMsg));
 
@@ -733,7 +766,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           }
 
           // Closing entrant : pas d'opener sortant → skip variantes.
-          if (!briefing.isInboundClosing && !briefing.openerDirectionCollected) {
+          // Si variantes déjà proposées OU choix 1–5 → angle considéré collecté.
+          if (
+            !briefing.isInboundClosing &&
+            !briefing.openerDirectionCollected &&
+            !briefing.openerVariantsProposed
+          ) {
             const block = JSON.stringify({
               error:
                 "INTERDIT de créer le brouillon avant que l'utilisateur ait indiqué comment il veut aborder le premier message. " +
@@ -914,7 +952,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       continue;
     }
 
-    const text = extractAssistantContent(assistantMsg);
+    let text = extractAssistantContent(assistantMsg);
+    if (containsDsmlToolMarkup(text)) {
+      const cleaned = stripDsmlMarkup(text);
+      if (!cleaned && rounds < MAX_TOOL_ROUNDS) {
+        messages.push({ role: "system", content: DSML_RETRY_NUDGE });
+        continue;
+      }
+      text = cleaned;
+    }
     if (!text) {
       if (forceSim && !forcedSimUsed && rounds < MAX_TOOL_ROUNDS) {
         messages.push({
@@ -990,7 +1036,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();
-    if (wrapText) return wrapText;
+    if (wrapText) {
+      if (containsDsmlToolMarkup(wrapText)) {
+        const cleaned = stripDsmlMarkup(wrapText);
+        if (cleaned) return cleaned;
+      } else {
+        return wrapText;
+      }
+    }
   } catch {
     /* fall through */
   }
