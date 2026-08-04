@@ -18,6 +18,7 @@ import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, recommend
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
+  hasNumberedOpenerList,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
 } from "./campaign-briefing.js";
@@ -1035,6 +1036,27 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < MAX_TOOL_ROUNDS) {
       messages.push(toAssistantHistoryMessage(assistantMsg));
       messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
+      continue;
+    }
+
+    // Garde-fou briefing sortant : ne jamais sauter l'étape « UNE accroche à valider ».
+    if (
+      briefing.inCampaignFlow &&
+      !briefing.isInboundClosing &&
+      briefing.readyForDraft &&
+      hasNumberedOpenerList(text) &&
+      (!briefing.openerSingleProposed || !briefing.openerSingleValidated) &&
+      rounds < MAX_TOOL_ROUNDS
+    ) {
+      messages.push(toAssistantHistoryMessage(assistantMsg));
+      messages.push({
+        role: "system",
+        content:
+          "INTERDIT de proposer les 5 variantes maintenant. " +
+          "Tu dois d'abord proposer UNE seule accroche Attention (1-2 phrases, sans prix/lien), " +
+          "demander validation, puis attendre. " +
+          "Réécris ton message en UNE accroche unique + question de validation.",
+      });
       continue;
     }
 
