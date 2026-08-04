@@ -23,12 +23,20 @@ const ESCALATION_PATTERNS =
 const NOT_INTERESTED_PATTERNS =
   /pas (du tout )?interesse|pas int[eé]ress[eée]?(\s|$|!|\.)|non merci|ca m.?interesse pas|cela m.?interesse pas|je (ne )?suis pas interesse|pas pour moi|pas besoin(\s|$)|je n.?ai pas besoin|fiche moi la paix|fichez-moi la paix|ne m.?ecri(s|ve|vez) plus|plus de message|j.?ai pas demande|je n.?ai pas demande|arrete(z)? (de )?(m.?ecri|me contacter)|stop (les? )?messages|non je (pense|crois) (que )?pas|je (ne )?(pense|crois) pas(\s|$|!|\.)|pas vraiment(\s|$|!|\.)|non pas vraiment|bof(\s|$|!|\.)|mouais/i;
 
-/** « non » / « nan » seul (après une question / pitch — voir detectContextualRefusal). */
+/** « non » / « nan » seul (après une demande de consentement — voir detectContextualRefusal). */
 const BARE_NO_RE = /^\s*(non|nan|nn|nope)([!.…\s]*)$/i;
 
-/** Dernier message sortant = question d'intérêt / poursuite / pitch oui-non. */
-const OUTBOUND_YES_NO_OR_PITCH_RE =
-  /\?|int[eé]ress|ouvert|on (en )?(parle|discute)|je (vous |te )?(explique|montre)|minutes?|secondes?|vous voyez|ca vous parle|partant|dispo|echange|échanger|gagner du temps|automatis|taches?|relances?|on continue|je peux/i;
+/**
+ * Dernier sortant = demande de CONSENTIR à poursuivre (intérêt / pitch / échange).
+ * PAS une question de qualification (« utilisez-vous déjà… », « avez-vous des tâches… »).
+ * Un « non » à une Q diagnostic = info utile → on continue. Un « non » ici = stop.
+ */
+const OUTBOUND_CONSENT_ASK_RE =
+  /(ca|ça)?\s*vous\s+int[eé]resse|vous\s+int[eé]resse\s*\?|int[eé]ress[eée]?\s*\?|ouvert\s+(a|à)\s+(un\s+)?[eé]change|on\s+(en\s+)?(parle|discute)\s*\?|(je\s+)?(peux|vais)\s+(vous|te)\s+(expliquer|montrer|envoyer)|gagner\s+du\s+temps.{0,80}\?|ca\s+vous\s+parle|ça\s+vous\s+parle|ça\s+vous\s+dit|ca\s+vous\s+dit|partant\s*\?|on\s+continue\s*\?|voulez[- ]vous|vous\s+voulez\s+|souhaitez[- ]vous|d['’]accord\s+pour|ok\s+pour\s+(qu|que|un)|disponible\s+pour\s+(un|une|en)\b|avez[- ]vous\s+\d+\s*(min|minutes?|secondes?)|vous\s+avez\s+\d+\s*(min|minutes?|secondes?)/i;
+
+/** Question de qualification / diagnostic — un « non » n'est PAS un refus d'intérêt. */
+const OUTBOUND_DIAGNOSTIC_ASK_RE =
+  /utilisez[- ]vous|vous\s+utilisez|avez[- ]vous\s+(des|de\s+la|du)|vous\s+avez\s+(des|de\s+la|du)|vous\s+voyez|c['’]est\s+quoi\s+votre|quel(le)?\s+(outil|logiciel|crm|process)|depuis\s+combien|combien\s+de\s+(temps|employ|personne|client)|vous\s+faites\s+(du|de\s+la)|travaillez[- ]vous/i;
 
 /**
  * Clôture verbale déjà envoyée par l'agent (refus / au revoir).
@@ -93,7 +101,25 @@ export function detectNotInterested(text: string): boolean {
   return NOT_INTERESTED_PATTERNS.test(normalizeText(text));
 }
 
-/** Dernier sortant = question / pitch oui-non → un « non » seul = refus. */
+/** Dernier sortant = demande de consentement à poursuivre (pas une Q diagnostic). */
+export function isOutboundConsentAsk(body: string): boolean {
+  const t = normalizeText(body);
+  if (!t) return false;
+  // Diagnostic prioritaire : « utilisez-vous déjà… ? » ≠ consentement même avec « ? ».
+  if (OUTBOUND_DIAGNOSTIC_ASK_RE.test(t)) return false;
+  return OUTBOUND_CONSENT_ASK_RE.test(t);
+}
+
+/** Dernier sortant = question de qualification (réponse oui/non = info, pas stop). */
+export function isOutboundDiagnosticAsk(body: string): boolean {
+  return OUTBOUND_DIAGNOSTIC_ASK_RE.test(normalizeText(body));
+}
+
+/**
+ * « non » seul = refus UNIQUEMENT après une demande de consentement
+ * (« ça vous intéresse ? », « ouvert à un échange ? »…).
+ * Après une Q diagnostic (« utilisez-vous déjà… ? ») → false (on continue).
+ */
 export function detectContextualRefusal(
   text: string,
   history?: Array<{ direction: string; body: string }>
@@ -102,21 +128,13 @@ export function detectContextualRefusal(
   if (!raw) return false;
   const t = normalizeText(raw);
 
-  // Soft refus même sans question précédente
-  if (
-    /^(non[,\s]+)?(je )?(pense|crois) (que )?pas\b/.test(t) ||
-    /^(pas vraiment|non pas vraiment|bof|mouais)\b/.test(t)
-  ) {
-    return true;
-  }
-
   if (!BARE_NO_RE.test(raw) && !BARE_NO_RE.test(t)) return false;
   if (!history?.length) return false;
 
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     if (m?.direction !== "sortant") continue;
-    return OUTBOUND_YES_NO_OR_PITCH_RE.test(normalizeText(m.body));
+    return isOutboundConsentAsk(m.body);
   }
   return false;
 }

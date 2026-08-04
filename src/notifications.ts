@@ -725,23 +725,24 @@ function buildActiveCampaignContext(
           `2. Salutation courte (« salut ») → accueil + question utile produit (besoin, taille, modèle).`,
           `3. Demande photo → le système enverra le média campagne si configuré ; confirme brièvement.`,
           `4. Si intéressé → qualifie puis avance vers l'objectif (${goal}).`,
-          `5. Si prêt → lien/prix/créneau RÉEL. Si refuse → accepte poliment.`,
-          `6. INTERDIT réactions vides et pitch cold outreach.`,
+          `5. Si prêt → lien/prix/créneau RÉEL. Si refuse clairement l'aide → accepte poliment.`,
+          `6. Messages courts (ok / oui) : avance sur son besoin — ne redemande pas la même chose.`,
+          `7. INTERDIT réactions vides et pitch cold outreach.`,
         ].join("\n")
       : [
           `PARCOURS CONVERSATION (raisonne — même mission, seuls les mots varient) :`,
-          `1. Après le 1er message, POURSUIS — ne coupe que sur refus clair OU objectif atteint.`,
+          `1. Après le 1er message, POURSUIS — ne coupe que sur refus d'intérêt clair OU objectif atteint.`,
           `2. À chaque message : relis ton dernier sortant → déduis l'intention → réponds à CETTE intention (pas de script).`,
           `3. Identité (« c'est qui ? ») → prénom business + pourquoi on écrit EN UN SOUFFLE.`,
-          `4. Oui / ok après une offre d'action (lien, envoi…) → EXÉCUTE (URL réelle). Confusion → clarifie ton dernier message, jamais de reset / re-présentation.`,
+          `4. Oui / ok après une offre d'action (lien, montrer, expliquer…) → EXÉCUTE. Confusion → clarifie, jamais de reset / re-présentation / question déjà posée.`,
           `5. Inattendu ou hors-sujet → clarifie ou recadre en 1 phrase, reste sur la mission (${goal}).`,
           `6. Intéressé → substance réelle, puis avance. Prêt → lien/prix/créneau RÉEL.`,
-          `7. Refus clair → accepte. Objectif livraison atteint → courte confirmation puis STOP.`,
-          `8. INTERDIT réactions vides, cold opener mid-fil, re-présentation, questions hors fil.`,
+          `7. Refus d'intérêt (« ça vous intéresse ? » → non / non merci / pas intéressé) → accepte + STOP. « Non » à une Q diagnostic (« utilisez-vous déjà… ? ») → continue et avance.`,
+          `8. INTERDIT réactions vides, cold opener mid-fil, re-présentation, questions déjà posées / hors fil.`,
           `9. N'utilise PAS le prénom du prospect à tout va.`,
           `10. Mémoire + playbook = même source que la simulation — ne dérive pas.`,
         ].join("\n"),
-    `RÈGLES : 1-2 phrases naturelles (court ≠ sec), ton WhatsApp, VOUS (jamais tu/ton/ta/te). Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. AUCUN texte entre crochets [ ].`,
+    `RÈGLES : 1-2 phrases naturelles (court ≠ sec), ton WhatsApp, VOUS (jamais tu/ton/ta/te). Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. Ne répète jamais une question déjà posée. AUCUN texte entre crochets [ ].`,
   ].filter((l) => l !== undefined && l !== "");
   return lines.join("\n");
 }
