@@ -267,6 +267,13 @@ export function PhoneSimulationPanel({
     [simBubbles],
   );
 
+  // Dès qu'une vraie simulation arrive dans le chat → ouvrir le panneau
+  useEffect(() => {
+    if (currentSimKey && simBubbles.length >= 2) {
+      setCollapsed(false);
+    }
+  }, [currentSimKey, simBubbles.length]);
+
   useEffect(() => {
     if (!hydrated || !currentSimKey || simBubbles.length < 2) return;
     if (currentSimKey === ignoredSimKey) return;
@@ -416,7 +423,7 @@ export function PhoneSimulationPanel({
   return (
     <aside
       className={cn(
-        'relative hidden h-full shrink-0 overflow-hidden border-l border-black/[0.06] bg-bg-100 lg:flex',
+        'relative flex h-full shrink-0 overflow-hidden border-l border-black/[0.06] bg-bg-100',
         className,
       )}
       style={{ width: collapsed ? RAIL_W : panelWidth }}

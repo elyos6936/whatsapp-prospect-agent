@@ -545,21 +545,31 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Simulation : « simule » / force_sim / resimule
+  // Simulation LLM : si échec, message clair — INTERDIT de laisser le LLM inventer
+  // « Simulation affichée sur le téléphone » sans fence klanvio-sim.
   if (shouldDeterministicSimulate(history, userMessage) || forceSim) {
     try {
       const sim = await runDeterministicSimulation({
         userId,
         threadId,
-        client,
+        client: config.toolLlmConfigured
+          ? await getToolLlmClient(userId)
+          : client,
         businessContext,
         history,
         userMessage,
       });
-      if (sim?.trim()) return sim;
+      if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
+      if (sim?.trim()) {
+        console.warn("[agent] simulation sans fence klanvio-sim — rejetée");
+      }
     } catch (err) {
       console.warn("[agent] deterministic simulation failed:", err);
     }
+    return (
+      "Je n'ai pas pu générer la simulation pour le moment. " +
+      "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
+    );
   }
 
   // Chemin déterministe : « oui » après les 5 variantes → brouillon + simulation
@@ -648,13 +658,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             .slice(-16)
             .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
             .join("\n\n");
-          const sim = await generateCampaignSimulationDirect(client, {
+          const simClient = config.toolLlmConfigured
+            ? await getToolLlmClient(userId)
+            : client;
+          const sim = await generateCampaignSimulationDirect(simClient, {
             businessContext,
             recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
             approvedOpener,
             campaignBrief,
           });
-          if (sim?.display?.trim()) {
+          if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
             try {
               const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
               await persistLivePlaybookForThread(userId, threadId, sim.turns);
@@ -668,7 +681,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           }
           return (
             "Parfait — les 5 accroches sont enregistrées en brouillon. " +
-            "Dis « simule » pour l'aperçu sur le téléphone, ou « active » pour lancer."
+            "Dis « simule » pour l'aperçu sur le téléphone à droite, ou « active » pour lancer."
           );
         }
       } catch (err) {
@@ -678,10 +691,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
 
   // Simulation LLM fallback déjà tentée via runDeterministicSimulation plus haut.
+  // Ne plus pousser FORCE_SIMULATION_NUDGE (le LLM inventait le footer sans fence).
 
-  if (forceSim) {
-    messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
-  } else if (turnMode === "decline_sim") {
+  if (turnMode === "decline_sim") {
     messages.push({ role: "system", content: DECLINE_SIMULATION_NUDGE });
   } else if (silentTweakAfterSim) {
     messages.push({ role: "system", content: SILENT_TWEAK_AFTER_SIM_NUDGE });
@@ -1129,6 +1141,29 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         continue;
       }
       return "Je n'ai pas pu générer de réponse. Réessayez.";
+    }
+
+    // Interdit : annoncer la simu sans payload téléphone (fence)
+    {
+      const rawAssistant =
+        typeof assistantMsg.content === "string" ? assistantMsg.content : text;
+      if (
+        /simulation affichée sur le/i.test(text) &&
+        !/```klanvio-sim\b/i.test(rawAssistant) &&
+        !hasSimulationThread(rawAssistant)
+      ) {
+        if (rounds < MAX_TOOL_ROUNDS) {
+          messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
+          messages.push({
+            role: "system",
+            content:
+              "INTERDIT d'annoncer « Simulation affichée » sans le fence ```klanvio-sim (6-7 tours Toi/Prospect). " +
+              "Appelle show_campaign_simulation maintenant.",
+          });
+          continue;
+        }
+        return "Je n'ai pas pu générer la simulation. Réessaie « simule ».";
+      }
     }
 
     // Garde-fou : annonce se terminant par « : » sans contenu.

@@ -205,9 +205,10 @@ export function resolveSimulationTurnMode(
 
 /** Heuristique : réponse assistant = révélation brouillon / fil de simulation (chat). */
 export function shouldAutoOpenSimulationPanel(assistantReply: string): boolean {
+  if (/```klanvio-sim\b/i.test(assistantReply)) return true;
   const isSimThread = (assistantReply.match(/→/g) || []).length >= 2;
   const isDraftReveal =
-    /brouillon|simulation dans ce chat|est prêt|veux-tu tester une \*\*simulation\*\*|ouvre la \*\*simulation\*\*/i.test(
+    /brouillon|simulation dans ce chat|est prêt|veux-tu tester une \*\*simulation\*\*|ouvre la \*\*simulation\*\*|simulation affichée sur le/i.test(
       assistantReply,
     );
   return isSimThread || isDraftReveal;

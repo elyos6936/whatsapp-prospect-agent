@@ -198,7 +198,8 @@ export default function AuthenticatedApp() {
           label: 'Agent',
         });
         void refreshUser();
-        void refreshThreads(threadIdAtSend);
+        // Attendre le refresh : sinon automation_id manque et le téléphone ne s'affiche pas.
+        await refreshThreads(threadIdAtSend);
       } catch (err) {
         if (activeThreadIdRef.current !== threadIdAtSend) return;
         const raw = err instanceof Error ? err.message : 'Erreur réseau';
@@ -327,13 +328,15 @@ export default function AuthenticatedApp() {
       </div>
 
       {overlayView == null &&
-        waConnected &&
         activeThreadId != null &&
-        activeThread?.automation_id != null && (
+        (activeThread?.automation_id != null ||
+          activeThread?.purpose === 'prospection' ||
+          activeThread?.purpose === 'support' ||
+          activeThread?.purpose === 'groupes') && (
         <PhoneSimulationPanel
           threadId={activeThreadId}
           purpose={activeThread?.purpose ?? null}
-          automationId={activeThread.automation_id}
+          automationId={activeThread?.automation_id ?? null}
           messages={messages}
         />
       )}
