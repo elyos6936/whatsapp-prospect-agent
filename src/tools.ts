@@ -1513,7 +1513,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           initial_message: {
             type: "string",
             description:
-              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases, ≤200 car., vouvoiement, SANS prénom du prospect). INTERDIT : prix, lien, pitch complet. Choisir parmi les 5 variantes validées avec l'utilisateur. Pour group_broadcast : 1er post dans le(s) groupe(s).",
+              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases, ≤200 car., vouvoiement, SANS prénom du prospect). INTERDIT : prix, lien, pitch complet. = accroche validée / référence simu ; les 5 ab_variants tournent à l'envoi. Pour group_broadcast : 1er post dans le(s) groupe(s).",
           },
           max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
           max_per_day: {
