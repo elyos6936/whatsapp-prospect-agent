@@ -93,6 +93,10 @@ export type BriefingAssessment = {
   inboundCatchAll: boolean;
   /** L'utilisateur a indiqué l'angle / le ton souhaité pour le 1er message (après question dédiée). */
   openerDirectionCollected: boolean;
+  /** Une seule accroche a été proposée (avant les 5 variantes). */
+  openerSingleProposed: boolean;
+  /** L'utilisateur a validé (ou fourni) cette accroche unique. */
+  openerSingleValidated: boolean;
   /** Les 5 variantes ont été proposées dans le chat. */
   openerVariantsProposed: boolean;
   /** L'agent a posé la question stickers (messages assistant uniquement). */
@@ -120,6 +124,14 @@ const OPENER_VARIANT_CHOICE_RE =
 /** L'utilisateur délègue la rédaction de l'accroche à l'agent. */
 const OPENER_DELEGATION_RE =
   /^\s*(propose([- ]?moi)?|propose\s+(des\s+)?(accroches?|variantes?|messages?)|comme\s+tu\s+veux|\u00e0\s+toi|fais\s+(toi[- ]?m[eê]me|comme\s+tu\s+veux|simple)|invente([- ]?moi)?|surprise|au\s+choix|libre\s+[aà]\s+toi)\s*[.!]?\s*$/i;
+
+/** L'agent présente UNE accroche (pas encore la liste 1–5). */
+const OPENER_SINGLE_PROPOSED_RE =
+  /\b(voici\s+(mon\s+|une\s+|l['’])?(accroche|proposition|premier\s+message)|je\s+(te\s+)?propose\s+(cette|une)\s+(accroche|ouverture|approche|phrase)|proposition\s+d['’]accroche|une\s+(seule\s+)?accroche|accroche\s+(propos[eé]e|retenue)|premier\s+message\s+propos[eé])\b/i;
+
+/** Validation courte de l'accroche unique (oui / ok / valide…). */
+const OPENER_SINGLE_VALIDATE_RE =
+  /^\s*(oui|ouais|ok|okay|d['’]accord|dac|parfait|nickel|top|valide|valid[eé]|c['’]est\s+bon|c\s+bon|vas[- ]?y|garde|j['’]aime|ça\s+me\s+va|ca\s+me\s+va|bonne|impeccable|go)([!.\s:]|$)/i;
 
 function isSubstantiveUserReply(text: string): boolean {
   const t = text.trim();
@@ -221,6 +233,58 @@ export function hasProposedOpenerVariants(history: AgentMessage[]): boolean {
       m.role === "assistant" &&
       (OPENER_VARIANTS_PROPOSED_RE.test(m.content) || hasNumberedOpenerList(m.content))
   );
+}
+
+function lastSingleOpenerAssistantIndex(history: AgentMessage[]): number {
+  // Fenêtre courte : un vieux message du brief / simu ne doit pas compter comme accroche.
+  const start = Math.max(0, history.length - 16);
+  for (let i = history.length - 1; i >= start; i--) {
+    const m = history[i];
+    if (m?.role !== "assistant") continue;
+    if (hasNumberedOpenerList(m.content) || OPENER_VARIANTS_PROPOSED_RE.test(m.content)) {
+      continue;
+    }
+    // Annonce explicite seulement (« Voici l'accroche… ») — pas une simple citation « … ».
+    if (OPENER_SINGLE_PROPOSED_RE.test(m.content)) return i;
+  }
+  return -1;
+}
+
+/** Une accroche unique a déjà été proposée (ou les 5 variantes rendent cette étape moot). */
+export function hasProposedSingleOpener(history: AgentMessage[]): boolean {
+  if (hasProposedOpenerVariants(history)) return true;
+  return lastSingleOpenerAssistantIndex(history) >= 0;
+}
+
+/**
+ * Accroche unique validée : oui/ok après proposition, OU brouillon collé par l'utilisateur
+ * (sa phrase = l'accroche), OU les 5 variantes déjà là.
+ */
+export function hasUserValidatedSingleOpener(
+  history: AgentMessage[],
+  userMessage: string
+): boolean {
+  if (hasProposedOpenerVariants(history)) return true;
+
+  const isValidate = (t: string) =>
+    OPENER_SINGLE_VALIDATE_RE.test(t.trim()) || looksLikeOpenerDraft(t);
+
+  const singleIdx = lastSingleOpenerAssistantIndex(history);
+  if (singleIdx >= 0) {
+    if (isValidate(userMessage)) return true;
+    for (let i = singleIdx + 1; i < history.length; i++) {
+      const m = history[i];
+      if (m?.role === "user" && isValidate(m.content)) return true;
+    }
+    return false;
+  }
+
+  // Pas encore de proposition agent : un long brouillon user = accroche fournie/validée.
+  if (looksLikeOpenerDraft(userMessage)) return true;
+  for (const m of history.slice(-16)) {
+    if (m.role === "user" && looksLikeOpenerDraft(m.content)) return true;
+  }
+  return false;
 }
 
 /**
@@ -339,6 +403,8 @@ export function assessCampaignBriefing(
       isInboundClosing: false,
       inboundCatchAll: false,
       openerDirectionCollected: false,
+      openerSingleProposed: false,
+      openerSingleValidated: false,
       openerVariantsProposed: false,
       stickersQuestionAsked: false,
       thirdPartyQuestionAsked: false,
@@ -475,9 +541,20 @@ export function assessCampaignBriefing(
   const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
   const handoffKeywordsQuestionAsked = hasHandoffKeywordsQuestionAsked(history);
   const openerVariantsProposed = inbound ? true : hasProposedOpenerVariants(history);
+  const openerSingleValidated = inbound
+    ? true
+    : openerVariantsProposed || hasUserValidatedSingleOpener(history, userMessage);
+  const openerSingleProposed = inbound
+    ? true
+    : openerVariantsProposed ||
+      hasProposedSingleOpener(history) ||
+      // Brouillon collé par l'user = déjà « proposé » (c'est le sien)
+      openerSingleValidated;
   const openerDirectionCollected = inbound
     ? true
-    : openerVariantsProposed || hasUserProvidedOpenerDirection(history, userMessage);
+    : openerVariantsProposed ||
+      openerSingleProposed ||
+      hasUserProvidedOpenerDirection(history, userMessage);
   const inboundPacingAsked = true;
 
   return {
@@ -488,6 +565,8 @@ export function assessCampaignBriefing(
     isInboundClosing: inbound,
     inboundCatchAll: catchAll,
     openerDirectionCollected,
+    openerSingleProposed,
+    openerSingleValidated,
     openerVariantsProposed,
     stickersQuestionAsked,
     thirdPartyQuestionAsked,
@@ -595,10 +674,10 @@ export function buildBriefingNudge(
 
     if (!assessment.openerDirectionCollected && !hasAgentAskedOpenerDirection(history)) {
       return (
-        "Briefing campagne : avant toute variante, pose UNE question sur le **premier message** souhaité — " +
+        "Briefing campagne : avant toute accroche, pose UNE question sur le **premier message** souhaité — " +
         "ex. « Comment tu veux aborder le premier contact ? (ton direct, question ouverte, mystère, formel…) — donne-moi une idée ou une phrase type. » " +
         "Puis ARRÊTE-TOI et attends sa réponse. " +
-        "**INTERDIT ABSOLU** : lister 5 variantes, proposer des accroches, ou mélanger récap + variantes dans ce message. " +
+        "**INTERDIT ABSOLU** : lister 5 variantes, proposer des accroches en rafale, ou mélanger récap + accroches dans ce message. " +
         "INTERDIT aussi de poser notif tiers / handoff (remboursement, plainte…) — ça concerne le **support**, pas la prospection."
       );
     }
@@ -606,11 +685,12 @@ export function buildBriefingNudge(
     if (!assessment.openerDirectionCollected) {
       return (
         "Tu as demandé le premier message — **ATTENDS** la réponse de l'utilisateur (angle, ton, exemple). " +
-        "INTERDIT : proposer des variantes, create_automation, ou simulation tant qu'il n'a pas donné son idée."
+        "INTERDIT : proposer une accroche, des variantes, create_automation, ou simulation tant qu'il n'a pas donné son idée."
       );
     }
 
-    if (!assessment.openerVariantsProposed) {
+    // Étape 1 : UNE seule accroche (pas encore les 5)
+    if (!assessment.openerSingleProposed) {
       const delegated =
         isOpenerDelegation(userMessage) ||
         history.slice(-8).some((m) => m.role === "user" && isOpenerDelegation(m.content));
@@ -618,21 +698,41 @@ export function buildBriefingNudge(
         (delegated
           ? "L'utilisateur t'a délégué l'accroche (« propose » / « comme tu veux »). "
           : "L'utilisateur a indiqué son angle pour le 1er message. ") +
-        "Propose maintenant **exactement 5 variantes** d'accroche A.I.D.A. Attention (liste numérotée 1–5)" +
+        "Propose maintenant **UNE seule accroche** A.I.D.A. Attention (1-2 phrases, ≤200 car., vouvoiement, SANS prix/lien/pitch, sans prénom du prospect)" +
         (delegated
-          ? " — inventées à partir de la **mémoire / offre** (pas 5 reformulations d'un salut vide)"
-          : ", alignées sur **SA** direction") +
-        " — courtes, SANS prix/lien/pitch, vouvoiement, sans prénom du prospect. " +
-        "Attends son choix / validation. Puis create_automation draft (initial_message + ab_variants). " +
+          ? " — inventée à partir de la **mémoire / offre**"
+          : ", alignée sur **SA** direction") +
+        ". Présente-la clairement (ex. « Voici l'accroche que je propose : « … » ») et demande s'il valide. " +
+        "**INTERDIT** de lister 5 variantes dans ce message. Attends sa validation / correction."
+      );
+    }
+
+    if (!assessment.openerSingleValidated) {
+      return (
+        "Tu as proposé **une** accroche — **ATTENDS** la validation de l'utilisateur (oui / ok / valide, ou une version corrigée). " +
+        "S'il refuse ou ajuste → reformule **UNE** nouvelle accroche, puis re-attends. " +
+        "INTERDIT : 5 variantes, create_automation, simulation tant qu'il n'a pas validé cette accroche."
+      );
+    }
+
+    // Étape 2 : après validation → montrer les 5 variantes (rotation aléatoire / équitable)
+    if (!assessment.openerVariantsProposed) {
+      return (
+        "L'accroche unique est **validée**. Propose maintenant **exactement 5 variantes** dérivées de cette accroche " +
+        "(liste numérotée 1–5, même intention, formulations distinctes — Attention seulement, SANS prix/lien/pitch). " +
+        "Explique en une phrase que le **premier message réel** sera **l'une de ces 5** (rotation), pas un envoi unique figé. " +
+        "Attends un OK sur l'ensemble (pas besoin de choisir un seul numéro). " +
+        "Puis create_automation draft (initial_message = accroche validée ou v1, ab_variants = les 5 textes). " +
         "Ensuite propose la simulation (show_campaign_simulation, 6-7 tours)."
       );
     }
 
     return (
-      "Les 5 variantes ont été proposées (ou un choix 1–5 a été donné). " +
+      "Les 5 variantes ont été proposées. " +
       "Crée MAINTENANT create_automation draft avec " +
-      "initial_message = variante choisie (ou v1), ET ab_variants = les **5 textes complets** " +
+      "initial_message = l'accroche validée (ou v1), ET ab_variants = les **5 textes complets** " +
       "proposés juste avant (jamais un seul message). personalize_messages=false. " +
+      "Le 1er message sortant réel = rotation parmi les 5 (pas un choix unique obligatoire). " +
       "(handoff_keywords=[] et third_party_notification_enabled=false par défaut en prospection — ne les demande pas). " +
       "Utilise le champ tool_calls natif — INTERDIT de coller du DSML / invoke dans le texte. " +
       "Propose ensuite la simulation (6-7 messages via show_campaign_simulation)."
