@@ -10,7 +10,8 @@ const PITCH_DUMP_RE =
 
 export const ATTENTION_OPENER_MAX_CHARS = 200;
 
-export function attentionOpenerIssues(text: string): string[] {
+/** Blocants durs : URL / prix / pitch — la longueur seule n'est plus un refus (choix produit 7-C). */
+export function attentionOpenerHardIssues(text: string): string[] {
   const opener = text.trim();
   const issues: string[] = [];
   if (!opener) {
@@ -19,27 +20,59 @@ export function attentionOpenerIssues(text: string): string[] {
   }
   if (URL_RE.test(opener)) issues.push("lien URL interdit");
   if (PRICE_RE.test(opener)) issues.push("prix interdit");
-  if (opener.length > ATTENTION_OPENER_MAX_CHARS) {
-    issues.push(`trop long (>${ATTENTION_OPENER_MAX_CHARS} caractères)`);
-  }
-  // Pitch trop chargé dès l'accroche (dates + places + offre complète…)
   if (opener.length > 140 && PITCH_DUMP_RE.test(opener)) {
     issues.push("pitch trop complet pour une accroche Attention");
   }
   return issues;
 }
 
+export function attentionOpenerIssues(text: string): string[] {
+  const opener = text.trim();
+  const issues = attentionOpenerHardIssues(opener);
+  if (opener && opener.length > ATTENTION_OPENER_MAX_CHARS) {
+    issues.push(`trop long (>${ATTENTION_OPENER_MAX_CHARS} caractères) — version courte recommandée`);
+  }
+  return issues;
+}
+
 export function isValidAttentionOpener(text: string): boolean {
-  return attentionOpenerIssues(text).length === 0;
+  return attentionOpenerHardIssues(text).length === 0;
+}
+
+/** Propose une version Attention courte (1–2 phrases) si le texte dépasse la cible. */
+export function proposeShortAttentionOpener(text: string): string | null {
+  const opener = text.trim().replace(/\s+/g, " ");
+  if (!opener || opener.length <= ATTENTION_OPENER_MAX_CHARS) return null;
+  const sentences = opener.split(/(?<=[.!?…])\s+/).filter(Boolean);
+  let short = "";
+  for (const s of sentences) {
+    const next = short ? `${short} ${s}` : s;
+    if (next.length > ATTENTION_OPENER_MAX_CHARS) break;
+    short = next;
+    if (short.length >= 60 && /[.!?…]$/.test(short)) break;
+  }
+  if (!short || short.length < 24) {
+    short = opener.slice(0, ATTENTION_OPENER_MAX_CHARS - 1).replace(/\s+\S*$/, "").trim();
+  }
+  if (!short || short === opener || short.length < 20) return null;
+  return short;
 }
 
 export function formatAttentionOpenerError(label: string, text: string): string {
-  const issues = attentionOpenerIssues(text);
+  const hard = attentionOpenerHardIssues(text);
+  if (hard.length) {
+    return (
+      `${label} viole A.I.D.A. (Attention) : ${hard.join(", ")}. ` +
+      `Le 1er message = accroche SANS lien, SANS prix, SANS pitch complet. ` +
+      `Mets le lien dans closing_link, le prix dans price, les détails dans conversation_guide.`
+    );
+  }
+  const short = proposeShortAttentionOpener(text);
   return (
-    `${label} viole A.I.D.A. (Attention) : ${issues.join(", ")}. ` +
-    `Le 1er message = accroche courte (1-2 phrases, ≤${ATTENTION_OPENER_MAX_CHARS} car.), ` +
-    `SANS lien, SANS prix, SANS pitch complet. Mets le lien dans closing_link, le prix dans price, ` +
-    `les détails dans conversation_guide.`
+    `${label} est longue (>${ATTENTION_OPENER_MAX_CHARS} car.). ` +
+    (short
+      ? `Version courte proposée : « ${short} ». Tu peux garder la longue ou valider la courte.`
+      : `Propose aussi une version ≤${ATTENTION_OPENER_MAX_CHARS} car.`)
   );
 }
 

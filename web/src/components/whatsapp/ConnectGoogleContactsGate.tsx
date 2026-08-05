@@ -93,11 +93,12 @@ export function ConnectGoogleContactsGate() {
         <div className="mb-4 flex h-12 w-12 items-center justify-center rounded-xl bg-[#4285F4]/10 text-[#4285F4]">
           <Contact className="h-6 w-6" />
         </div>
-        <h1 className="text-lg font-semibold text-text-100">Connecter Google Contacts</h1>
+        <h1 className="text-lg font-semibold text-text-100">Étape obligatoire — Google Contacts</h1>
         <p className="mt-2 text-sm leading-relaxed text-text-400">
-          Avant chaque campagne, Klanvio peut enregistrer automatiquement les numéros prospectés
-          dans Google Contacts. WhatsApp traite mieux les messages vers des contacts enregistrés —
-          cela réduit le risque de blocage.
+          Avant d’utiliser Klanvio, connecte Google Contacts (ou confirme explicitement que tu
+          passes). Klanvio enregistre les numéros prospectés dans Google Contacts : WhatsApp
+          traite mieux les messages vers des contacts enregistrés — cela réduit le risque de
+          blocage.
         </p>
         <p className="mt-3 rounded-xl border border-amber-500/25 bg-amber-500/10 px-3 py-2.5 text-xs leading-relaxed text-amber-900">
           Important : connecte le <strong>même compte Google</strong> que celui synchronisé avec le
@@ -151,7 +152,7 @@ export function ConnectGoogleContactsGate() {
                 className="inline-flex h-10 flex-1 items-center justify-center gap-2 rounded-xl bg-text-100 px-3 text-sm font-semibold text-white disabled:opacity-50"
               >
                 {skipping ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                J’ai compris, continuer
+              J’ai compris, je passe volontairement
               </button>
             </div>
           </div>

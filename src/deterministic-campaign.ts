@@ -13,6 +13,8 @@ import {
 import { executeTool } from "./tools.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
 import {
+  allowsActivateWithoutSimulation,
+  isActivationNegation,
   isExplicitActivationConfirm,
   recentAssistantAskedActivationConfirm,
   recentHistoryHasSimulation,
@@ -21,7 +23,9 @@ import {
 import {
   extractOpenerVariantsFromHistory,
   wantsCampaignSimulation,
+  wantsInboundCatchAll,
 } from "./campaign-briefing.js";
+import { proposeShortAttentionOpener } from "./opener-frame.js";
 
 function parseToolJson(raw: string): {
   ok: boolean;
@@ -95,6 +99,64 @@ export function extractProspectGroupQueryFromHistory(history: AgentMessage[]): s
   return null;
 }
 
+/** Phrases déclencheurs citées (guillemets) pour Support. */
+export function extractTriggerPhrasesFromHistory(history: AgentMessage[]): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  for (const m of history) {
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    const quotes = m.content.match(/[«"]([^»"]{3,120})[»"]/g) || [];
+    for (const q of quotes) {
+      const inner = q.replace(/^[«"]|[»"]$/g, "").trim();
+      if (inner.length < 3) continue;
+      const key = inner.toLowerCase();
+      if (seen.has(key)) continue;
+      // Ignorer les accroches longues / questions agent
+      if (inner.length > 100) continue;
+      if (/\?$/.test(inner) && inner.length > 40) continue;
+      seen.add(key);
+      found.push(inner);
+    }
+  }
+  return found.slice(0, 12);
+}
+
+function conversationBlob(history: AgentMessage[]): string {
+  return history.map((m) => m.content).join("\n");
+}
+
+function extractHttpLink(history: AgentMessage[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const hit = history[i]?.content.match(/https?:\/\/\S+/i);
+    if (hit?.[0]) return hit[0].replace(/[),.;]+$/, "");
+  }
+  return null;
+}
+
+function extractPriceHint(history: AgentMessage[]): string | null {
+  const blob = conversationBlob(history);
+  const hit = blob.match(/\b(\d[\d\s.,]{1,12}\s*(?:fcfa|f|€|euros?))\b/i);
+  return hit?.[1]?.replace(/\s+/g, " ").trim() ?? null;
+}
+
+function wantsMemberDmProspect(history: AgentMessage[], purpose?: string | null): boolean {
+  if (purpose === "groupes") return false;
+  const blob = conversationBlob(history);
+  return /\b(membres?|prospect(?:er|e)?\s+(?:les\s+)?membres|dm\s+(aux\s+)?membres|contacter\s+les\s+membres)\b/i.test(
+    blob
+  );
+}
+
+function shortOpenerNote(variants: Array<{ message: string }>): string {
+  const long = variants.find((v) => v.message.length > 200);
+  if (!long) return "";
+  const short = proposeShortAttentionOpener(long.message);
+  if (!short) return "";
+  return (
+    `\n\n_(Accroche longue acceptée. Version courte proposée : « ${short} » — dis « utilise la courte » si tu préfères.)_`
+  );
+}
+
 /**
  * Brouillon + simulation à partir des 5 variantes du chat (pas d'args MiniMax).
  */
@@ -124,11 +186,16 @@ export async function runDeterministicDraftAndSim(opts: {
   const variants = extractOpenerVariantsFromHistory(history);
   if (!variants || variants.length !== 5) {
     console.warn("[deterministic] extractOpenerVariantsFromHistory → null/insuffisant");
-    return null;
+    return (
+      "Je n'ai pas pu relire les **5 accroches** dans le fil. " +
+      "Renvoie-les en liste numérotée **1.** à **5.** (une phrase chacune), " +
+      "puis redis « je valide »."
+    );
   }
 
   let contacts = extractProspectContactsFromHistory(history);
   const groupQuery = extractProspectGroupQueryFromHistory(history);
+  const memberDm = wantsMemberDmProspect(history, purpose);
 
   // Réutiliser contacts / groupe déjà sur le brouillon du fil
   if (existingAutomationId) {
@@ -139,11 +206,6 @@ export async function runDeterministicDraftAndSim(opts: {
         .filter(Boolean) as string[];
     }
   }
-
-  const wantsGroup =
-    purpose === "groupes" ||
-    Boolean(groupQuery) ||
-    (contacts.length === 0 && purpose !== "prospection");
 
   let autoType: string;
   const draftArgs: Record<string, unknown> = {
@@ -157,20 +219,27 @@ export async function runDeterministicDraftAndSim(opts: {
     ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
   };
 
-  if (contacts.length > 0 && !groupQuery) {
+  if (contacts.length > 0 && !groupQuery && purpose !== "groupes") {
     autoType = "contact_prospect";
     draftArgs.type = autoType;
     draftArgs.contacts = contacts;
-  } else if (groupQuery || purpose === "groupes") {
-    // Prospection membres de groupe (pas broadcast)
+  } else if (purpose === "groupes" || (groupQuery && !memberDm && purpose !== "prospection")) {
+    // Fil Groupes = poster DANS le groupe (choix produit 5-B)
+    autoType = "group_broadcast";
+    draftArgs.type = autoType;
+    if (groupQuery) {
+      draftArgs.group_ids = [groupQuery];
+    } else {
+      return (
+        "Fil **Groupes** : j'ai les accroches, mais il me manque le(s) groupe(s) où poster. " +
+        "Donne le nom du groupe (où tu es admin), puis redis « je valide »."
+      );
+    }
+  } else if (groupQuery || memberDm) {
     autoType = "group_prospect";
     draftArgs.type = autoType;
     if (groupQuery) draftArgs.group_id = groupQuery;
-  } else if (wantsGroup) {
-    autoType = "group_broadcast";
-    draftArgs.type = autoType;
   } else {
-    // contact_prospect sans contacts → message clair
     return (
       "J'ai les 5 accroches, mais il me manque les contacts à prospecter. " +
       "Envoie le(s) numéro(s) (ex. +229…) ou le nom du groupe, puis redis « je valide »."
@@ -225,6 +294,8 @@ export async function runDeterministicDraftAndSim(opts: {
     campaignBrief,
   });
 
+  const openerNote = shortOpenerNote(variants);
+
   if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
     try {
       const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
@@ -233,13 +304,114 @@ export async function runDeterministicDraftAndSim(opts: {
       console.warn("[deterministic] persist playbook:", err);
     }
     return (
-      `Parfait — les 5 accroches sont enregistrées en brouillon.\n\n` + sim.display.trim()
+      `Parfait — les 5 accroches sont enregistrées en brouillon.${openerNote}\n\n` +
+      sim.display.trim()
     );
   }
 
   return (
-    "Parfait — les 5 accroches sont enregistrées en brouillon. " +
-    "Dis « simule » pour l'aperçu sur le téléphone à droite, ou « active » pour lancer."
+    `Parfait — les 5 accroches sont enregistrées en brouillon.${openerNote} ` +
+    "Dis « simule » pour l'aperçu sur le téléphone à droite, ou « active » pour lancer " +
+    "(ou « lance sans simulation » pour activer sans aperçu)."
+  );
+}
+
+/**
+ * Support / keyword_sales : brouillon + sim déterministes (pas MiniMax).
+ */
+export async function runDeterministicSupportDraftAndSim(opts: {
+  userId: number;
+  threadId: number;
+  client: OpenAI;
+  businessContext: string;
+  history: AgentMessage[];
+  userMessage: string;
+  threadTitle?: string | null;
+  existingAutomationId?: number | null;
+  inboundCatchAll?: boolean;
+}): Promise<string | null> {
+  const {
+    userId,
+    threadId,
+    client,
+    businessContext,
+    history,
+    userMessage,
+    threadTitle,
+    existingAutomationId,
+    inboundCatchAll,
+  } = opts;
+
+  const catchAll =
+    inboundCatchAll === true || wantsInboundCatchAll(history, userMessage);
+  const triggers = catchAll ? [] : extractTriggerPhrasesFromHistory(history);
+  if (!catchAll && triggers.length === 0) {
+    return (
+      "Pour le Support, il me faut soit des **phrases déclencheurs** exactes (entre guillemets), " +
+      "soit la confirmation « **tous les messages** » (compte entier). " +
+      "Précise ça, puis redis « crée le brouillon » / « je valide »."
+    );
+  }
+
+  const link = extractHttpLink(history);
+  const price = extractPriceHint(history);
+  const draftArgs: Record<string, unknown> = {
+    name: threadTitle?.trim() || "Support client",
+    type: "keyword_sales",
+    status: "draft",
+    mode: "inbound_closing",
+    inbound_catch_all: catchAll,
+    trigger_phrases: triggers,
+    handoff_keywords: [],
+    stickers_enabled: false,
+    ...(link ? { closing_link: link } : {}),
+    ...(price ? { price } : {}),
+    ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
+  };
+
+  const draftRaw = await executeTool(userId, threadId, "create_automation", draftArgs);
+  const draft = parseToolJson(draftRaw);
+  if (!draft.ok) {
+    console.warn("[deterministic] support draft error:", draft.error || draftRaw.slice(0, 240));
+    return (
+      draft.error ||
+      "Impossible d'enregistrer le brouillon Support. Réessaie « crée le brouillon »."
+    );
+  }
+
+  const recentTranscript = history
+    .slice(-16)
+    .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
+    .join("\n\n");
+
+  const sim = await generateCampaignSimulationDirect(client, {
+    businessContext,
+    recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
+    approvedOpener: null,
+    campaignBrief: catchAll
+      ? "Support compte entier : l'IA répond à tout message privé."
+      : `Support déclencheurs : ${triggers.join(" · ")}`,
+  });
+
+  if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
+    try {
+      const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
+      await persistLivePlaybookForThread(userId, threadId, sim.turns);
+    } catch (err) {
+      console.warn("[deterministic] support persist playbook:", err);
+    }
+    return (
+      `Parfait — brouillon Support enregistré` +
+      (catchAll ? " (tous les messages privés)." : ` (déclencheurs : ${triggers.slice(0, 3).join(", ")}).`) +
+      `\n\n` +
+      sim.display.trim()
+    );
+  }
+
+  return (
+    "Parfait — brouillon Support enregistré. " +
+    "Dis « simule » pour l'aperçu téléphone, « active » après sim, " +
+    "ou « lance sans simulation » pour activer sans aperçu."
   );
 }
 
@@ -287,6 +459,14 @@ export async function runDeterministicSimulation(opts: {
     approvedOpener = variants?.[0]?.message ?? null;
   }
 
+  if (!approvedOpener && !automationId) {
+    return (
+      "Pas encore de brouillon lié à ce fil. " +
+      "Valide d'abord les accroches (« je valide ») ou crée le brouillon Support, " +
+      "puis redis « simule »."
+    );
+  }
+
   const recentTranscript = history
     .slice(-16)
     .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
@@ -315,8 +495,18 @@ export async function runDeterministicSimulation(opts: {
 export async function runDeterministicActivation(opts: {
   userId: number;
   threadId: number;
+  history?: AgentMessage[];
+  userMessage?: string;
 }): Promise<string | null> {
-  const { userId, threadId } = opts;
+  const { userId, threadId, history = [], userMessage = "" } = opts;
+
+  if (userMessage && isActivationNegation(userMessage)) {
+    return (
+      "D'accord — **je n'active pas**. " +
+      "Quand tu seras prêt : « active » (après sim), ou clairement « lance sans simulation »."
+    );
+  }
+
   const automationId = await resolveThreadAutomationId(userId, threadId);
   if (!automationId) {
     return (
@@ -325,8 +515,26 @@ export async function runDeterministicActivation(opts: {
     );
   }
 
+  const hasSim = recentHistoryHasSimulation(history);
+  const skipSim = allowsActivateWithoutSimulation(userMessage);
+  let simValidatedOnConfig = false;
+  try {
+    const auto = await getAutomation(userId, automationId);
+    simValidatedOnConfig = Boolean(auto?.config.simulationValidatedAt);
+  } catch {
+    /* ignore */
+  }
+
+  if (!hasSim && !skipSim && !simValidatedOnConfig) {
+    return (
+      "Pour activer, il faut d'abord une **simulation** sur le téléphone (`simule`), " +
+      "ou écrire clairement **« lance sans simulation »**."
+    );
+  }
+
   const raw = await executeTool(userId, threadId, "activate_automation", {
     automation_id: automationId,
+    ...(skipSim ? { allow_without_simulation: true } : {}),
   });
   const parsed = parseToolJson(raw);
   if (!parsed.ok) {
@@ -352,16 +560,16 @@ export function shouldDeterministicSimulate(
   return false;
 }
 
-/** Faut-il forcer une activation sans LLM tool-loop ? */
+/** Intent d'activation (hors négation) — le garde-fou sim est dans runDeterministicActivation. */
 export function shouldDeterministicActivate(
   history: AgentMessage[],
   userMessage: string
 ): boolean {
   const t = userMessage.trim();
   if (!t) return false;
-  if (/\b(pas maintenant|plus tard|attends|attendre)\b/i.test(t) && t.length < 48) {
-    return false;
-  }
+  if (isActivationNegation(t)) return false;
+
+  if (allowsActivateWithoutSimulation(t)) return true;
 
   if (/^(lance|lancer|active|activer|démarre|demarre|go)(\s|$|[!.])/i.test(t)) return true;
   if (
@@ -380,6 +588,27 @@ export function shouldDeterministicActivate(
     return true;
   }
   return false;
+}
+
+/** Validation courte Support → brouillon déterministe. */
+export function shouldDeterministicSupportDraft(
+  userMessage: string,
+  opts: { readyForDraft: boolean; stickersOk: boolean; thirdPartyOk: boolean; handoffOk: boolean }
+): boolean {
+  if (!opts.readyForDraft || !opts.stickersOk || !opts.thirdPartyOk || !opts.handoffOk) {
+    return false;
+  }
+  const t = userMessage.trim();
+  if (!t || t.length > 120) return false;
+  if (isActivationNegation(t)) return false;
+  if (
+    /^(oui|ouais|ok|okay|d['’]accord|dac|parfait|valide|je\s+valide|c['’]est\s+bon|vas[- ]?y|go)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  return /\b(cr[eé]e|cr[eé]er|brouillon|valide|lance\s+le\s+brouillon)\b/i.test(t);
 }
 
 /** Outils « puissance » — jamais via args MiniMax bruts. */

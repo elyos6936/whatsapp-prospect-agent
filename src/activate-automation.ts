@@ -32,6 +32,30 @@ export type ActivateAutomationResult =
     }
   | { ok: false; error: string; automationId?: number };
 
+async function restorePausedAutomations(
+  userId: number,
+  paused: Array<{ id: number; name: string }>
+): Promise<void> {
+  for (const p of paused) {
+    try {
+      await updateAutomationStatus(userId, p.id, "active");
+      const auto = await getAutomationDetail(userId, p.id);
+      if (auto) {
+        const isGb =
+          auto.automation.type === "group_broadcast" ||
+          auto.automation.config.mode === "group_broadcast";
+        await updateAutomationConfig(userId, p.id, {
+          ...auto.automation.config,
+          enableAutoReply: isGb ? false : true,
+        });
+        if (!isGb) await resumeAutomationMessaging(userId, p.id);
+      }
+    } catch (err) {
+      console.warn("[activate] rollback restore pause failed:", p.id, err);
+    }
+  }
+}
+
 /**
  * Active une automatisation (draft/paused/failed → active) + bootstrap cibles.
  * Si d'autres campagnes sont actives, elles passent automatiquement en pause.
@@ -41,7 +65,11 @@ export type ActivateAutomationResult =
 export async function activateAutomationCore(
   userId: number,
   automationId: number,
-  options: { source?: "agent" | "simulation_ui" } = {}
+  options: {
+    source?: "agent" | "simulation_ui";
+    /** Chat : « lance sans simulation » explicite. */
+    allowWithoutSimulation?: boolean;
+  } = {}
 ): Promise<ActivateAutomationResult> {
   const id = Number(automationId);
   if (!Number.isFinite(id)) {
@@ -72,6 +100,10 @@ export async function activateAutomationCore(
   }
 
   const auto = detail.automation;
+  const priorStatus = auto.status;
+  const priorConfig = { ...auto.config };
+  void options.allowWithoutSimulation;
+
   if (
     (auto.type === "keyword_sales" || auto.config.mode === "inbound_closing") &&
     !auto.config.price?.trim()
@@ -154,6 +186,33 @@ export async function activateAutomationCore(
     }
   }
 
+  // Valider la config métier AVANT toute mutation (pause / status / auto-reply).
+  if (auto.type === "group_prospect") {
+    if (!auto.config.groupId || !auto.config.initialMessage) {
+      return {
+        ok: false,
+        error: "Groupe ou message initial manquant dans la configuration.",
+        automationId: id,
+      };
+    }
+  } else if (auto.type === "contact_prospect") {
+    if (!auto.config.initialMessage || !auto.config.contactTargets?.length) {
+      return {
+        ok: false,
+        error: "Message initial ou contacts manquants dans la configuration.",
+        automationId: id,
+      };
+    }
+  } else if (auto.type === "group_broadcast") {
+    if (!auto.config.initialMessage || !auto.config.groupTargets?.length) {
+      return {
+        ok: false,
+        error: "Message ou groupes manquants (groupes où vous êtes admin).",
+        automationId: id,
+      };
+    }
+  }
+
   let safeConfig: AutomationConfig = {
     ...auto.config,
     enableAutoReply: auto.type === "group_broadcast" ? false : true,
@@ -211,37 +270,30 @@ export async function activateAutomationCore(
 
   await setAutoReplyEnabled(userId, true);
 
+  const rollback = async (error: string): Promise<ActivateAutomationResult> => {
+    try {
+      await updateAutomationStatus(userId, id, priorStatus === "active" ? "draft" : priorStatus);
+      await updateAutomationConfig(userId, id, {
+        ...priorConfig,
+        simulationValidatedAt: priorConfig.simulationValidatedAt,
+      });
+      await restorePausedAutomations(userId, pausedOthers);
+    } catch (err) {
+      console.warn("[activate] rollback failed:", err);
+    }
+    return { ok: false, error, automationId: id };
+  };
+
   try {
     if (auto.type === "group_prospect") {
-      if (!auto.config.groupId || !auto.config.initialMessage) {
-        return {
-          ok: false,
-          error: "Groupe ou message initial manquant dans la configuration.",
-          automationId: id,
-        };
-      }
       await updateAutomationStatus(userId, id, "active");
       targetsAdded = await bootstrapGroupProspectTargets(userId, id);
       await resumeAutomationMessaging(userId, id);
     } else if (auto.type === "contact_prospect") {
-      if (!auto.config.initialMessage || !auto.config.contactTargets?.length) {
-        return {
-          ok: false,
-          error: "Message initial ou contacts manquants dans la configuration.",
-          automationId: id,
-        };
-      }
       await updateAutomationStatus(userId, id, "active");
       targetsAdded = await bootstrapContactProspectTargets(userId, id);
       await resumeAutomationMessaging(userId, id);
     } else if (auto.type === "group_broadcast") {
-      if (!auto.config.initialMessage || !auto.config.groupTargets?.length) {
-        return {
-          ok: false,
-          error: "Message ou groupes manquants (groupes où vous êtes admin).",
-          automationId: id,
-        };
-      }
       await updateAutomationStatus(userId, id, "active");
       const { bootstrapGroupBroadcastTargets } = await import("./automation-engine.js");
       targetsAdded = await bootstrapGroupBroadcastTargets(userId, id);
@@ -252,7 +304,7 @@ export async function activateAutomationCore(
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: `Activation échouée : ${msg}`, automationId: id };
+    return rollback(`Activation échouée : ${msg}`);
   }
 
   kickAutomationForUser(userId);

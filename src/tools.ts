@@ -4639,7 +4639,10 @@ export async function executeTool(
         });
       }
       const { activateAutomationCore } = await import("./activate-automation.js");
-      const result = await activateAutomationCore(userId, id, { source: "agent" });
+      const result = await activateAutomationCore(userId, id, {
+        source: "agent",
+        allowWithoutSimulation: Boolean(args.allow_without_simulation),
+      });
       if (!result.ok) {
         return JSON.stringify({ error: result.error, automationId: result.automationId ?? id });
       }

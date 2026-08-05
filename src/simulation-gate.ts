@@ -77,10 +77,56 @@ export function isSimulationApproval(text: string): boolean {
   );
 }
 
+/**
+ * Refus explicite d'activation (« n'active pas », « ne lance pas », « annule »…).
+ * À évaluer AVANT tout match sur « active » / « lance » (sinon « n'active pas » matche \bactive\b).
+ */
+export function isActivationNegation(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return false;
+  if (
+    /\b(pas\s+maintenant|plus\s+tard|attends|attendre|annule|annuler|laisse\s+tomber)\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (
+    /n['’]activer?\s+pas/i.test(t) ||
+    /n['’]activez?\s+pas/i.test(t) ||
+    /ne\s+l['’]?\s*active[rz]?\s+pas/i.test(t) ||
+    /ne\s+lance[rz]?\s+pas/i.test(t) ||
+    /ne\s+pas\s+(l['’]\s*)?(activer|lancer|d[eé]marrer)/i.test(t) ||
+    /\bpas\s+(l['’]\s*)?(activer|lancer)\b/i.test(t) ||
+    /\bsans\s+(activer|lancer)\b/i.test(t) ||
+    /\bne\s+lance\s+rien\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (/^(non|nan|no|nop)([!.\s]|$)/i.test(t)) return true;
+  return false;
+}
+
+/**
+ * Autorisation explicite d'activer SANS simulation (choix produit 1-B).
+ * Ex. « lance sans simulation », « active sans simu ».
+ */
+export function allowsActivateWithoutSimulation(text: string): boolean {
+  const t = text.trim().toLowerCase();
+  if (!t) return false;
+  if (isActivationNegation(t)) return false;
+  return (
+    /\b(lance|lancer|active|activer|démarre|demarre)\b[\s\S]{0,48}\bsans\s+(la\s+)?(simu|simulation)\b/i.test(
+      t
+    ) ||
+    /\bsans\s+(la\s+)?(simu|simulation)\b[\s\S]{0,48}\b(lance|lancer|active|activer|démarre|demarre)\b/i.test(
+      t
+    )
+  );
+}
+
 export function isExplicitActivationConfirm(text: string): boolean {
   const t = text.trim().toLowerCase();
   if (!t) return false;
-  if (/\b(non|pas maintenant|plus tard|attends|attendre)\b/i.test(t)) return false;
+  if (isActivationNegation(t)) return false;
   return (
     /^(oui\.?|ok\.?|yes\.?|vas-?y\.?|go\.?)(\s|$)/i.test(t) ||
     /\b(lance|lancer|active|activer|active[rz]?|démarre|demarre|go)\b/i.test(t)

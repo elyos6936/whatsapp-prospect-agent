@@ -202,9 +202,8 @@ export function extractOpenerVariantsFromHistory(
         .replace(/\s+/g, " ")
         .trim();
       if (!text || text.length < 8) continue;
-      // Accroche Attention : tronquer plutôt que rejeter (user a déjà validé le chat)
-      if (text.length > 280) text = text.slice(0, 277).trim() + "…";
-      variants.push({ id: `v${n}`, message: text.slice(0, 500) });
+      // Accroche longue acceptée (choix 7-C) — pas de troncature agressive
+      variants.push({ id: `v${n}`, message: text.slice(0, 1200) });
     }
     if (variants.length >= 4) {
       while (variants.length < 5) {

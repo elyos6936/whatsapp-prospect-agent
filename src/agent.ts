@@ -30,9 +30,11 @@ import {
 import {
   runDeterministicActivation,
   runDeterministicDraftAndSim,
+  runDeterministicSupportDraftAndSim,
   runDeterministicSimulation,
   shouldDeterministicActivate,
   shouldDeterministicSimulate,
+  shouldDeterministicSupportDraft,
   POWER_CAMPAIGN_TOOLS,
 } from "./deterministic-campaign.js";
 import {
@@ -45,6 +47,7 @@ import {
 } from "./campaign-briefing.js";
 import {
   hasSimulationThread,
+  isActivationNegation,
   recentHistoryHasSimulation,
   resolveSimulationTurnMode,
   shouldBlockDuplicateSimulation,
@@ -145,9 +148,9 @@ const FORCE_SIMULATION_NUDGE =
 const DECLINE_SIMULATION_NUDGE =
   "L'utilisateur REFUSE la simulation (non / pas maintenant / sans simu…). " +
   "INTERDIT d'appeler show_campaign_simulation. INTERDIT d'insister. " +
-  "Accepte en 1–2 phrases : on peut activer directement, ou retester plus tard. " +
-  "Propose clairement : bouton **Lancer** / « lance maintenant », ou « montre la simulation » s'il change d'avis. " +
-  "N'appelle activate_automation QUE s'il demande explicitement d'activer / lancer.";
+  "Accepte en 1–2 phrases. Pour activer SANS sim, il DOIT écrire clairement « lance sans simulation » " +
+  "(ou « active sans simu ») — INTERDIT d'activer sur un simple « lance » / « active » sans cette phrase. " +
+  "Sinon propose « simule » plus tard. N'appelle PAS activate_automation sauf phrase explicite sans simulation.";
 
 /** Après une simu déjà là : modifs / questions = pas de nouveau fil ni de fenêtre. */
 const SILENT_TWEAK_AFTER_SIM_NUDGE =
@@ -550,31 +553,74 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   );
 
   // ── Routeur déterministe (pas de boucle LLM) ─────────────────────────────
+  // Négation explicite (« n'active pas ») — jamais d'activation
+  if (isActivationNegation(userMessage) && /\b(active|activer|lance|lancer|campagne|automatisation)\b/i.test(userMessage)) {
+    return (
+      "D'accord — **je n'active pas**. " +
+      "Quand tu seras prêt : « active » après la simulation, ou clairement « lance sans simulation »."
+    );
+  }
+
   // Activation : « lancer » / « active » / oui après question d'activation
+  // (garde-fou sim dans runDeterministicActivation — sauf « lance sans simulation »)
   const bareValidation =
     isShortCampaignValidation(userMessage) &&
     !/\b(lance|lancer|active|activer|démarre|demarre)\b/i.test(userMessage);
   if (
     shouldDeterministicActivate(history, userMessage) &&
-    turnMode !== "decline_sim" &&
     !(bareValidation && !hasSimAlready)
   ) {
     try {
-      const activated = await runDeterministicActivation({ userId, threadId });
+      const activated = await runDeterministicActivation({
+        userId,
+        threadId,
+        history,
+        userMessage,
+      });
       if (activated) return activated;
     } catch (err) {
       console.warn("[agent] deterministic activate failed:", err);
     }
   }
 
+  // Support : brouillon + sim déterministes (pas MiniMax)
+  if (
+    briefing.isInboundClosing &&
+    shouldDeterministicSupportDraft(userMessage, {
+      readyForDraft: briefing.readyForDraft,
+      stickersOk: briefing.stickersQuestionAsked,
+      thirdPartyOk: briefing.thirdPartyQuestionAsked,
+      handoffOk: briefing.handoffKeywordsQuestionAsked,
+    }) &&
+    !hasSimAlready &&
+    !shouldDeterministicActivate(history, userMessage)
+  ) {
+    try {
+      const drafted = await runDeterministicSupportDraftAndSim({
+        userId,
+        threadId,
+        client: await getSimLlmClient(userId),
+        businessContext,
+        history,
+        userMessage,
+        threadTitle: thread?.title,
+        existingAutomationId: thread?.automation_id ?? null,
+        inboundCatchAll: briefing.inboundCatchAll,
+      });
+      if (drafted) return drafted;
+    } catch (err) {
+      console.warn("[agent] support draft/sim failed:", err);
+    }
+  }
+
   // Chemin déterministe : « oui » après les 5 variantes → brouillon + sim (Claude)
   // MiniMax ne touche JAMAIS create_automation / show_campaign_simulation ici.
+  // Choix produit 3-A : draft+sim immédiat même sans stickers/briefing restants.
   if (
     !briefing.isInboundClosing &&
     briefing.openerVariantsProposed &&
     isShortCampaignValidation(userMessage) &&
     !hasSimAlready &&
-    turnMode !== "decline_sim" &&
     turnMode !== "activation_confirm" &&
     turnMode !== "activation_nudge" &&
     !shouldDeterministicActivate(history, userMessage)
@@ -735,7 +781,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         // MiniMax ne doit jamais exécuter brouillon / sim / activation avec ses args.
         if (POWER_CAMPAIGN_TOOLS.has(toolCall.function.name)) {
           if (toolCall.function.name === "activate_automation") {
-            const activated = await runDeterministicActivation({ userId, threadId });
+            const activated = await runDeterministicActivation({
+              userId,
+              threadId,
+              history,
+              userMessage,
+            });
             if (activated) return activated;
           }
           if (toolCall.function.name === "show_campaign_simulation") {
@@ -750,19 +801,34 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             });
             if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
           }
-          if (toolCall.function.name === "create_automation" && !briefing.isInboundClosing) {
-            const drafted = await runDeterministicDraftAndSim({
-              userId,
-              threadId,
-              client: await getSimLlmClient(userId),
-              businessContext,
-              history,
-              userMessage,
-              purpose: thread?.purpose,
-              threadTitle: thread?.title,
-              existingAutomationId: thread?.automation_id ?? null,
-            });
-            if (drafted) return drafted;
+          if (toolCall.function.name === "create_automation") {
+            if (briefing.isInboundClosing) {
+              const drafted = await runDeterministicSupportDraftAndSim({
+                userId,
+                threadId,
+                client: await getSimLlmClient(userId),
+                businessContext,
+                history,
+                userMessage,
+                threadTitle: thread?.title,
+                existingAutomationId: thread?.automation_id ?? null,
+                inboundCatchAll: briefing.inboundCatchAll,
+              });
+              if (drafted) return drafted;
+            } else {
+              const drafted = await runDeterministicDraftAndSim({
+                userId,
+                threadId,
+                client: await getSimLlmClient(userId),
+                businessContext,
+                history,
+                userMessage,
+                purpose: thread?.purpose,
+                threadTitle: thread?.title,
+                existingAutomationId: thread?.automation_id ?? null,
+              });
+              if (drafted) return drafted;
+            }
           }
           messages.push({
             role: "tool",
@@ -787,7 +853,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             content: JSON.stringify({
               error:
                 "L'utilisateur a refusé la simulation. INTERDIT de la lancer. " +
-                "Accepte et propose d'activer directement ou de simuler plus tard.",
+                "Accepte. Pour activer sans sim il doit écrire « lance sans simulation ». " +
+                "Sinon propose de simuler plus tard.",
             }),
           });
           continue;

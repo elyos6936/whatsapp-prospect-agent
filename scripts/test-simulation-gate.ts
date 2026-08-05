@@ -7,7 +7,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { AgentMessage } from "../src/db.js";
 import {
+  allowsActivateWithoutSimulation,
   hasSimulationThread,
+  isActivationNegation,
   isExplicitActivationConfirm,
   isSimulationApproval,
   resolveSimulationTurnMode,
@@ -16,6 +18,8 @@ import {
   userWantsExplicitResimulation,
   userWantsSilentCampaignTweak,
 } from "../src/simulation-gate.js";
+import { shouldDeterministicActivate } from "../src/deterministic-campaign.js";
+import { proposeShortAttentionOpener, isValidAttentionOpener } from "../src/opener-frame.js";
 
 let passed = 0;
 let failed = 0;
@@ -137,6 +141,48 @@ assert(!/Valider à droite/i.test(agent), "agent: pas « Valider à droite »");
 assert(!/simulation à droite/i.test(tools), "tools: pas « simulation à droite »");
 assert(/simulation dans ce chat/i.test(persona), "persona: simulation dans ce chat");
 assert(/refais la simulation/i.test(agent), "agent: invite refais la simulation");
+
+console.log("\n=== E. Négation activate / lance sans sim / opener long ===\n");
+assert(isActivationNegation("n'active pas"), "negation: n'active pas");
+assert(isActivationNegation("ne lance pas"), "negation: ne lance pas");
+assert(isActivationNegation("annule"), "negation: annule");
+assert(isActivationNegation("pas maintenant"), "negation: pas maintenant");
+assert(!isActivationNegation("active"), "not negation: active");
+assert(!isExplicitActivationConfirm("n'active pas"), "confirm false on n'active pas");
+assert(!isExplicitActivationConfirm("ne l'active pas"), "confirm false on ne l'active pas");
+assert(allowsActivateWithoutSimulation("lance sans simulation"), "allow skip sim");
+assert(allowsActivateWithoutSimulation("active sans simu"), "allow skip simu");
+assert(!allowsActivateWithoutSimulation("lance"), "bare lance ≠ skip sim");
+assert(!allowsActivateWithoutSimulation("sans simulation"), "sans sim alone ≠ activate");
+{
+  const histNoSim: AgentMessage[] = [msg("assistant", "Brouillon prêt. Veux-tu activer ?")];
+  assert(
+    shouldDeterministicActivate(histNoSim, "lance"),
+    "lance intent even without sim (gate message later)",
+  );
+  assert(
+    !shouldDeterministicActivate(histNoSim, "n'active pas"),
+    "n'active pas → no activate intent",
+  );
+  assert(
+    shouldDeterministicActivate(histNoSim, "lance sans simulation"),
+    "lance sans simulation → activate intent",
+  );
+}
+assert(
+  isValidAttentionOpener(
+    "Bonjour, je vous contacte au sujet de notre masterclass complète sur l'automatisation WhatsApp pour les agences qui veulent scaler leur closing en Afrique de l'Ouest avec un accompagnement sur 8 semaines.",
+  ),
+  "long opener without URL/price = valid (soft length)",
+);
+assert(
+  Boolean(
+    proposeShortAttentionOpener(
+      "Bonjour, je vous contacte au sujet de notre masterclass complète sur l'automatisation WhatsApp pour les agences qui veulent scaler leur closing en Afrique de l'Ouest avec un accompagnement sur 8 semaines et un suivi personnalisé.",
+    ),
+  ),
+  "propose short for long opener",
+);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 if (failed > 0) process.exit(1);
