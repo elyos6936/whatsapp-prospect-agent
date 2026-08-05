@@ -20,8 +20,8 @@ import {
   toAssistantHistoryMessage,
   extractAssistantContent,
   createLlmClientForRole,
-  llmExtrasForRole,
-  recommendedMaxTokensForRole,
+  llmExtrasForProvider,
+  recommendedMaxTokensForProvider,
   resolveLlmRoleModel,
   resolveLlmRoleProvider,
 } from "./llm.js";
@@ -757,10 +757,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             ? { type: "function", function: { name: "create_automation" } }
             : "auto",
           temperature: toolProvider === "minimax" ? 1 : 0.7,
-          max_tokens: recommendedMaxTokensForRole("chat", CHAT_MAX_TOKENS, {
-            thinkingEnabled: false,
-          }),
-          ...llmExtrasForRole("chat", { enableThinking: false }),
+          max_tokens: recommendedMaxTokensForProvider(
+            toolProvider,
+            toolModel,
+            CHAT_MAX_TOKENS,
+            { thinkingEnabled: false }
+          ),
+          ...llmExtrasForProvider(toolProvider, toolModel, { enableThinking: false }),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
@@ -1309,10 +1312,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         model: toolModel,
         messages,
         temperature: toolProvider === "minimax" ? 1 : 0.7,
-        max_tokens: recommendedMaxTokensForRole("chat", 500, {
+        max_tokens: recommendedMaxTokensForProvider(toolProvider, toolModel, 500, {
           thinkingEnabled: false,
         }),
-        ...llmExtrasForRole("chat", { enableThinking: false }),
+        ...llmExtrasForProvider(toolProvider, toolModel, { enableThinking: false }),
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();

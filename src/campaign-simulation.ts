@@ -7,9 +7,10 @@ import { callOpenAiWithRetry } from "./openai-retry.js";
 import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import {
   extractAssistantContent,
-  llmExtrasForRole,
-  recommendedMaxTokensForRole,
+  llmExtrasForProvider,
+  recommendedMaxTokensForProvider,
   resolveLlmRoleModel,
+  resolveLlmRoleProvider,
 } from "./llm.js";
 
 export type SimulationTurn = {
@@ -167,15 +168,19 @@ export async function generateCampaignSimulationDirect(
     `Génère maintenant la simulation JSON (6 ou 7 turns max).`;
 
   const simRole = config.toolLlmConfigured ? "tools" : "chat";
+  const simProvider = resolveLlmRoleProvider(simRole);
+  const simModel = resolveLlmRoleModel(simRole);
   const body: Record<string, unknown> = {
-    model: resolveLlmRoleModel(simRole),
+    model: simModel,
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    max_tokens: recommendedMaxTokensForRole(simRole, 900, { thinkingEnabled: false }),
+    max_tokens: recommendedMaxTokensForProvider(simProvider, simModel, 900, {
+      thinkingEnabled: false,
+    }),
     temperature: 0.7,
-    ...llmExtrasForRole(simRole, { enableThinking: false }),
+    ...llmExtrasForProvider(simProvider, simModel, { enableThinking: false }),
   };
 
   const response = await callOpenAiWithRetry(() =>

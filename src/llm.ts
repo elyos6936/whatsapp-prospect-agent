@@ -3,16 +3,20 @@ import { config, type LlmProvider } from "./config.js";
 import {
   createLlmClientForRole,
   llmExtrasForRole,
+  llmExtrasForProvider,
   llmRoleLabel,
   recommendedMaxTokensForRole,
+  recommendedMaxTokensForProvider,
 } from "./llm-router.js";
 
 export type { LlmRole } from "./llm-router.js";
 export {
   createLlmClientForRole,
   llmExtrasForRole,
+  llmExtrasForProvider,
   llmRoleLabel,
   recommendedMaxTokensForRole,
+  recommendedMaxTokensForProvider,
   resolveLlmRoleModel,
   resolveLlmRoleProvider,
   supportsForcedToolChoiceForRole,
@@ -142,8 +146,19 @@ export function recommendedMaxTokens(
   desiredOutput: number,
   opts?: { thinkingEnabled?: boolean }
 ): number {
+  // Toujours caler sur le provider du modèle réellement appelé.
   if (config.toolLlmConfigured && model === config.toolLlmModel) {
-    return recommendedMaxTokensForRole("tools", desiredOutput, opts);
+    return recommendedMaxTokensForProvider(
+      config.toolLlmProvider,
+      config.toolLlmModel,
+      desiredOutput,
+      opts
+    );
   }
-  return recommendedMaxTokensForRole("chat", desiredOutput, opts);
+  return recommendedMaxTokensForProvider(
+    config.llmProvider,
+    config.openaiModel,
+    desiredOutput,
+    opts
+  );
 }

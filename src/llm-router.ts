@@ -1,14 +1,19 @@
 /**
  * Routeur LLM dual :
- * - chat  = tout le système de chat / boucle agent / outils (MiniMax)
- * - tools = filet Claude uniquement pour génération de simulation
- *           (comme DeepSeek avant — pas pour le dialogue)
+ * - chat = MiniMax partout (dialogue + boucle agent + outils)
+ * - sim  = Claude filet pour génération de simulation seulement
+ *   (alias historique du rôle "tools" — jamais le chat)
  *
- * Activation campagne = déterministe (sans LLM) — voir deterministic-campaign.ts.
+ * Activation campagne = déterministe (sans LLM).
+ *
+ * RÈGLE : les extras (thinking, etc.) doivent suivre le *provider du client
+ * réellement appelé*, jamais un autre rôle — sinon MiniMax sans
+ * thinking:disabled → content vide → « Je n'ai pas pu générer de réponse ».
  */
 import OpenAI from "openai";
 import { config, type LlmProvider } from "./config.js";
 
+/** "tools" = alias historique = filet simulation Claude (pas la boucle agent). */
 export type LlmRole = "chat" | "tools";
 
 export function resolveLlmRoleProvider(role: LlmRole): LlmProvider {
@@ -54,21 +59,21 @@ export function createLlmClientForRole(role: LlmRole, apiKey?: string): OpenAI {
   return new OpenAI({
     apiKey: key,
     baseURL: resolveLlmRoleBaseUrl(role),
-    // Compat OpenAI Anthropic : version API requise côté Claude
     ...(provider === "claude"
       ? { defaultHeaders: { "anthropic-version": "2023-06-01" } }
       : {}),
   });
 }
 
-/** Extras provider pour un rôle donné (thinking off MiniMax, etc.). */
-export function llmExtrasForRole(
-  role: LlmRole,
+/**
+ * Extras API selon le provider réellement appelé (pas selon un rôle abstrait).
+ * Toujours passer le même provider que le client OpenAI utilisé pour l'appel.
+ */
+export function llmExtrasForProvider(
+  provider: LlmProvider,
+  model: string,
   opts?: { enableThinking?: boolean }
 ): Record<string, unknown> {
-  const provider = resolveLlmRoleProvider(role);
-  const model = resolveLlmRoleModel(role);
-
   if (provider === "minimax") {
     return {
       thinking: { type: "disabled" },
@@ -90,13 +95,12 @@ export function llmExtrasForRole(
   return {};
 }
 
-export function recommendedMaxTokensForRole(
-  role: LlmRole,
+export function recommendedMaxTokensForProvider(
+  provider: LlmProvider,
+  model: string,
   desiredOutput: number,
   opts?: { thinkingEnabled?: boolean }
 ): number {
-  const provider = resolveLlmRoleProvider(role);
-  const model = resolveLlmRoleModel(role);
   if (provider === "minimax") return desiredOutput;
   if (provider === "mistral") {
     if (opts?.thinkingEnabled !== false) return Math.max(desiredOutput + 800, 1200);
@@ -110,6 +114,32 @@ export function recommendedMaxTokensForRole(
     if (thinking) return Math.max(desiredOutput + 650, 800);
   }
   return desiredOutput;
+}
+
+/** Préférer llmExtrasForProvider(provider, model) avec le provider du client. */
+export function llmExtrasForRole(
+  role: LlmRole,
+  opts?: { enableThinking?: boolean }
+): Record<string, unknown> {
+  return llmExtrasForProvider(
+    resolveLlmRoleProvider(role),
+    resolveLlmRoleModel(role),
+    opts
+  );
+}
+
+/** Préférer recommendedMaxTokensForProvider. */
+export function recommendedMaxTokensForRole(
+  role: LlmRole,
+  desiredOutput: number,
+  opts?: { thinkingEnabled?: boolean }
+): number {
+  return recommendedMaxTokensForProvider(
+    resolveLlmRoleProvider(role),
+    resolveLlmRoleModel(role),
+    desiredOutput,
+    opts
+  );
 }
 
 export function supportsForcedToolChoiceForRole(role: LlmRole): boolean {
