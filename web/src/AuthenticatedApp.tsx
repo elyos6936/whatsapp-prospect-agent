@@ -60,6 +60,9 @@ export default function AuthenticatedApp() {
       if (params.get('settings') === 'integrations') {
         setOverlayView('settings');
       }
+      if (params.get('settings') === 'team') {
+        setOverlayView('settings');
+      }
     } catch {
       /* ignore */
     }

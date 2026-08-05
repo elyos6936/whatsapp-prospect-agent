@@ -21,6 +21,9 @@ const IntegrationsHubPage = lazy(() =>
 const IntegrationDetailPage = lazy(() =>
   import('@/pages/IntegrationDetailPage').then((m) => ({ default: m.IntegrationDetailPage })),
 );
+const InvitePage = lazy(() =>
+  import('@/pages/InvitePage').then((m) => ({ default: m.InvitePage })),
+);
 const AuthenticatedApp = lazy(() => import('@/AuthenticatedApp'));
 
 function FullScreen({ children }: { children: React.ReactNode }) {
@@ -90,6 +93,7 @@ function PublicRoutes() {
       <Route path="/" element={<LandingPage />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/invite/:token" element={<InvitePage />} />
       {marketingRoutes()}
       <Route path="/app" element={<Navigate to="/login" replace />} />
       <Route path="*" element={<NotFoundPage />} />
@@ -143,6 +147,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<Navigate to="/app" replace />} />
         <Route path="/register" element={<Navigate to="/app" replace />} />
+        <Route path="/invite/:token" element={<InvitePage />} />
         {marketingRoutes()}
         <Route path="/*" element={<AuthenticatedApp />} />
       </Routes>

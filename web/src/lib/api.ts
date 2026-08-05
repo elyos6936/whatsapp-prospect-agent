@@ -17,6 +17,13 @@ export interface AuthUser {
   trial_conversations_used?: number;
   business: { ownerName: string; offer: string; price: string };
   whatsapp?: { connected: boolean; state: string; message: string };
+  workspace?: {
+    id: number;
+    name: string;
+    role: 'owner' | 'admin' | 'member';
+    billingPlan: 'starter' | 'pro' | 'business';
+    ownerUserId: number;
+  };
 }
 
 export interface MeResponse extends AuthUser {
@@ -832,6 +839,86 @@ export async function saveOnboarding(input: {
   return request('/api/onboarding', {
     method: 'POST',
     body: JSON.stringify(input),
+  });
+}
+
+export type TeamInviteRole = 'admin' | 'member';
+
+export type TeamOverview = {
+  workspace: {
+    workspaceId: number;
+    ownerUserId: number;
+    role: 'owner' | 'admin' | 'member';
+    billingPlan: 'starter' | 'pro' | 'business';
+    workspaceName: string;
+  };
+  members: Array<{
+    userId: number;
+    email: string;
+    name: string;
+    role: 'owner' | 'admin' | 'member';
+    joinedAt: string;
+  }>;
+  invites: Array<{
+    id: number;
+    email: string;
+    role: TeamInviteRole;
+    expiresAt: string;
+    createdAt: string;
+    invitedByName: string;
+  }>;
+  limits: {
+    maxInvites: number | null;
+    usedInvites: number;
+    totalMembers: number;
+  };
+};
+
+export async function fetchTeamOverview(): Promise<TeamOverview> {
+  return request<TeamOverview>('/api/team');
+}
+
+export async function inviteTeamMember(input: {
+  email: string;
+  role: TeamInviteRole;
+}): Promise<{ invite: TeamOverview['invites'][number] }> {
+  return request('/api/team/invite', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function cancelTeamInvite(inviteId: number): Promise<{ ok: boolean }> {
+  return request(`/api/team/invite/${inviteId}`, { method: 'DELETE' });
+}
+
+export async function updateTeamMemberRole(
+  userId: number,
+  role: TeamInviteRole,
+): Promise<{ ok: boolean }> {
+  return request(`/api/team/members/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ role }),
+  });
+}
+
+export async function removeTeamMember(userId: number): Promise<{ ok: boolean }> {
+  return request(`/api/team/members/${userId}`, { method: 'DELETE' });
+}
+
+export async function fetchTeamInvitePreview(token: string): Promise<{
+  workspaceName: string;
+  email: string;
+  role: TeamInviteRole;
+  expired: boolean;
+  accepted: boolean;
+}> {
+  return request(`/api/team/invite/${encodeURIComponent(token)}`);
+}
+
+export async function acceptTeamInvite(token: string): Promise<{ ok: boolean }> {
+  return request(`/api/team/invite/${encodeURIComponent(token)}/accept`, {
+    method: 'POST',
   });
 }
 

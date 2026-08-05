@@ -6,6 +6,7 @@ import {
   LogOut,
   Smartphone,
   Unplug,
+  Users,
 } from 'lucide-react';
 import {
   createMoneyFusionCheckout,
@@ -22,6 +23,7 @@ import { TypeformIntegrationCard } from '@/components/settings/TypeformIntegrati
 import { GoogleSheetsIntegrationCard } from '@/components/settings/GoogleSheetsIntegrationCard';
 import { GoogleContactsIntegrationCard } from '@/components/settings/GoogleContactsIntegrationCard';
 import { CampaignMemoriesPanel } from '@/components/settings/CampaignMemoriesPanel';
+import { TeamPanel } from '@/components/settings/TeamPanel';
 import {
   PLANS,
   TRIAL_DAYS,
@@ -34,7 +36,7 @@ import {
   type PlanId,
 } from '@/lib/pricing';
 
-type SettingsTab = 'connection' | 'integrations' | 'billing' | 'memory';
+type SettingsTab = 'connection' | 'integrations' | 'billing' | 'memory' | 'team';
 
 function Feedback({ text, type }: { text: string; type?: 'ok' | 'err' }) {
   if (!text) return null;
@@ -56,6 +58,7 @@ function readInitialTab(): SettingsTab {
   try {
     const params = new URLSearchParams(window.location.search);
     if (params.get('settings') === 'integrations') return 'integrations';
+    if (params.get('settings') === 'team') return 'team';
   } catch {
     /* ignore */
   }
@@ -273,10 +276,17 @@ export function SettingsPage() {
     }
   };
 
+  const isOwner = user?.workspace?.role === 'owner' || !user?.workspace;
+
+  useEffect(() => {
+    if (!isOwner && tab === 'billing') setTab('team');
+  }, [isOwner, tab]);
+
   const tabs: { id: SettingsTab; label: string; icon: typeof Smartphone }[] = [
-    { id: 'billing', label: 'Facturation', icon: CreditCard },
+    ...(isOwner ? [{ id: 'billing' as const, label: 'Facturation', icon: CreditCard }] : []),
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'integrations', label: 'Intégrations', icon: Link2 },
+    { id: 'team', label: 'Équipe', icon: Users },
     { id: 'connection', label: 'WhatsApp', icon: Smartphone },
   ];
 
@@ -284,6 +294,7 @@ export function SettingsPage() {
     billing: { short: 'Facturation', full: 'Facturation' },
     memory: { short: 'Mémoire', full: 'Mémoire' },
     integrations: { short: 'Intégrations', full: 'Intégrations' },
+    team: { short: 'Équipe', full: 'Équipe' },
     connection: { short: 'WhatsApp', full: 'WhatsApp' },
   };
 
@@ -306,7 +317,12 @@ export function SettingsPage() {
             </button>
           </div>
 
-          <div className="mb-6 grid w-full grid-cols-4 gap-1 rounded-xl border border-black/10 bg-bg-100 p-1">
+          <div
+            className={cn(
+              'mb-6 grid w-full gap-1 rounded-xl border border-black/10 bg-bg-100 p-1',
+              tabs.length >= 5 ? 'grid-cols-5' : 'grid-cols-4',
+            )}
+          >
             {tabs.map((t) => {
               const Icon = t.icon;
               const labels = tabLabels[t.id];
@@ -373,7 +389,9 @@ export function SettingsPage() {
             </div>
           ) : tab === 'memory' ? (
             <CampaignMemoriesPanel />
-          ) : (
+          ) : tab === 'team' ? (
+            <TeamPanel />
+          ) : tab === 'billing' ? (
             <div className="panel min-w-0 space-y-5 overflow-hidden p-4 sm:p-5">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-100">Abonnement Klanvio</h2>
@@ -515,7 +533,7 @@ export function SettingsPage() {
                 </p>
               )}
             </div>
-          )}
+          ) : null}
         </div>
       </div>
 

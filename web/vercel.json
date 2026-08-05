@@ -44,6 +44,7 @@
     { "source": "/contact", "destination": "/index.html" },
     { "source": "/integrations", "destination": "/index.html" },
     { "source": "/integrations/:slug", "destination": "/index.html" },
+    { "source": "/invite/:token", "destination": "/index.html" },
     { "source": "/app", "destination": "/index.html" },
     { "source": "/app/:path*", "destination": "/index.html" }
   ],

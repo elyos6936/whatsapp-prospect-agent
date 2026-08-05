@@ -51,6 +51,7 @@ import { registerAutomationRoutes } from "./automation-routes.js";
 import { registerFeatureRoutes } from "./feature-routes.js";
 import { registerIntegrationRoutes } from "./integration-routes.js";
 import { registerBillingRoutes } from "./billing-routes.js";
+import { registerTeamRoutes } from "./team-routes.js";
 import { registerCampaignMemoryRoutes } from "./campaign-memory-routes.js";
 import {
   ensureCampaignMemoriesSchema,
@@ -840,6 +841,7 @@ await registerAutomationRoutes(app);
 await registerFeatureRoutes(app);
 await registerIntegrationRoutes(app);
 await registerBillingRoutes(app);
+await registerTeamRoutes(app);
 
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });

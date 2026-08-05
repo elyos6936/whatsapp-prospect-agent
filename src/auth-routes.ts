@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { OAuth2Client } from "google-auth-library";
 import { config } from "./config.js";
-import { hashPassword, verifyPassword, requireUserId } from "./auth.js";
+import { hashPassword, verifyPassword, requireUserId, requireActorUserId } from "./auth.js";
 import {
   createUser,
   createGoogleUser,
@@ -194,14 +194,15 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   );
 
   app.get("/api/me", async (request) => {
-    const userId = requireUserId(request);
-    const user = await getUserById(userId);
+    const actorUserId = requireActorUserId(request);
+    const dataUserId = requireUserId(request);
+    const user = await getUserById(actorUserId);
     if (!user) return { error: "Utilisateur introuvable" };
 
     let whatsapp = { connected: false, state: "not_configured", message: "Non configuré" };
     try {
       const { getWhatsAppConnectionStatus } = await import("./whatsapp-connection.js");
-      whatsapp = await getWhatsAppConnectionStatus(userId);
+      whatsapp = await getWhatsAppConnectionStatus(dataUserId);
     } catch (err) {
       whatsapp = {
         connected: false,
@@ -210,9 +211,19 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       };
     }
 
+    const { resolveWorkspaceContext } = await import("./team.js");
+    const workspace = await resolveWorkspaceContext(actorUserId);
+
     return {
       ...publicUser(user),
       whatsapp,
+      workspace: {
+        id: workspace.workspaceId,
+        name: workspace.workspaceName,
+        role: workspace.role,
+        billingPlan: workspace.billingPlan,
+        ownerUserId: workspace.ownerUserId,
+      },
     };
   });
 
@@ -224,7 +235,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       business_price?: string;
     };
   }>("/api/onboarding", async (request, reply) => {
-    const userId = requireUserId(request);
+    const userId = requireActorUserId(request);
     const answers = request.body?.answers;
     if (!answers || typeof answers !== "object") {
       return reply.status(400).send({ error: "Réponses onboarding requises." });
@@ -241,7 +252,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   });
 
   app.post("/api/me/google-contacts-prompt-done", async (request) => {
-    const userId = requireUserId(request);
+    const userId = requireActorUserId(request);
     const user = await markGoogleContactsPromptDone(userId);
     if (!user) return { error: "Utilisateur introuvable" };
     return { ok: true, user: publicUser(user) };

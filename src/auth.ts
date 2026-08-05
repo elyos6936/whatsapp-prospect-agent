@@ -3,6 +3,8 @@ import bcrypt from "bcryptjs";
 import { config } from "./config.js";
 import { registerAdminJwtHelpers } from "./admin-auth.js";
 import { getAccountAccessBlock, getUserById } from "./users.js";
+import { resolveWorkspaceContext } from "./team.js";
+import type { TeamRole } from "./team.js";
 
 const PUBLIC_PREFIXES = [
   "/api/auth/",
@@ -38,7 +40,12 @@ export async function verifyPassword(password: string, hash: string): Promise<bo
 
 declare module "fastify" {
   interface FastifyRequest {
+    /** Compte connecté (JWT). */
+    actorUserId?: number;
+    /** Données partagées workspace (propriétaire si membre d'équipe). */
     userId?: number;
+    workspaceId?: number;
+    workspaceRole?: TeamRole;
   }
 }
 
@@ -60,6 +67,15 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
   registerAdminJwtHelpers(app);
 
   app.addHook("onRequest", async (request, reply) => {
+    const path = request.url.split("?")[0] ?? request.url;
+    if (
+      request.method === "GET" &&
+      /^\/api\/team\/invite\/[^/]+$/.test(path) &&
+      !path.endsWith("/accept")
+    ) {
+      return;
+    }
+
     if (isPublicRoute(request.url)) return;
     // /api/admin/* (hors login public) : géré par requireAdmin dans admin-routes
     if (isAdminApiRoute(request.url)) return;
@@ -83,7 +99,11 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
       if (block) {
         return reply.status(403).send({ error: block, code: "account_blocked" });
       }
-      request.userId = userId;
+      request.actorUserId = userId;
+      const workspace = await resolveWorkspaceContext(userId);
+      request.workspaceId = workspace.workspaceId;
+      request.workspaceRole = workspace.role;
+      request.userId = workspace.ownerUserId;
     } catch {
       return reply.status(401).send({ error: "Token invalide ou expiré." });
     }
@@ -93,6 +113,12 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
 export function requireUserId(request: FastifyRequest): number {
   const id = request.userId;
   if (!id) throw new Error("userId manquant");
+  return id;
+}
+
+export function requireActorUserId(request: FastifyRequest): number {
+  const id = request.actorUserId ?? request.userId;
+  if (!id) throw new Error("actorUserId manquant");
   return id;
 }
 

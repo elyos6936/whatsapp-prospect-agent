@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 import { sql } from "./pg.js";
 import { setSubscriptionStatus, type UserRecord } from "./users.js";
+import { setWorkspaceBillingPlan } from "./team.js";
 
 export type BillingPlanId = "starter" | "pro" | "business";
 export type BillingPeriod = "monthly" | "annual";
@@ -248,8 +249,11 @@ export async function findBillingPaymentByToken(token: string): Promise<BillingP
   return rows.length ? mapPayment(rows[0]) : null;
 }
 
-async function applyPaidSubscription(userId: number): Promise<void> {
+async function applyPaidSubscription(userId: number, planId?: BillingPlanId): Promise<void> {
   await setSubscriptionStatus(userId, "active");
+  if (planId) {
+    await setWorkspaceBillingPlan(userId, planId);
+  }
 }
 
 export async function syncMoneyFusionPaymentByToken(
@@ -291,7 +295,7 @@ export async function syncMoneyFusionPaymentByToken(
 
   const updated = rows.length ? mapPayment(rows[0]) : null;
   if (updated?.status === "paid") {
-    await applyPaidSubscription(updated.user_id);
+    await applyPaidSubscription(updated.user_id, updated.plan_id);
   }
   return updated;
 }
