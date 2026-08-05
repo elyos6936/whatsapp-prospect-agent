@@ -139,7 +139,8 @@ export function isShortCampaignValidation(text: string): boolean {
   if (!t || t.length > 100) return false;
   if (/^(non|nan|no|nop|refuse|pas\s+d['’]?accord)\b/i.test(t)) return false;
   if (OPENER_SINGLE_VALIDATE_RE.test(t)) return true;
-  // « Oui, je valide » / « Ok je valide tout » / « c'est parfait »
+  // « Je valide » seul / « Oui, je valide » / « Ok je valide tout »
+  if (/^(je\s+)?valide\b/i.test(t)) return true;
   return /\b(oui|ok|okay|d['’]accord|parfait|nickel)\b/i.test(t) &&
     /\b(valide|valid[eé]|bon|ensemble|tout|les\s+5|accroches?)\b/i.test(t);
 }

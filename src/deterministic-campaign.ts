@@ -57,6 +57,44 @@ async function resolveThreadAutomationId(
   return thread?.automation_id ?? null;
 }
 
+/** Numéros / contacts cités par l'utilisateur dans le fil (pour contact_prospect). */
+export function extractProspectContactsFromHistory(history: AgentMessage[]): string[] {
+  const found: string[] = [];
+  const seen = new Set<string>();
+  const phoneRe = /(?:\+|00)?\d[\d\s.\-]{7,}\d/g;
+  for (const m of history) {
+    if (m.role !== "user") continue;
+    const hits = m.content.match(phoneRe) || [];
+    for (const raw of hits) {
+      const compact = raw.replace(/[\s.\-]/g, "");
+      const digits = compact.replace(/\D/g, "");
+      if (digits.length < 8 || digits.length > 15) continue;
+      if (seen.has(digits)) continue;
+      seen.add(digits);
+      found.push(compact.startsWith("+") || compact.startsWith("00") ? compact : `+${digits}`);
+    }
+  }
+  return found;
+}
+
+/** Nom de groupe mentionné (ex. « prospecter le groupe Automax »). */
+export function extractProspectGroupQueryFromHistory(history: AgentMessage[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.role !== "user") continue;
+    const hit =
+      /\b(?:groupe|group)\s+[«"]?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ0-9 .'-]{1,60})/i.exec(m.content) ||
+      /\bprospect(?:er|e)?\s+(?:le\s+)?groupe\s+[«"]?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ0-9 .'-]{1,60})/i.exec(
+        m.content
+      );
+    if (hit?.[1]) {
+      const name = hit[1].replace(/[»"].*$/, "").trim();
+      if (name.length >= 2) return name;
+    }
+  }
+  return null;
+}
+
 /**
  * Brouillon + simulation à partir des 5 variantes du chat (pas d'args MiniMax).
  */
@@ -89,9 +127,26 @@ export async function runDeterministicDraftAndSim(opts: {
     return null;
   }
 
-  const autoType = purpose === "groupes" ? "group_broadcast" : "contact_prospect";
-  const draftRaw = await executeTool(userId, threadId, "create_automation", {
-    type: autoType,
+  let contacts = extractProspectContactsFromHistory(history);
+  const groupQuery = extractProspectGroupQueryFromHistory(history);
+
+  // Réutiliser contacts / groupe déjà sur le brouillon du fil
+  if (existingAutomationId) {
+    const existing = await getAutomation(userId, existingAutomationId);
+    if (existing?.config.contactTargets?.length && contacts.length === 0) {
+      contacts = existing.config.contactTargets
+        .map((t) => t.label || t.id)
+        .filter(Boolean) as string[];
+    }
+  }
+
+  const wantsGroup =
+    purpose === "groupes" ||
+    Boolean(groupQuery) ||
+    (contacts.length === 0 && purpose !== "prospection");
+
+  let autoType: string;
+  const draftArgs: Record<string, unknown> = {
     name: threadTitle?.trim() || "Campagne",
     status: "draft",
     initial_message: variants[0]!.message,
@@ -100,7 +155,29 @@ export async function runDeterministicDraftAndSim(opts: {
     personalize_messages: false,
     stickers_enabled: false,
     ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
-  });
+  };
+
+  if (contacts.length > 0 && !groupQuery) {
+    autoType = "contact_prospect";
+    draftArgs.type = autoType;
+    draftArgs.contacts = contacts;
+  } else if (groupQuery || purpose === "groupes") {
+    // Prospection membres de groupe (pas broadcast)
+    autoType = "group_prospect";
+    draftArgs.type = autoType;
+    if (groupQuery) draftArgs.group_id = groupQuery;
+  } else if (wantsGroup) {
+    autoType = "group_broadcast";
+    draftArgs.type = autoType;
+  } else {
+    // contact_prospect sans contacts → message clair
+    return (
+      "J'ai les 5 accroches, mais il me manque les contacts à prospecter. " +
+      "Envoie le(s) numéro(s) (ex. +229…) ou le nom du groupe, puis redis « je valide »."
+    );
+  }
+
+  const draftRaw = await executeTool(userId, threadId, "create_automation", draftArgs);
 
   const draft = parseToolJson(draftRaw);
   if (!draft.ok) {
