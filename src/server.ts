@@ -850,11 +850,11 @@ try {
   console.log(`   LLM chat : ${config.llmProvider} (${config.openaiModel}) @ ${config.llmBaseUrl}`);
   if (config.toolLlmConfigured) {
     console.log(
-      `   LLM tools : ${config.toolLlmProvider} (${config.toolLlmModel}) @ ${config.toolLlmBaseUrl}`
+      `   LLM sim  : ${config.toolLlmProvider} (${config.toolLlmModel}) @ ${config.toolLlmBaseUrl} (filet simulation)`
     );
   } else {
-    console.error(
-      `   ❌ LLM tools : ANTHROPIC_API_KEY manquante — brouillon/sim/activation exigent Claude`
+    console.warn(
+      `   ⚠️ LLM sim  : ANTHROPIC_API_KEY absente — simulations via MiniMax (chat)`
     );
   }
   console.log(`   Ouvrez l'app → Connexions → Evolution API + WhatsApp QR\n`);

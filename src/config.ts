@@ -17,18 +17,6 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
 
 export type LlmProvider = "deepseek" | "openai" | "minimax" | "mistral" | "claude";
 
-function parseProvider(raw: string | undefined, fallback: LlmProvider): LlmProvider {
-  const v = (raw || "").trim().toLowerCase();
-  // DeepSeek désactivé produit (fuites DSML) — remappé vers Claude.
-  if (v === "deepseek") {
-    console.warn(`⚠️ LLM provider "deepseek" ignoré → ${fallback} (MiniMax chat + Claude tools).`);
-    return fallback;
-  }
-  if (v === "openai" || v === "minimax" || v === "mistral") return v;
-  if (v === "claude" || v === "anthropic") return "claude";
-  return fallback;
-}
-
 function resolveLlmProvider(): LlmProvider {
   const base = (process.env.LLM_BASE_URL || "").toLowerCase();
   const model = (
@@ -37,28 +25,29 @@ function resolveLlmProvider(): LlmProvider {
     ""
   ).toLowerCase();
 
-  // Endpoint / modèle MiniMax gagnent toujours (même si LLM_PROVIDER=openai|mistral).
+  // Endpoint / modèle MiniMax gagnent toujours.
   if (base.includes("minimax") || model.includes("minimax")) {
     return "minimax";
   }
-  if (base.includes("anthropic") || model.includes("claude")) {
-    return "claude";
-  }
-  // URL DeepSeek legacy → MiniMax (plus de DeepSeek en prod).
-  if (base.includes("deepseek")) {
-    console.warn(`⚠️ LLM_BASE_URL DeepSeek ignoré → minimax.`);
+  // Claude / Anthropic / DeepSeek ne sont jamais le chat principal.
+  if (
+    base.includes("anthropic") ||
+    base.includes("deepseek") ||
+    model.includes("claude") ||
+    model.includes("deepseek")
+  ) {
+    console.warn(`⚠️ URL/modèle chat Claude|DeepSeek ignoré → minimax (Claude = sim uniquement).`);
     return "minimax";
   }
 
   const raw = process.env.LLM_PROVIDER?.trim().toLowerCase() || "minimax";
-  if (raw === "deepseek") {
-    console.warn(`⚠️ LLM_PROVIDER=deepseek ignoré → minimax.`);
+  if (raw === "deepseek" || raw === "claude" || raw === "anthropic") {
+    console.warn(`⚠️ LLM_PROVIDER=${raw} ignoré → minimax (Claude = filet simulation).`);
     return "minimax";
   }
   if (raw === "openai" || raw === "minimax" || raw === "mistral") {
     return raw;
   }
-  if (raw === "claude" || raw === "anthropic") return "claude";
   if (base.includes("mistral")) return "mistral";
   console.warn(`⚠️ LLM_PROVIDER="${raw}" inconnu → minimax.`);
   return "minimax";
@@ -134,20 +123,18 @@ function resolveLlmBaseUrl(): string {
 }
 
 /**
- * Filet outils = Claude uniquement (jamais DeepSeek).
- * ANTHROPIC_API_KEY / CLAUDE_API_KEY requise ; TOOL_LLM_PROVIDER=deepseek est ignoré.
+ * Filet Claude = génération de simulation uniquement (remplace DeepSeek).
+ * Chat / boucle agent / create_automation = toujours MiniMax (LLM_PROVIDER).
+ * TOOL_LLM_PROVIDER=deepseek est ignoré.
  */
 function resolveToolLlmProvider(): LlmProvider {
   const explicit = process.env.TOOL_LLM_PROVIDER?.trim().toLowerCase();
   if (explicit === "deepseek") {
-    console.warn(`⚠️ TOOL_LLM_PROVIDER=deepseek ignoré → claude.`);
+    console.warn(`⚠️ TOOL_LLM_PROVIDER=deepseek ignoré → claude (filet sim uniquement).`);
   } else if (explicit && explicit !== "claude" && explicit !== "anthropic") {
-    const parsed = parseProvider(explicit, "claude");
-    if (parsed !== "claude") {
-      console.warn(
-        `⚠️ TOOL_LLM_PROVIDER="${explicit}" non supporté pour les outils → claude (MiniMax = chat seulement).`
-      );
-    }
+    console.warn(
+      `⚠️ TOOL_LLM_PROVIDER="${explicit}" ignoré → claude (sim uniquement ; chat = MiniMax).`
+    );
   }
   return "claude";
 }
@@ -267,14 +254,15 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
   /**
-   * Fournisseur LLM chat : MiniMax (défaut). DeepSeek désactivé.
-   * Filet tools = Claude uniquement (ANTHROPIC_API_KEY).
+   * Chat principal = MiniMax partout (dialogue + boucle agent).
+   * Filet Claude = génération de simulation uniquement (ANTHROPIC_API_KEY).
+   * Activation campagne = déterministe, sans LLM.
    */
   llmProvider: resolveLlmProvider(),
   llmBaseUrl: resolveLlmBaseUrl(),
-  /** Modèle chat (dialogue, accroches). */
+  /** Modèle chat (dialogue, accroches, outils agent). */
   openaiModel: resolveLlmModel(),
-  /** Filet tool-calling = Claude (ANTHROPIC_API_KEY / CLAUDE_API_KEY). */
+  /** Filet Claude pour simulation (pas le chat). */
   toolLlmConfigured: isToolLlmConfigured(),
   toolLlmProvider: resolveToolLlmProvider(),
   toolLlmBaseUrl: resolveToolLlmBaseUrl(),

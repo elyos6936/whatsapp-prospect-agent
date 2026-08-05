@@ -19,8 +19,8 @@ export {
 } from "./llm-router.js";
 
 /**
- * Client LLM chat (MiniMax / Claude / Mistral / DeepSeek / OpenAI).
- * Pour la boucle outils, préférer createLlmClientForRole("tools").
+ * Client LLM chat (MiniMax par défaut — dialogue + boucle agent partout).
+ * Filet Claude : createLlmClientForRole("tools") pour la simulation uniquement.
  */
 export function createLlmClient(apiKey: string): OpenAI {
   return createLlmClientForRole("chat", apiKey);

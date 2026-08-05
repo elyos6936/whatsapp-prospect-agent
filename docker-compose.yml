@@ -28,7 +28,7 @@ services:
       LLM_MODEL: ${LLM_MODEL:-MiniMax-M3}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-MiniMax-M3}
-      # Filet tools = Claude uniquement (DeepSeek désactivé)
+      # Filet Claude = simulation uniquement (chat = MiniMax)
       TOOL_LLM_PROVIDER: ${TOOL_LLM_PROVIDER:-claude}
       TOOL_LLM_BASE_URL: ${TOOL_LLM_BASE_URL:-https://api.anthropic.com/v1}
       TOOL_LLM_MODEL: ${TOOL_LLM_MODEL:-claude-sonnet-4-5}

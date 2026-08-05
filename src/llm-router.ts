@@ -1,10 +1,10 @@
 /**
  * Routeur LLM dual :
- * - chatLlm  = dialogue (MiniMax)
- * - toolLlm  = boucle outils (Claude / Anthropic uniquement — DeepSeek désactivé)
+ * - chat  = tout le système de chat / boucle agent / outils (MiniMax)
+ * - tools = filet Claude uniquement pour génération de simulation
+ *           (comme DeepSeek avant — pas pour le dialogue)
  *
- * Les actions critiques (simuler / activer) passent par des chemins
- * déterministes sans LLM — voir deterministic-campaign.ts.
+ * Activation campagne = déterministe (sans LLM) — voir deterministic-campaign.ts.
  */
 import OpenAI from "openai";
 import { config, type LlmProvider } from "./config.js";

@@ -14,7 +14,17 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { toAssistantHistoryMessage, extractAssistantContent, createLlmClientForRole, llmExtrasForRole, recommendedMaxTokensForRole, resolveLlmRoleModel, resolveLlmRoleProvider } from "./llm.js";
+import {
+  createLlmClient,
+  llmProviderLabel,
+  toAssistantHistoryMessage,
+  extractAssistantContent,
+  createLlmClientForRole,
+  llmExtrasForRole,
+  recommendedMaxTokensForRole,
+  resolveLlmRoleModel,
+  resolveLlmRoleProvider,
+} from "./llm.js";
 import {
   runDeterministicActivation,
   runDeterministicSimulation,
@@ -185,15 +195,27 @@ function isBrokenSimulationPreview(text: string): boolean {
   return t.length < 450;
 }
 
-/** Client boucle outils = Claude uniquement (jamais DeepSeek / MiniMax tools). */
-async function getToolLlmClient(_userId: number): Promise<OpenAI> {
-  if (!config.toolLlmConfigured || !config.toolLlmApiKey) {
+/** Client chat principal = MiniMax (dialogue + boucle outils agent). */
+async function getChatLlmClient(userId: number): Promise<OpenAI> {
+  const key = (await getAppSettings(userId)).openai_api_key;
+  if (!key) {
     throw new Error(
-      "ANTHROPIC_API_KEY manquante : les outils (brouillon, simulation, activation) exigent Claude. " +
-        "Ajoute la clé Anthropic dans l'environnement Docker puis rebuild."
+      `Clé ${llmProviderLabel()} manquante. Définissez MINIMAX_API_KEY sur le serveur.`
     );
   }
-  return createLlmClientForRole("tools", config.toolLlmApiKey);
+  return createLlmClient(key);
+}
+
+/**
+ * Client Claude = génération de simulation uniquement (filet, comme DeepSeek avant).
+ * Fallback MiniMax si ANTHROPIC_API_KEY absente.
+ */
+async function getSimLlmClient(userId: number): Promise<OpenAI> {
+  if (config.toolLlmConfigured && config.toolLlmApiKey) {
+    return createLlmClientForRole("tools", config.toolLlmApiKey);
+  }
+  console.warn("[agent] ANTHROPIC_API_KEY absente — simulation via MiniMax (chat)");
+  return getChatLlmClient(userId);
 }
 
 async function buildBusinessContext(
@@ -457,6 +479,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     return MEMORY_REQUIRED_REPLY;
   }
 
+  const client = await getChatLlmClient(userId);
   const [settings, historyRaw, thread] = await Promise.all([
     getAppSettings(userId),
     getRecentAgentMessages(userId, threadId, CHAT_HISTORY_LIMIT),
@@ -625,7 +648,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             .slice(-16)
             .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
             .join("\n\n");
-          const simClient = await getToolLlmClient(userId);
+          const simClient = await getSimLlmClient(userId);
           const sim = await generateCampaignSimulationDirect(simClient, {
             businessContext,
             recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
@@ -662,7 +685,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       const sim = await runDeterministicSimulation({
         userId,
         threadId,
-        client: await getToolLlmClient(userId),
+        client: await getSimLlmClient(userId),
         businessContext,
         history,
         userMessage,
@@ -702,10 +725,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   let dsmlEmptyRetries = 0;
   const MAX_DSML_EMPTY_RETRIES = 2;
 
-  // Boucle outils : Claude (filet) si configuré, sinon modèle chat
-  const toolClient = await getToolLlmClient(userId);
-  const toolModel = resolveLlmRoleModel("tools");
-  const toolProvider = resolveLlmRoleProvider("tools");
+  // Boucle agent = MiniMax partout (chat + outils). Claude = sim uniquement.
+  const toolClient = client;
+  const toolModel = resolveLlmRoleModel("chat");
+  const toolProvider = resolveLlmRoleProvider("chat");
 
   const forceCreateDraftTool =
     !briefing.isInboundClosing &&
