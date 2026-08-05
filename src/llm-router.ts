@@ -1,7 +1,7 @@
 /**
  * Routeur LLM dual :
- * - chatLlm  = dialogue (MiniMax par défaut)
- * - toolLlm  = boucle outils (Claude / Anthropic si ANTHROPIC_API_KEY, sinon DeepSeek)
+ * - chatLlm  = dialogue (MiniMax)
+ * - toolLlm  = boucle outils (Claude / Anthropic uniquement — DeepSeek désactivé)
  *
  * Les actions critiques (simuler / activer) passent par des chemins
  * déterministes sans LLM — voir deterministic-campaign.ts.

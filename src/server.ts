@@ -853,7 +853,9 @@ try {
       `   LLM tools : ${config.toolLlmProvider} (${config.toolLlmModel}) @ ${config.toolLlmBaseUrl}`
     );
   } else {
-    console.log(`   LLM tools : (même que chat — définir ANTHROPIC_API_KEY ou TOOL_LLM_* pour le filet)`);
+    console.error(
+      `   ❌ LLM tools : ANTHROPIC_API_KEY manquante — brouillon/sim/activation exigent Claude`
+    );
   }
   console.log(`   Ouvrez l'app → Connexions → Evolution API + WhatsApp QR\n`);
   startNotificationPoller(12_000);

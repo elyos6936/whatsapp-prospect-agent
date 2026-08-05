@@ -14,7 +14,7 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { createLlmClient, llmProviderLabel, toAssistantHistoryMessage, extractAssistantContent, createLlmClientForRole, llmExtrasForRole, recommendedMaxTokensForRole, resolveLlmRoleModel, resolveLlmRoleProvider } from "./llm.js";
+import { toAssistantHistoryMessage, extractAssistantContent, createLlmClientForRole, llmExtrasForRole, recommendedMaxTokensForRole, resolveLlmRoleModel, resolveLlmRoleProvider } from "./llm.js";
 import {
   runDeterministicActivation,
   runDeterministicSimulation,
@@ -185,22 +185,15 @@ function isBrokenSimulationPreview(text: string): boolean {
   return t.length < 450;
 }
 
-async function getOpenAiClient(userId: number): Promise<OpenAI> {
-  const key = (await getAppSettings(userId)).openai_api_key;
-  if (!key) {
+/** Client boucle outils = Claude uniquement (jamais DeepSeek / MiniMax tools). */
+async function getToolLlmClient(_userId: number): Promise<OpenAI> {
+  if (!config.toolLlmConfigured || !config.toolLlmApiKey) {
     throw new Error(
-      `Clé ${llmProviderLabel()} manquante. Définissez MINIMAX_API_KEY, ANTHROPIC_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY ou OPENAI_API_KEY sur le serveur.`
+      "ANTHROPIC_API_KEY manquante : les outils (brouillon, simulation, activation) exigent Claude. " +
+        "Ajoute la clé Anthropic dans l'environnement Docker puis rebuild."
     );
   }
-  return createLlmClient(key);
-}
-
-/** Client boucle outils (DeepSeek filet si configuré, sinon chat). */
-async function getToolLlmClient(userId: number): Promise<OpenAI> {
-  if (config.toolLlmConfigured && config.toolLlmApiKey) {
-    return createLlmClientForRole("tools", config.toolLlmApiKey);
-  }
-  return getOpenAiClient(userId);
+  return createLlmClientForRole("tools", config.toolLlmApiKey);
 }
 
 async function buildBusinessContext(
@@ -464,7 +457,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     return MEMORY_REQUIRED_REPLY;
   }
 
-  const client = await getOpenAiClient(userId);
   const [settings, historyRaw, thread] = await Promise.all([
     getAppSettings(userId),
     getRecentAgentMessages(userId, threadId, CHAT_HISTORY_LIMIT),
@@ -633,9 +625,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             .slice(-16)
             .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
             .join("\n\n");
-          const simClient = config.toolLlmConfigured
-            ? await getToolLlmClient(userId)
-            : client;
+          const simClient = await getToolLlmClient(userId);
           const sim = await generateCampaignSimulationDirect(simClient, {
             businessContext,
             recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
@@ -672,9 +662,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       const sim = await runDeterministicSimulation({
         userId,
         threadId,
-        client: config.toolLlmConfigured
-          ? await getToolLlmClient(userId)
-          : client,
+        client: await getToolLlmClient(userId),
         businessContext,
         history,
         userMessage,

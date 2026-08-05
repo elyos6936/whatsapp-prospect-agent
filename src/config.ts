@@ -19,7 +19,12 @@ export type LlmProvider = "deepseek" | "openai" | "minimax" | "mistral" | "claud
 
 function parseProvider(raw: string | undefined, fallback: LlmProvider): LlmProvider {
   const v = (raw || "").trim().toLowerCase();
-  if (v === "openai" || v === "minimax" || v === "deepseek" || v === "mistral") return v;
+  // DeepSeek désactivé produit (fuites DSML) — remappé vers Claude.
+  if (v === "deepseek") {
+    console.warn(`⚠️ LLM provider "deepseek" ignoré → ${fallback} (MiniMax chat + Claude tools).`);
+    return fallback;
+  }
+  if (v === "openai" || v === "minimax" || v === "mistral") return v;
   if (v === "claude" || v === "anthropic") return "claude";
   return fallback;
 }
@@ -39,15 +44,24 @@ function resolveLlmProvider(): LlmProvider {
   if (base.includes("anthropic") || model.includes("claude")) {
     return "claude";
   }
+  // URL DeepSeek legacy → MiniMax (plus de DeepSeek en prod).
+  if (base.includes("deepseek")) {
+    console.warn(`⚠️ LLM_BASE_URL DeepSeek ignoré → minimax.`);
+    return "minimax";
+  }
 
-  const raw = process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek";
-  if (raw === "openai" || raw === "minimax" || raw === "deepseek" || raw === "mistral") {
+  const raw = process.env.LLM_PROVIDER?.trim().toLowerCase() || "minimax";
+  if (raw === "deepseek") {
+    console.warn(`⚠️ LLM_PROVIDER=deepseek ignoré → minimax.`);
+    return "minimax";
+  }
+  if (raw === "openai" || raw === "minimax" || raw === "mistral") {
     return raw;
   }
   if (raw === "claude" || raw === "anthropic") return "claude";
   if (base.includes("mistral")) return "mistral";
-  console.warn(`⚠️ LLM_PROVIDER="${raw}" inconnu → deepseek.`);
-  return "deepseek";
+  console.warn(`⚠️ LLM_PROVIDER="${raw}" inconnu → minimax.`);
+  return "minimax";
 }
 
 function defaultBaseUrl(provider: LlmProvider): string {
@@ -55,7 +69,8 @@ function defaultBaseUrl(provider: LlmProvider): string {
   if (provider === "minimax") return "https://api.minimax.io/v1";
   if (provider === "mistral") return "https://api.mistral.ai/v1";
   if (provider === "claude") return "https://api.anthropic.com/v1";
-  return "https://api.deepseek.com";
+  // deepseek type legacy — ne pas joindre api.deepseek.com
+  return "https://api.minimax.io/v1";
 }
 
 function defaultModel(provider: LlmProvider): string {
@@ -63,11 +78,10 @@ function defaultModel(provider: LlmProvider): string {
   if (provider === "minimax") return "MiniMax-M3";
   if (provider === "mistral") return "mistral-medium-3-5";
   if (provider === "claude") return "claude-sonnet-4-5";
-  return "deepseek-v4-pro";
+  return "MiniMax-M3";
 }
 
 function resolveApiKeyForProvider(provider: LlmProvider): string {
-  const deepseek = process.env.DEEPSEEK_API_KEY?.trim() || "";
   const openai = process.env.OPENAI_API_KEY?.trim() || "";
   const minimax = process.env.MINIMAX_API_KEY?.trim() || "";
   const mistral = process.env.MISTRAL_API_KEY?.trim() || "";
@@ -77,25 +91,19 @@ function resolveApiKeyForProvider(provider: LlmProvider): string {
     "";
 
   if (provider === "claude") {
-    return anthropic || openai || "";
+    return anthropic;
   }
   if (provider === "minimax") {
-    return minimax || openai || mistral || deepseek;
+    return minimax || openai || "";
   }
   if (provider === "mistral") {
     return mistral || openai || "";
   }
   if (provider === "deepseek") {
-    if (deepseek) return deepseek;
-    if (openai.startsWith("sk-proj-") || openai.startsWith("sk-svcacct-")) {
-      console.error(
-        "❌ DEEPSEEK_API_KEY manquante : OPENAI_API_KEY (OpenAI) ne peut pas être utilisée avec DeepSeek."
-      );
-      return "";
-    }
-    return openai;
+    // Jamais utilisé en prod — pas de clé DeepSeek.
+    return "";
   }
-  return openai || anthropic || deepseek || minimax || mistral;
+  return openai || anthropic || minimax || mistral;
 }
 
 function resolveLlmApiKey(): string {
@@ -109,61 +117,70 @@ function resolveLlmModel(): string {
   if (provider === "minimax") return raw || defaultModel(provider);
   if (provider === "mistral") return raw || defaultModel(provider);
   if (provider === "claude") return raw || defaultModel(provider);
-  if (!raw || /flash/i.test(raw)) {
-    if (/flash/i.test(raw)) {
-      console.warn(`⚠️ LLM_MODEL="${raw}" (Flash) ignoré → deepseek-v4-pro.`);
-    }
-    return "deepseek-v4-pro";
-  }
-  return raw;
+  return raw || defaultModel("minimax");
 }
 
 function resolveLlmBaseUrl(): string {
   const explicit = process.env.LLM_BASE_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
+  if (explicit) {
+    const lower = explicit.toLowerCase();
+    if (lower.includes("deepseek")) {
+      console.warn(`⚠️ LLM_BASE_URL DeepSeek ignoré → ${defaultBaseUrl("minimax")}`);
+      return defaultBaseUrl("minimax");
+    }
+    return explicit.replace(/\/$/, "");
+  }
   return defaultBaseUrl(resolveLlmProvider());
 }
 
 /**
- * Filet outils : Claude (Anthropic) en priorité pour stabilité tool-calling.
- * DeepSeek seulement si Claude absent et DEEPSEEK_API_KEY présent.
+ * Filet outils = Claude uniquement (jamais DeepSeek).
+ * ANTHROPIC_API_KEY / CLAUDE_API_KEY requise ; TOOL_LLM_PROVIDER=deepseek est ignoré.
  */
 function resolveToolLlmProvider(): LlmProvider {
   const explicit = process.env.TOOL_LLM_PROVIDER?.trim().toLowerCase();
-  if (explicit) return parseProvider(explicit, "claude");
-  if (
-    process.env.ANTHROPIC_API_KEY?.trim() ||
-    process.env.CLAUDE_API_KEY?.trim()
-  ) {
-    return "claude";
+  if (explicit === "deepseek") {
+    console.warn(`⚠️ TOOL_LLM_PROVIDER=deepseek ignoré → claude.`);
+  } else if (explicit && explicit !== "claude" && explicit !== "anthropic") {
+    const parsed = parseProvider(explicit, "claude");
+    if (parsed !== "claude") {
+      console.warn(
+        `⚠️ TOOL_LLM_PROVIDER="${explicit}" non supporté pour les outils → claude (MiniMax = chat seulement).`
+      );
+    }
   }
-  if (process.env.DEEPSEEK_API_KEY?.trim()) return "deepseek";
-  return resolveLlmProvider();
+  return "claude";
 }
 
 function resolveToolLlmBaseUrl(): string {
   const explicit = process.env.TOOL_LLM_BASE_URL?.trim();
-  if (explicit) return explicit.replace(/\/$/, "");
-  return defaultBaseUrl(resolveToolLlmProvider());
+  if (explicit) {
+    const lower = explicit.toLowerCase();
+    if (lower.includes("deepseek")) {
+      console.warn(`⚠️ TOOL_LLM_BASE_URL DeepSeek ignoré → Anthropic.`);
+      return defaultBaseUrl("claude");
+    }
+    return explicit.replace(/\/$/, "");
+  }
+  return defaultBaseUrl("claude");
 }
 
 function resolveToolLlmModel(): string {
   const raw = process.env.TOOL_LLM_MODEL?.trim() || "";
+  if (raw && /deepseek/i.test(raw)) {
+    console.warn(`⚠️ TOOL_LLM_MODEL DeepSeek ignoré → ${defaultModel("claude")}`);
+    return defaultModel("claude");
+  }
   if (raw) return raw;
-  return defaultModel(resolveToolLlmProvider());
+  return defaultModel("claude");
 }
 
 function resolveToolLlmApiKey(): string {
-  return resolveApiKeyForProvider(resolveToolLlmProvider());
+  return resolveApiKeyForProvider("claude");
 }
 
 function isToolLlmConfigured(): boolean {
-  if (process.env.TOOL_LLM_PROVIDER?.trim()) return Boolean(resolveToolLlmApiKey());
-  if (process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()) {
-    return true;
-  }
-  if (process.env.DEEPSEEK_API_KEY?.trim()) return true;
-  return false;
+  return Boolean(resolveToolLlmApiKey());
 }
 
 /**
@@ -250,14 +267,14 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
   /**
-   * Fournisseur LLM chat (API compatible OpenAI : Claude | MiniMax | Mistral | DeepSeek | OpenAI).
-   * Les outils critiques (sim/activate) sont déterministes ; filet tools = toolLlm* (Claude recommandé).
+   * Fournisseur LLM chat : MiniMax (défaut). DeepSeek désactivé.
+   * Filet tools = Claude uniquement (ANTHROPIC_API_KEY).
    */
   llmProvider: resolveLlmProvider(),
   llmBaseUrl: resolveLlmBaseUrl(),
   /** Modèle chat (dialogue, accroches). */
   openaiModel: resolveLlmModel(),
-  /** Filet tool-calling (Claude si ANTHROPIC_API_KEY, sinon DeepSeek / TOOL_LLM_*). */
+  /** Filet tool-calling = Claude (ANTHROPIC_API_KEY / CLAUDE_API_KEY). */
   toolLlmConfigured: isToolLlmConfigured(),
   toolLlmProvider: resolveToolLlmProvider(),
   toolLlmBaseUrl: resolveToolLlmBaseUrl(),
