@@ -406,6 +406,21 @@ export function toE164Display(phoneKey: string): string {
   return d ? `+${d}` : "";
 }
 
+/** Comparaison stricte de numéros (évite les faux positifs endsWith). */
+export function phonesMatchStrict(a: string, b: string): boolean {
+  const da = a.replace(/\D/g, "");
+  const db = b.replace(/\D/g, "");
+  if (!da || !db || da.length < 8 || db.length < 8) return false;
+  if (da === db) return true;
+  // Même numéro avec/sans indicatif pays (ex. 01… vs 22901…)
+  const shorter = da.length <= db.length ? da : db;
+  const longer = da.length > db.length ? da : db;
+  if (longer.endsWith(shorter) && shorter.length >= 9 && longer.length - shorter.length <= 4) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * Recherche un contact People par numéro.
  * Retourne resourceName si trouvé, sinon null.
@@ -443,15 +458,13 @@ export async function searchGoogleContactByPhone(
     }>;
   };
 
-  const want = phoneKey.replace(/\D/g, "");
   for (const r of data.results ?? []) {
     const person = r.person;
     if (!person?.resourceName) continue;
     const phones = person.phoneNumbers ?? [];
-    const match = phones.some((p) => {
-      const v = String(p.canonicalForm || p.value || "").replace(/\D/g, "");
-      return Boolean(v) && (v === want || v.endsWith(want) || want.endsWith(v));
-    });
+    const match = phones.some((p) =>
+      phonesMatchStrict(String(p.canonicalForm || p.value || ""), phoneKey),
+    );
     if (match) return person.resourceName;
   }
   return null;
@@ -483,12 +496,10 @@ export async function getGoogleContactByResource(
   if (!data.resourceName) return null;
 
   if (expectedPhoneKey) {
-    const want = expectedPhoneKey.replace(/\D/g, "");
     const phones = data.phoneNumbers ?? [];
-    const match = phones.some((p) => {
-      const v = String(p.canonicalForm || p.value || "").replace(/\D/g, "");
-      return Boolean(v) && (v === want || v.endsWith(want) || want.endsWith(v));
-    });
+    const match = phones.some((p) =>
+      phonesMatchStrict(String(p.canonicalForm || p.value || ""), expectedPhoneKey),
+    );
     if (!match) return null;
   }
 
@@ -533,7 +544,48 @@ export async function createGoogleContact(
     );
   }
   const data = (await res.json()) as { resourceName?: string };
-  return data.resourceName ?? null;
+  const resourceName = data.resourceName ?? null;
+  if (resourceName) {
+    // Force « Mes contacts » — sinon la fiche peut rester invisible / non sync téléphone.
+    await addContactToMyContacts(accessToken, resourceName).catch((err) => {
+      console.warn(
+        `[google-contacts] membership myContacts: ${
+          err instanceof Error ? err.message.slice(0, 120) : String(err)
+        }`,
+      );
+    });
+  }
+  return resourceName;
+}
+
+/** Ajoute une fiche au groupe « Mes contacts » (sync téléphone). */
+export async function addContactToMyContacts(
+  accessToken: string,
+  resourceName: string,
+): Promise<void> {
+  const rn = resourceName.startsWith("people/") ? resourceName : `people/${resourceName}`;
+  const res = await fetch(
+    `${PEOPLE_BASE}/contactGroups/myContacts/members:modify`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ resourceNamesToAdd: [rn] }),
+    },
+  );
+  if (res.status === 401 || res.status === 403) {
+    throw new GoogleAuthError("Token Google invalide ou People API refusée.", "revoked");
+  }
+  if (!res.ok && res.status !== 400) {
+    // 400 = déjà membre — OK
+    const body = await res.text().catch(() => "");
+    throw new GoogleAuthError(
+      `contactGroups.members.modify HTTP ${res.status}${body ? `: ${body.slice(0, 120)}` : ""}`,
+      "http",
+    );
+  }
 }
 
 /** Met à jour le nom d'une fiche existante (si on a un meilleur pushName). */

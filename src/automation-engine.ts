@@ -309,16 +309,32 @@ async function processGroupProspect(userId: number, auto: Automation): Promise<v
 
     if (!isGroupBroadcast) {
       const { ensureGoogleContactBeforeSend } = await import("./integrations/google-contacts.js");
-      // Ne bloque jamais l'envoi si Google est lent : timeout 4s max
-      await Promise.race([
-        ensureGoogleContactBeforeSend(userId, {
-          phone: target.target_id,
-          name: googleName ?? target.target_label,
-        }),
-        new Promise<{ synced: false; reason: string }>((resolve) =>
-          setTimeout(() => resolve({ synced: false, reason: "timeout" }), 4000),
-        ),
-      ]).catch(() => null);
+      // Anti-blocage : ne PAS envoyer si le contact n'est pas dans Google Contacts.
+      const google = await ensureGoogleContactBeforeSend(userId, {
+        phone: target.target_id,
+        name: googleName ?? target.target_label,
+      });
+      if (!google.synced) {
+        const why =
+          google.reason === "not_connected"
+            ? "Google Contacts non connecté"
+            : google.reason === "token_revoked"
+              ? "Google Contacts révoqué — reconnecte l'intégration"
+              : google.reason === "timeout"
+                ? "Google Contacts trop lent"
+                : `sync Google Contacts échouée (${google.reason || "error"})`;
+        await updateAutomationTarget(userId, auto.id, target.target_id, {
+          status: "error",
+          notes: `Envoi bloqué — ${why}. Le numéro doit être enregistré dans Google Contacts avant prospection.`,
+        });
+        await addAutomationLog(
+          userId,
+          auto.id,
+          "warning",
+          `Cible non contactée (${target.target_label || chatIdToDisplay(target.target_id)}) : ${why}.`,
+        );
+        return;
+      }
     }
 
     if (isGroupBroadcast) {

@@ -1,10 +1,6 @@
 /**
- * Google Contacts via People API — création avant envoi campagne.
- * No-op silencieux si provider google_contacts absent / sans scope ;
- * jamais bloquant pour enqueueSend.
- *
- * Perf : cache hit = 1 lecture SQL, zéro appel Google/Evolution.
- * Coût réseau seulement au 1er sync d'un numéro (create + vérif légère).
+ * Google Contacts via People API — création OBLIGATOIRE avant prospection DM.
+ * Anti-blocage WhatsApp : le numéro doit exister dans « Mes contacts » Google.
  */
 
 import { sql } from "../pg.js";
@@ -18,6 +14,7 @@ import {
   createGoogleContact,
   getGoogleContactByResource,
   updateGoogleContactName,
+  addContactToMyContacts,
   phoneKeyFromWhatsAppId,
   toE164Display,
 } from "./google.js";
@@ -45,10 +42,10 @@ async function ensureSchema(): Promise<void> {
 async function getEnsuredRow(
   userId: number,
   phoneKey: string,
-): Promise<{ resource_name: string | null } | null> {
+): Promise<{ resource_name: string | null; ensured_at: string | null } | null> {
   await ensureSchema();
   const rows = await sql`
-    SELECT resource_name
+    SELECT resource_name, ensured_at
     FROM google_contacts_ensured
     WHERE user_id = ${userId} AND phone_key = ${phoneKey}
     LIMIT 1
@@ -57,6 +54,7 @@ async function getEnsuredRow(
   return {
     resource_name:
       rows[0].resource_name == null ? null : String(rows[0].resource_name),
+    ensured_at: rows[0].ensured_at == null ? null : String(rows[0].ensured_at),
   };
 }
 
@@ -70,7 +68,7 @@ async function markEnsured(
     INSERT INTO google_contacts_ensured (user_id, phone_key, resource_name, ensured_at)
     VALUES (${userId}, ${phoneKey}, ${resourceName}, NOW())
     ON CONFLICT (user_id, phone_key) DO UPDATE SET
-      resource_name = COALESCE(EXCLUDED.resource_name, google_contacts_ensured.resource_name),
+      resource_name = EXCLUDED.resource_name,
       ensured_at = NOW()
   `;
 }
@@ -92,12 +90,38 @@ export async function clearGoogleContactsEnsuredCache(userId: number): Promise<v
   `;
 }
 
+export async function isGoogleContactsConnected(userId: number): Promise<boolean> {
+  const row = await getUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
+  return Boolean(row && hasGoogleContactsScope(row.scopes));
+}
+
+/**
+ * Exige Google Contacts connecté (prospection DM anti-blocage).
+ * Throw Error avec message utilisateur si absent / révoqué.
+ */
+export async function requireGoogleContactsConnected(userId: number): Promise<void> {
+  const row = await getUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
+  if (!row || !hasGoogleContactsScope(row.scopes)) {
+    throw new Error(
+      "Google Contacts n'est pas connecté. Va dans Réglages → Intégrations → Google Contacts " +
+        "pour l'activer — obligatoire avant toute prospection (anti-blocage WhatsApp).",
+    );
+  }
+  try {
+    await getValidGoogleContactsToken(userId);
+  } catch {
+    throw new Error(
+      "Google Contacts est expiré ou révoqué. Reconnecte-le dans Réglages → Intégrations " +
+        "avant de prospecter.",
+    );
+  }
+}
+
 async function resolveDisplayName(
   userId: number,
   phone: string,
   preferred?: string | null,
 ): Promise<string> {
-  // Si l'appelant a déjà un vrai nom (campagne / save_contact), ne pas re-interroquer Evolution
   if (preferred && !isPhoneLikeLabel(preferred)) {
     return String(preferred).trim().slice(0, 100);
   }
@@ -110,30 +134,17 @@ async function resolveDisplayName(
 }
 
 /**
- * Avant enqueueSend / enregistrement manuel : si Google Contacts (People) est
- * connecté, crée la fiche pour ce numéro s'il n'existe pas encore.
- * Ne throw jamais vers l'appelant métier.
+ * Avant enqueueSend / enregistrement manuel : crée la fiche Google Contacts
+ * pour ce numéro et vérifie qu'elle existe vraiment dans « Mes contacts ».
+ * Ne throw jamais vers l'appelant métier (retourne synced + reason).
  */
 export async function ensureGoogleContactBeforeSend(
   userId: number,
   input: { phone: string; name?: string | null },
-): Promise<{ synced: boolean; reason?: string; displayName?: string }> {
+): Promise<{ synced: boolean; reason?: string; displayName?: string; resourceName?: string }> {
   try {
     const phoneKey = phoneKeyFromWhatsAppId(input.phone);
     if (!phoneKey) return { synced: false, reason: "phone_invalid" };
-
-    // Fast path : déjà syncé → aucun appel Google / Evolution
-    const cached = await getEnsuredRow(userId, phoneKey);
-    if (cached?.resource_name) {
-      return {
-        synced: true,
-        reason: "already_ensured",
-        displayName: input.name && !isPhoneLikeLabel(input.name) ? String(input.name) : undefined,
-      };
-    }
-    if (cached && !cached.resource_name) {
-      await clearEnsuredPhone(userId, phoneKey);
-    }
 
     const row = await getUserIntegration(userId, GOOGLE_CONTACTS_PROVIDER);
     if (!row || !hasGoogleContactsScope(row.scopes)) {
@@ -144,26 +155,47 @@ export async function ensureGoogleContactBeforeSend(
     const e164 = toE164Display(phoneKey);
     const displayName = await resolveDisplayName(userId, input.phone, input.name);
 
+    // Cache : re-vérifier chez Google (pas de faux « synchronisé »)
+    const cached = await getEnsuredRow(userId, phoneKey);
+    if (cached?.resource_name) {
+      const verified = await getGoogleContactByResource(
+        accessToken,
+        cached.resource_name,
+        phoneKey,
+      ).catch(() => null);
+      if (verified) {
+        void addContactToMyContacts(accessToken, verified.resourceName).catch(() => {});
+        return {
+          synced: true,
+          reason: "already_ensured",
+          displayName,
+          resourceName: verified.resourceName,
+        };
+      }
+      await clearEnsuredPhone(userId, phoneKey);
+    } else if (cached) {
+      await clearEnsuredPhone(userId, phoneKey);
+    }
+
     const existing = await searchGoogleContactByPhone(accessToken, phoneKey);
     if (existing) {
-      // Une seule lecture légère pour confirmer + éventuellement mettre à jour le nom
       const verified = await getGoogleContactByResource(
         accessToken,
         existing,
         phoneKey,
       ).catch(() => null);
       const resourceName = verified?.resourceName ?? existing;
+      await addContactToMyContacts(accessToken, resourceName).catch(() => {});
       if (
         verified &&
         displayName &&
         !isPhoneLikeLabel(displayName) &&
         isPhoneLikeLabel(verified.displayName)
       ) {
-        // Non bloquant : ne retarde pas l'envoi campagne
         void updateGoogleContactName(accessToken, resourceName, displayName).catch(() => false);
       }
       await markEnsured(userId, phoneKey, resourceName);
-      return { synced: true, reason: "already_in_google", displayName };
+      return { synced: true, reason: "already_in_google", displayName, resourceName };
     }
 
     const created = await createGoogleContact(accessToken, {
@@ -177,16 +209,29 @@ export async function ensureGoogleContactBeforeSend(
       return { synced: false, reason: "create_empty", displayName };
     }
 
-    // createContact renvoie déjà resourceName → on marque tout de suite (pas d'attente d'indexation).
-    // Vérif async optionnelle : si la fiche est illisible, on invalide le cache pour un prochain essai.
-    await markEnsured(userId, phoneKey, created);
-    void getGoogleContactByResource(accessToken, created)
-      .then(async (ok) => {
-        if (!ok) await clearEnsuredPhone(userId, phoneKey);
-      })
-      .catch(() => {});
+    // Vérif synchrone : ne jamais annoncer « synchronisé » sans preuve
+    const verified = await getGoogleContactByResource(accessToken, created, phoneKey).catch(
+      () => null,
+    );
+    if (!verified) {
+      console.warn(
+        `[google-contacts] user=${userId} create OK mais lecture impossible pour ${phoneKey} (${created})`,
+      );
+      await clearEnsuredPhone(userId, phoneKey);
+      return { synced: false, reason: "verify_failed", displayName };
+    }
 
-    return { synced: true, reason: "created", displayName };
+    await markEnsured(userId, phoneKey, verified.resourceName);
+    console.log(
+      `[google-contacts] user=${userId} créé ${phoneKey} → ${verified.resourceName}` +
+        (row.provider_email ? ` (${row.provider_email})` : ""),
+    );
+    return {
+      synced: true,
+      reason: "created",
+      displayName,
+      resourceName: verified.resourceName,
+    };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     if (err instanceof GoogleAuthError && err.code === "revoked") {
@@ -196,8 +241,8 @@ export async function ensureGoogleContactBeforeSend(
       return { synced: false, reason: "token_revoked" };
     }
     console.warn(
-      `[google-contacts] user=${userId} échec ensure (campagne continue) : ${msg.slice(0, 200)}`,
+      `[google-contacts] user=${userId} échec ensure : ${msg.slice(0, 200)}`,
     );
-    return { synced: false, reason: "error" };
+    return { synced: false, reason: "error", displayName: undefined };
   }
 }

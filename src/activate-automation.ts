@@ -123,6 +123,10 @@ export async function activateAutomationCore(
     auto.type === "group_broadcast" ||
     auto.config.mode === "outbound_prospect" ||
     auto.config.mode === "group_broadcast";
+  const isDmProspecting =
+    auto.type === "group_prospect" ||
+    auto.type === "contact_prospect" ||
+    auto.config.mode === "outbound_prospect";
   if (isOutbound) {
     try {
       await requireEvolutionConnected(userId, "l'activation de la campagne");
@@ -130,6 +134,21 @@ export async function activateAutomationCore(
       return {
         ok: false,
         error: err instanceof Error ? err.message : "WhatsApp non connecté — impossible d'activer.",
+        automationId: id,
+      };
+    }
+  }
+  // Anti-blocage : Google Contacts obligatoire avant prospection DM (pas broadcast groupes).
+  if (isDmProspecting) {
+    try {
+      const { requireGoogleContactsConnected } = await import(
+        "./integrations/google-contacts.js"
+      );
+      await requireGoogleContactsConnected(userId);
+    } catch (err) {
+      return {
+        ok: false,
+        error: err instanceof Error ? err.message : "Google Contacts requis avant prospection.",
         automationId: id,
       };
     }

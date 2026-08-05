@@ -443,6 +443,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       description:
         "Enregistre ou met à jour un contact de prospection (base Klanvio) : numéro, nom, notes, statut. " +
         "Si Google Contacts est connecté, crée aussi la fiche dans Google Contacts avec le nom WhatsApp. " +
+        "Lis googleContactsSynced dans la réponse : si false, dis clairement que Google n'a PAS reçu le contact — ne dis jamais « synchronisé ». " +
+        "Si not_connected, invite à connecter Réglages → Intégrations → Google Contacts. " +
         "CRITIQUE : phone = chatId/numéro EXACT du prospect (ex. 22996158855@c.us ou +22996158855). " +
         "Interdit d'inventer un numéro. Pour « enregistre ce prospect », utilise le target_id / contact_phone " +
         "de la campagne ou des messages — jamais un numéro approximatif. Si le nom WhatsApp est connu " +
@@ -2769,22 +2771,23 @@ export async function executeTool(
       });
       const googleNote =
         google.synced
-          ? " Aussi ajouté / déjà présent dans Google Contacts."
+          ? ` Google Contacts : OUI — fiche confirmée dans « Mes contacts » (${google.reason}).`
           : google.reason === "not_connected"
-            ? " (Google Contacts non connecté — fiche Klanvio seulement.)"
+            ? " Google Contacts : NON — intégration non connectée (Réglages → Intégrations). Fiche Klanvio seulement."
             : google.reason === "token_revoked"
-              ? " (Google Contacts : reconnecte l’intégration pour synchroniser.)"
+              ? " Google Contacts : NON — token révoqué, reconnecte l’intégration."
               : google.reason === "verify_failed" || google.reason === "create_empty"
-                ? " (Google Contacts : création non confirmée — réessaie.)"
-                : "";
+                ? " Google Contacts : NON — création non confirmée par Google. Réessaie ou reconnecte."
+                : ` Google Contacts : NON — échec (${google.reason || "error"}).`;
       return JSON.stringify({
         success: true,
         contact: formatContact(contact),
         googleContactsSynced: google.synced,
         googleContactsReason: google.reason ?? null,
+        // Consigne agent : ne JAMAIS dire « synchronisé » si googleContactsSynced === false.
         message: `Contact ${chatIdToDisplay(contact.phone)}${
           contact.name ? ` (${contact.name})` : ""
-        } enregistré (statut : ${contact.status}).${googleNote}`,
+        } enregistré dans Klanvio (statut : ${contact.status}).${googleNote}`,
       });
     }
 
