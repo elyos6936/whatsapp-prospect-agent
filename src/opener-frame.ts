@@ -44,11 +44,14 @@ export function formatAttentionOpenerError(label: string, text: string): string 
 }
 
 /**
- * Prospection sortante : exactement 5 accroches Attention DISTINCTES.
+ * Prospection sortante : exactement 5 accroches DISTINCTES.
  * Empêche de ne garder que initial_message (ou 5 copies du même texte).
+ * @param opts.fromUserValidatedChat — textes déjà validés dans le chat : on n'applique
+ *   pas le filtre A.I.D.A. strict (longueur / pitch) qui rejetterait sinon tout le lot.
  */
 export function validateOutboundAbVariants(
-  variants: Array<{ id?: string; message?: string }> | null | undefined
+  variants: Array<{ id?: string; message?: string }> | null | undefined,
+  opts?: { fromUserValidatedChat?: boolean }
 ): string | null {
   const cleaned = (variants ?? [])
     .map((v, i) => ({
@@ -66,9 +69,11 @@ export function validateOutboundAbVariants(
     );
   }
 
-  for (const v of cleaned) {
-    if (!isValidAttentionOpener(v.message)) {
-      return formatAttentionOpenerError(`ab_variants.${v.id}`, v.message);
+  if (!opts?.fromUserValidatedChat) {
+    for (const v of cleaned) {
+      if (!isValidAttentionOpener(v.message)) {
+        return formatAttentionOpenerError(`ab_variants.${v.id}`, v.message);
+      }
     }
   }
 

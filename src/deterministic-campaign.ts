@@ -1,6 +1,8 @@
 /**
- * Actions campagne sans LLM tool-loop : simulation + activation.
- * Évite les boucles MiniMax sur « simule » / « lance » / « active ».
+ * Actions campagne SANS MiniMax tool-loop :
+ * - brouillon + simulation (Claude pour générer le fil)
+ * - activation
+ * MiniMax = dialogue uniquement.
  */
 import type OpenAI from "openai";
 import {
@@ -16,7 +18,10 @@ import {
   recentHistoryHasSimulation,
   userWantsExplicitResimulation,
 } from "./simulation-gate.js";
-import { wantsCampaignSimulation } from "./campaign-briefing.js";
+import {
+  extractOpenerVariantsFromHistory,
+  wantsCampaignSimulation,
+} from "./campaign-briefing.js";
 
 function parseToolJson(raw: string): {
   ok: boolean;
@@ -53,7 +58,116 @@ async function resolveThreadAutomationId(
 }
 
 /**
- * Simulation déterministe (génération directe, sans tool_choice LLM).
+ * Brouillon + simulation à partir des 5 variantes du chat (pas d'args MiniMax).
+ */
+export async function runDeterministicDraftAndSim(opts: {
+  userId: number;
+  threadId: number;
+  client: OpenAI;
+  businessContext: string;
+  history: AgentMessage[];
+  userMessage: string;
+  purpose?: string | null;
+  threadTitle?: string | null;
+  existingAutomationId?: number | null;
+}): Promise<string | null> {
+  const {
+    userId,
+    threadId,
+    client,
+    businessContext,
+    history,
+    userMessage,
+    purpose,
+    threadTitle,
+    existingAutomationId,
+  } = opts;
+
+  const variants = extractOpenerVariantsFromHistory(history);
+  if (!variants || variants.length !== 5) {
+    console.warn("[deterministic] extractOpenerVariantsFromHistory → null/insuffisant");
+    return null;
+  }
+
+  const autoType = purpose === "groupes" ? "group_broadcast" : "contact_prospect";
+  const draftRaw = await executeTool(userId, threadId, "create_automation", {
+    type: autoType,
+    name: threadTitle?.trim() || "Campagne",
+    status: "draft",
+    initial_message: variants[0]!.message,
+    ab_variants: variants,
+    ab_variants_from_chat: true,
+    personalize_messages: false,
+    stickers_enabled: false,
+    ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
+  });
+
+  const draft = parseToolJson(draftRaw);
+  if (!draft.ok) {
+    console.warn("[deterministic] draft error:", draft.error || draftRaw.slice(0, 240));
+    return (
+      draft.error ||
+      "Impossible d'enregistrer le brouillon avec les 5 accroches. Réessaie « oui »."
+    );
+  }
+
+  const freshThread = await getAgentThread(userId, threadId);
+  let approvedOpener = variants[0]!.message;
+  let campaignBrief: string | null = null;
+  if (freshThread?.automation_id) {
+    const auto = await getAutomation(userId, freshThread.automation_id);
+    approvedOpener = auto?.config.initialMessage?.trim() || approvedOpener;
+    if (auto) {
+      const bits = [
+        auto.config.conversationGuide ? `Guide :\n${auto.config.conversationGuide}` : "",
+        auto.config.productName ? `Produit : ${auto.config.productName}` : "",
+        auto.config.price ? `Prix : ${auto.config.price}` : "",
+        auto.config.closingLink ? `Lien : ${auto.config.closingLink}` : "",
+      ].filter(Boolean);
+      try {
+        const { formatCampaignMemoryForWhatsApp, getLinkedMemoryForAutomation } =
+          await import("./campaign-sync.js");
+        const mem = await getLinkedMemoryForAutomation(userId, auto.id);
+        if (mem) bits.push(formatCampaignMemoryForWhatsApp(mem));
+      } catch {
+        /* ignore */
+      }
+      campaignBrief = bits.join("\n\n") || null;
+    }
+  }
+
+  const recentTranscript = history
+    .slice(-16)
+    .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
+    .join("\n\n");
+
+  const sim = await generateCampaignSimulationDirect(client, {
+    businessContext,
+    recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
+    approvedOpener,
+    campaignBrief,
+  });
+
+  if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
+    try {
+      const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
+      await persistLivePlaybookForThread(userId, threadId, sim.turns);
+    } catch (err) {
+      console.warn("[deterministic] persist playbook:", err);
+    }
+    return (
+      `Parfait — les 5 accroches sont enregistrées en brouillon.\n\n` + sim.display.trim()
+    );
+  }
+
+  return (
+    "Parfait — les 5 accroches sont enregistrées en brouillon. " +
+    "Dis « simule » pour l'aperçu sur le téléphone à droite, ou « active » pour lancer."
+  );
+}
+
+/**
+ * Simulation déterministe (génération Claude / filet — sans tool_choice MiniMax).
  */
 export async function runDeterministicSimulation(opts: {
   userId: number;
@@ -89,6 +203,11 @@ export async function runDeterministicSimulation(opts: {
       }
       campaignBrief = bits.join("\n\n") || null;
     }
+  }
+
+  if (!approvedOpener) {
+    const variants = extractOpenerVariantsFromHistory(history);
+    approvedOpener = variants?.[0]?.message ?? null;
   }
 
   const recentTranscript = history
@@ -167,7 +286,6 @@ export function shouldDeterministicActivate(
     return false;
   }
 
-  // Ordre explicite (« lancer », « active les campagnes »)
   if (/^(lance|lancer|active|activer|démarre|demarre|go)(\s|$|[!.])/i.test(t)) return true;
   if (
     /\b(active|activer|lance|lancer)\s+(les?\s+)?(campagnes?|automatisations?|maintenant)\b/i.test(
@@ -177,7 +295,6 @@ export function shouldDeterministicActivate(
     return true;
   }
 
-  // Oui / vas-y après question d'activation post-simulation
   if (
     recentHistoryHasSimulation(history) &&
     recentAssistantAskedActivationConfirm(history) &&
@@ -187,3 +304,10 @@ export function shouldDeterministicActivate(
   }
   return false;
 }
+
+/** Outils « puissance » — jamais via args MiniMax bruts. */
+export const POWER_CAMPAIGN_TOOLS = new Set([
+  "create_automation",
+  "show_campaign_simulation",
+  "activate_automation",
+]);

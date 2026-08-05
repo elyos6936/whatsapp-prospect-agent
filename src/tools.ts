@@ -4296,6 +4296,7 @@ export async function executeTool(
       if (
         type !== "group_broadcast" &&
         config.initialMessage &&
+        !args.ab_variants_from_chat &&
         !isValidAttentionOpener(config.initialMessage)
       ) {
         return JSON.stringify({
@@ -4304,9 +4305,12 @@ export async function executeTool(
       }
       const abVariantsParsed = parseAbVariantsArg(args.ab_variants);
       const abVariantsExplicit = Boolean(abVariantsParsed);
+      const abFromChat = Boolean(args.ab_variants_from_chat);
       // Pré-contrôle si ab_variants est fourni (évite un merge inutile)
       if (isOutbound && abVariantsExplicit) {
-        const early = validateOutboundAbVariants(abVariantsParsed!);
+        const early = validateOutboundAbVariants(abVariantsParsed!, {
+          fromUserValidatedChat: abFromChat,
+        });
         if (early) return JSON.stringify({ error: early });
       }
 
@@ -4348,7 +4352,9 @@ export async function executeTool(
 
         // Toujours 5 variantes en sortant (après merge) — empêche de ne garder que initial_message
         if (isOutbound) {
-          const abErr = validateOutboundAbVariants(merged.abVariants);
+          const abErr = validateOutboundAbVariants(merged.abVariants, {
+            fromUserValidatedChat: abFromChat,
+          });
           if (abErr) return JSON.stringify({ error: abErr });
           merged.personalizeMessages = false;
         }

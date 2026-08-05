@@ -29,9 +29,11 @@ import {
 } from "./llm.js";
 import {
   runDeterministicActivation,
+  runDeterministicDraftAndSim,
   runDeterministicSimulation,
   shouldDeterministicActivate,
   shouldDeterministicSimulate,
+  POWER_CAMPAIGN_TOOLS,
 } from "./deterministic-campaign.js";
 import {
   assessCampaignBriefing,
@@ -39,10 +41,8 @@ import {
   hasNumberedOpenerList,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
-  extractOpenerVariantsFromHistory,
   isShortCampaignValidation,
 } from "./campaign-briefing.js";
-import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
 import {
   hasSimulationThread,
   recentHistoryHasSimulation,
@@ -543,7 +543,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     purpose: thread?.purpose,
     userMessage,
     recentHistory: history,
-  });
+  }).filter(
+    (t) =>
+      t.type !== "function" ||
+      !POWER_CAMPAIGN_TOOLS.has(String(t.function?.name ?? ""))
+  );
 
   // ── Routeur déterministe (pas de boucle LLM) ─────────────────────────────
   // Activation : « lancer » / « active » / oui après question d'activation
@@ -563,9 +567,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Chemin déterministe : « oui » après les 5 variantes → brouillon + simulation
-  // Prioritaire même si le briefing « questions » est incomplet — sinon MiniMax
-  // force create_automation avec un JSON ab_variants cassé (HTTP 400 / 2015).
+  // Chemin déterministe : « oui » après les 5 variantes → brouillon + sim (Claude)
+  // MiniMax ne touche JAMAIS create_automation / show_campaign_simulation ici.
   if (
     !briefing.isInboundClosing &&
     briefing.openerVariantsProposed &&
@@ -576,110 +579,25 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     turnMode !== "activation_nudge" &&
     !shouldDeterministicActivate(history, userMessage)
   ) {
-    const variants = extractOpenerVariantsFromHistory(history);
-    if (variants && variants.length === 5) {
-      try {
-        const autoType =
-          thread?.purpose === "groupes" ? "group_broadcast" : "contact_prospect";
-        const draftRaw = await executeTool(userId, threadId, "create_automation", {
-          type: autoType,
-          name: thread?.title?.trim() || "Campagne",
-          status: "draft",
-          initial_message: variants[0]!.message,
-          ab_variants: variants,
-          personalize_messages: false,
-          stickers_enabled: false,
-          ...(thread?.automation_id ? { automation_id: thread.automation_id } : {}),
-        });
-        let draftOk = false;
-        try {
-          const parsed = JSON.parse(draftRaw) as {
-            success?: boolean;
-            updated?: boolean;
-            error?: string;
-            automationId?: number;
-            automation_id?: number;
-            id?: number;
-          };
-          draftOk = Boolean(
-            !parsed.error &&
-              (parsed.success ||
-                parsed.updated ||
-                parsed.automationId ||
-                parsed.automation_id ||
-                parsed.id)
-          );
-          if (parsed.error) {
-            console.warn("[agent] fast draft error:", parsed.error);
-          }
-        } catch {
-          draftOk = /success|brouillon|mis à jour|enregistr/i.test(draftRaw);
-        }
-
-        if (draftOk) {
-          const freshThread = await getAgentThread(userId, threadId);
-          let approvedOpener = variants[0]!.message;
-          let campaignBrief: string | null = null;
-          if (freshThread?.automation_id) {
-            const auto = await getAutomation(userId, freshThread.automation_id);
-            approvedOpener = auto?.config.initialMessage?.trim() || approvedOpener;
-            if (auto) {
-              const bits = [
-                auto.config.conversationGuide
-                  ? `Guide :\n${auto.config.conversationGuide}`
-                  : "",
-                auto.config.productName ? `Produit : ${auto.config.productName}` : "",
-                auto.config.price ? `Prix : ${auto.config.price}` : "",
-                auto.config.closingLink ? `Lien : ${auto.config.closingLink}` : "",
-              ].filter(Boolean);
-              try {
-                const { formatCampaignMemoryForWhatsApp, getLinkedMemoryForAutomation } =
-                  await import("./campaign-sync.js");
-                const mem = await getLinkedMemoryForAutomation(userId, auto.id);
-                if (mem) bits.push(formatCampaignMemoryForWhatsApp(mem));
-              } catch {
-                /* ignore */
-              }
-              campaignBrief = bits.join("\n\n") || null;
-            }
-          }
-
-          const recentTranscript = history
-            .slice(-16)
-            .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
-            .join("\n\n");
-          const simClient = await getSimLlmClient(userId);
-          const sim = await generateCampaignSimulationDirect(simClient, {
-            businessContext,
-            recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
-            approvedOpener,
-            campaignBrief,
-          });
-          if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
-            try {
-              const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
-              await persistLivePlaybookForThread(userId, threadId, sim.turns);
-            } catch (err) {
-              console.warn("[agent] persist playbook (fast path):", err);
-            }
-            return (
-              `Parfait — les 5 accroches sont enregistrées en brouillon.\n\n` +
-              sim.display.trim()
-            );
-          }
-          return (
-            "Parfait — les 5 accroches sont enregistrées en brouillon. " +
-            "Dis « simule » pour l'aperçu sur le téléphone à droite, ou « active » pour lancer."
-          );
-        }
-      } catch (err) {
-        console.warn("[agent] fast path variants→draft/sim:", err);
-      }
+    try {
+      const drafted = await runDeterministicDraftAndSim({
+        userId,
+        threadId,
+        client: await getSimLlmClient(userId),
+        businessContext,
+        history,
+        userMessage,
+        purpose: thread?.purpose,
+        threadTitle: thread?.title,
+        existingAutomationId: thread?.automation_id ?? null,
+      });
+      if (drafted) return drafted;
+    } catch (err) {
+      console.warn("[agent] fast path variants→draft/sim:", err);
     }
   }
 
-  // Simulation LLM : si échec, message clair — INTERDIT de laisser le LLM inventer
-  // « Simulation affichée sur le téléphone » sans fence klanvio-sim.
+  // Simulation déterministe (Claude) — pas MiniMax
   if (shouldDeterministicSimulate(history, userMessage) || forceSim) {
     try {
       const sim = await runDeterministicSimulation({
@@ -727,20 +645,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const MAX_DSML_EMPTY_RETRIES = 2;
   const MAX_EMPTY_REPLY_RETRIES = 2;
 
-  // Boucle agent = MiniMax partout (chat + outils). Claude = sim uniquement.
+  // Boucle dialogue MiniMax uniquement — brouillon / sim / activate = chemins déterministes.
   const toolClient = client;
   const toolModel = resolveLlmRoleModel("chat");
   const toolProvider = resolveLlmRoleProvider("chat");
 
-  // Ne PAS forcer create_automation via MiniMax (JSON ab_variants souvent invalide).
-  // Le fast path déterministe ci-dessus crée le brouillon + sim sans tool_choice.
-  const forceCreateDraftTool = false;
-
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
 
-    // tool_choice auto : l'agent choisit les outils selon le brief.
-    // Filet : forcer create_automation après « oui » sur les 5 variantes.
     let response: OpenAI.Chat.Completions.ChatCompletion;
     try {
       response = await callOpenAiWithRetry(() =>
@@ -748,9 +660,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           model: toolModel,
           messages,
           tools: toolsForTurn,
-          tool_choice: forceCreateDraftTool && rounds === 1
-            ? { type: "function", function: { name: "create_automation" } }
-            : "auto",
+          tool_choice: "auto",
           temperature: toolProvider === "minimax" ? 1 : 0.7,
           max_tokens: recommendedMaxTokensForProvider(
             toolProvider,
@@ -821,6 +731,50 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
       for (const toolCall of assistantMsg.tool_calls) {
         if (toolCall.type !== "function") continue;
+
+        // MiniMax ne doit jamais exécuter brouillon / sim / activation avec ses args.
+        if (POWER_CAMPAIGN_TOOLS.has(toolCall.function.name)) {
+          if (toolCall.function.name === "activate_automation") {
+            const activated = await runDeterministicActivation({ userId, threadId });
+            if (activated) return activated;
+          }
+          if (toolCall.function.name === "show_campaign_simulation") {
+            forcedSimUsed = true;
+            const sim = await runDeterministicSimulation({
+              userId,
+              threadId,
+              client: await getSimLlmClient(userId),
+              businessContext,
+              history,
+              userMessage,
+            });
+            if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
+          }
+          if (toolCall.function.name === "create_automation" && !briefing.isInboundClosing) {
+            const drafted = await runDeterministicDraftAndSim({
+              userId,
+              threadId,
+              client: await getSimLlmClient(userId),
+              businessContext,
+              history,
+              userMessage,
+              purpose: thread?.purpose,
+              threadTitle: thread?.title,
+              existingAutomationId: thread?.automation_id ?? null,
+            });
+            if (drafted) return drafted;
+          }
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({
+              error:
+                "Cet outil est géré côté serveur (pas MiniMax). " +
+                "Dis à l'utilisateur de répondre « oui » / « simule » / « active » — le système s'en charge.",
+            }),
+          });
+          continue;
+        }
 
         if (toolCall.function.name === "show_campaign_simulation") {
           forcedSimUsed = true;

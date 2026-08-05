@@ -129,9 +129,20 @@ const OPENER_DELEGATION_RE =
 const OPENER_SINGLE_PROPOSED_RE =
   /\b(voici\s+(mon\s+|une\s+|l['’])?(accroche|proposition|premier\s+message)|je\s+(te\s+)?propose\s+(cette|une)\s+(accroche|ouverture|approche|phrase)|proposition\s+d['’]accroche|une\s+(seule\s+)?accroche|accroche\s+(propos[eé]e|retenue)|premier\s+message\s+propos[eé])\b/i;
 
-/** Validation courte de l'accroche unique (oui / ok / valide…). */
+/** Validation courte de l'accroche / des 5 variantes (oui / ok / je valide…). */
 const OPENER_SINGLE_VALIDATE_RE =
-  /^\s*(oui|ouais|ok|okay|d['’]accord|dac|parfait|nickel|top|valide|valid[eé]|c['’]est\s+bon|c\s+bon|vas[- ]?y|garde|j['’]aime|ça\s+me\s+va|ca\s+me\s+va|bonne|impeccable|go)([!.\s:]|$)/i;
+  /^\s*(oui|ouais|ok|okay|d['’]accord|dac|parfait|nickel|top|valide|valid[eé]|je\s+valide|c['’]est\s+bon|c\s+bon|vas[- ]?y|garde|j['’]aime|ça\s+me\s+va|ca\s+me\s+va|bonne|impeccable|go)\b/i;
+
+/** Validation courte type « oui / ok / je valide » (accroches ou ensemble). */
+export function isShortCampaignValidation(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 100) return false;
+  if (/^(non|nan|no|nop|refuse|pas\s+d['’]?accord)\b/i.test(t)) return false;
+  if (OPENER_SINGLE_VALIDATE_RE.test(t)) return true;
+  // « Oui, je valide » / « Ok je valide tout » / « c'est parfait »
+  return /\b(oui|ok|okay|d['’]accord|parfait|nickel)\b/i.test(t) &&
+    /\b(valide|valid[eé]|bon|ensemble|tout|les\s+5|accroches?)\b/i.test(t);
+}
 
 function isSubstantiveUserReply(text: string): boolean {
   const t = text.trim();
@@ -155,7 +166,14 @@ export function looksLikeOpenerDraft(text: string): boolean {
 export function hasNumberedOpenerList(content: string): boolean {
   let count = 0;
   for (let n = 1; n <= 5; n++) {
-    if (new RegExp(`(?:^|\\n)\\s*${n}\\s*[.)]\\s+\\S`, "m").test(content)) count++;
+    if (
+      new RegExp(
+        `(?:^|\\n)\\s*(?:\\*\\*|__)?${n}(?:\\*\\*|__)?\\s*[.)：:\\-]\\s*\\S`,
+        "m"
+      ).test(content)
+    ) {
+      count++;
+    }
   }
   return count >= 4;
 }
@@ -173,19 +191,21 @@ export function extractOpenerVariantsFromHistory(
     const variants: Array<{ id: string; message: string }> = [];
     for (let n = 1; n <= 5; n++) {
       const re = new RegExp(
-        `(?:^|\\n)\\s*${n}\\s*[.)]\\s*([\\s\\S]*?)(?=(?:\\n\\s*[1-5]\\s*[.)])|\\n\\n|$)`,
+        `(?:^|\\n)\\s*(?:\\*\\*|__)?${n}(?:\\*\\*|__)?\\s*[.)：:\\-]\\s*([\\s\\S]*?)(?=(?:\\n\\s*(?:\\*\\*|__)?[1-5](?:\\*\\*|__)?\\s*[.)：:\\-])|\\n\\n|$)`,
         "m"
       );
       const hit = m.content.match(re);
-      const text = hit?.[1]
-        ?.replace(/^["«]\s*|\s*["»]$/g, "")
+      let text = hit?.[1]
+        ?.replace(/^["«"\s]+|["»"\s]+$/g, "")
+        .replace(/\*\*/g, "")
         .replace(/\s+/g, " ")
         .trim();
       if (!text || text.length < 8) continue;
+      // Accroche Attention : tronquer plutôt que rejeter (user a déjà validé le chat)
+      if (text.length > 280) text = text.slice(0, 277).trim() + "…";
       variants.push({ id: `v${n}`, message: text.slice(0, 500) });
     }
     if (variants.length >= 4) {
-      // Compléter à 5 si besoin (duplique la dernière)
       while (variants.length < 5) {
         const last = variants[variants.length - 1]!;
         variants.push({
@@ -197,11 +217,6 @@ export function extractOpenerVariantsFromHistory(
     }
   }
   return null;
-}
-
-/** Validation courte type « oui / ok / valide » (accroches ou ensemble). */
-export function isShortCampaignValidation(text: string): boolean {
-  return OPENER_SINGLE_VALIDATE_RE.test(text.trim());
 }
 
 export function isOpenerDelegation(text: string): boolean {
