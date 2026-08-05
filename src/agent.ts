@@ -723,7 +723,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   let simFixAttempts = 0;
   let forcedSimUsed = false;
   let dsmlEmptyRetries = 0;
+  let emptyReplyRetries = 0;
   const MAX_DSML_EMPTY_RETRIES = 2;
+  const MAX_EMPTY_REPLY_RETRIES = 2;
 
   // Boucle agent = MiniMax partout (chat + outils). Claude = sim uniquement.
   const toolClient = client;
@@ -755,10 +757,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             ? { type: "function", function: { name: "create_automation" } }
             : "auto",
           temperature: toolProvider === "minimax" ? 1 : 0.7,
-          max_tokens: recommendedMaxTokensForRole("tools", CHAT_MAX_TOKENS, {
+          max_tokens: recommendedMaxTokensForRole("chat", CHAT_MAX_TOKENS, {
             thinkingEnabled: false,
           }),
-          ...llmExtrasForRole("tools", { enableThinking: false }),
+          ...llmExtrasForRole("chat", { enableThinking: false }),
         } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
       );
     } catch (err) {
@@ -1187,6 +1189,20 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       }
+      if (emptyReplyRetries < MAX_EMPTY_REPLY_RETRIES && rounds < MAX_TOOL_ROUNDS) {
+        emptyReplyRetries++;
+        console.warn(
+          `[agent] réponse vide (finish=${choice.finish_reason ?? "?"}) — retry ${emptyReplyRetries}/${MAX_EMPTY_REPLY_RETRIES}`
+        );
+        messages.push({
+          role: "system",
+          content:
+            "Ta dernière réponse était vide. Réponds MAINTENANT à l'utilisateur en français, " +
+            "clairement (1–3 phrases). Si un outil est nécessaire, utilise tool_calls natif — " +
+            "sinon réponds en texte. INTERDIT de répondre vide.",
+        });
+        continue;
+      }
       return "Je n'ai pas pu générer de réponse. Réessayez.";
     }
 
@@ -1293,10 +1309,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         model: toolModel,
         messages,
         temperature: toolProvider === "minimax" ? 1 : 0.7,
-        max_tokens: recommendedMaxTokensForRole("tools", 500, {
+        max_tokens: recommendedMaxTokensForRole("chat", 500, {
           thinkingEnabled: false,
         }),
-        ...llmExtrasForRole("tools", { enableThinking: false }),
+        ...llmExtrasForRole("chat", { enableThinking: false }),
       } as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming)
     );
     const wrapText = extractAssistantContent(wrapUp.choices[0]?.message).trim();
