@@ -15,8 +15,18 @@ export function hasSimulationThread(text: string): boolean {
   // Fence dédiée au téléphone — ne pas stripper avant ce test
   if (/```klanvio-sim\b/i.test(text)) return true;
   const cleaned = stripCodeFences(text);
+  // Liste d'accroches 1–5 ≠ fil de simulation (même avec « … » et le mot simulation)
+  if (
+    /(?:^|\n)\s*(?:\*\*|__)?1(?:\*\*|__)?\s*[.)：:\-]\s*\S/m.test(cleaned) &&
+    /(?:^|\n)\s*(?:\*\*|__)?[45](?:\*\*|__)?\s*[.)：:\-]\s*\S/m.test(cleaned)
+  ) {
+    return false;
+  }
   const arrowTurns = (cleaned.match(/→/g) || []).length;
-  if (arrowTurns >= 2) return true;
+  if (arrowTurns >= 2) {
+    // Exige au moins un tour « Toi/Moi » pour éviter les flèches décoratives
+    if (/(^|\n)\s*(toi|moi)\s*→/im.test(cleaned)) return true;
+  }
   if (
     /(^|\n)\s*(toi|moi)\s*→/im.test(cleaned) &&
     /(^|\n)\s*\S{2,}\s*→/im.test(cleaned)
@@ -30,11 +40,13 @@ export function hasSimulationThread(text: string): boolean {
   ) {
     return true;
   }
-  // Guillemets français seulement (jamais " ASCII du JSON planDisplay).
+  // Guillemets : seulement si vraiment un fil Toi / Prospect (pas accroches + mot « simulation »)
   const quotes = cleaned.match(/«[^»\n]{8,}»/g);
-  // Au moins 2 répliques « … » ET un marqueur de fil (Toi/Prospect/Simulation).
   if (quotes && quotes.length >= 2) {
-    return /\b(toi|prospect|simulation)\b/i.test(cleaned);
+    const hasSpeakers =
+      /(^|\n)\s*(toi|moi)\s*[:→]/im.test(cleaned) &&
+      /(^|\n)\s*(prospect|prospect\s*\d+)\s*[:→]/im.test(cleaned);
+    if (hasSpeakers) return true;
   }
   return false;
 }
@@ -137,8 +149,16 @@ export function recentAssistantAskedActivationConfirm(history: AgentMessage[]): 
   for (let i = history.length - 1; i >= 0 && i >= history.length - 8; i--) {
     const m = history[i];
     if (m?.role !== "assistant") continue;
+    // Proposition de 5 accroches / création brouillon ≠ demande d'activation
     if (
-      /veux-tu activer|voulez-vous activer|activer.*maintenant|je (l[’'])?active|tu veux que je l[’']active|autres? modifi|modifications? à faire|je lance|lancer (la )?(campagne|automatisation)/i.test(
+      /tu valides l['’]ensemble|valides? (l['’]ensemble|les\s+5|les\s+accroches)|je lance la cr[eé]ation/i.test(
+        m.content
+      )
+    ) {
+      continue;
+    }
+    if (
+      /veux-tu activer|voulez-vous activer|activer\s+(la\s+)?(campagne|automatisation)?\s*maintenant|je (l[’']\s*)?active\s+(maintenant|la campagne)|tu veux que je l[’']?active|active\s+maintenant|autres? modifi|modifications?\s+[àa]\s+faire|lancer\s+(la\s+)?(campagne|automatisation)\s+maintenant/i.test(
         m.content
       )
     ) {

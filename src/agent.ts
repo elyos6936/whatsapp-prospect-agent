@@ -561,27 +561,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     );
   }
 
-  // Activation : « lancer » / « active » / oui après question d'activation
-  // (garde-fou sim dans runDeterministicActivation — sauf « lance sans simulation »)
   const bareValidation =
     isShortCampaignValidation(userMessage) &&
     !/\b(lance|lancer|active|activer|démarre|demarre)\b/i.test(userMessage);
-  if (
-    shouldDeterministicActivate(history, userMessage) &&
-    !(bareValidation && !hasSimAlready)
-  ) {
-    try {
-      const activated = await runDeterministicActivation({
-        userId,
-        threadId,
-        history,
-        userMessage,
-      });
-      if (activated) return activated;
-    } catch (err) {
-      console.warn("[agent] deterministic activate failed:", err);
-    }
-  }
 
   // Support : brouillon + sim déterministes (pas MiniMax)
   if (
@@ -613,17 +595,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Chemin déterministe : « oui » après les 5 variantes → brouillon + sim (Claude)
-  // MiniMax ne touche JAMAIS create_automation / show_campaign_simulation ici.
-  // Choix produit 3-A : draft+sim immédiat même sans stickers/briefing restants.
+  // « oui » après les 5 variantes → brouillon + sim AVANT toute tentative d'activation
+  // (évite le faux positif : guillemets + « simulation » + « je lance » → activate sans campagne)
   if (
     !briefing.isInboundClosing &&
     briefing.openerVariantsProposed &&
     isShortCampaignValidation(userMessage) &&
-    !hasSimAlready &&
-    turnMode !== "activation_confirm" &&
-    turnMode !== "activation_nudge" &&
-    !shouldDeterministicActivate(history, userMessage)
+    !hasSimAlready
   ) {
     try {
       const drafted = await runDeterministicDraftAndSim({
@@ -640,6 +618,24 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       if (drafted) return drafted;
     } catch (err) {
       console.warn("[agent] fast path variants→draft/sim:", err);
+    }
+  }
+
+  // Activation : « lancer » / « active » / oui après vraie question d'activation
+  if (
+    shouldDeterministicActivate(history, userMessage) &&
+    !(bareValidation && !hasSimAlready)
+  ) {
+    try {
+      const activated = await runDeterministicActivation({
+        userId,
+        threadId,
+        history,
+        userMessage,
+      });
+      if (activated) return activated;
+    } catch (err) {
+      console.warn("[agent] deterministic activate failed:", err);
     }
   }
 

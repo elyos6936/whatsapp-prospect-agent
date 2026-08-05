@@ -12,6 +12,8 @@ import {
   isActivationNegation,
   isExplicitActivationConfirm,
   isSimulationApproval,
+  recentAssistantAskedActivationConfirm,
+  recentHistoryHasSimulation,
   resolveSimulationTurnMode,
   shouldAutoOpenSimulationPanel,
   shouldBlockDuplicateSimulation,
@@ -62,6 +64,32 @@ assert(isSimulationApproval("ok"), "approval: ok");
 assert(!isSimulationApproval("change le ton"), "not approval: change ton");
 assert(isExplicitActivationConfirm("lance"), "activation: lance");
 assert(isExplicitActivationConfirm("oui active"), "activation: oui active");
+assert(
+  !hasSimulationThread(
+    "Voici 5 variantes :\n1. « Salut A »\n2. « Salut B »\n3. « Salut C »\n4. « Salut D »\n5. « Salut E »\n\nTu valides l'ensemble ? Si oui, je lance la création puis la simulation.",
+  ),
+  "5 variantes + mot simulation ≠ fil sim",
+);
+{
+  const histVariants: AgentMessage[] = [
+    msg(
+      "assistant",
+      "Voici 5 variantes :\n1. « Salut A »\n2. « Salut B »\n3. « Salut C »\n4. « Salut D »\n5. « Salut E »\n\nTu valides l'ensemble ? Si oui, je lance la création de la campagne, puis la simulation.",
+    ),
+  ];
+  assert(
+    !recentHistoryHasSimulation(histVariants),
+    "history: variantes ≠ hasSim",
+  );
+  assert(
+    !recentAssistantAskedActivationConfirm(histVariants),
+    "valides l'ensemble ≠ ask activate",
+  );
+  assert(
+    !shouldDeterministicActivate(histVariants, "oui"),
+    "oui après variantes ≠ activate",
+  );
+}
 assert(userWantsExplicitResimulation("refais la simulation"), "resim: refais");
 assert(userWantsExplicitResimulation("recommence la simu"), "resim: recommence");
 assert(!userWantsExplicitResimulation("adoucis le ton"), "no resim: tweak only");
