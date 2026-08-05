@@ -15,11 +15,12 @@ if (!Number.isInteger(port) || port < 1 || port > 65535) {
   process.exit(1);
 }
 
-export type LlmProvider = "deepseek" | "openai" | "minimax" | "mistral";
+export type LlmProvider = "deepseek" | "openai" | "minimax" | "mistral" | "claude";
 
 function parseProvider(raw: string | undefined, fallback: LlmProvider): LlmProvider {
   const v = (raw || "").trim().toLowerCase();
   if (v === "openai" || v === "minimax" || v === "deepseek" || v === "mistral") return v;
+  if (v === "claude" || v === "anthropic") return "claude";
   return fallback;
 }
 
@@ -35,11 +36,15 @@ function resolveLlmProvider(): LlmProvider {
   if (base.includes("minimax") || model.includes("minimax")) {
     return "minimax";
   }
+  if (base.includes("anthropic") || model.includes("claude")) {
+    return "claude";
+  }
 
   const raw = process.env.LLM_PROVIDER?.trim().toLowerCase() || "deepseek";
   if (raw === "openai" || raw === "minimax" || raw === "deepseek" || raw === "mistral") {
     return raw;
   }
+  if (raw === "claude" || raw === "anthropic") return "claude";
   if (base.includes("mistral")) return "mistral";
   console.warn(`⚠️ LLM_PROVIDER="${raw}" inconnu → deepseek.`);
   return "deepseek";
@@ -49,6 +54,7 @@ function defaultBaseUrl(provider: LlmProvider): string {
   if (provider === "openai") return "https://api.openai.com/v1";
   if (provider === "minimax") return "https://api.minimax.io/v1";
   if (provider === "mistral") return "https://api.mistral.ai/v1";
+  if (provider === "claude") return "https://api.anthropic.com/v1";
   return "https://api.deepseek.com";
 }
 
@@ -56,6 +62,7 @@ function defaultModel(provider: LlmProvider): string {
   if (provider === "openai") return "gpt-4o";
   if (provider === "minimax") return "MiniMax-M3";
   if (provider === "mistral") return "mistral-medium-3-5";
+  if (provider === "claude") return "claude-sonnet-4-5";
   return "deepseek-v4-pro";
 }
 
@@ -64,7 +71,14 @@ function resolveApiKeyForProvider(provider: LlmProvider): string {
   const openai = process.env.OPENAI_API_KEY?.trim() || "";
   const minimax = process.env.MINIMAX_API_KEY?.trim() || "";
   const mistral = process.env.MISTRAL_API_KEY?.trim() || "";
+  const anthropic =
+    process.env.ANTHROPIC_API_KEY?.trim() ||
+    process.env.CLAUDE_API_KEY?.trim() ||
+    "";
 
+  if (provider === "claude") {
+    return anthropic || openai || "";
+  }
   if (provider === "minimax") {
     return minimax || openai || mistral || deepseek;
   }
@@ -81,7 +95,7 @@ function resolveApiKeyForProvider(provider: LlmProvider): string {
     }
     return openai;
   }
-  return openai || deepseek || minimax || mistral;
+  return openai || anthropic || deepseek || minimax || mistral;
 }
 
 function resolveLlmApiKey(): string {
@@ -94,6 +108,7 @@ function resolveLlmModel(): string {
   if (provider === "openai") return raw || defaultModel(provider);
   if (provider === "minimax") return raw || defaultModel(provider);
   if (provider === "mistral") return raw || defaultModel(provider);
+  if (provider === "claude") return raw || defaultModel(provider);
   if (!raw || /flash/i.test(raw)) {
     if (/flash/i.test(raw)) {
       console.warn(`⚠️ LLM_MODEL="${raw}" (Flash) ignoré → deepseek-v4-pro.`);
@@ -109,11 +124,19 @@ function resolveLlmBaseUrl(): string {
   return defaultBaseUrl(resolveLlmProvider());
 }
 
-/** Filet outils (DeepSeek recommandé). Si non configuré → même LLM que le chat. */
+/**
+ * Filet outils : Claude (Anthropic) en priorité pour stabilité tool-calling.
+ * DeepSeek seulement si Claude absent et DEEPSEEK_API_KEY présent.
+ */
 function resolveToolLlmProvider(): LlmProvider {
   const explicit = process.env.TOOL_LLM_PROVIDER?.trim().toLowerCase();
-  if (explicit) return parseProvider(explicit, "deepseek");
-  // Défaut : DeepSeek si clé présente, sinon chat
+  if (explicit) return parseProvider(explicit, "claude");
+  if (
+    process.env.ANTHROPIC_API_KEY?.trim() ||
+    process.env.CLAUDE_API_KEY?.trim()
+  ) {
+    return "claude";
+  }
   if (process.env.DEEPSEEK_API_KEY?.trim()) return "deepseek";
   return resolveLlmProvider();
 }
@@ -135,8 +158,10 @@ function resolveToolLlmApiKey(): string {
 }
 
 function isToolLlmConfigured(): boolean {
-  // Actif si TOOL_LLM_* explicite OU DEEPSEEK_API_KEY présente (filet auto)
   if (process.env.TOOL_LLM_PROVIDER?.trim()) return Boolean(resolveToolLlmApiKey());
+  if (process.env.ANTHROPIC_API_KEY?.trim() || process.env.CLAUDE_API_KEY?.trim()) {
+    return true;
+  }
   if (process.env.DEEPSEEK_API_KEY?.trim()) return true;
   return false;
 }
@@ -225,14 +250,14 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET?.trim() || "",
   publicUrl: (process.env.PUBLIC_URL?.trim() || "http://localhost:3000").replace(/\/$/, ""),
   /**
-   * Fournisseur LLM chat (API compatible OpenAI : DeepSeek | MiniMax | Mistral | OpenAI).
-   * Les outils critiques (sim/activate) sont déterministes ; filet tools = toolLlm*.
+   * Fournisseur LLM chat (API compatible OpenAI : Claude | MiniMax | Mistral | DeepSeek | OpenAI).
+   * Les outils critiques (sim/activate) sont déterministes ; filet tools = toolLlm* (Claude recommandé).
    */
   llmProvider: resolveLlmProvider(),
   llmBaseUrl: resolveLlmBaseUrl(),
   /** Modèle chat (dialogue, accroches). */
   openaiModel: resolveLlmModel(),
-  /** Filet tool-calling (DeepSeek si DEEPSEEK_API_KEY / TOOL_LLM_*). */
+  /** Filet tool-calling (Claude si ANTHROPIC_API_KEY, sinon DeepSeek / TOOL_LLM_*). */
   toolLlmConfigured: isToolLlmConfigured(),
   toolLlmProvider: resolveToolLlmProvider(),
   toolLlmBaseUrl: resolveToolLlmBaseUrl(),

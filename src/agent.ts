@@ -189,7 +189,7 @@ async function getOpenAiClient(userId: number): Promise<OpenAI> {
   const key = (await getAppSettings(userId)).openai_api_key;
   if (!key) {
     throw new Error(
-      `Clé ${llmProviderLabel()} manquante. Définissez MINIMAX_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY ou OPENAI_API_KEY sur le serveur.`
+      `Clé ${llmProviderLabel()} manquante. Définissez MINIMAX_API_KEY, ANTHROPIC_API_KEY, MISTRAL_API_KEY, DEEPSEEK_API_KEY ou OPENAI_API_KEY sur le serveur.`
     );
   }
   return createLlmClient(key);
@@ -546,35 +546,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Simulation LLM : si échec, message clair — INTERDIT de laisser le LLM inventer
-  // « Simulation affichée sur le téléphone » sans fence klanvio-sim.
-  if (shouldDeterministicSimulate(history, userMessage) || forceSim) {
-    try {
-      const sim = await runDeterministicSimulation({
-        userId,
-        threadId,
-        client: config.toolLlmConfigured
-          ? await getToolLlmClient(userId)
-          : client,
-        businessContext,
-        history,
-        userMessage,
-      });
-      if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
-      if (sim?.trim()) {
-        console.warn("[agent] simulation sans fence klanvio-sim — rejetée");
-      }
-    } catch (err) {
-      console.warn("[agent] deterministic simulation failed:", err);
-    }
-    return (
-      "Je n'ai pas pu générer la simulation pour le moment. " +
-      "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
-    );
-  }
-
   // Chemin déterministe : « oui » après les 5 variantes → brouillon + simulation
-  // (évite les boucles tool-calling MiniMax qui laissent l'UI sur « L'agent réfléchit… »).
+  // AVANT force_sim : un « oui » après variantes peut matcher wantsCampaignSimulation
+  // (l'agent a déjà parlé de sim) et court-circuiterait le draft.
   if (
     !briefing.isInboundClosing &&
     briefing.readyForDraft &&
@@ -691,6 +665,33 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
+  // Simulation LLM : si échec, message clair — INTERDIT de laisser le LLM inventer
+  // « Simulation affichée sur le téléphone » sans fence klanvio-sim.
+  if (shouldDeterministicSimulate(history, userMessage) || forceSim) {
+    try {
+      const sim = await runDeterministicSimulation({
+        userId,
+        threadId,
+        client: config.toolLlmConfigured
+          ? await getToolLlmClient(userId)
+          : client,
+        businessContext,
+        history,
+        userMessage,
+      });
+      if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
+      if (sim?.trim()) {
+        console.warn("[agent] simulation sans fence klanvio-sim — rejetée");
+      }
+    } catch (err) {
+      console.warn("[agent] deterministic simulation failed:", err);
+    }
+    return (
+      "Je n'ai pas pu générer la simulation pour le moment. " +
+      "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
+    );
+  }
+
   // Simulation LLM fallback déjà tentée via runDeterministicSimulation plus haut.
   // Ne plus pousser FORCE_SIMULATION_NUDGE (le LLM inventait le footer sans fence).
 
@@ -710,8 +711,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   let rounds = 0;
   let simFixAttempts = 0;
   let forcedSimUsed = false;
+  let dsmlEmptyRetries = 0;
+  const MAX_DSML_EMPTY_RETRIES = 2;
 
-  // Boucle outils : DeepSeek (filet) si configuré, sinon modèle chat
+  // Boucle outils : Claude (filet) si configuré, sinon modèle chat
   const toolClient = await getToolLlmClient(userId);
   const toolModel = resolveLlmRoleModel("tools");
   const toolProvider = resolveLlmRoleProvider("tools");
@@ -787,12 +790,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         console.warn(
           `[agent] DSML récupéré → ${usable.map((t) => t.function.name).join(", ")}`
         );
-      } else if (rounds < MAX_TOOL_ROUNDS) {
-        console.warn("[agent] DSML détecté sans args utilisables — retry native tools");
+      } else if (dsmlEmptyRetries < MAX_DSML_EMPTY_RETRIES && rounds < MAX_TOOL_ROUNDS) {
+        dsmlEmptyRetries++;
+        console.warn(
+          `[agent] DSML sans args utilisables — retry ${dsmlEmptyRetries}/${MAX_DSML_EMPTY_RETRIES}`
+        );
         messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       } else {
-        return "Je n'ai pas pu appeler l'outil correctement. Réessaie en une phrase (ex. « crée le brouillon »).";
+        return "Je n'ai pas pu appeler l'outil correctement. Réessaie en une phrase (ex. « crée le brouillon » ou « simule »).";
       }
     } else if (containsDsmlToolMarkup(rawContentForDsml)) {
       const cleaned = stripDsmlMarkup(rawContentForDsml).trim();
@@ -1141,7 +1147,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     let text = extractAssistantContent(assistantMsg);
     if (containsDsmlToolMarkup(text)) {
       const cleaned = stripDsmlMarkup(text);
-      if (!cleaned && rounds < MAX_TOOL_ROUNDS) {
+      if (
+        !cleaned &&
+        dsmlEmptyRetries < MAX_DSML_EMPTY_RETRIES &&
+        rounds < MAX_TOOL_ROUNDS
+      ) {
+        dsmlEmptyRetries++;
         messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       }
@@ -1156,7 +1167,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         });
         continue;
       }
-      if (rounds < MAX_TOOL_ROUNDS && containsDsmlToolMarkup(extractAssistantContent(assistantMsg))) {
+      if (
+        dsmlEmptyRetries < MAX_DSML_EMPTY_RETRIES &&
+        rounds < MAX_TOOL_ROUNDS &&
+        containsDsmlToolMarkup(extractAssistantContent(assistantMsg))
+      ) {
+        dsmlEmptyRetries++;
         messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       }

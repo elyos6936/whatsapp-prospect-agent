@@ -1,7 +1,7 @@
 /**
  * Routeur LLM dual :
  * - chatLlm  = dialogue (MiniMax par défaut)
- * - toolLlm  = boucle outils (DeepSeek par défaut si clé présente)
+ * - toolLlm  = boucle outils (Claude / Anthropic si ANTHROPIC_API_KEY, sinon DeepSeek)
  *
  * Les actions critiques (simuler / activer) passent par des chemins
  * déterministes sans LLM — voir deterministic-campaign.ts.
@@ -41,6 +41,7 @@ export function resolveLlmRoleApiKey(role: LlmRole): string {
 
 export function llmRoleLabel(role: LlmRole): string {
   const p = resolveLlmRoleProvider(role);
+  if (p === "claude") return "Claude";
   if (p === "deepseek") return "DeepSeek";
   if (p === "minimax") return "MiniMax";
   if (p === "mistral") return "Mistral";
@@ -49,9 +50,14 @@ export function llmRoleLabel(role: LlmRole): string {
 
 export function createLlmClientForRole(role: LlmRole, apiKey?: string): OpenAI {
   const key = (apiKey?.trim() || resolveLlmRoleApiKey(role)).trim();
+  const provider = resolveLlmRoleProvider(role);
   return new OpenAI({
     apiKey: key,
     baseURL: resolveLlmRoleBaseUrl(role),
+    // Compat OpenAI Anthropic : version API requise côté Claude
+    ...(provider === "claude"
+      ? { defaultHeaders: { "anthropic-version": "2023-06-01" } }
+      : {}),
   });
 }
 

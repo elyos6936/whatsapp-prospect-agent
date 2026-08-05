@@ -21,13 +21,15 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       LLM_PROVIDER: ${LLM_PROVIDER:-minimax}
       LLM_BASE_URL: ${LLM_BASE_URL:-https://api.minimax.io/v1}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLAUDE_API_KEY: ${CLAUDE_API_KEY:-}
       DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
       MINIMAX_API_KEY: ${MINIMAX_API_KEY:-}
       MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
       LLM_MODEL: ${LLM_MODEL:-MiniMax-M3}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-MiniMax-M3}
-      # Filet tool-calling (recommandé : DeepSeek)
+      # Filet tool-calling (recommandé : Claude / Anthropic)
       TOOL_LLM_PROVIDER: ${TOOL_LLM_PROVIDER:-}
       TOOL_LLM_BASE_URL: ${TOOL_LLM_BASE_URL:-}
       TOOL_LLM_MODEL: ${TOOL_LLM_MODEL:-}

@@ -19,7 +19,7 @@ export {
 } from "./llm-router.js";
 
 /**
- * Client LLM chat (DeepSeek / MiniMax / Mistral / OpenAI).
+ * Client LLM chat (MiniMax / Claude / Mistral / DeepSeek / OpenAI).
  * Pour la boucle outils, préférer createLlmClientForRole("tools").
  */
 export function createLlmClient(apiKey: string): OpenAI {
