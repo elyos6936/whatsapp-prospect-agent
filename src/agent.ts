@@ -63,6 +63,7 @@ import {
   DSML_RETRY_NUDGE,
   parseDsmlToolCalls,
   stripDsmlMarkup,
+  userSafeAssistantText,
 } from "./dsml-tool-calls.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
@@ -757,7 +758,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     const assistantMsg = choice.message;
 
-    // Fuite outils en DSML dans content (DeepSeek / parfois Mistral) au lieu de tool_calls.
+    // Fuite outils en DSML dans content (DeepSeek / MiniMax) au lieu de tool_calls.
     const rawContentForDsml =
       typeof assistantMsg.content === "string"
         ? assistantMsg.content
@@ -767,13 +768,27 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       containsDsmlToolMarkup(rawContentForDsml)
     ) {
       const recovered = parseDsmlToolCalls(rawContentForDsml);
-      if (recovered.toolCalls.length > 0) {
-        assistantMsg.tool_calls = recovered.toolCalls as typeof assistantMsg.tool_calls;
+      const usable = recovered.toolCalls.filter((t) => {
+        const args = t.function.arguments?.trim() || "{}";
+        // create_automation / update sans args = fuite vide → mieux retenter
+        if (
+          (t.function.name === "create_automation" ||
+            t.function.name === "update_automation" ||
+            t.function.name === "show_campaign_simulation") &&
+          (args === "{}" || args === "")
+        ) {
+          return false;
+        }
+        return true;
+      });
+      if (usable.length > 0) {
+        assistantMsg.tool_calls = usable as typeof assistantMsg.tool_calls;
         assistantMsg.content = recovered.contentWithoutDsml.trim() || null;
         console.warn(
-          `[agent] DSML récupéré → ${recovered.toolCalls.map((t) => t.function.name).join(", ")}`
+          `[agent] DSML récupéré → ${usable.map((t) => t.function.name).join(", ")}`
         );
       } else if (rounds < MAX_TOOL_ROUNDS) {
+        console.warn("[agent] DSML détecté sans args utilisables — retry native tools");
         messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       } else {
@@ -1132,12 +1147,17 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       }
       text = cleaned;
     }
+    text = userSafeAssistantText(text, "");
     if (!text) {
       if (forceSim && !forcedSimUsed && rounds < MAX_TOOL_ROUNDS) {
         messages.push({
           role: "system",
           content: FORCE_SIMULATION_NUDGE,
         });
+        continue;
+      }
+      if (rounds < MAX_TOOL_ROUNDS && containsDsmlToolMarkup(extractAssistantContent(assistantMsg))) {
+        messages.push({ role: "system", content: DSML_RETRY_NUDGE });
         continue;
       }
       return "Je n'ai pas pu générer de réponse. Réessayez.";

@@ -1,29 +1,40 @@
 /** Retire footers outil, IDs techniques et @g.us du texte assistant affiché. */
+
+function stripDsmlClient(text: string): string {
+  let out = text.replace(/\uFF5C/g, '|');
+  out = out.replace(/\|\s*\|+/g, '|');
+  out = out.replace(
+    /<\s*\/?\s*\|[\s|]*DSML[\s|]*[^>]*>/gi,
+    '',
+  );
+  out = out.replace(/<\/?\|DSML\|[^>]*>/gi, '');
+  out = out.replace(/\|?\s*DSML\s*\|?\s*(?:tool_calls|invoke|parameter)[^\n]*/gi, '');
+  out = out.replace(/\[\s*DSML\s*\][^\n]*/gi, '');
+  out = out.replace(/\binvoke\s*[:=]?\s*name\s*=\s*["'][^"']+["'][^\n]*/gi, '');
+  out = out.replace(/\btool_calls\s*:?\s*/gi, '');
+  out = out.replace(/\bDSML\b/gi, '');
+  out = out.replace(/^\s*[+|]+\s*$/gm, '');
+  out = out.replace(/[<>]\s*[|/]+\s*/g, ' ');
+  return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function looksLikeDsml(text: string): boolean {
+  return (
+    /\bDSML\b/i.test(text) ||
+    /invoke\s*[:=]?\s*name\s*=/i.test(text) ||
+    /tool_calls\s*>/i.test(text)
+  );
+}
+
 export function sanitizeAssistantText(text: string): string {
   if (!text?.trim()) return text;
 
   let out = text;
 
   // Fuite d'appels d'outils DSML / invoke — jamais afficher à l'utilisateur
-  if (
-    /(?:<\s*[|｜]\s*DSML\s*[|｜]|\[\s*DSML\s*\]|\bDSML\b\s*[|｜:]?\s*(?:tool_calls|invoke)|invoke\s*[:=]\s*name\s*=)/i.test(
-      out,
-    )
-  ) {
-    out = out
-      .replace(/\uFF5C/g, '|')
-      .replace(/<\s*\|?\s*DSML\s*\|?\s*tool_calls\s*>[\s\S]*?(?:<\/\s*\|?\s*DSML\s*\|?\s*tool_calls\s*>|$)/gi, '')
-      .replace(/<\s*\|?\s*DSML\s*\|?\s*invoke[\s\S]*?(?:<\/\s*\|?\s*DSML\s*\|?\s*invoke\s*>|$)/gi, '')
-      .replace(/<\s*\|?\s*DSML\s*\|?\s*parameter[\s\S]*?(?:<\/\s*\|?\s*DSML\s*\|?\s*parameter\s*>|$)/gi, '')
-      .replace(/<\s*\|?\s*DSML\s*\|?[^>]*>/gi, '')
-      .replace(/<\/\s*\|?\s*DSML\s*\|?\s*\w*\s*>/gi, '')
-      .replace(/\|\s*DSML\s*\|\s*(?:tool_calls|invoke|parameter)[^\n]*/gi, '')
-      .replace(/\[\s*DSML\s*\][^\n]*/gi, '')
-      .replace(/\binvoke\s*[:=]\s*name\s*=\s*["'][^"']+["'][^\n]*/gi, '')
-      .replace(/\btool_calls\s*:?\s*/gi, '')
-      .replace(/^\s*[+|]+\s*$/gm, '')
-      .trim();
-    if (!out) {
+  if (looksLikeDsml(out)) {
+    out = stripDsmlClient(out);
+    if (!out || looksLikeDsml(out)) {
       return "Je finalise l'action… Relance-moi si rien ne bouge.";
     }
   }
@@ -94,7 +105,6 @@ export function sanitizeAssistantText(text: string): string {
   out = out.replace(/\n{3,}/g, '\n\n');
 
   // Répare listes numérotées collées sur une ligne : « 1. A 2. B 3. C » → hard breaks
-  // (évite le mur de texte si le LLM / un vieux message a omis les retours ligne)
   if (/\d+\.\s+\S.+\s+\d+\.\s+\S/.test(out)) {
     out = out.replace(/([^\n\d])\s+(\d{1,3}\.\s+)/g, '$1  \n$2');
   }

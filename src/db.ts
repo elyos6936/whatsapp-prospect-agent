@@ -443,9 +443,24 @@ export async function saveAgentMessage(
   role: AgentRole,
   content: string
 ): Promise<AgentMessage> {
+  let safeContent = content;
+  if (role === "assistant") {
+    const { userSafeAssistantText, containsDsmlToolMarkup } = await import(
+      "./dsml-tool-calls.js"
+    );
+    if (containsDsmlToolMarkup(content)) {
+      console.warn(
+        `[db] strip DSML avant persistance (thread=${threadId}): ${content.slice(0, 80)}…`,
+      );
+    }
+    safeContent = userSafeAssistantText(
+      content,
+      "Je finalise l'action… Relance-moi si rien ne bouge.",
+    );
+  }
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO agent_conversation (user_id, thread_id, role, content)
-    VALUES (${userId}, ${threadId}, ${role}, ${content})
+    VALUES (${userId}, ${threadId}, ${role}, ${safeContent})
     RETURNING id, role, content, created_at
   `;
   await touchAgentThread(userId, threadId);
