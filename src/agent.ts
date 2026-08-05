@@ -567,6 +567,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   if (
     !briefing.isInboundClosing &&
     briefing.readyForDraft &&
+    briefing.openerSingleValidated &&
     briefing.openerVariantsProposed &&
     briefing.stickersQuestionAsked &&
     isShortCampaignValidation(userMessage) &&
@@ -735,6 +736,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const forceCreateDraftTool =
     !briefing.isInboundClosing &&
     briefing.readyForDraft &&
+    briefing.openerSingleValidated &&
     briefing.openerVariantsProposed &&
     briefing.stickersQuestionAsked &&
     isShortCampaignValidation(userMessage) &&

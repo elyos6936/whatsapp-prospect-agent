@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AppHeader } from '@/components/layout/AppHeader';
 import { AppSidebar } from '@/components/layout/AppSidebar';
 import { ChatWorkspace } from '@/components/chat/ChatWorkspace';
@@ -27,6 +27,7 @@ import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { NewAutomationModal } from '@/components/ui/NewAutomationModal';
 import { PhoneSimulationPanel } from '@/components/chat/PhoneSimulationPanel';
+import { extractLatestSimulationBubbles } from '@/lib/parse-simulation-turns';
 
 export default function AuthenticatedApp() {
   const { user, refreshUser } = useAuth();
@@ -52,6 +53,22 @@ export default function AuthenticatedApp() {
   const neverConnected = user?.whatsapp?.state === 'not_configured';
 
   const activeThread = threads.find((t) => t.id === activeThreadId) ?? null;
+
+  /** Téléphone uniquement en phase simulation (fence klanvio-sim) — plus de panneau vide statique. */
+  const showPhoneSimPanel = useMemo(() => {
+    if (overlayView != null || activeThreadId == null) return false;
+    const purpose = activeThread?.purpose;
+    const isCampaignThread =
+      activeThread?.automation_id != null ||
+      purpose === 'prospection' ||
+      purpose === 'support' ||
+      purpose === 'groupes';
+    if (!isCampaignThread) return false;
+    if (extractLatestSimulationBubbles(messages).length >= 2) return true;
+    return messages.some(
+      (m) => m.kind === 'assistant' && /```klanvio-sim\b/i.test(m.content),
+    );
+  }, [overlayView, activeThreadId, activeThread?.automation_id, activeThread?.purpose, messages]);
 
   // Retour OAuth Typeform → ouvrir Réglages / Intégrations
   useEffect(() => {
@@ -332,10 +349,7 @@ export default function AuthenticatedApp() {
 
       {overlayView == null &&
         activeThreadId != null &&
-        (activeThread?.automation_id != null ||
-          activeThread?.purpose === 'prospection' ||
-          activeThread?.purpose === 'support' ||
-          activeThread?.purpose === 'groupes') && (
+        showPhoneSimPanel && (
         <PhoneSimulationPanel
           threadId={activeThreadId}
           purpose={activeThread?.purpose ?? null}

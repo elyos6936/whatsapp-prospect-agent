@@ -759,27 +759,28 @@ export function buildBriefingNudge(
       );
     }
 
-    // Étape 2 : après validation → montrer les 5 variantes (rotation aléatoire / équitable)
+    // Étape 2 : après validation → montrer les 5 variantes SEULEMENT (pas encore brouillon/sim)
     if (!assessment.openerVariantsProposed) {
       return (
         "L'accroche unique est **validée**. Propose maintenant **exactement 5 variantes** dérivées de cette accroche " +
         "(liste numérotée 1–5, même intention, formulations distinctes — Attention seulement, SANS prix/lien/pitch). " +
-        "Explique en une phrase que le **premier message réel** sera **l'une de ces 5** (rotation), pas un envoi unique figé. " +
-        "Attends un OK sur l'ensemble (pas besoin de choisir un seul numéro). " +
-        "Puis create_automation draft (initial_message = accroche validée ou v1, ab_variants = les 5 textes). " +
-        "Ensuite propose la simulation (show_campaign_simulation, 6-7 tours)."
+        "Explique en une phrase que le **premier message réel** sera **l'une de ces 5** (rotation). " +
+        "Demande un OK sur l'ensemble (« oui » / « c'est bon »). " +
+        "**INTERDIT** dans ce message : create_automation, simulation, téléphone, activer. " +
+        "Attends la validation des 5 avant toute suite."
       );
     }
 
+    // Étape 3 : 5 validées → brouillon + simulation téléphone (puis validation sim → lancement)
     return (
-      "Les 5 variantes ont été proposées. " +
-      "Crée MAINTENANT create_automation draft avec " +
-      "initial_message = l'accroche validée (ou v1), ET ab_variants = les **5 textes complets** " +
-      "proposés juste avant (jamais un seul message). personalize_messages=false. " +
-      "Le 1er message sortant réel = rotation parmi les 5 (pas un choix unique obligatoire). " +
-      "(handoff_keywords=[] et third_party_notification_enabled=false par défaut en prospection — ne les demande pas). " +
-      "Utilise le champ tool_calls natif — INTERDIT de coller du DSML / invoke dans le texte. " +
-      "Propose ensuite la simulation (6-7 messages via show_campaign_simulation)."
+      "Les 5 variantes ont été proposées et l'utilisateur les valide. " +
+      "ORDRE STRICT : (1) create_automation draft avec initial_message = accroche validée (ou v1) " +
+      "ET ab_variants = les **5 textes complets** (jamais un seul). personalize_messages=false. " +
+      "(2) Immédiatement après : show_campaign_simulation (6-7 tours) pour le **téléphone à droite** " +
+      "(fence ```klanvio-sim obligatoire). " +
+      "(3) Demande validation de la sim — INTERDIT d'activer tant qu'il n'a pas validé la simulation. " +
+      "Utilise tool_calls natif — INTERDIT DSML / invoke dans le texte. " +
+      "(handoff_keywords=[] ; third_party_notification_enabled=false en prospection)."
     );
   }
 
