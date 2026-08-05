@@ -105,6 +105,9 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         name,
       });
 
+      const { tryAcceptPendingInviteByEmail } = await import("./team.js");
+      await tryAcceptPendingInviteByEmail(user.id);
+
       const token = app.signUserToken(user.id);
       return { token, user: publicUser(user) };
     },
@@ -134,6 +137,8 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       if (block) {
         return reply.status(403).send({ error: block, code: "account_blocked" });
       }
+      const { tryAcceptPendingInviteByEmail } = await import("./team.js");
+      await tryAcceptPendingInviteByEmail(user.id);
       const token = app.signUserToken(user.id);
       return { token, user: publicUser(user) };
     },
@@ -187,6 +192,9 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       if (block) {
         return reply.status(403).send({ error: block, code: "account_blocked" });
       }
+
+      const { tryAcceptPendingInviteByEmail } = await import("./team.js");
+      await tryAcceptPendingInviteByEmail(user.id);
 
       const token = app.signUserToken(user.id);
       return { token, user: publicUser(user) };

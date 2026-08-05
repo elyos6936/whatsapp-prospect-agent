@@ -1,15 +1,23 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { AuthUI } from '@/components/ui/auth-fuse';
 import { SeoHead } from '@/components/SeoHead';
 import { useAuth } from '@/lib/auth';
 import { ApiError } from '@/lib/api';
 
+function redirectQuery(searchParams: URLSearchParams): string {
+  const redirect = searchParams.get('redirect');
+  if (!redirect) return '';
+  return `?redirect=${encodeURIComponent(redirect)}`;
+}
+
 export function LoginPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const { login, loginGoogle } = useAuth();
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const qs = redirectQuery(searchParams);
 
   return (
     <>
@@ -23,7 +31,7 @@ export function LoginPage() {
         initialSignIn
         onBack={() => navigate('/')}
         onModeChange={(isSignIn) => {
-          if (!isSignIn) navigate('/register');
+          if (!isSignIn) navigate(`/register${qs}`);
         }}
         handlers={{
           busy,
@@ -40,7 +48,7 @@ export function LoginPage() {
             }
           },
           onSignUp: async () => {
-            navigate('/register');
+            navigate(`/register${qs}`);
           },
           onGoogle: async (accessToken) => {
             setError('');

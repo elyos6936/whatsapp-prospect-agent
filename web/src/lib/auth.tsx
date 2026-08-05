@@ -50,13 +50,29 @@ function toMe(user: AuthUser, fallbackWhatsApp?: MeResponse['whatsapp']): MeResp
   };
 }
 
+function safeRedirectPath(): string | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const raw = params.get('redirect');
+    if (!raw) return null;
+    const path = decodeURIComponent(raw);
+    // Uniquement chemins relatifs internes
+    if (!path.startsWith('/') || path.startsWith('//') || path.includes('://')) return null;
+    return path;
+  } catch {
+    return null;
+  }
+}
+
 function syncAppUrl(loggedIn: boolean): void {
   if (typeof window === 'undefined') return;
   const path = window.location.pathname;
   if (loggedIn) {
-    // Après connexion : quitter landing / auth vers l'app
+    // Après connexion : quitter landing / auth vers redirect ou /app
     if (path === '/' || path === '/login' || path === '/register') {
-      window.history.pushState(null, '', '/app');
+      const next = safeRedirectPath() || '/app';
+      window.history.pushState(null, '', next);
       window.dispatchEvent(new PopStateEvent('popstate'));
     }
     return;

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { Loader2, Users } from 'lucide-react';
 import { acceptTeamInvite, fetchTeamInvitePreview } from '@/lib/api';
@@ -7,7 +7,7 @@ import { useAuth } from '@/lib/auth';
 export function InvitePage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, refreshUser } = useAuth();
   const [preview, setPreview] = useState<{
     workspaceName: string;
     email: string;
@@ -18,6 +18,7 @@ export function InvitePage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const autoAcceptStarted = useRef(false);
 
   useEffect(() => {
     if (!token) return;
@@ -36,14 +37,33 @@ export function InvitePage() {
     setError('');
     try {
       await acceptTeamInvite(token);
+      await refreshUser();
       navigate('/app?settings=team', { replace: true });
-      window.location.reload();
+      window.location.assign('/app?settings=team');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Impossible d’accepter l’invitation.');
-    } finally {
       setBusy(false);
     }
   };
+
+  // Invitation déjà acceptée (ex. auto à l'inscription) → entrer dans l'app
+  useEffect(() => {
+    if (authLoading || loading || !preview || !user) return;
+    if (preview.accepted) {
+      navigate('/app', { replace: true });
+    }
+  }, [authLoading, loading, preview, user, navigate]);
+
+  // Connecté avec le bon email → accepter automatiquement
+  useEffect(() => {
+    if (authLoading || loading || !token || !preview || !user) return;
+    if (preview.expired || preview.accepted) return;
+    if (user.email.toLowerCase() !== preview.email.toLowerCase()) return;
+    if (autoAcceptStarted.current || busy) return;
+    autoAcceptStarted.current = true;
+    void handleAccept();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot auto-accept
+  }, [authLoading, loading, token, preview, user]);
 
   if (loading || authLoading) {
     return (
@@ -67,6 +87,9 @@ export function InvitePage() {
   const roleLabel = preview.role === 'admin' ? 'administrateur' : 'membre';
   const emailMismatch =
     user && user.email.toLowerCase() !== preview.email.toLowerCase();
+  const inviteQs = token
+    ? `?redirect=${encodeURIComponent(`/invite/${token}`)}`
+    : '';
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-0 px-4 py-12">
@@ -100,21 +123,26 @@ export function InvitePage() {
             {!user ? (
               <>
                 <Link
-                  to={`/login?redirect=${encodeURIComponent(`/invite/${token}`)}`}
+                  to={`/register${inviteQs}`}
                   className="rounded-xl bg-brand px-4 py-2.5 text-center text-sm font-medium text-white hover:bg-brand-dark"
                 >
-                  Se connecter pour accepter
+                  Créer un compte pour rejoindre
                 </Link>
                 <Link
-                  to={`/register?redirect=${encodeURIComponent(`/invite/${token}`)}`}
+                  to={`/login${inviteQs}`}
                   className="rounded-xl border border-black/10 px-4 py-2.5 text-center text-sm text-text-300 hover:bg-bg-200"
                 >
-                  Créer un compte
+                  Déjà un compte ? Se connecter
                 </Link>
               </>
             ) : emailMismatch ? (
               <p className="text-sm text-amber-500">
                 Connectez-vous avec <strong>{preview.email}</strong> pour accepter cette invitation.
+              </p>
+            ) : busy ? (
+              <p className="inline-flex items-center justify-center gap-2 text-sm text-text-400">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Intégration à l’équipe…
               </p>
             ) : (
               <button
@@ -123,7 +151,6 @@ export function InvitePage() {
                 onClick={() => void handleAccept()}
                 className="inline-flex items-center justify-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-medium text-white hover:bg-brand-dark disabled:opacity-50"
               >
-                {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
                 Rejoindre l’équipe
               </button>
             )}

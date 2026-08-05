@@ -490,15 +490,11 @@ export async function acceptTeamInvite(
     throw new Error("Vous êtes déjà le propriétaire de cet espace.");
   }
 
-  const existing = await sql<{ workspace_id: number }[]>`
-    SELECT workspace_id FROM workspace_members WHERE user_id = ${actorUserId} LIMIT 1
-  `;
-  if (existing.length && Number(existing[0].workspace_id) !== Number(invite.workspace_id)) {
-    throw new Error("Vous appartenez déjà à une autre équipe Klanvio.");
-  }
-
   const workspaceId = Number(invite.workspace_id);
   const role = String(invite.role) as InviteRole;
+
+  // Si le membre a un espace solo auto-créé (inscription), on le dissout pour rejoindre l'équipe.
+  await leaveSoloOwnedWorkspaceOrThrow(actorUserId, workspaceId);
 
   await sql`
     INSERT INTO workspace_members (workspace_id, user_id, role)
@@ -520,4 +516,72 @@ export async function acceptTeamInvite(
     billingPlan: normalizePlan(String(invite.billing_plan)),
     workspaceName: String(invite.workspace_name || "Équipe Klanvio"),
   };
+}
+
+/**
+ * Dissout un workspace perso vide (seul propriétaire) pour permettre de rejoindre une équipe.
+ * Refuse si l'utilisateur est déjà dans une vraie équipe (plusieurs membres / pas owner).
+ */
+async function leaveSoloOwnedWorkspaceOrThrow(
+  userId: number,
+  joiningWorkspaceId: number
+): Promise<void> {
+  const existing = await sql<Record<string, unknown>[]>`
+    SELECT
+      m.workspace_id,
+      m.role,
+      w.owner_user_id,
+      (SELECT COUNT(*)::int FROM workspace_members m2 WHERE m2.workspace_id = m.workspace_id) AS member_count
+    FROM workspace_members m
+    JOIN workspaces w ON w.id = m.workspace_id
+    WHERE m.user_id = ${userId}
+    LIMIT 1
+  `;
+  if (!existing.length) return;
+
+  const row = existing[0];
+  const currentWsId = Number(row.workspace_id);
+  if (currentWsId === joiningWorkspaceId) return;
+
+  const isSoloOwner =
+    String(row.role) === "owner" &&
+    Number(row.owner_user_id) === userId &&
+    Number(row.member_count) <= 1;
+
+  if (!isSoloOwner) {
+    throw new Error("Vous appartenez déjà à une autre équipe Klanvio.");
+  }
+
+  await sql`DELETE FROM workspace_invites WHERE workspace_id = ${currentWsId}`;
+  await sql`DELETE FROM workspace_members WHERE workspace_id = ${currentWsId}`;
+  await sql`DELETE FROM workspaces WHERE id = ${currentWsId}`;
+}
+
+/** Accepte automatiquement une invitation en attente pour l'email du compte (inscription / Google). */
+export async function tryAcceptPendingInviteByEmail(
+  userId: number
+): Promise<WorkspaceContext | null> {
+  await ensureTeamSchema();
+  const user = await getUserById(userId);
+  if (!user) return null;
+  const email = user.email.trim().toLowerCase();
+  const rows = await sql<{ token: string }[]>`
+    SELECT token
+    FROM workspace_invites
+    WHERE lower(email) = ${email}
+      AND accepted_at IS NULL
+      AND expires_at > NOW()
+    ORDER BY created_at DESC
+    LIMIT 1
+  `;
+  if (!rows.length) return null;
+  try {
+    return await acceptTeamInvite(userId, String(rows[0].token));
+  } catch (err) {
+    console.warn(
+      "[team] auto-accept invite failed:",
+      err instanceof Error ? err.message : err
+    );
+    return null;
+  }
 }
