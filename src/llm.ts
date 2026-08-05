@@ -3,9 +3,7 @@ import { config, type LlmProvider } from "./config.js";
 import {
   createLlmClientForRole,
   llmExtrasForRole,
-  llmExtrasForProvider,
   llmRoleLabel,
-  recommendedMaxTokensForRole,
   recommendedMaxTokensForProvider,
 } from "./llm-router.js";
 
