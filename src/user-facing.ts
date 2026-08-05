@@ -21,6 +21,12 @@ export function userFacingError(err: unknown): string {
   if (/401|session|jwt|unauthorized|expiré/i.test(m)) {
     return "Votre session a expiré. Reconnectez-vous pour continuer.";
   }
+  if (
+    /invalid function arguments|invalid params|tool_call_id|2015/i.test(m) ||
+    /400.*function arguments/i.test(m)
+  ) {
+    return "Je n'ai pas pu enregistrer le brouillon d'un coup. Réessayez « oui » ou « crée le brouillon » — je m'en occupe.";
+  }
   if (/groupe.*(introuvable|pas trouvé|not found)|aucun groupe/i.test(m)) {
     return "Je ne trouve pas ce groupe. Vérifiez le nom exact (ou collez l’identifiant du groupe) et réessayez.";
   }

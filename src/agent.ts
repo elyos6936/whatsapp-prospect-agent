@@ -24,6 +24,8 @@ import {
   recommendedMaxTokensForProvider,
   resolveLlmRoleModel,
   resolveLlmRoleProvider,
+  sanitizeAssistantToolCalls,
+  sanitizeToolCallArgumentsJson,
 } from "./llm.js";
 import {
   runDeterministicActivation,
@@ -562,14 +564,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
 
   // Chemin déterministe : « oui » après les 5 variantes → brouillon + simulation
-  // AVANT force_sim : un « oui » après variantes peut matcher wantsCampaignSimulation
-  // (l'agent a déjà parlé de sim) et court-circuiterait le draft.
+  // Prioritaire même si le briefing « questions » est incomplet — sinon MiniMax
+  // force create_automation avec un JSON ab_variants cassé (HTTP 400 / 2015).
   if (
     !briefing.isInboundClosing &&
-    briefing.readyForDraft &&
-    briefing.openerSingleValidated &&
     briefing.openerVariantsProposed &&
-    briefing.stickersQuestionAsked &&
     isShortCampaignValidation(userMessage) &&
     !hasSimAlready &&
     turnMode !== "decline_sim" &&
@@ -733,15 +732,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const toolModel = resolveLlmRoleModel("chat");
   const toolProvider = resolveLlmRoleProvider("chat");
 
-  const forceCreateDraftTool =
-    !briefing.isInboundClosing &&
-    briefing.readyForDraft &&
-    briefing.openerSingleValidated &&
-    briefing.openerVariantsProposed &&
-    briefing.stickersQuestionAsked &&
-    isShortCampaignValidation(userMessage) &&
-    !hasSimAlready &&
-    toolsForTurn.some((t) => t.type === "function" && t.function?.name === "create_automation");
+  // Ne PAS forcer create_automation via MiniMax (JSON ab_variants souvent invalide).
+  // Le fast path déterministe ci-dessus crée le brouillon + sim sans tool_choice.
+  const forceCreateDraftTool = false;
 
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
@@ -777,7 +770,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       throw new Error("Je n'ai pas reçu de réponse. Réessayez dans un instant.");
     }
 
-    const assistantMsg = choice.message;
+    const assistantMsg = sanitizeAssistantToolCalls(choice.message);
 
     // Fuite outils en DSML dans content (DeepSeek / MiniMax) au lieu de tool_calls.
     const rawContentForDsml =
@@ -1015,7 +1008,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
         let args: Record<string, unknown> = {};
         try {
-          args = JSON.parse(toolCall.function.arguments || "{}") as Record<string, unknown>;
+          args = JSON.parse(
+            sanitizeToolCallArgumentsJson(toolCall.function.arguments)
+          ) as Record<string, unknown>;
         } catch {
           args = {};
         }

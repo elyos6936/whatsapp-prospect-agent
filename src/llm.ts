@@ -94,20 +94,75 @@ export function extractReasoningContent(
 }
 
 /**
+ * MiniMax / certains providers renvoient parfois des arguments d'outil non-JSON.
+ * Les renvoyer tels quels dans l'historique provoque HTTP 400 (code 2015).
+ */
+export function sanitizeToolCallArgumentsJson(raw: string | null | undefined): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "{}";
+  try {
+    JSON.parse(s);
+    return s;
+  } catch {
+    /* repair common leaks */
+  }
+  // Extraire le premier objet JSON équilibré
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    const slice = s.slice(start, end + 1);
+    try {
+      JSON.parse(slice);
+      return slice;
+    } catch {
+      /* continue */
+    }
+    // Trailing commas
+    const noTrailing = slice.replace(/,\s*([}\]])/g, "$1");
+    try {
+      JSON.parse(noTrailing);
+      return noTrailing;
+    } catch {
+      /* fall through */
+    }
+  }
+  return "{}";
+}
+
+export function sanitizeAssistantToolCalls(
+  message: OpenAI.Chat.Completions.ChatCompletionMessage
+): OpenAI.Chat.Completions.ChatCompletionMessage {
+  if (!message.tool_calls?.length) return message;
+  const tool_calls = message.tool_calls.map((tc) => {
+    if (tc.type !== "function") return tc;
+    return {
+      ...tc,
+      function: {
+        ...tc.function,
+        arguments: sanitizeToolCallArgumentsJson(tc.function.arguments),
+      },
+    };
+  });
+  return { ...message, tool_calls };
+}
+
+/**
  * Message assistant à renvoyer dans le contexte multi-tours.
  * DeepSeek thinking : reasoning_content DOIT être rejoué (sinon HTTP 400).
+ * Arguments d'outils toujours JSON valide (sinon MiniMax 2015).
  */
 export function toAssistantHistoryMessage(
   message: OpenAI.Chat.Completions.ChatCompletionMessage,
   provider: LlmProvider = config.llmProvider
 ): OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam {
+  const safe = sanitizeAssistantToolCalls(message);
   const base: OpenAI.Chat.Completions.ChatCompletionAssistantMessageParam = {
     role: "assistant",
-    content: message.content ?? null,
-    ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
+    content: safe.content ?? null,
+    ...(safe.tool_calls?.length ? { tool_calls: safe.tool_calls } : {}),
   };
   if (provider !== "deepseek") return base;
-  const reasoning = extractReasoningContent(message);
+  const reasoning = extractReasoningContent(safe);
   if (!reasoning) return base;
   return {
     ...base,
