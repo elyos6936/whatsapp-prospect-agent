@@ -14,7 +14,7 @@ import {
   isAffirmingPendingSendOffer,
   ensurePendingLinkInReply,
 } from "./lead-scoring.js";
-import { shouldSilenceAfterFarewell } from "./stop-policy.js";
+import { shouldSilenceAfterFarewell, isOutboundDiagnosticAsk } from "./stop-policy.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté (Afrique francophone) qui répond comme un **vrai humain** — jamais comme un bot.
 
@@ -24,11 +24,12 @@ export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté
 - INTERDIT : notes internes, coaching, stratégie, « mission », « recadrer », parler du prospect à la 3ᵉ personne.
 
 ## Comment traiter le message (silencieusement)
-1. Relis ton dernier message sortant + sa réponse.
-2. Déduis son intention.
-3. Réponds à CETTE intention, mission campagne — pas de script générique.
-4. Inattendu → clarifie/recadre en 1 phrase humaine. JAMAIS de reset (re-présentation, cold opener).
+1. Relis ton dernier message sortant + sa réponse + l'historique utile.
+2. Déduis son intention réelle dans CE fil (pas un script figé).
+3. Réponds à CETTE intention, aligné sur l'objectif campagne — raisonnements humains, pas de checklist.
+4. Inattendu → clarifie/recadre en 1 phrase. JAMAIS de reset (re-présentation, cold opener).
 5. Si tu as proposé quelque chose et qu'il dit oui → exécute (lien / détail), ne clôture pas.
+6. Les garde-fous serveur (refus / STOP / lien manquant) sont des filets étroits — le reste, c'est toi qui juges.
 
 ## Ta mission
 Poursuivre selon l'OBJECTIF DE LA CAMPAGNE (A.I.D.A.) jusqu'à conversion ou refus clair.
@@ -370,6 +371,13 @@ export async function generateWhatsAppReply(userId: number, input: {
     /\b(je (peux |vais )?(vous |te )?(montrer|expliquer|envoyer|partager)|voici (un |le )?exemple|justement[, ]|on peut |si vous voulez)\b/i.test(
       lastOutBody
     );
+  const lastOutWasDiagnostic =
+    !!lastOutBody && isOutboundDiagnosticAsk(lastOutBody);
+  const softNoToDiagnostic =
+    lastOutWasDiagnostic &&
+    /^(non|nan|nn|nope)(\s|$)|non je (pense|crois)|pas vraiment|bof|mouais/i.test(
+      input.incomingText.trim()
+    );
   const askedQuestions = policyHistory
     .filter((m) => m.direction === "sortant")
     .flatMap((m) => m.body.match(/[^.!?\n]{8,}\?/g) ?? [])
@@ -381,23 +389,23 @@ export async function generateWhatsAppReply(userId: number, input: {
       ? `\n## Questions DÉJÀ posées (INTERDIT de les reformuler / répéter)\n- ${askedQuestions.join("\n- ")}\n`
       : "";
 
-  // Filets critiques seulement — le reste = raisonnement IA.
-  const hardOverride = affirmingPendingSend
-    ? `\n## ACTION REQUISE\n` +
-      `Tu as proposé d'envoyer le lien. Le prospect dit « ${input.incomingText.trim()} ». ` +
-      `Inclus MAINTENANT l'URL campagne du contexte. Pas de clôture sans lien.\n`
+  // Filets critiques seulement — le reste = raisonnement IA sur l'historique.
+  const hardOverride = softNoToDiagnostic
+    ? `\n## GARDE-FOU (ne remplace pas ton jugement)\n` +
+      `Sa réponse « ${input.incomingText.trim()} » porte sur ta question de qualification — ce n'est PAS un refus d'intérêt. ` +
+      `INTERDIT de clôturer (« je ne vous dérange plus »). ` +
+      `Lis l'historique, déduis ce que ça implique pour la mission, réponds naturellement (1-2 phrases).\n`
+    : affirmingPendingSend
+    ? `\n## GARDE-FOU\n` +
+      `Tu as proposé d'envoyer le lien. Il dit « ${input.incomingText.trim()} » → inclus MAINTENANT l'URL campagne. Pas de clôture sans lien.\n`
     : !inbound && ongoing && shortAck && lastOutWasForwardOffer
-      ? `\n## ACTION REQUISE\n` +
-        `Le prospect accepte (« ${input.incomingText.trim()} »). Ton dernier message proposait déjà d'avancer : ` +
-        `**exécute** maintenant (exemple concret / prochaine info utile, 1-2 phrases). ` +
-        `INTERDIT : reposer une question déjà dans l'historique, te présenter, ou repartir de zéro.\n`
+      ? `\n## GARDE-FOU\n` +
+        `Il accepte (« ${input.incomingText.trim()} ») alors que tu venais de proposer d'avancer : exécute la suite (pas de reset / re-présentation / question déjà posée).\n`
       : !inbound && ongoing && shortAck
-        ? `\n## ACTION REQUISE\n` +
-          `TU as déjà ouvert. Il répond juste « ${input.incomingText.trim()} ». ` +
-          `INTERDIT : te présenter (nom + bio / « j'accompagne… »). ` +
-          `Avance avec 1 point ou 1 question **NOUVELLE** (jamais une question déjà posée).\n`
+        ? `\n## GARDE-FOU\n` +
+          `Ack court (« ${input.incomingText.trim()} ») — pas de bio / re-présentation. Relis ton dernier message et avance intelligemment (point ou question NOUVELLE).\n`
         : inbound
-          ? `\n## Mode ENTRANT\nLe client a initié — support/closing, pas de cold outreach. Messages courts : réponds à son besoin, n'invente pas un script prospection.\n`
+          ? `\n## Mode ENTRANT\nLe client a initié — support/closing, pas de cold outreach. Réponds à son besoin réel.\n`
           : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)

@@ -74,7 +74,8 @@ export function safeFallbackWhatsAppReply(incomingText: string): string {
   ) {
     return "Je vous ai contacté dans le cadre d'une prospection commerciale. Si ça ne vous convient pas, dites-le-moi et je m'arrête.";
   }
-  if (/^(non|non merci|pas int[eé]ress)/i.test(t)) {
+  // Refus dur uniquement — pas « non » / « non je pense pas » (souvent une réponse diagnostic).
+  if (/^(non merci|pas int[eé]ress|ne m['’]?[eé]cri)/i.test(t)) {
     return "C'est noté, je ne vous dérange plus. Bonne continuation !";
   }
   if (/qui\s+(êtes|etes|es)-?vous|t['’]es\s+qui|c['’]est\s+qui/i.test(t)) {

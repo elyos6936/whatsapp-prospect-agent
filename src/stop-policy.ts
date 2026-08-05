@@ -17,11 +17,25 @@ const ESCALATION_PATTERNS =
   /parler a un humain|parler a une personne|un responsable|votre patron|votre chef|appeler|telephone direct|numero direct|je veux parler (a|à|avec) (un |une )?(humain|personne|responsable)/i;
 
 /**
- * Refus explicite (phrases longues).
- * Les « non » seuls sont gérés à part via le contexte (dernière question sortante).
+ * Refus dur (phrases explicites) — stop immédiat, hors contexte diagnostic.
+ * Les « non » seuls / soft (« non je pense pas ») sont gérés via le contexte
+ * (dernière question sortante : consent vs diagnostic).
  */
-const NOT_INTERESTED_PATTERNS =
-  /pas (du tout )?interesse|pas int[eé]ress[eée]?(\s|$|!|\.)|non merci|ca m.?interesse pas|cela m.?interesse pas|je (ne )?suis pas interesse|pas pour moi|pas besoin(\s|$)|je n.?ai pas besoin|fiche moi la paix|fichez-moi la paix|ne m.?ecri(s|ve|vez) plus|plus de message|j.?ai pas demande|je n.?ai pas demande|arrete(z)? (de )?(m.?ecri|me contacter)|stop (les? )?messages|non je (pense|crois) (que )?pas|je (ne )?(pense|crois) pas(\s|$|!|\.)|pas vraiment(\s|$|!|\.)|non pas vraiment|bof(\s|$|!|\.)|mouais/i;
+const HARD_NOT_INTERESTED_PATTERNS =
+  /pas (du tout )?interesse|pas int[eé]ress[eée]?(\s|$|!|\.)|non merci|ca m.?interesse pas|cela m.?interesse pas|je (ne )?suis pas interesse|pas pour moi|pas besoin(\s|$)|je n.?ai pas besoin|fiche moi la paix|fichez-moi la paix|ne m.?ecri(s|ve|vez) plus|plus de message|j.?ai pas demande|je n.?ai pas demande|arrete(z)? (de )?(m.?ecri|me contacter)|stop (les? )?messages/i;
+
+/**
+ * Soft « non » enrichi — refus UNIQUEMENT après une demande de consentement.
+ * Après une Q diagnostic (« vous avez déjà des process… ? ») = info, on continue.
+ */
+const SOFT_NOT_INTERESTED_PATTERNS =
+  /non je (pense|crois) (que )?pas|je (ne )?(pense|crois) pas(\s|$|!|\.)|pas vraiment(\s|$|!|\.)|non pas vraiment|bof(\s|$|!|\.)|mouais/i;
+
+/** Conservé pour les appels existants (hard ∪ soft). */
+const NOT_INTERESTED_PATTERNS = new RegExp(
+  `${HARD_NOT_INTERESTED_PATTERNS.source}|${SOFT_NOT_INTERESTED_PATTERNS.source}`,
+  "i"
+);
 
 /** « non » / « nan » seul (après une demande de consentement — voir detectContextualRefusal). */
 const BARE_NO_RE = /^\s*(non|nan|nn|nope)([!.…\s]*)$/i;
@@ -34,9 +48,12 @@ const BARE_NO_RE = /^\s*(non|nan|nn|nope)([!.…\s]*)$/i;
 const OUTBOUND_CONSENT_ASK_RE =
   /(ca|ça)?\s*vous\s+int[eé]resse|vous\s+int[eé]resse\s*\?|int[eé]ress[eée]?\s*\?|ouvert\s+(a|à)\s+(un\s+)?[eé]change|on\s+(en\s+)?(parle|discute)\s*\?|(je\s+)?(peux|vais)\s+(vous|te)\s+(expliquer|montrer|envoyer)|gagner\s+du\s+temps.{0,80}\?|ca\s+vous\s+parle|ça\s+vous\s+parle|ça\s+vous\s+dit|ca\s+vous\s+dit|partant\s*\?|on\s+continue\s*\?|voulez[- ]vous|vous\s+voulez\s+|souhaitez[- ]vous|d['’]accord\s+pour|ok\s+pour\s+(qu|que|un)|disponible\s+pour\s+(un|une|en)\b|avez[- ]vous\s+\d+\s*(min|minutes?|secondes?)|vous\s+avez\s+\d+\s*(min|minutes?|secondes?)/i;
 
-/** Question de qualification / diagnostic — un « non » n'est PAS un refus d'intérêt. */
+/**
+ * Question de qualification / diagnostic — un « non » / « non je pense pas » n'est PAS un refus d'intérêt.
+ * Inclut adverbes entre auxiliaire et objet (« vous avez déjà des process… »).
+ */
 const OUTBOUND_DIAGNOSTIC_ASK_RE =
-  /utilisez[- ]vous|vous\s+utilisez|avez[- ]vous\s+(des|de\s+la|du)|vous\s+avez\s+(des|de\s+la|du)|vous\s+voyez|c['’]est\s+quoi\s+votre|quel(le)?\s+(outil|logiciel|crm|process)|depuis\s+combien|combien\s+de\s+(temps|employ|personne|client)|vous\s+faites\s+(du|de\s+la)|travaillez[- ]vous/i;
+  /utilisez[- ]vous|vous\s+utilisez|avez[- ]vous.{0,40}\b(des|de\s+la|du)\b|vous\s+avez.{0,40}\b(des|de\s+la|du)\b|vous\s+voyez|c['’]est\s+quoi\s+votre|quel(le)?\s+(outil|logiciel|crm|process)|depuis\s+combien|combien\s+de\s+(temps|employ|personne|client)|vous\s+faites\s+(du|de\s+la)|travaillez[- ]vous|vous\s+g[eé]rez|en\s+solo|petite\s+[eé]quipe|assez\s+manuel|process.{0,40}(quotidien|temps)|gestion\s+des\s+commandes|relances?\s+clients|sav\b/i;
 
 /**
  * Clôture verbale déjà envoyée par l'agent (refus / au revoir).
@@ -101,6 +118,26 @@ export function detectNotInterested(text: string): boolean {
   return NOT_INTERESTED_PATTERNS.test(normalizeText(text));
 }
 
+export function detectHardNotInterested(text: string): boolean {
+  return HARD_NOT_INTERESTED_PATTERNS.test(normalizeText(text));
+}
+
+export function detectSoftNotInterested(text: string): boolean {
+  return SOFT_NOT_INTERESTED_PATTERNS.test(normalizeText(text));
+}
+
+/** Dernier message sortant de l'historique (ou null). */
+function lastOutboundBody(
+  history?: Array<{ direction: string; body: string }>
+): string | null {
+  if (!history?.length) return null;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.direction === "sortant") return m.body;
+  }
+  return null;
+}
+
 /** Dernier sortant = demande de consentement à poursuivre (pas une Q diagnostic). */
 export function isOutboundConsentAsk(body: string): boolean {
   const t = normalizeText(body);
@@ -131,12 +168,28 @@ export function detectContextualRefusal(
   if (!BARE_NO_RE.test(raw) && !BARE_NO_RE.test(t)) return false;
   if (!history?.length) return false;
 
-  for (let i = history.length - 1; i >= 0; i--) {
-    const m = history[i];
-    if (m?.direction !== "sortant") continue;
-    return isOutboundConsentAsk(m.body);
-  }
-  return false;
+  const lastOut = lastOutboundBody(history);
+  if (!lastOut) return false;
+  return isOutboundConsentAsk(lastOut);
+}
+
+/**
+ * Soft refus (« non je pense pas », « pas vraiment ») :
+ * - après Q diagnostic → false (info de qualification)
+ * - après demande de consentement → true (stop)
+ * - sans historique / ambigu → true (conservateur hors diagnostic)
+ */
+export function detectSoftContextualRefusal(
+  text: string,
+  history?: Array<{ direction: string; body: string }>
+): boolean {
+  if (!detectSoftNotInterested(text)) return false;
+  const lastOut = lastOutboundBody(history);
+  if (!lastOut) return true;
+  if (isOutboundDiagnosticAsk(lastOut)) return false;
+  if (isOutboundConsentAsk(lastOut)) return true;
+  // Ni consent ni diagnostic clair → stop (ex. pitch sans « ? » d'intérêt).
+  return true;
 }
 
 /** L'agent a déjà dit au revoir / clôturé le fil. */
@@ -285,12 +338,17 @@ export function shouldStopConversation(
     return "not_interested";
   }
 
-  if (detectNotInterested(text) || detectContextualRefusal(text, history)) {
+  const softRefusal = detectSoftContextualRefusal(text, history);
+  const hardOrBareRefusal =
+    detectHardNotInterested(text) || detectContextualRefusal(text, history);
+  if (hardOrBareRefusal || softRefusal) {
     const prior = history
       ? history.filter(
           (m) =>
             m.direction === "entrant" &&
-            (detectNotInterested(m.body) || detectContextualRefusal(m.body, history))
+            (detectHardNotInterested(m.body) ||
+              detectSoftContextualRefusal(m.body, history) ||
+              detectContextualRefusal(m.body, history))
         ).length
       : 0;
     // Si intérêt FORT antérieur (pas un simple « ok »), exige un 2e refus.
@@ -299,7 +357,8 @@ export function shouldStopConversation(
         (m) =>
           m.direction === "entrant" &&
           STRONG_INTEREST_SIGNAL.test(normalizeText(m.body)) &&
-          !detectNotInterested(m.body) &&
+          !detectHardNotInterested(m.body) &&
+          !detectSoftContextualRefusal(m.body, history) &&
           !detectContextualRefusal(m.body, history)
       ) ?? false;
     if (hadStrongInterestBefore && prior < 1) return null;
