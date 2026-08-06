@@ -365,6 +365,14 @@ export async function runDeterministicSupportDraftAndSim(opts: {
   const link = extractHttpLink(history);
   const price = extractPriceHint(history);
   const productHint = extractSupportProductHint(history);
+  const historyBlob = history.map((m) => m.content).join("\n");
+  const closingGoal: "payment" | "delivery" | "link" | "appointment" = link
+    ? "link"
+    : /rdv|rendez[- ]?vous|calendly/i.test(historyBlob)
+      ? "appointment"
+      : /paiement|payer|orange money|moov|mtn/i.test(historyBlob)
+        ? "payment"
+        : "delivery";
   const supportGuide = buildSupportConversationGuide({
     catchAll,
     triggers,
@@ -372,6 +380,7 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     productHint,
     price,
     link,
+    closingGoal,
   });
   const draftArgs: Record<string, unknown> = {
     name: threadTitle?.trim() || "Support client",
@@ -383,6 +392,7 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     handoff_keywords: handoffKeywords,
     stickers_enabled: false,
     conversation_guide: supportGuide,
+    closing_goal: closingGoal,
     ...(productHint ? { product_name: productHint } : {}),
     ...(link ? { closing_link: link } : {}),
     ...(price ? { price } : {}),
@@ -532,6 +542,7 @@ export async function runDeterministicSimulation(opts: {
         productHint: auto?.config.productName,
         price: auto?.config.price,
         link: auto?.config.closingLink,
+        closingGoal: auto?.config.closingGoal,
       });
     const sim = await generateSupportSimulationDirect(client, {
       businessContext,

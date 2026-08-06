@@ -4285,6 +4285,7 @@ export async function executeTool(
               productHint: config.productName,
               price: config.price,
               link: config.closingLink,
+              closingGoal: config.closingGoal,
             });
             const existing = (config.conversationGuide || "").trim();
             config.conversationGuide = existing.includes("CADRE SUPPORT CLIENT")

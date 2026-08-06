@@ -4,7 +4,7 @@ import { getAppSettings, getContactChatHistory } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens, llmChatExtras } from "./llm.js";
-import { sanitizeOutboundWhatsAppText, ensureLeadingCapital } from "./outbound-sanitize.js";
+import { sanitizeOutboundWhatsAppText, ensureLeadingCapital, sanitizeInventedCampaignUrls } from "./outbound-sanitize.js";
 import {
   sanitizeProspectFacingReply,
   safeFallbackWhatsAppReply,
@@ -71,10 +71,12 @@ Commence par une majuscule.`
 /** Injecté en system quand conversationMode=inbound — prioritaire sur AIDA sortant. */
 export const SUPPORT_INBOUND_REPLY_ADDENDUM = `## MODE ENTRANT / SUPPORT (PRIORITAIRE)
 - Le CLIENT a écrit en premier. Tu gères le compte / la boutique.
-- Commence par une majuscule. Phrases propres (pas « merci pour votre message » en minuscules).
-- Si intérêt (« je suis intéressé », fautes OK) : remercie brièvement + présente prix / produit / lien / next step en 1-2 phrases.
-- INTERDIT ABSOLU : « quel type de tâche », « secteur d'activité », « pour vous donner le bon tarif… », discovery B2B, cold outreach, A.I.D.A. opener.
-- Une seule question utile max (quantité, taille, délai) — jamais une enquête.`;
+- Commence par une majuscule. Phrases propres.
+- Si intérêt (« je suis intéressé », fautes OK) : remercie brièvement + présente prix / produit / next step en 1-2 phrases.
+- Objectif livraison : après pointure/quantité, demande le LIEU DE LIVRAISON (quartier / ville). Ne saute pas cette étape.
+- INTERDIT ABSOLU d'inventer une URL (example.com, faux lien commande). Envoie un lien SEULEMENT s'il est fourni dans la campagne.
+- INTERDIT : « quel type de tâche », « secteur d'activité », discovery B2B, cold outreach, A.I.D.A. opener.
+- Une seule question utile max — jamais une enquête.`;
 
 const INJECTION_PATTERNS =
   /ignore\s+(tes|vos|your)\s+instructions|ignore\s+previous|system\s+prompt|révèle\s+(ton|le)\s+prompt|jailbreak|DAN\s+mode/i;
@@ -336,6 +338,8 @@ export async function generateWhatsAppReply(userId: number, input: {
   conversationMode?: "outbound" | "inbound";
   /** Lien campagne à livrer si le prospect dit oui à une offre d'envoi. */
   closingLink?: string | null;
+  /** Objectif campagne (delivery → lieu ; link → URL réelle seulement). */
+  closingGoal?: string | null;
   /**
    * Force le mode « oui → envoyer le lien » (ex. simulation où l'historique
    * n'est pas encore en base).
@@ -365,8 +369,9 @@ export async function generateWhatsAppReply(userId: number, input: {
   }
 
   const affirmingPendingSend =
-    input.forceDeliverPendingLink === true ||
-    isAffirmingPendingSendOffer(input.incomingText, policyHistory);
+    Boolean(input.closingLink?.trim()) &&
+    (input.forceDeliverPendingLink === true ||
+      isAffirmingPendingSendOffer(input.incomingText, policyHistory));
 
   const inbound = input.conversationMode === "inbound";
   const ongoing = input.forceOngoing === true || isOngoingConversation || inbound;
@@ -419,9 +424,9 @@ export async function generateWhatsAppReply(userId: number, input: {
         : inbound
           ? `\n## Mode ENTRANT (SUPPORT — prioritaire)\n` +
             `Le client a initié. Tu gères le compte / la boutique — PAS de cold outreach.\n` +
-            `INTERDIT : « secteur d'activité », « quel type de tâche », « pour vous donner le bon tarif… », discovery B2B, « je vous contacte pour… », pitch d'ouverture, « ! » en tête.\n` +
-            `Si intérêt (« je suis intéressé », « plus d'infos », fautes OK) : remercie + offre concrète (prix/lien/commande) en 1-2 phrases — commence par une majuscule.\n` +
-            `Si ack court (« ah », « ok ») : clarifie le besoin produit en 1 phrase — ne pivote PAS vers une qualification prospection.\n`
+            `INTERDIT : « secteur d'activité », « quel type de tâche », discovery B2B, inventer une URL (example.com…).\n` +
+            `Si intérêt : remercie + offre concrète (prix/produit) — majuscule en tête.\n` +
+            `Si ack / quantité (« ok », « 1 ») : enchaîne la prochaine question utile (souvent le LIEU DE LIVRAISON) — jamais un faux lien.\n`
           : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
@@ -532,6 +537,10 @@ ${input.senderName}: ${input.incomingText}
         ]
       : policyHistory
   );
+  styled = sanitizeInventedCampaignUrls(styled, {
+    allowedLink: input.closingLink,
+    closingGoal: input.closingGoal,
+  });
   return styled;
 }
 

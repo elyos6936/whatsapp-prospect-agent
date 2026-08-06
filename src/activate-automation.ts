@@ -257,6 +257,7 @@ export async function activateAutomationCore(
       productHint: safeConfig.productName,
       price: safeConfig.price,
       link: safeConfig.closingLink,
+      closingGoal: safeConfig.closingGoal,
     });
     const existing = (safeConfig.conversationGuide || "").trim();
     if (!existing.includes("CADRE SUPPORT CLIENT")) {

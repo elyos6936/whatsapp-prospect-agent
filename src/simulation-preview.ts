@@ -128,6 +128,7 @@ function buildSimCampaignContext(
           productHint: cfg.productName,
           price: cfg.price,
           link: cfg.closingLink,
+          closingGoal: cfg.closingGoal,
         })
       : "",
     guide ? `TON & APPROCHE :\n${guide}` : "",
@@ -135,7 +136,9 @@ function buildSimCampaignContext(
     cfg.price
       ? `Prix EXACT : ${cfg.price}`
       : `Prix : NON RENSEIGNÉ — si demandé, dis que tu confirmes juste après.`,
-    cfg.closingLink ? `Lien : ${cfg.closingLink}` : "",
+    cfg.closingLink
+      ? `Lien (seul autorisé) : ${cfg.closingLink}`
+      : `Lien : AUCUN — INTERDIT d'inventer une URL.`,
     cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
     mediaHint,
     extras.memoryBlock ? `\n${extras.memoryBlock}` : "",
@@ -148,12 +151,12 @@ function buildSimCampaignContext(
       : [
           `IMPORTANT ENTRANT (support) : LE CLIENT a écrit en premier. Tu gères le compte / la boutique.`,
           `La mémoire liée peut parler de prospection — IGNORE toute consigne de cold outreach / accroche / qualification « secteur » / « type de tâche ».`,
-          `INTERDIT : « Bonjour, c'est X, je vous contacte… », « quel est votre secteur d'activité ? », « pour vous donner le bon tarif, quel type de tâche… ».`,
-          `Si le client montre de l'intérêt : remercie + présente offre/prix/lien/next step (1-2 phrases, majuscule en tête).`,
-          `Si le client dit juste « salut / bonjour / ah / ok » : accueille ou clarifie le besoin produit — PAS une enquête prospection.`,
+          `INTERDIT : « Bonjour, c'est X, je vous contacte… », inventer https://example.com ou tout faux lien.`,
+          `Si le client montre de l'intérêt : remercie + prix/produit + next step (souvent lieu de livraison).`,
+          `Si « ok / okay / 1 » : traite la réponse puis demande le lieu de livraison si pas encore donné — PAS un lien inventé.`,
           `Si le client demande une photo et qu'un média est en config : confirme que tu l'envoies (en simu : dis-le en texte).`,
         ].join(" "),
-    `ARRÊT (identique au live) : refus d'intérêt (« ça vous intéresse ? » → non) / STOP → clôture. « Non » à une Q diagnostic → continue. Objectif atteint (lien/prix/RDV + ack) → courte confirmation puis stop. Ne répète jamais une question déjà posée.`,
+    `ARRÊT (identique au live) : refus d'intérêt → clôture. Objectif atteint (lien réel livré / handoff livreur / preuve paiement + ack) → courte confirmation puis stop. Ne répète jamais une question déjà posée.`,
   ].filter(Boolean);
   return lines.join("\n");
 }
@@ -366,6 +369,7 @@ export async function replyInSimulationPreview(
       forceOngoing: mode === "inbound" || history.length > 1,
       conversationMode: mode,
       closingLink: campaignConfig?.closingLink,
+      closingGoal: campaignConfig?.closingGoal,
       forceDeliverPendingLink: affirmingLink,
     });
     reply = ensurePendingLinkInReply(
@@ -374,6 +378,13 @@ export async function replyInSimulationPreview(
       prospectMessage,
       priorPolicyHistory
     );
+    {
+      const { sanitizeInventedCampaignUrls } = await import("./outbound-sanitize.js");
+      reply = sanitizeInventedCampaignUrls(reply, {
+        allowedLink: campaignConfig?.closingLink,
+        closingGoal: campaignConfig?.closingGoal,
+      });
+    }
   } catch {
     reply =
       mode === "inbound"

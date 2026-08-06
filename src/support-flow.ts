@@ -27,8 +27,52 @@ export const SUPPORT_FIL_SYSTEM_ADDENDUM = `## MODULE SUPPORT CLIENT (prioritair
 - Portée : phrases déclencheurs (guillemets) OU « tous les messages » (inbound_catch_all).
 - Après stickers + notif tiers + handoff : demande « crée le brouillon » / « je valide » — le serveur crée le brouillon (tu n'as PAS besoin d'appeler create_automation avec des args MiniMax).
 - Simulation = le **client** démarre (libellé Client, pas Prospect). Activation = « active » après sim, ou « lance sans simulation ».
-- Dans la sim / réponses : si le client dit « je suis intéressé » → accueille + présente l'offre / prix / lien / next step. INTERDIT « quel est votre secteur d'activité ? », INTERDIT discovery froide type prospection.
+- Dans la sim / réponses : si le client dit « je suis intéressé » → accueille + présente l'offre / prix / next step (lieu de livraison si objectif livraison). INTERDIT inventer une URL. INTERDIT « quel est votre secteur d'activité ? », INTERDIT discovery froide type prospection.
 - INTERDIT de parler d'accroches / rotation / group_prospect / contact_prospect.`;
+
+/** Étapes Support selon l'objectif campagne (comme avant MiniMax / drift « faux lien »). */
+export function supportGoalPlaybook(
+  closingGoal?: string | null,
+  closingLink?: string | null
+): string {
+  const goal = (closingGoal || "").toLowerCase();
+  const hasLink = Boolean(closingLink?.trim());
+  const noFakeLink =
+    `INTERDIT ABSOLU d'inventer une URL (example.com, bit.ly fictif, « lien commande » inventé). ` +
+    (hasLink
+      ? `Seul lien autorisé : ${closingLink!.trim()}.`
+      : `Aucun lien campagne configuré — pose la question utile (adresse, paiement, créneau) au lieu d'un lien.`);
+
+  if (goal === "delivery") {
+    return (
+      `Objectif LIVRAISON :\n` +
+      `1) Intérêt → prix / produit si connus.\n` +
+      `2) Pointure / quantité si e-commerce.\n` +
+      `3) Demande le LIEU DE LIVRAISON (quartier / ville / adresse) — c'est le cœur de la mission.\n` +
+      `4) Une fois l'adresse notée → confirme que le livreur / la boutique recontacte ; pas de faux lien.\n` +
+      `${noFakeLink}`
+    );
+  }
+  if (goal === "payment") {
+    return (
+      `Objectif PAIEMENT : avance vers le mode de paiement réel configuré. ${noFakeLink}`
+    );
+  }
+  if (goal === "appointment") {
+    return (
+      `Objectif RDV : propose / confirme un créneau (jour + heure). ${noFakeLink}`
+    );
+  }
+  if (goal === "link") {
+    return hasLink
+      ? `Objectif LIEN : quand le client est prêt, envoie UNIQUEMENT : ${closingLink!.trim()}. ${noFakeLink}`
+      : `Objectif LIEN mais AUCUN closing_link en config — demande comment finaliser (sans inventer d'URL). ${noFakeLink}`;
+  }
+  return (
+    `Après intérêt + détails produit : avance vers l'objectif campagne (livraison = adresse ; paiement ; RDV ; lien réel seulement s'il est en config).\n` +
+    `${noFakeLink}`
+  );
+}
 
 /** Cadre conversationnel Support — prioritaire sur une mémoire écrite pour la prospection. */
 export function buildSupportConversationGuide(opts: {
@@ -38,6 +82,7 @@ export function buildSupportConversationGuide(opts: {
   productHint?: string | null;
   price?: string | null;
   link?: string | null;
+  closingGoal?: string | null;
 }): string {
   const triggersLine = opts.catchAll
     ? "Portée : TOUS les messages privés (hors groupes)."
@@ -49,7 +94,8 @@ export function buildSupportConversationGuide(opts: {
   const offerBits = [
     opts.productHint ? `Produit / offre : ${opts.productHint}` : "",
     opts.price ? `Prix : ${opts.price}` : "",
-    opts.link ? `Lien : ${opts.link}` : "",
+    opts.link ? `Lien (seul autorisé) : ${opts.link}` : "Lien : AUCUN — n'invente pas d'URL.",
+    opts.closingGoal ? `Objectif : ${opts.closingGoal}` : "",
   ]
     .filter(Boolean)
     .join("\n");
@@ -59,11 +105,12 @@ export function buildSupportConversationGuide(opts: {
     `${triggersLine}\n` +
     `${handoff}\n` +
     (offerBits ? `${offerBits}\n` : "") +
+    `\n${supportGoalPlaybook(opts.closingGoal, opts.link)}\n` +
     `\nComportement :\n` +
     `- Tu es l'assistant du compte / de la boutique. Le CLIENT a écrit en premier.\n` +
     `- INTERDIT ABSOLU : « je vous contacte pour… », pitch d'ouverture, 5 accroches, demander le « secteur d'activité », qualification froide B2B.\n` +
-    `- Si le client montre de l'intérêt (« je suis intéressé », « je veux plus d'infos ») : remercie brièvement + présente l'offre concrète (prix / dispo / lien / commande) en 1-2 phrases. Une seule question utile max (ex. quantité, taille, délai) — pas une enquête.\n` +
-    `- Si le client répond « ah », « ok », « okay », « hmm » après le prix / l'info : avance (taille, quantité, lien, paiement, livraison) — INTERDIT de clôturer (« Bonne continuation », « C'est noté »).\n` +
+    `- Si le client montre de l'intérêt (« je suis intéressé », « je veux plus d'infos ») : remercie brièvement + présente l'offre concrète (prix / dispo / produit) en 1-2 phrases. Une seule question utile max (ex. quantité, taille, lieu de livraison) — pas une enquête.\n` +
+    `- Si le client répond « ah », « ok », « okay », « hmm » ou « 1 » après une question : réponds à CETTE réponse puis pose la prochaine question utile (souvent le lieu de livraison) — INTERDIT inventer un lien, INTERDIT clôturer (« Bonne continuation », « C'est noté »).\n` +
     `- Vouvoiement, ton chaleureux et utile. Pas de « ! » parasite en début de message.`
   );
 }

@@ -15,6 +15,7 @@ import {
   phonesMatchStrict,
   toE164Display,
 } from "../src/integrations/google.js";
+import { sanitizeInventedCampaignUrls } from "../src/outbound-sanitize.js";
 import { findMatchingHandoffKeyword } from "../src/handoff.js";
 import { isInboundCatchAllCampaign } from "../src/campaign-gating.js";
 import { looksLikeInternalMonologue, safeFallbackWhatsAppReply } from "../src/prospect-facing-sanitize.js";
@@ -183,6 +184,22 @@ console.log("\n=== Google Contacts: numéros Bénin 22901… ===\n");
   assert(toE164Display(key!) === "+22966082161", "e164 canon");
   assert(phonesMatchStrict("22966082161", "2290166082161"), "match avec/sans 01");
   assert(phonesMatchStrict("+22966082161", "+229 01 66 08 21 61"), "match formaté");
+}
+
+console.log("\n=== Anti faux liens (Support) ===\n");
+{
+  const fake = sanitizeInventedCampaignUrls(
+    "Voici le lien pour finaliser votre commande : https://example.com/commande-baskets",
+    { allowedLink: null, closingGoal: "delivery" },
+  );
+  assert(!/https?:\/\//i.test(fake), "pas d'URL inventée sans closingLink");
+  assert(/livraison|quartier|ville/i.test(fake), "redirige vers lieu de livraison");
+  const swapped = sanitizeInventedCampaignUrls(
+    "Commandez ici https://example.com/x",
+    { allowedLink: "https://pay.real.shop/baskets", closingGoal: "link" },
+  );
+  assert(swapped.includes("https://pay.real.shop/baskets"), "faux lien → lien campagne");
+  assert(!/example\.com/i.test(swapped), "example.com retiré");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

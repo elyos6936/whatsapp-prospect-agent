@@ -680,6 +680,7 @@ function buildRuntimeSupportFrame(cfg: AutomationConfig): string {
     productHint: cfg.productName,
     price: cfg.price,
     link: cfg.closingLink,
+    closingGoal: cfg.closingGoal,
   });
 }
 
@@ -721,8 +722,8 @@ function buildActiveCampaignContext(
       ? `Prix EXACT à citer si demandé : ${cfg.price}`
       : `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire [prix].`,
     cfg.closingLink
-      ? `Lien à envoyer au prospect (URL réelle) : ${cfg.closingLink}`
-      : "",
+      ? `Lien à envoyer au prospect (URL réelle — SEULE URL autorisée) : ${cfg.closingLink}`
+      : `Lien : AUCUN en config — INTERDIT d'inventer https://… (example.com, faux lien commande, etc.).`,
     cfg.mediaUrl
       ? `Photo / média produit à envoyer si le client demande une photo/image : ${cfg.mediaUrl}`
       : "",
@@ -737,12 +738,13 @@ function buildActiveCampaignContext(
       ? [
           `PARCOURS ENTRANT (support — prioritaire sur toute mémoire prospection) :`,
           `1. Le client a initié — accueille / réponds. JAMAIS « Bonjour c'est X, je vous contacte… ».`,
-          `2. Intérêt (« je suis intéressé », « plus d'infos », fautes OK) → remercie + présente l'offre CONCRÈTE (prix / produit / lien / commande). INTERDIT « quel type de tâche », « secteur d'activité », qualification froide.`,
-          `3. Salutation courte (« salut ») → accueil + 1 question utile produit (taille, quantité, délai) — pas une enquête.`,
+          `2. Intérêt (« je suis intéressé », « plus d'infos », fautes OK) → remercie + offre CONCRÈTE (prix / produit). INTERDIT « quel type de tâche », « secteur d'activité », qualification froide.`,
+          `3. Salutation courte (« salut ») → accueil + 1 question utile produit (taille, quantité) — pas une enquête.`,
           `4. Demande photo → confirme ; le système enverra le média si configuré.`,
-          `5. Si prêt → lien/prix/créneau RÉEL. Si refuse clairement → accepte poliment.`,
-          `6. Ack court (ok / okay / ah / oui) après prix ou info : avance (commande, taille, lien, paiement) — INTERDIT clôturer (« Bonne continuation », « C'est noté »). La clôture auto ne se fait qu'après lien livré / handoff livreur / preuve de paiement.`,
-          `7. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides et pitch cold outreach.`,
+          `5. Objectif « ${goal} » : suis le playbook Support (livraison = demander le LIEU ; paiement / RDV / lien réel seulement s'il est en config).`,
+          `6. Ack court (ok / okay / « 1 ») : traite la réponse puis pose la prochaine question utile — souvent le lieu de livraison. INTERDIT inventer un lien. INTERDIT clôturer (« Bonne continuation », « C'est noté »).`,
+          `7. Objectif livraison : adresse notée + confirmation livreur/boutique → courte confirmation puis STOP. Pas de boucle « le livreur vous appelle ».`,
+          `8. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides et pitch cold outreach.`,
         ].join("\n")
       : [
           `PARCOURS CONVERSATION (raisonne — même mission, seuls les mots varient) :`,
@@ -1233,6 +1235,7 @@ async function runAutoReply(
         allowEmojis: activeCampaign?.config.stickersEnabled === true,
         automationId: activeCampaign?.id,
         closingLink: activeCampaign?.config.closingLink,
+        closingGoal: activeCampaign?.config.closingGoal,
         conversationMode:
           activeCampaign &&
           (activeCampaign.type === "keyword_sales" ||
@@ -1253,6 +1256,13 @@ async function runAutoReply(
           text,
           history
         );
+      }
+      {
+        const { sanitizeInventedCampaignUrls } = await import("./outbound-sanitize.js");
+        reply = sanitizeInventedCampaignUrls(reply, {
+          allowedLink: activeCampaign?.config.closingLink,
+          closingGoal: activeCampaign?.config.closingGoal,
+        });
       }
     }
 
