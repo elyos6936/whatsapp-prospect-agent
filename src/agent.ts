@@ -31,12 +31,16 @@ import {
   runDeterministicActivation,
   runDeterministicDraftAndSim,
   runDeterministicSupportDraftAndSim,
+  runDeterministicGroupsDraft,
   runDeterministicSimulation,
   shouldDeterministicActivate,
   shouldDeterministicSimulate,
   shouldDeterministicSupportDraft,
+  shouldDeterministicGroupsDraft,
   POWER_CAMPAIGN_TOOLS,
 } from "./deterministic-campaign.js";
+import { SUPPORT_FIL_SYSTEM_ADDENDUM } from "./support-flow.js";
+import { GROUPS_FIL_SYSTEM_ADDENDUM } from "./groups-flow.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -274,10 +278,13 @@ async function buildBusinessContext(
           `- Questions utiles : produit/activité, portée (déclencheurs OU tout le compte), infos à donner, objectif, présentation, stickers, notif tiers, handoff.\n` +
           `- INTERDIT de demander délais entre messages, vagues de 50, gap entre vagues ou plage anti-blocage — défauts système automatiques.\n` +
           `- Commence le brief par une question ouverte sur le produit / ce que tu dois répondre — PAS « quel premier message envoyer ».\n` +
+          `- Quand le brief est prêt : demande **« je valide »** / **« crée le brouillon »** (le serveur crée le brouillon + sim inbound). ` +
+          `N'invente pas d'args MiniMax pour create_automation.\n` +
           `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Prospection. Le purpose est fixé. ` +
           `Si l'utilisateur veut prospecter (groupes / contacts) → dis-lui clairement d'ouvrir **Nouvelle automatisation** ` +
           `dans la barre latérale et de choisir **Prospection**.`
       );
+      lines.push(SUPPORT_FIL_SYSTEM_ADDENDUM);
     } else if (thread?.purpose === "prospection") {
       lines.push(
         `## TYPE DE FIL — PROSPECTION (OBLIGATOIRE)\n` +
@@ -296,13 +303,15 @@ async function buildBusinessContext(
           `- Envoi immédiat : \`send_whatsapp_message\` (recipient = nom du groupe ou @g.us). **Ne passe PAS** par save_contact / prospects / get_group_members.\n` +
           `- Programmation : \`schedule_whatsapp_message\` (delay_minutes OU send_at_local) vers le groupe — même si plusieurs horaires, appelle l'outil plusieurs fois.\n` +
           `- INTERDIT d'appeler get_group_members quand l'utilisateur demande d'envoyer/programmer un message dans le groupe.\n` +
-          `- Campagne multi-groupes / rythme : create_automation type=\`group_broadcast\`.\n` +
+          `- Campagne multi-jours (optionnelle) : create_automation type=\`group_broadcast\` — demande **« je valide »** (serveur crée le brouillon).\n` +
           `- list_whatsapp_groups avec admin_only=true — INTERDIT de proposer un groupe où l'utilisateur n'est pas admin.\n` +
           `- Si l'outil renvoie une erreur « pas administrateur » → refuse clairement, ne contourne pas.\n` +
           `- INTERDIT : contact_prospect, group_prospect (DM membres), keyword_sales / inbound, save_contact sur un @g.us.\n` +
+          `- INTERDIT : 5 variantes d'accroche, A.I.D.A. cold, questions stickers/handoff support.\n` +
           `- Stats = messages envoyés vs restants (une cible = un groupe).\n` +
           `- Pour prospecter des membres en DM ou du support → **Nouvelle automatisation** avec le bon type.`
       );
+      lines.push(GROUPS_FIL_SYSTEM_ADDENDUM);
     }
 
     // Liste compte (noms) — pour orienter, PAS pour modifier depuis un autre fil
@@ -595,10 +604,31 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
+  // Groupes : brouillon group_broadcast (pas de sim)
+  if (
+    briefing.isGroupsFlow &&
+    shouldDeterministicGroupsDraft(userMessage, history) &&
+    !shouldDeterministicActivate(history, userMessage)
+  ) {
+    try {
+      const drafted = await runDeterministicGroupsDraft({
+        userId,
+        threadId,
+        history,
+        threadTitle: thread?.title,
+        existingAutomationId: thread?.automation_id ?? null,
+      });
+      if (drafted) return drafted;
+    } catch (err) {
+      console.warn("[agent] groups draft failed:", err);
+    }
+  }
+
   // « oui » après les 5 variantes → brouillon + sim AVANT toute tentative d'activation
   // (évite le faux positif : guillemets + « simulation » + « je lance » → activate sans campagne)
   if (
     !briefing.isInboundClosing &&
+    !briefing.isGroupsFlow &&
     briefing.openerVariantsProposed &&
     isShortCampaignValidation(userMessage) &&
     !hasSimAlready
@@ -639,8 +669,12 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Simulation déterministe (Claude) — pas MiniMax
-  if (shouldDeterministicSimulate(history, userMessage) || forceSim) {
+  // Simulation déterministe (Claude) — pas MiniMax — PAS pour Groupes
+  if (
+    !briefing.isGroupsFlow &&
+    thread?.purpose !== "groupes" &&
+    (shouldDeterministicSimulate(history, userMessage) || forceSim)
+  ) {
     try {
       const sim = await runDeterministicSimulation({
         userId,
@@ -660,6 +694,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     return (
       "Je n'ai pas pu générer la simulation pour le moment. " +
       "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
+    );
+  }
+
+  if (
+    (briefing.isGroupsFlow || thread?.purpose === "groupes") &&
+    (forceSim || shouldDeterministicSimulate(history, userMessage))
+  ) {
+    return (
+      "Sur le fil **Groupes**, pas de simulation téléphone. " +
+      "Envoi ponctuel → je publie / programme. Diffusion → « je valide » puis **« active »**."
     );
   }
 
@@ -786,6 +830,18 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             if (activated) return activated;
           }
           if (toolCall.function.name === "show_campaign_simulation") {
+            if (briefing.isGroupsFlow || thread?.purpose === "groupes") {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error:
+                    "Pas de simulation sur le fil Groupes. " +
+                    "Publie/programme (send/schedule) ou active la diffusion group_broadcast.",
+                }),
+              });
+              continue;
+            }
             forcedSimUsed = true;
             const sim = await runDeterministicSimulation({
               userId,
@@ -809,6 +865,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
                 threadTitle: thread?.title,
                 existingAutomationId: thread?.automation_id ?? null,
                 inboundCatchAll: briefing.inboundCatchAll,
+              });
+              if (drafted) return drafted;
+            } else if (briefing.isGroupsFlow || thread?.purpose === "groupes") {
+              const drafted = await runDeterministicGroupsDraft({
+                userId,
+                threadId,
+                history,
+                threadTitle: thread?.title,
+                existingAutomationId: thread?.automation_id ?? null,
               });
               if (drafted) return drafted;
             } else {
@@ -969,6 +1034,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           // Si variantes déjà proposées OU choix 1–5 → angle considéré collecté.
           if (
             !briefing.isInboundClosing &&
+            !briefing.isGroupsFlow &&
             !briefing.openerDirectionCollected &&
             !briefing.openerVariantsProposed
           ) {
@@ -989,6 +1055,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
           if (
             !briefing.isInboundClosing &&
+            !briefing.isGroupsFlow &&
             !briefing.openerSingleValidated &&
             !briefing.openerVariantsProposed
           ) {
@@ -1007,7 +1074,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             continue;
           }
 
-          if (!briefing.isInboundClosing && !briefing.openerVariantsProposed) {
+          if (
+            !briefing.isInboundClosing &&
+            !briefing.isGroupsFlow &&
+            !briefing.openerVariantsProposed
+          ) {
             const block = JSON.stringify({
               error:
                 "INTERDIT de créer le brouillon avant d'avoir montré les 5 variantes d'accroche (rotation) dans le chat après validation de l'accroche unique.",
@@ -1292,6 +1363,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     if (
       briefing.inCampaignFlow &&
       !briefing.isInboundClosing &&
+      !briefing.isGroupsFlow &&
       briefing.readyForDraft &&
       hasNumberedOpenerList(text) &&
       (!briefing.openerSingleProposed || !briefing.openerSingleValidated) &&

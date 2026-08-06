@@ -4,6 +4,12 @@
  */
 import type { AgentMessage } from "./db.js";
 import { parseMemoryHints, type CampaignMemory } from "./campaign-memory.js";
+import { buildSupportBriefingNudge } from "./support-flow.js";
+import {
+  buildGroupsBriefingNudge,
+  extractGroupNamesFromHistory,
+  extractGroupPostMessage,
+} from "./groups-flow.js";
 
 const CAMPAIGN_INTENT_RE =
   /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|g[eè]re[rz]?\s+tout|tous\s+(mes\s+)?messages|compte\s+whatsapp|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
@@ -89,6 +95,8 @@ export type BriefingAssessment = {
   readyForDraft: boolean;
   /** Closing entrant / support : pas d'opener sortant → pas de 5 variantes. */
   isInboundClosing: boolean;
+  /** Fil purpose=groupes : publish / group_broadcast — pas d'opener ni support. */
+  isGroupsFlow: boolean;
   /** Support : gérer tous les messages privés (pas seulement des phrases déclencheurs). */
   inboundCatchAll: boolean;
   /** L'utilisateur a indiqué l'angle / le ton souhaité pour le 1er message (après question dédiée). */
@@ -460,6 +468,7 @@ export function assessCampaignBriefing(
       missing: [],
       readyForDraft: false,
       isInboundClosing: false,
+      isGroupsFlow: false,
       inboundCatchAll: false,
       openerDirectionCollected: false,
       openerSingleProposed: false,
@@ -472,8 +481,35 @@ export function assessCampaignBriefing(
     };
   }
 
-  const blob = conversationBlob(history, userMessage);
   const questionsAsked = countBriefingQuestions(history, purpose);
+
+  // Fil Groupes : module isolé (pas d'opener / stickers / handoff prospection).
+  if (purpose === "groupes") {
+    const post = extractGroupPostMessage(history);
+    const groups = extractGroupNamesFromHistory(history);
+    const missing: string[] = [];
+    if (!post) missing.push("message à publier");
+    if (!groups.length) missing.push("groupe(s) admin");
+    return {
+      inCampaignFlow: true,
+      questionsAsked,
+      missing,
+      readyForDraft: Boolean(post && groups.length),
+      isInboundClosing: false,
+      isGroupsFlow: true,
+      inboundCatchAll: false,
+      openerDirectionCollected: true,
+      openerSingleProposed: true,
+      openerSingleValidated: true,
+      openerVariantsProposed: true,
+      stickersQuestionAsked: true,
+      thirdPartyQuestionAsked: true,
+      handoffKeywordsQuestionAsked: true,
+      inboundPacingAsked: true,
+    };
+  }
+
+  const blob = conversationBlob(history, userMessage);
 
   const missing: string[] = [];
   const inbound = isInboundClosingFlow(history, userMessage, purpose);
@@ -569,7 +605,9 @@ export function assessCampaignBriefing(
       );
     if (!hasIdentity) {
       missing.push(
-        "présentation face aux prospects (prénom/nom + formule si on demande « qui êtes-vous ? »)"
+        inbound
+          ? "présentation face aux clients (prénom/nom + formule si on demande « qui êtes-vous ? »)"
+          : "présentation face aux prospects (prénom/nom + formule si on demande « qui êtes-vous ? »)"
       );
     }
   }
@@ -622,6 +660,7 @@ export function assessCampaignBriefing(
     missing,
     readyForDraft,
     isInboundClosing: inbound,
+    isGroupsFlow: false,
     inboundCatchAll: catchAll,
     openerDirectionCollected,
     openerSingleProposed,
@@ -679,55 +718,23 @@ export function buildBriefingNudge(
   userMessage: string
 ): string | null {
   if (!assessment.inCampaignFlow) return null;
+
+  // Support = module isolé (jamais le chemin opener / 5 variantes).
+  if (assessment.isInboundClosing) {
+    return buildSupportBriefingNudge(assessment, history, userMessage);
+  }
+
+  // Groupes = publish / group_broadcast (jamais opener prospection).
+  if (assessment.isGroupsFlow) {
+    return buildGroupsBriefingNudge(assessment, history, userMessage);
+  }
+
   if (assessment.readyForDraft) {
     if (!assessment.stickersQuestionAsked) {
       return (
         "Briefing campagne : éléments essentiels réunis (≥6 questions). " +
         "Pose UNE question — « Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non) » — puis ARRÊTE-TOI. " +
         "INTERDIT : résumer + proposer des variantes / brouillon dans le même message."
-      );
-    }
-
-    // Notif tiers + handoff = support / closing entrant uniquement (pas la prospection sortante).
-    if (assessment.isInboundClosing) {
-      if (!assessment.thirdPartyQuestionAsked) {
-        return (
-          "Briefing support : pose UNE question OBLIGATOIRE — « Quand un client convertit / objectif atteint, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial…) sur WhatsApp ? (oui/non) ». " +
-          "Si oui : récupère numéro + rôle + infos (une question à la fois). " +
-          "INTERDIT : create_automation / simulation tant que cette question n'est pas posée."
-        );
-      }
-
-      if (!assessment.handoffKeywordsQuestionAsked) {
-        return (
-          "Briefing support : pose UNE question OBLIGATOIRE — « Y a-t-il des mots ou phrases pour lesquels je dois **arrêter** de répondre et te **passer la main** " +
-          "(ex. remboursement, plainte, parler à un humain) ? Liste-les, ou dis « non » s'il n'y en a pas. » " +
-          "Puis ARRÊTE-TOI. INTERDIT create_automation / simulation tant que cette question n'est pas posée. " +
-          "Quand tu créeras le brouillon : passe `handoff_keywords` (tableau de strings, ou [] si non)."
-        );
-      }
-
-      // Closing entrant : pacing vagues + délais gérés en arrière-plan (pas de question user).
-      if (assessment.inboundCatchAll) {
-        return (
-          "Campagne support COMPTE ENTIER (tous les messages privés) : stickers + notification tiers + mots-clés handoff couverts. " +
-          "Pacing / plage = défauts système (ne PAS demander à l'utilisateur). " +
-          "Pas de 5 variantes d'opener. " +
-          "Crée le brouillon create_automation draft keyword_sales / inbound_closing avec **inbound_catch_all=true**, " +
-          "trigger_phrases=[] (vide), handoff_keywords (ou []), " +
-          "puis propose une simulation (show_campaign_simulation). " +
-          "Explique clairement : l'IA répondra à TOUT message privé WhatsApp (hors groupes), " +
-          "sauf STOP / handoff / contacts bloqués."
-        );
-      }
-      return (
-        "Campagne closing entrant / support (phrases déclencheurs) : stickers + notification tiers + mots-clés handoff couverts. " +
-        "Pacing vagues / délais / plage = défauts système (ne PAS demander à l'utilisateur). " +
-        "Pas de 5 variantes d'opener (le prospect écrit en premier). " +
-        "Crée le brouillon (create_automation draft keyword_sales / inbound_closing) avec trigger_phrases " +
-        "et handoff_keywords (ou [] si aucun), inbound_catch_all=false ou omis, " +
-        "(les défauts inbound_wave_gap_minutes / quiet_hours / batch seront appliqués automatiquement), " +
-        "puis propose une simulation (show_campaign_simulation)."
       );
     }
 

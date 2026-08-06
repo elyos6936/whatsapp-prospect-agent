@@ -26,6 +26,17 @@ import {
   wantsInboundCatchAll,
 } from "./campaign-briefing.js";
 import { proposeShortAttentionOpener } from "./opener-frame.js";
+import {
+  extractSupportHandoffKeywords,
+  extractSupportTriggerPhrases,
+  generateSupportSimulationDirect,
+} from "./support-flow.js";
+
+export {
+  runDeterministicGroupsDraft,
+  runDeterministicGroupsDraftAndSim,
+  shouldDeterministicGroupsDraft,
+} from "./groups-flow.js";
 
 function parseToolJson(raw: string): {
   ok: boolean;
@@ -99,26 +110,9 @@ export function extractProspectGroupQueryFromHistory(history: AgentMessage[]): s
   return null;
 }
 
-/** Phrases déclencheurs citées (guillemets) pour Support. */
+/** Phrases déclencheurs citées (guillemets) pour Support — délègue au module isolé. */
 export function extractTriggerPhrasesFromHistory(history: AgentMessage[]): string[] {
-  const found: string[] = [];
-  const seen = new Set<string>();
-  for (const m of history) {
-    if (m.role !== "user" && m.role !== "assistant") continue;
-    const quotes = m.content.match(/[«"]([^»"]{3,120})[»"]/g) || [];
-    for (const q of quotes) {
-      const inner = q.replace(/^[«"]|[»"]$/g, "").trim();
-      if (inner.length < 3) continue;
-      const key = inner.toLowerCase();
-      if (seen.has(key)) continue;
-      // Ignorer les accroches longues / questions agent
-      if (inner.length > 100) continue;
-      if (/\?$/.test(inner) && inner.length > 40) continue;
-      seen.add(key);
-      found.push(inner);
-    }
-  }
-  return found.slice(0, 12);
+  return extractSupportTriggerPhrases(history);
 }
 
 function conversationBlob(history: AgentMessage[]): string {
@@ -182,6 +176,18 @@ export async function runDeterministicDraftAndSim(opts: {
     threadTitle,
     existingAutomationId,
   } = opts;
+
+  // Sécurité : fil Groupes ne doit jamais passer par les 5 accroches / sim.
+  if (purpose === "groupes") {
+    const { runDeterministicGroupsDraft } = await import("./groups-flow.js");
+    return runDeterministicGroupsDraft({
+      userId,
+      threadId,
+      history,
+      threadTitle,
+      existingAutomationId,
+    });
+  }
 
   const variants = extractOpenerVariantsFromHistory(history);
   if (!variants || variants.length !== 5) {
@@ -344,15 +350,16 @@ export async function runDeterministicSupportDraftAndSim(opts: {
 
   const catchAll =
     inboundCatchAll === true || wantsInboundCatchAll(history, userMessage);
-  const triggers = catchAll ? [] : extractTriggerPhrasesFromHistory(history);
+  const triggers = catchAll ? [] : extractSupportTriggerPhrases(history);
   if (!catchAll && triggers.length === 0) {
     return (
-      "Pour le Support, il me faut soit des **phrases déclencheurs** exactes (entre guillemets), " +
+      "Pour le Support, il me faut soit des **phrases déclencheurs** exactes (entre guillemets ou listées), " +
       "soit la confirmation « **tous les messages** » (compte entier). " +
       "Précise ça, puis redis « crée le brouillon » / « je valide »."
     );
   }
 
+  const handoffKeywords = extractSupportHandoffKeywords(history);
   const link = extractHttpLink(history);
   const price = extractPriceHint(history);
   const draftArgs: Record<string, unknown> = {
@@ -362,7 +369,7 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     mode: "inbound_closing",
     inbound_catch_all: catchAll,
     trigger_phrases: triggers,
-    handoff_keywords: [],
+    handoff_keywords: handoffKeywords,
     stickers_enabled: false,
     ...(link ? { closing_link: link } : {}),
     ...(price ? { price } : {}),
@@ -384,13 +391,15 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
     .join("\n\n");
 
-  const sim = await generateCampaignSimulationDirect(client, {
+  const sim = await generateSupportSimulationDirect(client, {
     businessContext,
     recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
-    approvedOpener: null,
+    triggerPhrases: triggers,
+    catchAll,
     campaignBrief: catchAll
       ? "Support compte entier : l'IA répond à tout message privé."
-      : `Support déclencheurs : ${triggers.join(" · ")}`,
+      : `Support déclencheurs : ${triggers.join(" · ")}` +
+        (handoffKeywords.length ? `\nHandoff : ${handoffKeywords.join(", ")}` : ""),
   });
 
   if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
@@ -410,7 +419,7 @@ export async function runDeterministicSupportDraftAndSim(opts: {
 
   return (
     "Parfait — brouillon Support enregistré. " +
-    "Dis « simule » pour l'aperçu téléphone, « active » après sim, " +
+    "Dis « simule » pour l'aperçu téléphone (le client écrit en premier), « active » après sim, " +
     "ou « lance sans simulation » pour activer sans aperçu."
   );
 }
@@ -431,9 +440,29 @@ export async function runDeterministicSimulation(opts: {
 
   let approvedOpener: string | null = null;
   let campaignBrief: string | null = null;
+  let isSupportCampaign = false;
+  let supportTriggers: string[] = [];
+  let supportCatchAll = false;
+
   if (automationId) {
     const auto = await getAutomation(userId, automationId);
     approvedOpener = auto?.config.initialMessage?.trim() || null;
+    isSupportCampaign =
+      auto?.type === "keyword_sales" || auto?.config.mode === "inbound_closing";
+    // Groupes : pas de simulation téléphone
+    if (
+      auto?.type === "group_broadcast" ||
+      auto?.config.mode === "group_broadcast"
+    ) {
+      return (
+        "Sur le fil **Groupes**, il n'y a pas de simulation téléphone. " +
+        "Dis **« active »** pour lancer la diffusion, ou utilise send/schedule pour un envoi ponctuel."
+      );
+    }
+    supportCatchAll = Boolean(auto?.config.inboundCatchAll);
+    supportTriggers = (auto?.config.triggerPhrases || auto?.config.keywords || [])
+      .map((p) => String(p).trim())
+      .filter(Boolean);
     if (auto) {
       const bits = [
         auto.config.conversationGuide ? `Guide :\n${auto.config.conversationGuide}` : "",
@@ -454,17 +483,50 @@ export async function runDeterministicSimulation(opts: {
     }
   }
 
-  if (!approvedOpener) {
+  const thread = await getAgentThread(userId, threadId);
+  if (thread?.purpose === "groupes") {
+    return (
+      "Sur le fil **Groupes**, pas de simulation. " +
+      "Envoi ponctuel → send/schedule. Diffusion multi-jours → « je valide » puis **« active »**."
+    );
+  }
+
+  if (!approvedOpener && !isSupportCampaign) {
     const variants = extractOpenerVariantsFromHistory(history);
     approvedOpener = variants?.[0]?.message ?? null;
   }
 
-  if (!approvedOpener && !automationId) {
+  if (!approvedOpener && !automationId && !isSupportCampaign) {
     return (
       "Pas encore de brouillon lié à ce fil. " +
       "Valide d'abord les accroches (« je valide ») ou crée le brouillon Support, " +
       "puis redis « simule »."
     );
+  }
+
+  if (isSupportCampaign) {
+    // Support / inbound : sim dédiée (client d'abord)
+    const recentTranscript = history
+      .slice(-16)
+      .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
+      .join("\n\n");
+    const sim = await generateSupportSimulationDirect(client, {
+      businessContext,
+      recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
+      campaignBrief,
+      triggerPhrases: supportTriggers.length
+        ? supportTriggers
+        : extractSupportTriggerPhrases(history),
+      catchAll: supportCatchAll,
+    });
+    if (!sim?.display?.trim()) return null;
+    try {
+      const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
+      await persistLivePlaybookForThread(userId, threadId, sim.turns);
+    } catch (err) {
+      console.warn("[deterministic] persist support playbook:", err);
+    }
+    return sim.display.trim();
   }
 
   const recentTranscript = history
@@ -509,6 +571,19 @@ export async function runDeterministicActivation(opts: {
 
   const automationId = await resolveThreadAutomationId(userId, threadId);
   if (!automationId) {
+    const thread = await getAgentThread(userId, threadId);
+    if (thread?.purpose === "support") {
+      return (
+        "Aucune campagne Support n'est liée à ce fil. " +
+        "Termine le brief puis dis « crée le brouillon » / « je valide », ensuite « active »."
+      );
+    }
+    if (thread?.purpose === "groupes") {
+      return (
+        "Aucune diffusion groupes n'est liée à ce fil. " +
+        "Pour un envoi ponctuel : send/schedule. Pour une campagne multi-jours : « je valide » après message + groupes, puis « active »."
+      );
+    }
     return (
       "Aucune campagne n'est liée à ce fil. " +
       "Valide d'abord les accroches (oui) pour créer le brouillon, ou ouvre une automatisation existante."
@@ -518,14 +593,18 @@ export async function runDeterministicActivation(opts: {
   const hasSim = recentHistoryHasSimulation(history);
   const skipSim = allowsActivateWithoutSimulation(userMessage);
   let simValidatedOnConfig = false;
+  let isGroupBroadcast = false;
   try {
     const auto = await getAutomation(userId, automationId);
     simValidatedOnConfig = Boolean(auto?.config.simulationValidatedAt);
+    isGroupBroadcast =
+      auto?.type === "group_broadcast" || auto?.config.mode === "group_broadcast";
   } catch {
     /* ignore */
   }
 
-  if (!hasSim && !skipSim && !simValidatedOnConfig) {
+  // Diffusion groupes : pas de téléphone / sim — on active directement.
+  if (!isGroupBroadcast && !hasSim && !skipSim && !simValidatedOnConfig) {
     return (
       "Pour activer, il faut d'abord une **simulation** sur le téléphone (`simule`), " +
       "ou écrire clairement **« lance sans simulation »**."
@@ -534,7 +613,8 @@ export async function runDeterministicActivation(opts: {
 
   const raw = await executeTool(userId, threadId, "activate_automation", {
     automation_id: automationId,
-    ...(skipSim ? { allow_without_simulation: true } : {}),
+    ...(!isGroupBroadcast && skipSim ? { allow_without_simulation: true } : {}),
+    ...(isGroupBroadcast ? { allow_without_simulation: true } : {}),
   });
   const parsed = parseToolJson(raw);
   if (!parsed.ok) {
