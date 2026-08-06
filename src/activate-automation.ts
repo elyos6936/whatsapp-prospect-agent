@@ -248,6 +248,20 @@ export async function activateAutomationCore(
     safeConfig.quietHoursEnd = quiet.end;
     if (safeConfig.inboundBatchSize == null) safeConfig.inboundBatchSize = 50;
     if (safeConfig.inboundWaveGapMinutes == null) safeConfig.inboundWaveGapMinutes = 120;
+    // Campagnes déjà créées avant le fix : assure un cadre Support dans le guide.
+    const { buildSupportConversationGuide } = await import("./support-flow.js");
+    const frame = buildSupportConversationGuide({
+      catchAll: Boolean(safeConfig.inboundCatchAll),
+      triggers: (safeConfig.triggerPhrases || safeConfig.keywords || []).map(String),
+      handoffKeywords: safeConfig.handoffKeywords,
+      productHint: safeConfig.productName,
+      price: safeConfig.price,
+      link: safeConfig.closingLink,
+    });
+    const existing = (safeConfig.conversationGuide || "").trim();
+    if (!existing.includes("CADRE SUPPORT CLIENT")) {
+      safeConfig.conversationGuide = existing ? `${frame}\n---\n${existing}` : frame;
+    }
   }
   // Activer = simulation considérée validée (pas de double validation).
   if (!safeConfig.simulationValidatedAt) {

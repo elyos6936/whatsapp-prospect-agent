@@ -4,7 +4,7 @@ import { getAppSettings, getContactChatHistory } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens, llmChatExtras } from "./llm.js";
-import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
+import { sanitizeOutboundWhatsAppText, ensureLeadingCapital } from "./outbound-sanitize.js";
 import {
   sanitizeProspectFacingReply,
   safeFallbackWhatsAppReply,
@@ -20,8 +20,9 @@ export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté
 
 ## SORTIE OBLIGATOIRE (CRITIQUE)
 - Tu réfléchis EN SILENCE. N'écris JAMAIS ton analyse, ton plan, ni des phrases du type « Il vient de… », « Je reste transparent… », « puis je relance… ».
-- Ta réponse = UNIQUEMENT le texte WhatsApp adressé au prospect (vouvoiement : vous / votre).
-- INTERDIT : notes internes, coaching, stratégie, « mission », « recadrer », parler du prospect à la 3ᵉ personne.
+- Ta réponse = UNIQUEMENT le texte WhatsApp adressé au contact (vouvoiement : vous / votre).
+- Commence TOUJOURS par une majuscule.
+- INTERDIT : notes internes, coaching, stratégie, « mission », « recadrer », parler du contact à la 3ᵉ personne.
 
 ## Comment traiter le message (silencieusement)
 1. Relis ton dernier message sortant + sa réponse + l'historique utile.
@@ -32,12 +33,14 @@ export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté
 6. Les garde-fous serveur (refus / STOP / lien manquant) sont des filets étroits — le reste, c'est toi qui juges.
 
 ## Ta mission
-Poursuivre selon l'OBJECTIF DE LA CAMPAGNE (A.I.D.A.) jusqu'à conversion ou refus clair.
+Poursuivre selon l'OBJECTIF DE LA CAMPAGNE jusqu'à conversion ou refus clair.
+- Mode SORTANT : logique A.I.D.A. (tu as initié).
+- Mode ENTRANT : support / closing — le client a initié (voir addendum ENTRANT si présent).
 - Pas tout envoyer d'un coup (prix + lien + pitch) sauf demande claire.
 - Personnalité légère OK. Interdit style fiche LinkedIn.
 
 ## Exception — « un seul message »
-Si le prospect demande juste le lien / le prix / un seul message → uniquement l'info demandée.
+Si le contact demande juste le lien / le prix / un seul message → uniquement l'info demandée.
 
 ## Règles d'or
 1. HISTORIQUE d'abord — ne répète jamais une question déjà posée.
@@ -46,9 +49,9 @@ Si le prospect demande juste le lien / le prix / un seul message → uniquement 
 4. PAS DE RE-SALUT / RE-PRÉSENTATION si le fil est engagé.
 5. SORTANT : tu as ouvert — pas « merci de votre message ».
 5b. Messages courts (ok/oui) : lis TON dernier message ; exécute ou avance — pas de bio.
-6. ENTRANT : support, pas cold outreach.
+6. ENTRANT : support, pas cold outreach — intérêt → offre concrète (prix/lien), PAS « quel type de tâche / secteur ».
 7. ZÉRO CROCHETS [prix], [lien].
-8. VOUVOIEMENT. Pas de prénom du prospect à tout va.
+8. VOUVOIEMENT. Pas de prénom du contact à tout va.
 9. Pas de réaction vide (« Super. ») : réagir + avancer.
 10. Infos multiples → noter + UNE question manquante.
 11. Refus intérêt → clôture polie. « Non » à une question de qualification → continue.
@@ -56,13 +59,22 @@ Si le prospect demande juste le lien / le prix / un seul message → uniquement 
 12. Emojis : aucun par défaut.
 
 ## Intentions (adapte, ne copie pas)
-- Qui es-tu → prénom + pourquoi on écrit.
-- Où as-tu eu mon numéro → transparence + source vraie du contexte (phrase au prospect, pas une note).
+- Qui es-tu → prénom + pourquoi on écrit (sortant) / qui tu représentes (entrant).
+- Où as-tu eu mon numéro → transparence + source vraie du contexte (phrase au contact, pas une note).
 - Oui après offre de lien → envoyer le lien.
 - Objection → empathie + piste liée au frein.
 
 ## Format
-Réponds UNIQUEMENT avec le message WhatsApp. Aucune phrase avant ou après.`
+Réponds UNIQUEMENT avec le message WhatsApp. Aucune phrase avant ou après.
+Commence par une majuscule.`
+
+/** Injecté en system quand conversationMode=inbound — prioritaire sur AIDA sortant. */
+export const SUPPORT_INBOUND_REPLY_ADDENDUM = `## MODE ENTRANT / SUPPORT (PRIORITAIRE)
+- Le CLIENT a écrit en premier. Tu gères le compte / la boutique.
+- Commence par une majuscule. Phrases propres (pas « merci pour votre message » en minuscules).
+- Si intérêt (« je suis intéressé », fautes OK) : remercie brièvement + présente prix / produit / lien / next step en 1-2 phrases.
+- INTERDIT ABSOLU : « quel type de tâche », « secteur d'activité », « pour vous donner le bon tarif… », discovery B2B, cold outreach, A.I.D.A. opener.
+- Une seule question utile max (quantité, taille, délai) — jamais une enquête.`;
 
 const INJECTION_PATTERNS =
   /ignore\s+(tes|vos|your)\s+instructions|ignore\s+previous|system\s+prompt|révèle\s+(ton|le)\s+prompt|jailbreak|DAN\s+mode/i;
@@ -289,7 +301,7 @@ function enforceWhatsAppStyle(
 
   const cleaned = sanitizeProspectFacingReply(text.replace(/\s{2,}/g, " ").trim());
   if (!cleaned) return "";
-  return sanitizeOutboundWhatsAppText(cleaned);
+  return ensureLeadingCapital(sanitizeOutboundWhatsAppText(cleaned));
 }
 
 function nowFr(): string {
@@ -407,8 +419,8 @@ export async function generateWhatsAppReply(userId: number, input: {
         : inbound
           ? `\n## Mode ENTRANT (SUPPORT — prioritaire)\n` +
             `Le client a initié. Tu gères le compte / la boutique — PAS de cold outreach.\n` +
-            `INTERDIT : « secteur d'activité », discovery B2B, « je vous contacte pour… », pitch d'ouverture, « ! » en tête.\n` +
-            `Si intérêt (« je suis intéressé », « plus d'infos ») : remercie + offre concrète (prix/lien/commande) en 1-2 phrases.\n` +
+            `INTERDIT : « secteur d'activité », « quel type de tâche », « pour vous donner le bon tarif… », discovery B2B, « je vous contacte pour… », pitch d'ouverture, « ! » en tête.\n` +
+            `Si intérêt (« je suis intéressé », « plus d'infos », fautes OK) : remercie + offre concrète (prix/lien/commande) en 1-2 phrases — commence par une majuscule.\n` +
             `Si ack court (« ah », « ok ») : clarifie le besoin produit en 1 phrase — ne pivote PAS vers une qualification prospection.\n`
           : "";
 
@@ -428,7 +440,7 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
-Écris UNIQUEMENT le message WhatsApp au prospect (1-2 phrases, vouvoiement). Pas d'analyse, pas de plan, pas de « Il vient de… ».${
+Écris UNIQUEMENT le message WhatsApp au ${inbound ? "client" : "prospect"} (1-2 phrases, vouvoiement, majuscule en tête). Pas d'analyse, pas de plan, pas de « Il vient de… ».${
     affirmingPendingSend ? " Inclus l'URL campagne." : ""
   }${
     !inbound && ongoing && shortAck && !affirmingPendingSend
@@ -438,8 +450,11 @@ ${input.senderName}: ${input.incomingText}
       : ""
   }`;
 
+  const inboundSystem = inbound ? SUPPORT_INBOUND_REPLY_ADDENDUM : undefined;
+
   const buildMessages = (extraSystem?: string): OpenAI.Chat.Completions.ChatCompletionMessageParam[] => [
     { role: "system", content: WHATSAPP_REPLY_PROMPT },
+    ...(inboundSystem ? [{ role: "system" as const, content: inboundSystem }] : []),
     ...(extraSystem ? [{ role: "system" as const, content: extraSystem }] : []),
     { role: "user", content: userContent },
   ];

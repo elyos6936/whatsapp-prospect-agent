@@ -38,6 +38,7 @@ import {
   stopReasonLabel,
   type StopReason,
 } from "./stop-policy.js";
+import { buildSupportConversationGuide } from "./support-flow.js";
 
 export type SimPreviewTurn = {
   role: "you" | "prospect";
@@ -110,7 +111,7 @@ function buildSimCampaignContext(
   const mediaHint = cfg.mediaUrl
     ? `Photo / média produit disponible (sera envoyé en live si le client demande) : ${cfg.mediaUrl}`
     : "";
-  const lines = [
+    const lines = [
     `=== CAMPAGNE (simulation = même cadre que le live) : « ${auto.name} » ===`,
     `Mode : ${outbound ? "prospection SORTANTE (tu as initié)" : "support / closing ENTRANT (le client a initié)"}`,
     outbound && cfg.initialMessage
@@ -118,6 +119,16 @@ function buildSimCampaignContext(
       : "",
     !outbound && cfg.initialMessage
       ? `Réponse type / ton de référence (PAS un opener à coller) : « ${cfg.initialMessage} »`
+      : "",
+    !outbound
+      ? buildSupportConversationGuide({
+          catchAll: Boolean(cfg.inboundCatchAll),
+          triggers: (cfg.triggerPhrases || cfg.keywords || []).map(String),
+          handoffKeywords: cfg.handoffKeywords,
+          productHint: cfg.productName,
+          price: cfg.price,
+          link: cfg.closingLink,
+        })
       : "",
     guide ? `TON & APPROCHE :\n${guide}` : "",
     cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
@@ -131,14 +142,14 @@ function buildSimCampaignContext(
     extras.playbookBlock ? `\n${extras.playbookBlock}` : "",
     "",
     `Tu es en SIMULATION téléphone — 0 envoi réel — mais tes réponses doivent être`,
-    `IDENTIQUES à ce que tu écrirais à un vrai prospect (même playbook, même ton).`,
+    `IDENTIQUES à ce que tu écrirais à un vrai ${outbound ? "prospect" : "client"} (même playbook, même ton).`,
     outbound
       ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », INTERDIT de te présenter (nom + bio). Enchaîne 1 question concrète liée à la mission.`
       : [
           `IMPORTANT ENTRANT (support) : LE CLIENT a écrit en premier. Tu gères le compte / la boutique.`,
-          `La mémoire liée peut parler de prospection — IGNORE toute consigne de cold outreach / accroche / qualification « secteur ».`,
-          `INTERDIT : « Bonjour, c'est X, je vous contacte… », « quel est votre secteur d'activité ? », pitch d'ouverture.`,
-          `Si le client montre de l'intérêt : remercie + présente offre/prix/lien/next step (1-2 phrases).`,
+          `La mémoire liée peut parler de prospection — IGNORE toute consigne de cold outreach / accroche / qualification « secteur » / « type de tâche ».`,
+          `INTERDIT : « Bonjour, c'est X, je vous contacte… », « quel est votre secteur d'activité ? », « pour vous donner le bon tarif, quel type de tâche… ».`,
+          `Si le client montre de l'intérêt : remercie + présente offre/prix/lien/next step (1-2 phrases, majuscule en tête).`,
           `Si le client dit juste « salut / bonjour / ah / ok » : accueille ou clarifie le besoin produit — PAS une enquête prospection.`,
           `Si le client demande une photo et qu'un média est en config : confirme que tu l'envoies (en simu : dis-le en texte).`,
         ].join(" "),

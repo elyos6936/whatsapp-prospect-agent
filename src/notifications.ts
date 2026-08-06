@@ -74,7 +74,8 @@ import {
 import { enqueueAutoReply } from "./auto-reply-queue.js";
 import { ANTI_BAN, clampPresenceMs } from "./anti-ban.js";
 import { shouldStopConversation, stopReasonLabel, getStopFarewellReply, getObjectiveReachedReply, shouldSilenceAfterFarewell } from "./stop-policy.js";
-import type { Automation } from "./db.js";
+import type { Automation, AutomationConfig } from "./db.js";
+import { buildSupportConversationGuide } from "./support-flow.js";
 
 function extractEvolutionInboundText(message: unknown): string | null {
   if (!message || typeof message !== "object") return null;
@@ -670,6 +671,18 @@ async function recordAutomationEngagement(
   void text;
 }
 
+/** Cadre Support injecté à CHAQUE reply (campagnes actives incluses). */
+function buildRuntimeSupportFrame(cfg: AutomationConfig): string {
+  return buildSupportConversationGuide({
+    catchAll: Boolean(cfg.inboundCatchAll),
+    triggers: (cfg.triggerPhrases || cfg.keywords || []).map(String),
+    handoffKeywords: cfg.handoffKeywords,
+    productHint: cfg.productName,
+    price: cfg.price,
+    link: cfg.closingLink,
+  });
+}
+
 function buildActiveCampaignContext(
   auto: Automation,
   extras?: { memoryBlock?: string; playbookBlock?: string }
@@ -698,6 +711,8 @@ function buildActiveCampaignContext(
     inbound && cfg.initialMessage
       ? `Réponse type / ton de référence (PAS un opener sortant) : « ${cfg.initialMessage} »`
       : "",
+    // Campagnes déjà actives : injecte le cadre Support même si le guide DB est vieux / prospection.
+    inbound ? buildRuntimeSupportFrame(cfg) : "",
     cfg.conversationGuide
       ? `TON & APPROCHE (suis à la lettre, c'est le cœur de la campagne) :\n${cfg.conversationGuide}`
       : "",
@@ -720,14 +735,14 @@ function buildActiveCampaignContext(
     "",
     inbound
       ? [
-          `PARCOURS ENTRANT (support) :`,
-          `1. Le client a initié — accueille / réponds, JAMAIS « Bonjour c'est X, je vous contacte au sujet de… ».`,
-          `2. Salutation courte (« salut ») → accueil + question utile produit (besoin, taille, modèle).`,
-          `3. Demande photo → le système enverra le média campagne si configuré ; confirme brièvement.`,
-          `4. Si intéressé → qualifie puis avance vers l'objectif (${goal}).`,
-          `5. Si prêt → lien/prix/créneau RÉEL. Si refuse clairement l'aide → accepte poliment.`,
-          `6. Messages courts (ok / oui) : avance sur son besoin — ne redemande pas la même chose.`,
-          `7. INTERDIT réactions vides et pitch cold outreach.`,
+          `PARCOURS ENTRANT (support — prioritaire sur toute mémoire prospection) :`,
+          `1. Le client a initié — accueille / réponds. JAMAIS « Bonjour c'est X, je vous contacte… ».`,
+          `2. Intérêt (« je suis intéressé », « plus d'infos », fautes OK) → remercie + présente l'offre CONCRÈTE (prix / produit / lien / commande). INTERDIT « quel type de tâche », « secteur d'activité », qualification froide.`,
+          `3. Salutation courte (« salut ») → accueil + 1 question utile produit (taille, quantité, délai) — pas une enquête.`,
+          `4. Demande photo → confirme ; le système enverra le média si configuré.`,
+          `5. Si prêt → lien/prix/créneau RÉEL. Si refuse clairement → accepte poliment.`,
+          `6. Ack court (ok / ah / oui) : avance sur LE produit — ne redemande pas la même chose.`,
+          `7. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides et pitch cold outreach.`,
         ].join("\n")
       : [
           `PARCOURS CONVERSATION (raisonne — même mission, seuls les mots varient) :`,

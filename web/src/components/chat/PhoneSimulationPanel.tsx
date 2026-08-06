@@ -261,7 +261,13 @@ export function PhoneSimulationPanel({
     };
   }, [threadId, automationId, messages.length]);
 
-  const simBubbles = useMemo(() => extractLatestSimulationBubbles(messages), [messages]);
+  const simBubbles = useMemo(() => {
+    const raw = extractLatestSimulationBubbles(messages);
+    if (!isSupport) return raw;
+    return raw.map((b) =>
+      b.role === 'prospect' ? { ...b, name: 'Client' } : b,
+    );
+  }, [messages, isSupport]);
   const currentSimKey = useMemo(
     () => (simBubbles.length >= 2 ? simKeyOf(simBubbles) : ''),
     [simBubbles],
@@ -294,16 +300,21 @@ export function PhoneSimulationPanel({
     setIgnoredSimKey(null);
     setConversationClosed(false);
     setError('');
-    setPhoneBubbles(isContinuation ? storedBubbles : simBubbles);
+    const nextBubbles = (isContinuation ? storedBubbles : simBubbles).map((b) =>
+      isSupport && b.role === 'prospect' ? { ...b, name: 'Client' } : b,
+    );
+    setPhoneBubbles(nextBubbles);
     setCollapsed(false);
-  }, [hydrated, currentSimKey, simBubbles, ignoredSimKey, threadId]);
+  }, [hydrated, currentSimKey, simBubbles, ignoredSimKey, threadId, isSupport]);
 
   // Support inbound : pas de sim batch — on peut reprendre un test local.
   useEffect(() => {
     if (!hydrated || !isSupport || threadId == null) return;
     if (phoneBubbles.length > 0) return;
     const stored = loadPersisted(threadId);
-    const bubbles = stored?.bubbles ?? [];
+    const bubbles = (stored?.bubbles ?? []).map((b) =>
+      b.role === 'prospect' ? { ...b, name: 'Client' } : b,
+    );
     if (!bubbles.some((b) => b.role === 'prospect')) return;
     setPhoneBubbles(bubbles);
     setIgnoredSimKey(stored?.ignoredSimKey ?? null);

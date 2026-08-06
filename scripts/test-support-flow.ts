@@ -13,6 +13,7 @@ import {
   buildSupportBriefingNudge,
   buildSupportConversationGuide,
 } from "../src/support-flow.js";
+import { ensureLeadingCapital } from "../src/outbound-sanitize.js";
 
 let passed = 0;
 let failed = 0;
@@ -128,6 +129,13 @@ console.log("\n=== Guide Support isolé de la prospection ===\n");
   assert(/je suis intéressé/i.test(guide), "déclencheurs dans le guide");
   assert(/15000/i.test(guide), "prix dans le guide");
   assert(!/5 variantes|A\.I\.D\.A|accroche sortante/i.test(guide.replace(/INTERDIT[^\n]*/g, "")), "pas d'opener prospection à faire");
+  assert(/type de tâche|secteur/i.test(guide), "interdit type de tâche ou secteur");
+}
+
+console.log("\n=== Majuscule en tête ===\n");
+{
+  assert(ensureLeadingCapital("merci pour votre message.") === "Merci pour votre message.", "capitalise merci");
+  assert(ensureLeadingCapital("! Merci") === "Merci", "retire ! parasite");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

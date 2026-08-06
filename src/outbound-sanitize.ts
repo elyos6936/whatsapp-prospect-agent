@@ -21,6 +21,15 @@ export function sanitizeOutboundWhatsAppText(text: string): string {
   return "Je vous confirme le détail exact juste après.";
 }
 
+/** Majuscule en tête + retire artefacts (!, #…) — qualité WhatsApp. */
+export function ensureLeadingCapital(text: string): string {
+  let t = String(text ?? "")
+    .replace(/^[\s!*#>\-–—]+/, "")
+    .trim();
+  if (!t) return "";
+  return t.replace(/^[a-zàâäéèêëïîôùûüç]/, (c) => c.toUpperCase());
+}
+
 /** Liste les champs d'une config de campagne qui contiennent encore des crochets. */
 export function findPlaceholderFields(
   fields: Array<{ label: string; value?: string | null }>
