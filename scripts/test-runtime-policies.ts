@@ -10,6 +10,11 @@ import {
   outboundDeliveredAction,
   ensurePendingLinkInReply,
 } from "../src/lead-scoring.js";
+import {
+  phoneKeyFromWhatsAppId,
+  phonesMatchStrict,
+  toE164Display,
+} from "../src/integrations/google.js";
 import { findMatchingHandoffKeyword } from "../src/handoff.js";
 import { isInboundCatchAllCampaign } from "../src/campaign-gating.js";
 import { looksLikeInternalMonologue, safeFallbackWhatsAppReply } from "../src/prospect-facing-sanitize.js";
@@ -87,6 +92,29 @@ console.log("\n=== Objectifs: ok après adieu ≠ conversion ===\n");
   );
 }
 
+console.log("\n=== Objectifs: ok après prix seul ≠ clôture (Support) ===\n");
+{
+  const hist = [
+    {
+      direction: "sortant",
+      body: "Merci pour votre intérêt! Les baskets Nike noires et rouges sont disponibles à 40 000 FCFA.",
+    },
+  ];
+  assert(!outboundDeliveredAction(hist[0].body), "prix seul ≠ action conversion livrée");
+  assert(
+    !isCampaignObjectiveReached("Okay", hist, { closingGoal: "link" }),
+    "Okay après prix ≠ objectif",
+  );
+  assert(
+    !isCampaignObjectiveReached("ok", hist, { closingGoal: "payment" }),
+    "ok après prix ≠ objectif",
+  );
+  assert(
+    !isCampaignObjectiveReached("merci", hist, { closingGoal: "link" }),
+    "merci après prix ≠ objectif",
+  );
+}
+
 console.log("\n=== RDV créneau ===\n");
 {
   const hist = [
@@ -146,6 +174,15 @@ assert(
     /ne vous dérange plus/i.test(safeFallbackWhatsAppReply("non merci")),
     "fallback hard « non merci » clôture",
   );
+}
+
+console.log("\n=== Google Contacts: numéros Bénin 22901… ===\n");
+{
+  const key = phoneKeyFromWhatsAppId("2290166082161@c.us");
+  assert(key === "22966082161", "JID 22901…13 → clé sans 01");
+  assert(toE164Display(key!) === "+22966082161", "e164 canon");
+  assert(phonesMatchStrict("22966082161", "2290166082161"), "match avec/sans 01");
+  assert(phonesMatchStrict("+22966082161", "+229 01 66 08 21 61"), "match formaté");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -1224,8 +1224,10 @@ export interface Contact {
 
 function canonicalizeContactDigits(digits: string): string {
   let d = digits.replace(/\D/g, "");
-  // Bénin : +229 01 XX XX XX XX → +229XXXXXXXX
-  if (d.startsWith("22901") && d.length === 14) d = `229${d.slice(5)}`;
+  // Bénin : +229 01 XX XX XX XX (13 chiffres) → +229XXXXXXXX
+  if (d.startsWith("22901") && (d.length === 13 || d.length === 14)) {
+    d = `229${d.slice(5)}`;
+  }
   return d;
 }
 

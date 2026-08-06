@@ -741,7 +741,7 @@ function buildActiveCampaignContext(
           `3. Salutation courte (« salut ») → accueil + 1 question utile produit (taille, quantité, délai) — pas une enquête.`,
           `4. Demande photo → confirme ; le système enverra le média si configuré.`,
           `5. Si prêt → lien/prix/créneau RÉEL. Si refuse clairement → accepte poliment.`,
-          `6. Ack court (ok / ah / oui) : avance sur LE produit — ne redemande pas la même chose.`,
+          `6. Ack court (ok / okay / ah / oui) après prix ou info : avance (commande, taille, lien, paiement) — INTERDIT clôturer (« Bonne continuation », « C'est noté »). La clôture auto ne se fait qu'après lien livré / handoff livreur / preuve de paiement.`,
           `7. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides et pitch cold outreach.`,
         ].join("\n")
       : [
@@ -1131,7 +1131,8 @@ async function runAutoReply(
         }
       }
 
-      // Objectif atteint : lien/prix/RDV/handoff livraison + ack du prospect → on coupe.
+      // Objectif atteint : lien / handoff livraison / preuve paiement + ack → on coupe.
+      // PAS un simple prix + « okay » (Support : ça doit faire avancer, pas clôturer).
       if (
         activeCampaign &&
         isCampaignObjectiveReached(text, history, activeCampaign.config)

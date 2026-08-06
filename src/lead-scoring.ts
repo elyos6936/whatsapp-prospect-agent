@@ -16,7 +16,7 @@ const NEGATIVE_KEYWORDS =
 const HANDOFF_KEYWORDS =
   /parler (à|a) (un |une )?humain|responsable|g[eé]rant|directeur|plaint|plaindre|remboursement|r[eé]clamation urgente/i;
 
-/** Accusé de réception court après envoi d'un lien / prix / créneau / handoff livraison. */
+/** Accusé de réception court après livraison d'un lien / handoff livraison (pas après un simple prix). */
 const SHORT_ACK =
   /^(ok|okay|oui|ouais|d['']accord|dac|parfait|super|merci|top|nickel|impeccable|c['']est (bon|not[eé])|re[cç]u|bien re[cç]u|je (vais )?regarder|je regarde|partant|volontiers|vas[- ]y|go|envoie[rz]?)([\s!.?,;:]|$)/i;
 
@@ -27,9 +27,6 @@ const SHORT_YES =
 /** URL réellement livrée dans un message sortant. */
 const URL_DELIVERED =
   /https?:\/\/\S+|wa\.me\/\S*|chat\.whatsapp\.com\/\S+|bit\.ly\/\S+|calendly\.\S+/i;
-
-/** Prix concret déjà communiqué. */
-const PRICE_DELIVERED = /\b\d[\d\s.,]{2,}\s*(fcfa|€|euros?)\b/i;
 
 /**
  * Handoff livraison déjà fait (pas une simple proposition « le livreur peut… ? »).
@@ -45,14 +42,14 @@ const PENDING_SEND_OFFER =
   /(?:je (?:peux |vais )?(?:vous |te )?(?:l['']?)?(?:envoyer|envoie)|(?:vous |te )(?:l['']?)envoie|envoyer (?:le )?lien|lien (?:du )?groupe|je (?:vous |te )(?:envoie|transmets) (?:le )?lien)/i;
 
 /**
- * Action RÉELLEMENT livrée — pas une offre (« je vous envoie ? »).
+ * Action de conversion RÉELLEMENT livrée — pas une offre (« je vous envoie ? »),
+ * et PAS un simple devis/prix (Support : « ok » après le prix = on avance, on ne clôture pas).
  * Un « oui » après une offre ne doit PAS clôturer la mission.
  */
 export function outboundDeliveredAction(body: string): boolean {
   const t = body.trim();
   if (!t) return false;
   if (URL_DELIVERED.test(t)) return true;
-  if (PRICE_DELIVERED.test(t)) return true;
   if (DELIVERY_HANDOFF_DONE.test(t) && !/\?\s*$/.test(t)) return true;
   // « Voici le lien » sans URL seulement si ce n'est pas une question d'offre
   if (
@@ -211,8 +208,9 @@ const ASKED_FOR_SLOT =
 
 /**
  * Objectif campagne atteint — règles simples, pas de LLM.
- * Lien / paiement / RDV / handoff livraison déjà LIVRÉ par l'agent + « ok »
- * du prospect = on arrête.
+ * Lien / paiement explicite / handoff livraison déjà LIVRÉ + « ok » = on arrête.
+ * Analogie prospection (offre + oui ≠ close) : un devis/prix + « okay » ≠ objectif
+ * (Support doit avancer : taille, quantité, lien, paiement — pas « Bonne continuation »).
  * Une simple offre (« Je vous l'envoie ? ») + « oui » ≠ objectif atteint.
  */
 export function isCampaignObjectiveReached(

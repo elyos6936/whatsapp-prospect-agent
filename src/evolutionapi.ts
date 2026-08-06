@@ -146,11 +146,13 @@ export function isLikelyPhoneJid(jid: string): boolean {
 
 /**
  * Canonise les chiffres internationaux.
- * Bénin : +229 01 XX XX XX XX (14 chiffres) → +229XXXXXXXX (sans le 01 national).
+ * Bénin : +229 01 XX XX XX XX (13 chiffres : 229 + 01 + 8) → +229XXXXXXXX
+ * (sans le 01 national). Ancien bug : length===14 ne matchait jamais les JID réels.
  */
 export function canonicalizePhoneDigits(digits: string): string {
   let d = String(digits ?? "").replace(/\D/g, "");
-  if (d.startsWith("22901") && d.length === 14) {
+  // 13 = format WA courant ; 14 = filet si un zéro parasite
+  if (d.startsWith("22901") && (d.length === 13 || d.length === 14)) {
     d = `229${d.slice(5)}`;
   }
   return d;
@@ -319,7 +321,9 @@ export function phoneDigitsVariants(phoneOrJid: string): string[] {
   const out = new Set<string>();
   if (raw) out.add(raw);
   if (canon) out.add(canon);
-  if (raw.startsWith("22901") && raw.length === 14) out.add(`229${raw.slice(5)}`);
+  if (raw.startsWith("22901") && (raw.length === 13 || raw.length === 14)) {
+    out.add(`229${raw.slice(5)}`);
+  }
   if (canon.startsWith("229") && canon.length === 11) {
     out.add(`22901${canon.slice(3)}`);
   }

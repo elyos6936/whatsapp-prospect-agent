@@ -5,6 +5,7 @@
  */
 
 import { config } from "../config.js";
+import { canonicalizePhoneDigits } from "../evolutionapi.js";
 
 /** @deprecated legacy — migrer vers google_sheets / google_contacts */
 export const GOOGLE_PROVIDER = "google" as const;
@@ -392,27 +393,24 @@ export function phoneKeyFromWhatsAppId(phoneOrJid: string): string | null {
   if (!raw) return null;
   if (/@lid$/i.test(raw) || raw.toLowerCase().includes("@lid")) return null;
   if (/@g\.us$/i.test(raw) || /@newsletter/i.test(raw)) return null;
-  let digits = raw.replace(/\D/g, "");
-  // Bénin : +229 01 XX XX XX XX → sans le 01 national
-  if (digits.startsWith("22901") && digits.length === 14) {
-    digits = `229${digits.slice(5)}`;
-  }
+  // Même canon Bénin que l'envoi WA (22901… 13 chiffres → 229…)
+  const digits = canonicalizePhoneDigits(raw);
   if (digits.length < 8 || digits.length > 15) return null;
   return digits;
 }
 
 export function toE164Display(phoneKey: string): string {
-  const d = phoneKey.replace(/\D/g, "");
+  const d = canonicalizePhoneDigits(phoneKey);
   return d ? `+${d}` : "";
 }
 
 /** Comparaison stricte de numéros (évite les faux positifs endsWith). */
 export function phonesMatchStrict(a: string, b: string): boolean {
-  const da = a.replace(/\D/g, "");
-  const db = b.replace(/\D/g, "");
+  const da = canonicalizePhoneDigits(a);
+  const db = canonicalizePhoneDigits(b);
   if (!da || !db || da.length < 8 || db.length < 8) return false;
   if (da === db) return true;
-  // Même numéro avec/sans indicatif pays (ex. 01… vs 22901…)
+  // Même numéro avec/sans indicatif pays (ex. 01… vs 229…)
   const shorter = da.length <= db.length ? da : db;
   const longer = da.length > db.length ? da : db;
   if (longer.endsWith(shorter) && shorter.length >= 9 && longer.length - shorter.length <= 4) {
