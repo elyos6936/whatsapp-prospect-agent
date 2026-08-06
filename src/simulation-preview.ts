@@ -136,8 +136,10 @@ function buildSimCampaignContext(
       ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », INTERDIT de te présenter (nom + bio). Enchaîne 1 question concrète liée à la mission.`
       : [
           `IMPORTANT ENTRANT (support) : LE CLIENT a écrit en premier. Tu gères le compte / la boutique.`,
-          `INTERDIT de parler comme en prospection (« Bonjour, c'est X, je vous contacte au sujet de… », pitch d'ouverture).`,
-          `Si le client dit juste « salut / bonjour / hello » : accueille brièvement + demande en quoi tu peux l'aider (produit / besoin) — 1-2 phrases.`,
+          `La mémoire liée peut parler de prospection — IGNORE toute consigne de cold outreach / accroche / qualification « secteur ».`,
+          `INTERDIT : « Bonjour, c'est X, je vous contacte… », « quel est votre secteur d'activité ? », pitch d'ouverture.`,
+          `Si le client montre de l'intérêt : remercie + présente offre/prix/lien/next step (1-2 phrases).`,
+          `Si le client dit juste « salut / bonjour / ah / ok » : accueille ou clarifie le besoin produit — PAS une enquête prospection.`,
           `Si le client demande une photo et qu'un média est en config : confirme que tu l'envoies (en simu : dis-le en texte).`,
         ].join(" "),
     `ARRÊT (identique au live) : refus d'intérêt (« ça vous intéresse ? » → non) / STOP → clôture. « Non » à une Q diagnostic → continue. Objectif atteint (lien/prix/RDV + ack) → courte confirmation puis stop. Ne répète jamais une question déjà posée.`,
@@ -327,7 +329,7 @@ export async function replyInSimulationPreview(
   const syntheticChatId = `sim-preview-${userId}-${threadId ?? "x"}@s.whatsapp.net`;
   const transcriptHint = history
     .slice(0, -1)
-    .map((t) => `${t.role === "you" ? "Toi" : "Prospect"}: ${t.text}`)
+    .map((t) => `${t.role === "you" ? "Toi" : mode === "inbound" ? "Client" : "Prospect"}: ${t.text}`)
     .join("\n");
 
   const enrichedContext =

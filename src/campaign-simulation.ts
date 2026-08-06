@@ -26,7 +26,11 @@ const SIM_CHAT_FOOTER =
 /**
  * Payload machine pour le téléphone (fence masquée dans le chat) + phrase courte visible.
  */
-export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string {
+export function formatCampaignSimulationDisplay(
+  turns: SimulationTurn[],
+  opts?: { counterpartLabel?: string }
+): string {
+  const counterpart = (opts?.counterpartLabel || "Prospect").trim() || "Prospect";
   const limited = turns.slice(0, 7);
   if (limited.length < 3) {
     throw new Error("La simulation doit contenir au moins 3 messages.");
@@ -41,7 +45,7 @@ export function formatCampaignSimulationDisplay(turns: SimulationTurn[]): string
     if (turn.speaker === "toi") {
       lines.push(`Toi → « ${text} »`);
     } else {
-      const name = String(turn.name ?? "Prospect").trim() || "Prospect";
+      const name = String(turn.name ?? counterpart).trim() || counterpart;
       lines.push(`${name} → « ${text} »`);
     }
   }

@@ -11,6 +11,7 @@ import {
   extractSupportTriggerPhrases,
   extractSupportHandoffKeywords,
   buildSupportBriefingNudge,
+  buildSupportConversationGuide,
 } from "../src/support-flow.js";
 
 let passed = 0;
@@ -112,6 +113,21 @@ console.log("\n=== Handoff keywords ===\n");
   ];
   const kw = extractSupportHandoffKeywords(hist);
   assert(kw.some((k) => /rembours/i.test(k)), "handoff remboursement");
+}
+
+console.log("\n=== Guide Support isolé de la prospection ===\n");
+{
+  const guide = buildSupportConversationGuide({
+    catchAll: false,
+    triggers: ["je suis intéressé", "je veux plus d'infos"],
+    price: "15000 FCFA",
+    productHint: "crème",
+  });
+  assert(/CADRE SUPPORT CLIENT/i.test(guide), "cadre support présent");
+  assert(/INTERDIT ABSOLU/i.test(guide) && /secteur/i.test(guide), "interdit secteur / cold");
+  assert(/je suis intéressé/i.test(guide), "déclencheurs dans le guide");
+  assert(/15000/i.test(guide), "prix dans le guide");
+  assert(!/5 variantes|A\.I\.D\.A|accroche sortante/i.test(guide.replace(/INTERDIT[^\n]*/g, "")), "pas d'opener prospection à faire");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

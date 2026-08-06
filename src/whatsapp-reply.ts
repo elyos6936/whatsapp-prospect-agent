@@ -405,7 +405,11 @@ export async function generateWhatsAppReply(userId: number, input: {
         ? `\n## GARDE-FOU\n` +
           `Ack court (« ${input.incomingText.trim()} ») — pas de bio / re-présentation. Relis ton dernier message et avance intelligemment (point ou question NOUVELLE).\n`
         : inbound
-          ? `\n## Mode ENTRANT\nLe client a initié — support/closing, pas de cold outreach. Réponds à son besoin réel.\n`
+          ? `\n## Mode ENTRANT (SUPPORT — prioritaire)\n` +
+            `Le client a initié. Tu gères le compte / la boutique — PAS de cold outreach.\n` +
+            `INTERDIT : « secteur d'activité », discovery B2B, « je vous contacte pour… », pitch d'ouverture, « ! » en tête.\n` +
+            `Si intérêt (« je suis intéressé », « plus d'infos ») : remercie + offre concrète (prix/lien/commande) en 1-2 phrases.\n` +
+            `Si ack court (« ah », « ok ») : clarifie le besoin produit en 1 phrase — ne pivote PAS vers une qualification prospection.\n`
           : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)

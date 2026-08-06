@@ -26,8 +26,71 @@ export const SUPPORT_FIL_SYSTEM_ADDENDUM = `## MODULE SUPPORT CLIENT (prioritair
 - create_automation = type keyword_sales + mode inbound_closing uniquement.
 - Portée : phrases déclencheurs (guillemets) OU « tous les messages » (inbound_catch_all).
 - Après stickers + notif tiers + handoff : demande « crée le brouillon » / « je valide » — le serveur crée le brouillon (tu n'as PAS besoin d'appeler create_automation avec des args MiniMax).
-- Simulation = le client démarre (pas toi). Activation = « active » après sim, ou « lance sans simulation ».
+- Simulation = le **client** démarre (libellé Client, pas Prospect). Activation = « active » après sim, ou « lance sans simulation ».
+- Dans la sim / réponses : si le client dit « je suis intéressé » → accueille + présente l'offre / prix / lien / next step. INTERDIT « quel est votre secteur d'activité ? », INTERDIT discovery froide type prospection.
 - INTERDIT de parler d'accroches / rotation / group_prospect / contact_prospect.`;
+
+/** Cadre conversationnel Support — prioritaire sur une mémoire écrite pour la prospection. */
+export function buildSupportConversationGuide(opts: {
+  catchAll: boolean;
+  triggers: string[];
+  handoffKeywords?: string[];
+  productHint?: string | null;
+  price?: string | null;
+  link?: string | null;
+}): string {
+  const triggersLine = opts.catchAll
+    ? "Portée : TOUS les messages privés (hors groupes)."
+    : `Déclencheurs (répondre seulement si match) : ${opts.triggers.map((t) => `« ${t} »`).join(", ") || "(à préciser)"}.`;
+  const handoff =
+    opts.handoffKeywords && opts.handoffKeywords.length
+      ? `Handoff humain si le client écrit : ${opts.handoffKeywords.join(", ")}.`
+      : "Handoff : selon mots-clés configurés (sinon STOP classique).";
+  const offerBits = [
+    opts.productHint ? `Produit / offre : ${opts.productHint}` : "",
+    opts.price ? `Prix : ${opts.price}` : "",
+    opts.link ? `Lien : ${opts.link}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return (
+    `## CADRE SUPPORT CLIENT (PRIORITAIRE — écrase toute consigne de cold outreach)\n` +
+    `${triggersLine}\n` +
+    `${handoff}\n` +
+    (offerBits ? `${offerBits}\n` : "") +
+    `\nComportement :\n` +
+    `- Tu es l'assistant du compte / de la boutique. Le CLIENT a écrit en premier.\n` +
+    `- INTERDIT ABSOLU : « je vous contacte pour… », pitch d'ouverture, 5 accroches, demander le « secteur d'activité », qualification froide B2B.\n` +
+    `- Si le client montre de l'intérêt (« je suis intéressé », « je veux plus d'infos ») : remercie brièvement + présente l'offre concrète (prix / dispo / lien / commande) en 1-2 phrases. Une seule question utile max (ex. quantité, taille, délai) — pas une enquête.\n` +
+    `- Si le client répond « ah », « ok », « hmm » : clarifie en 1 phrase ce dont il a besoin sur LE produit, sans pivoter vers une discovery prospection.\n` +
+    `- Vouvoiement, ton chaleureux et utile. Pas de « ! » parasite en début de message.`
+  );
+}
+
+/** Indice produit / offre depuis le fil Support (sans inventer). */
+export function extractSupportProductHint(history: AgentMessage[]): string | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.role !== "user") continue;
+    const labeled =
+      /(?:produit|offre|service|je\s+(?:vends|propose|offre))\s*[:\-–]?\s*([^\n]{4,120})/i.exec(
+        m.content
+      );
+    if (labeled?.[1]) {
+      const t = labeled[1].replace(/[«»"]/g, "").trim();
+      if (t.length >= 3 && !/^(oui|non|ok)\b/i.test(t)) return t.slice(0, 120);
+    }
+  }
+  return null;
+}
+
+function sanitizeSupportSimText(text: string): string {
+  return text
+    .replace(/^[\s!*#>\-–—]+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
 /**
  * Phrases déclencheurs : guillemets + listes près de « déclencheur ».
@@ -224,13 +287,13 @@ export async function generateSupportSimulationDirect(
 ): Promise<{ display: string; turns: SimulationTurn[] } | null> {
   const triggers = (opts.triggerPhrases || []).filter(Boolean);
   const startRule = opts.catchAll
-    ? `- Le 1er turn DOIT être speaker=prospect (client qui écrit en premier : bonjour / question produit).\n`
+    ? `- Le 1er turn DOIT être speaker=prospect, name=Client (bonjour / question produit).\n`
     : triggers.length
-      ? `- Le 1er turn DOIT être speaker=prospect avec un message qui MATCH un déclencheur (ex. « ${triggers[0]} » ou proche).\n`
-      : `- Le 1er turn DOIT être speaker=prospect (le client écrit en premier).\n`;
+      ? `- Le 1er turn DOIT être speaker=prospect, name=Client, texte proche du déclencheur « ${triggers[0]} ».\n`
+      : `- Le 1er turn DOIT être speaker=prospect, name=Client (le client écrit en premier).\n`;
 
   const brief = opts.campaignBrief?.trim()
-    ? `\n## Cadre support\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
+    ? `\n## Cadre SUPPORT (PRIORITAIRE)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
     : "";
 
   const system =
@@ -240,18 +303,20 @@ export async function generateSupportSimulationDirect(
     '{"turns":[{"speaker":"prospect","name":"Client","text":"..."},{"speaker":"toi","text":"..."}]}\n' +
     "Règles :\n" +
     "- Exactement 6 ou 7 turns\n" +
-    "- Alternance prospect / toi en commençant par prospect\n" +
+    "- Alternance prospect / toi en commençant par prospect ; name toujours « Client » (jamais « Prospect »)\n" +
     startRule +
-    "- « toi » = réponses support utiles (pas d'opener cold, pas de « je vous contacte pour… »)\n" +
-    "- Vouvoiement, textes naturels, sans crochets [ ]\n" +
-    "- Prix / lien seulement si le client engage et si présents dans le cadre\n" +
+    "- Après un message d'intérêt : « toi » remercie + présente offre/prix/lien/next step — PAS « quel est votre secteur ? »\n" +
+    "- INTERDIT : cold outreach, A.I.D.A., discovery B2B, « je vous contacte pour… », « automatisation IA » générique hors offre du cadre\n" +
+    "- « toi » = vendeur/support utile, 1-2 phrases, vouvoiement, sans crochets [ ], sans « ! » en tête de message\n" +
+    "- Prix / lien seulement s'ils sont dans le cadre SUPPORT\n" +
     "- Aucune phrase hors JSON";
 
   const user =
-    `## Contexte business\n${opts.businessContext.slice(0, 3500)}\n` +
     brief +
-    `\n## Fil agence\n${opts.recentTranscript.slice(0, 4000)}\n\n` +
-    `Génère la simulation JSON support (client d'abord).`;
+    `\n## Faits business (secondaires — le cadre SUPPORT ci-dessus prime ; ignore toute consigne de cold outreach)\n` +
+    `${opts.businessContext.slice(0, 2200)}\n` +
+    `\n## Fil agence\n${opts.recentTranscript.slice(0, 3000)}\n\n` +
+    `Génère la simulation JSON support (Client d'abord, replies utiles produit).`;
 
   const simRole = config.toolLlmConfigured ? "tools" : "chat";
   const simProvider = resolveLlmRoleProvider(simRole);
@@ -283,7 +348,10 @@ export async function generateSupportSimulationDirect(
   }
 
   try {
-    return { display: formatCampaignSimulationDisplay(turns), turns };
+    return {
+      display: formatCampaignSimulationDisplay(turns, { counterpartLabel: "Client" }),
+      turns,
+    };
   } catch (err) {
     console.warn("[support-sim] format failed:", err);
     return null;
@@ -304,20 +372,32 @@ function parseSupportTurns(content: string): SimulationTurn[] | null {
       if (!item || typeof item !== "object") return null;
       const t = item as { speaker?: string; name?: string; text?: string };
       const speaker = String(t.speaker ?? "").toLowerCase();
-      const text = String(t.text ?? "").trim();
+      const text = sanitizeSupportSimText(String(t.text ?? ""));
       if (!text) return null;
       if (speaker === "toi" || speaker === "moi" || speaker === "you" || speaker === "agent") {
         out.push({ speaker: "toi", text });
       } else {
         out.push({
           speaker: "prospect",
-          name: t.name || "Client",
+          name: "Client",
           text,
         });
       }
     }
-    // Doit commencer par le client
     if (out[0]?.speaker !== "prospect") return null;
+    // Rejette une sim qui part en discovery prospection
+    const agentBlob = out
+      .filter((t) => t.speaker === "toi")
+      .map((t) => t.text)
+      .join(" ");
+    if (
+      /\bsecteur\s+d['']activit|\bje\s+vous\s+contacte\b|\bautomatisation\s+IA\s*\?/i.test(
+        agentBlob
+      )
+    ) {
+      console.warn("[support-sim] rejected prospection-like agent turns");
+      return null;
+    }
     return out.length >= 3 ? out : null;
   } catch {
     return null;

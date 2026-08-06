@@ -358,7 +358,12 @@ export function PhoneSimulationPanel({
     const base = phoneBubbles;
     const withProspect: PhoneBubble[] = [
       ...base,
-      { id: `p-${Date.now()}`, role: 'prospect', text, name: 'Prospect' },
+      {
+        id: `p-${Date.now()}`,
+        role: 'prospect',
+        text,
+        name: isSupport ? 'Client' : 'Prospect',
+      },
     ];
     setPhoneBubbles(withProspect);
     // Garder ignoredSimKey : sinon la simu batch réapparaît un instant avant la réponse.
@@ -378,7 +383,7 @@ export function PhoneSimulationPanel({
         id: `h-${i}-${t.role}`,
         role: t.role,
         text: t.text,
-        name: t.role === 'prospect' ? 'Prospect' : undefined,
+        name: t.role === 'prospect' ? (isSupport ? 'Client' : 'Prospect') : undefined,
       }));
       if (result.reply?.trim() && !next.some((n) => n.role === 'you' && n.text === result.reply)) {
         next.push({ id: `r-${Date.now()}`, role: 'you', text: result.reply.trim() });
@@ -402,7 +407,7 @@ export function PhoneSimulationPanel({
 
   const waMessages: WaMsg[] = phoneBubbles.map((b) => ({
     id: b.id,
-    sender: b.role === 'prospect' ? b.name || 'Prospect' : 'Vous',
+    sender: b.role === 'prospect' ? b.name || (isSupport ? 'Client' : 'Prospect') : 'Vous',
     text: b.text,
     isCurrentUser: b.role === 'you',
     timestamp: timeLabel,

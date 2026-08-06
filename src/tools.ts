@@ -4225,6 +4225,24 @@ export async function executeTool(
             mem,
             config.conversationGuide
           );
+          // keyword_sales : cadre Support prioritaire (la mémoire est souvent écrite pour la prospection).
+          if (type === "keyword_sales") {
+            const { buildSupportConversationGuide } = await import("./support-flow.js");
+            const frame = buildSupportConversationGuide({
+              catchAll: Boolean(config.inboundCatchAll),
+              triggers: (config.triggerPhrases || config.keywords || []).map(String),
+              handoffKeywords: config.handoffKeywords,
+              productHint: config.productName,
+              price: config.price,
+              link: config.closingLink,
+            });
+            const existing = (config.conversationGuide || "").trim();
+            config.conversationGuide = existing.includes("CADRE SUPPORT CLIENT")
+              ? existing
+              : existing
+                ? `${frame}\n---\n${existing}`
+                : frame;
+          }
           const owner = (hints.ownerName || mem.ownerName).trim();
           if (owner) {
             await saveBusinessProfile(userId, { ownerName: owner }).catch(() => {});

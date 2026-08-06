@@ -29,6 +29,8 @@ import { proposeShortAttentionOpener } from "./opener-frame.js";
 import {
   extractSupportHandoffKeywords,
   extractSupportTriggerPhrases,
+  extractSupportProductHint,
+  buildSupportConversationGuide,
   generateSupportSimulationDirect,
 } from "./support-flow.js";
 
@@ -362,6 +364,15 @@ export async function runDeterministicSupportDraftAndSim(opts: {
   const handoffKeywords = extractSupportHandoffKeywords(history);
   const link = extractHttpLink(history);
   const price = extractPriceHint(history);
+  const productHint = extractSupportProductHint(history);
+  const supportGuide = buildSupportConversationGuide({
+    catchAll,
+    triggers,
+    handoffKeywords,
+    productHint,
+    price,
+    link,
+  });
   const draftArgs: Record<string, unknown> = {
     name: threadTitle?.trim() || "Support client",
     type: "keyword_sales",
@@ -371,6 +382,8 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     trigger_phrases: triggers,
     handoff_keywords: handoffKeywords,
     stickers_enabled: false,
+    conversation_guide: supportGuide,
+    ...(productHint ? { product_name: productHint } : {}),
     ...(link ? { closing_link: link } : {}),
     ...(price ? { price } : {}),
     ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
@@ -396,10 +409,7 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
     triggerPhrases: triggers,
     catchAll,
-    campaignBrief: catchAll
-      ? "Support compte entier : l'IA répond à tout message privé."
-      : `Support déclencheurs : ${triggers.join(" · ")}` +
-        (handoffKeywords.length ? `\nHandoff : ${handoffKeywords.join(", ")}` : ""),
+    campaignBrief: supportGuide,
   });
 
   if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
@@ -510,10 +520,23 @@ export async function runDeterministicSimulation(opts: {
       .slice(-16)
       .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
       .join("\n\n");
+    const auto = automationId ? await getAutomation(userId, automationId) : null;
+    const supportGuide =
+      auto?.config.conversationGuide?.trim() ||
+      buildSupportConversationGuide({
+        catchAll: supportCatchAll,
+        triggers: supportTriggers.length
+          ? supportTriggers
+          : extractSupportTriggerPhrases(history),
+        handoffKeywords: extractSupportHandoffKeywords(history),
+        productHint: auto?.config.productName,
+        price: auto?.config.price,
+        link: auto?.config.closingLink,
+      });
     const sim = await generateSupportSimulationDirect(client, {
       businessContext,
       recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
-      campaignBrief,
+      campaignBrief: [supportGuide, campaignBrief].filter(Boolean).join("\n\n"),
       triggerPhrases: supportTriggers.length
         ? supportTriggers
         : extractSupportTriggerPhrases(history),
