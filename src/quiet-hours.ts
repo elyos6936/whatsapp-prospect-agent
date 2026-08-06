@@ -32,13 +32,38 @@ export function normalizeQuietHours(
   if (s === e) return { start: s, end: e };
 
   // Quiet diurne large le matin→soir = activité mal enregistrée → inverser
+  // (ex. 9→18, 6→15 passés comme « quiet » alors que c'est la fenêtre d'envoi)
   if (s < e) {
     const span = e - s;
-    if (span >= 6 && s <= 12 && e >= 17) {
+    if (span >= 6 && s <= 12 && e >= 14) {
       return { start: e, end: s };
     }
   }
   return { start: s, end: e };
+}
+
+/**
+ * Fenêtre d'ACTIVITÉ (ce que dit l'utilisateur : « 6h–15h ») → heures calmes.
+ * Ex. activité 6→15 → quiet 15→6.
+ */
+export function activityWindowToQuietHours(
+  sendStart: number | null | undefined,
+  sendEnd: number | null | undefined
+): QuietHours | null {
+  if (typeof sendStart !== "number" || typeof sendEnd !== "number") return null;
+  if (!Number.isFinite(sendStart) || !Number.isFinite(sendEnd)) return null;
+  const start = clampHour(sendStart);
+  const end = clampHour(sendEnd);
+  if (start === end) return null;
+  return normalizeQuietHours(end, start) ?? { start: end, end: start };
+}
+
+/** Quiet hours → fenêtre d'activité affichable (ex. quiet 15→6 → « 6h–15h »). */
+export function quietHoursToActivityWindow(quiet: QuietHours): {
+  sendWindowStart: number;
+  sendWindowEnd: number;
+} {
+  return { sendWindowStart: quiet.end, sendWindowEnd: quiet.start };
 }
 
 export function resolveOutboundQuietHours(

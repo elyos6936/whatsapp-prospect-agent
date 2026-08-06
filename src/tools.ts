@@ -166,6 +166,8 @@ import {
   setThreadCampaignMemory,
 } from "./campaign-memory.js";
 import {
+  activityWindowToQuietHours,
+  quietHoursToActivityWindow,
   resolveInboundQuietHours,
   resolveOutboundQuietHours,
 } from "./quiet-hours.js";
@@ -304,7 +306,9 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "manage_group_participants",
-      description: "Gère les participants d'un groupe : ajouter, retirer, promouvoir admin, rétrograder admin.",
+      description:
+        "Gère les participants d'un groupe : ajouter, retirer, promouvoir admin, rétrograder. " +
+        "group_id = nom du groupe (jamais demander l'ID @g.us à l'utilisateur).",
       parameters: {
         type: "object",
         properties: {
@@ -1569,12 +1573,22 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           quiet_hours_start: {
             type: "number",
             description:
-              "Heure (0-23) de début des heures calmes (PAS d'envoi). Ex. activité 9h-18h → quiet_hours_start=18",
+              "Heure (0-23) de début des heures calmes (PAS d'envoi). Ex. activité 9h-18h → quiet_hours_start=18. Préfère send_window_* si l'utilisateur donne une fenêtre d'activité.",
           },
           quiet_hours_end: {
             type: "number",
             description:
               "Heure (0-23) de fin des heures calmes. Ex. activité 9h-18h → quiet_hours_end=9",
+          },
+          send_window_start: {
+            type: "number",
+            description:
+              "Début fenêtre d'ACTIVITÉ (0-23) — ce que dit l'utilisateur (« de 6h à … »). Convertie automatiquement en quiet hours.",
+          },
+          send_window_end: {
+            type: "number",
+            description:
+              "Fin fenêtre d'ACTIVITÉ (0-23) — (« … jusqu'à 15h »). Avec send_window_start : ex. 6→15 → quiet 15→6.",
           },
           inbound_wave_gap_minutes: {
             type: "number",
@@ -1784,8 +1798,21 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             description:
               "Mots/phrases qui stoppent l'IA et passent la main à l'humain. [] pour désactiver.",
           },
-          quiet_hours_start: { type: "number" },
+          quiet_hours_start: {
+            type: "number",
+            description:
+              "Début heures calmes (PAS d'envoi). Préfère send_window_* si l'utilisateur dit « fenêtre 6h–15h ».",
+          },
           quiet_hours_end: { type: "number" },
+          send_window_start: {
+            type: "number",
+            description:
+              "Début fenêtre d'ACTIVITÉ (0-23). Ex. « 6h–15h » → send_window_start=6, send_window_end=15.",
+          },
+          send_window_end: {
+            type: "number",
+            description: "Fin fenêtre d'ACTIVITÉ (0-23).",
+          },
           inbound_wave_gap_minutes: {
             type: "number",
             description: "Closing entrant : minutes entre vagues (min 60)",
@@ -2246,9 +2273,16 @@ function buildAutomationConfigFromArgs(
     mediaType: args.media_type ? (String(args.media_type) as "image" | "document" | "audio") : undefined,
   };
 
+  const activityQuiet = activityWindowToQuietHours(
+    args.send_window_start != null ? Number(args.send_window_start) : undefined,
+    args.send_window_end != null ? Number(args.send_window_end) : undefined
+  );
   const qStart = args.quiet_hours_start != null ? Number(args.quiet_hours_start) : NaN;
   const qEnd = args.quiet_hours_end != null ? Number(args.quiet_hours_end) : NaN;
-  if (Number.isFinite(qStart) && Number.isFinite(qEnd)) {
+  if (activityQuiet) {
+    config.quietHoursStart = activityQuiet.start;
+    config.quietHoursEnd = activityQuiet.end;
+  } else if (Number.isFinite(qStart) && Number.isFinite(qEnd)) {
     const quiet = isOutbound
       ? resolveOutboundQuietHours(qStart, qEnd)
       : resolveInboundQuietHours(qStart, qEnd);
@@ -2561,17 +2595,33 @@ export async function executeTool(
       if (!["add", "remove", "promote", "demote"].includes(action)) {
         return JSON.stringify({ error: "action invalide (add/remove/promote/demote)." });
       }
+      if (!participants.length) {
+        return JSON.stringify({ error: "Indique au moins un numéro de participant." });
+      }
       try {
-        await updateGroupParticipants(userId, String(args.group_id ?? ""), action, participants);
+        const groupRef = String(args.group_id ?? "").trim();
+        if (!groupRef) {
+          return JSON.stringify({
+            error: "Indique le nom du groupe (pas besoin d'ID technique).",
+          });
+        }
+        const groupId = await resolveGroupId(userId, groupRef);
+        await updateGroupParticipants(userId, groupId, action, participants);
         const labels = { add: "ajoutés", remove: "retirés", promote: "promus admin", demote: "rétrogradés" };
+        const resolved = await findGroupByNameOrId(userId, groupId).catch(() => null);
         return JSON.stringify({
           success: true,
           action,
           count: participants.length,
-          message: `${participants.length} participant(s) ${labels[action]}.`,
+          groupName: resolved?.name || groupRef,
+          message: `${participants.length} participant(s) ${labels[action]} dans « ${resolved?.name || groupRef} ».`,
         });
       } catch (err) {
-        return JSON.stringify({ error: err instanceof Error ? err.message : String(err) });
+        const msg = err instanceof Error ? err.message : String(err);
+        const soft = /introuvable|not found|admin|forbidden|403|401/i.test(msg)
+          ? " Ne demande JAMAIS l'ID @g.us à l'utilisateur — propose un nom exact proche, ou vérifie qu'il est admin."
+          : "";
+        return JSON.stringify({ error: `${msg}${soft}` });
       }
     }
 
@@ -4313,6 +4363,7 @@ export async function executeTool(
       }
       if (
         type !== "group_broadcast" &&
+        type !== "keyword_sales" &&
         config.initialMessage &&
         !args.ab_variants_from_chat &&
         !isValidAttentionOpener(config.initialMessage)
@@ -4763,6 +4814,20 @@ export async function executeTool(
         }
       }
       if (
+        args.send_window_start != null &&
+        Number.isFinite(Number(args.send_window_start)) &&
+        args.send_window_end != null &&
+        Number.isFinite(Number(args.send_window_end))
+      ) {
+        const activityQuiet = activityWindowToQuietHours(
+          Number(args.send_window_start),
+          Number(args.send_window_end)
+        );
+        if (activityQuiet) {
+          merged.quietHoursStart = activityQuiet.start;
+          merged.quietHoursEnd = activityQuiet.end;
+        }
+      } else if (
         (args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))) ||
         (args.quiet_hours_end != null && Number.isFinite(Number(args.quiet_hours_end)))
       ) {
@@ -4845,7 +4910,15 @@ export async function executeTool(
           error: `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
         });
       }
-      if (merged.initialMessage && !isValidAttentionOpener(merged.initialMessage)) {
+      const isOutboundType =
+        detail.automation.type === "contact_prospect" ||
+        detail.automation.type === "group_prospect" ||
+        merged.mode === "outbound_prospect";
+      if (
+        isOutboundType &&
+        merged.initialMessage &&
+        !isValidAttentionOpener(merged.initialMessage)
+      ) {
         return JSON.stringify({
           error: formatAttentionOpenerError("initial_message", merged.initialMessage),
         });
@@ -4855,9 +4928,7 @@ export async function executeTool(
         if (abErr) return JSON.stringify({ error: abErr });
         merged.personalizeMessages = false;
       } else if (
-        (detail.automation.type === "contact_prospect" ||
-          detail.automation.type === "group_prospect" ||
-          merged.mode === "outbound_prospect") &&
+        isOutboundType &&
         !(merged.abVariants ?? []).filter((v) => v.message?.trim()).length
       ) {
         // Sortant sans aucune variante en config : refuse de laisser un seul initial_message
@@ -4888,6 +4959,32 @@ export async function executeTool(
             }
           : merged.livePlaybook,
       });
+
+      // Si l'utilisateur a changé la fenêtre d'activité, aligne aussi la mémoire liée
+      const windowChanged =
+        (args.send_window_start != null && Number.isFinite(Number(args.send_window_start))) ||
+        (args.send_window_end != null && Number.isFinite(Number(args.send_window_end))) ||
+        (args.quiet_hours_start != null && Number.isFinite(Number(args.quiet_hours_start))) ||
+        (args.quiet_hours_end != null && Number.isFinite(Number(args.quiet_hours_end)));
+      if (windowChanged && updated?.config.quietHoursStart != null && updated.config.quietHoursEnd != null) {
+        const activity = quietHoursToActivityWindow({
+          start: updated.config.quietHoursStart,
+          end: updated.config.quietHoursEnd,
+        });
+        try {
+          const mem = await getLinkedCampaignMemory(userId, threadId);
+          if (mem) {
+            const { updateCampaignMemory } = await import("./campaign-memory.js");
+            await updateCampaignMemory(userId, mem.id, {
+              sendWindowStart: activity.sendWindowStart,
+              sendWindowEnd: activity.sendWindowEnd,
+            });
+          }
+        } catch {
+          /* best effort */
+        }
+      }
+
       try {
         const { syncThreadAutomationFromMemory, patchPlaybookAfterConfigEdit } =
           await import("./campaign-sync.js");
@@ -4903,6 +5000,12 @@ export async function executeTool(
         await resumeAutomationMessaging(userId, id);
       }
       const plan = await persistVisualPlan(userId, id);
+      const quietStart = updated?.config.quietHoursStart;
+      const quietEnd = updated?.config.quietHoursEnd;
+      const activityWin =
+        quietStart != null && quietEnd != null
+          ? quietHoursToActivityWindow({ start: quietStart, end: quietEnd })
+          : null;
       return JSON.stringify({
         success: true,
         automationId: id,
@@ -4915,6 +5018,12 @@ export async function executeTool(
           abVariantsCount: updated?.config.abVariants?.length ?? 0,
           guideChars: updated?.config.conversationGuide?.length ?? 0,
           livePlaybookTurns: updated?.config.livePlaybook?.turns?.length ?? 0,
+          quietHoursStart: quietStart ?? null,
+          quietHoursEnd: quietEnd ?? null,
+          sendWindow:
+            activityWin != null
+              ? `${activityWin.sendWindowStart}h–${activityWin.sendWindowEnd}h`
+              : null,
         },
         plan: plan
           ? { title: plan.title, automationId: plan.automationId, type: plan.type }
@@ -4922,10 +5031,13 @@ export async function executeTool(
         // Pas de planDisplay : évite de re-coller le fence / re-simuler à chaque tweak.
         message:
           `Campagne « ${detail.automation.name} » mise à jour` +
-          `${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}. ` +
-          `Mémoire / simulation / réponses prospects restent synchronisées. ` +
-          `Confirme brièvement le changement à l'utilisateur et propose « refais la simulation » ` +
-          `pour revoir le fil sur le téléphone, ou « c'est bon » pour activer — SANS coller un plan Toi/Prospect dans le chat.`,
+          `${detail.automation.status === "active" ? " (auto-reply maintenu ON)" : ""}.` +
+          (activityWin
+            ? ` Fenêtre d'activité enregistrée : ${activityWin.sendWindowStart}h–${activityWin.sendWindowEnd}h.`
+            : "") +
+          ` Confirme UNIQUEMENT ce que configSummary.sendWindow / les champs changés indiquent — ` +
+          `INTERDIT de dire « c'est bon » si success n'est pas true. ` +
+          `Propose « refais la simulation » pour revoir le fil, ou « c'est bon » si déjà active.`,
       });
     }
 

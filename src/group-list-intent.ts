@@ -64,7 +64,7 @@ export function isGroupActionNotCatalogRequest(t: string): boolean {
     return true;
   }
   if (
-    /\b(envoie|envoyer|ecris|écrire|ecrire|poste|publie|mentionne|tague|contacte|contacter|lance|lancer|cree|créer|create)\b/i.test(
+    /\b(envoie|envoyer|ecris|écrire|ecrire|poste|publie|mentionne|tague|contacte|contacter|lance|lancer|cree|créer|create|ajoute|ajouter|retire|retirer|promou|promouvoir|enl[eè]ve|enlever)\b/i.test(
       t
     ) &&
     /\bgroupes?\b/i.test(t)
@@ -74,7 +74,7 @@ export function isGroupActionNotCatalogRequest(t: string): boolean {
   // « ce groupe(s) » / « le groupe » / « mon groupe » = cible, pas catalogue
   // (ne pas matcher « mes groupes » → catalogue explicite)
   if (
-    /\b(ce|cet|ces|du|de\s+ce|dans\s+(ce\s+|cet\s+|ces\s+|le\s+|les\s+|mon\s+)?|mon|ma)\s+groupes?\b/i.test(
+    /\b(ce|cet|ces|du|de\s+ce|au|dans\s+(ce\s+|cet\s+|ces\s+|le\s+|les\s+|mon\s+)?|mon|ma)\s+groupes?\b/i.test(
       t
     )
   ) {

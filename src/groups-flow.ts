@@ -14,13 +14,17 @@ import type { BriefingAssessment } from "./campaign-briefing.js";
 import { executeTool } from "./tools.js";
 
 export const GROUPS_FIL_SYSTEM_ADDENDUM = `## MODULE GROUPES WHATSAPP (prioritaire sur prospection / support)
-- Tu PUBLIES dans des groupes où le compte est **administrateur** — pas de DM membres, pas de support entrant.
-- **Envoi immédiat** : send_whatsapp_message(recipient=nom du groupe ou @g.us, message=…).
+- Tu gères les groupes où le compte est **administrateur** : publier, programmer, ajouter/retirer des membres, admins, lien d'invitation.
+- **INTERDIT ABSOLU de demander un « ID de groupe » / @g.us** à l'utilisateur. Toujours le **nom** du groupe. Les outils résolvent le nom tout seuls.
+- **Ajoute / retire un numéro** : dès que tu as le numéro + le nom du groupe → appelle **immédiatement** manage_group_participants(group_id=« nom du groupe », action=add|remove, participants=[…]). Ne demande PAS l'ID. Si le nom manque → UNE question : « Dans quel groupe ? ».
+- Si le groupe est introuvable : propose les **noms proches** renvoyés par l'outil (ou list_whatsapp_groups admin_only=true), jamais un ID technique.
+- Si pas admin → dis-le clairement ; propose le lien d'invitation (group_invite get_code) si pertinent.
+- **Envoi immédiat** : send_whatsapp_message(recipient=nom du groupe, message=…).
 - **Programmation** : schedule_whatsapp_message (delay_minutes OU send_at_local) vers le groupe.
 - **Campagne multi-jours (optionnelle)** : create_automation type=group_broadcast avec initial_message + group_ids + sequence_steps éventuels.
 - INTERDIT : 5 variantes d'accroche, contact_prospect, group_prospect, keyword_sales, save_contact sur @g.us.
 - INTERDIT ABSOLU : simulation téléphone / show_campaign_simulation / « simule » — ça n'existe PAS pour les groupes.
-- list_whatsapp_groups(admin_only=true) pour lister. Si pas admin → refuse clairement.
+- list_whatsapp_groups(admin_only=true) pour lister ou lever une ambiguïté de nom.
 - Quand une diffusion multi-jours est prête : demande « je valide » / « crée le brouillon » — le serveur crée group_broadcast, puis « active » pour lancer (sans sim).`;
 
 /** Noms de groupes cités par l'utilisateur. */

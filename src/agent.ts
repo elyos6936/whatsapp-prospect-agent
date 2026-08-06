@@ -161,13 +161,13 @@ const SILENT_TWEAK_AFTER_SIM_NUDGE =
   "Une simulation a DÉJÀ été montrée. L'utilisateur demande une modification ou pose une question. " +
   "INTERDIT d'écrire un fil Toi → / Prospect → dans le chat. " +
   "INTERDIT de coller un planDisplay / fence de plan dans ta réponse. " +
-  "Si modif (fenêtre horaire, ton, accroche, prix, relances, vouvoiement…) → applique via update_automation_config " +
-  "(et initial_message / conversation_guide si besoin). " +
-  "OBLIGATOIRE dans ta réponse chat : **réponds d'abord** à sa question / confirme **explicitement** ce qui a changé " +
-  "avec la valeur concrète (ex. « Oui — fenêtre d'envoi réglée sur 6h–20h. »). " +
-  "Si c'est seulement « c'est fait ? » / « tu as changé… ? » → OUI ou NON + détail ; " +
+  "Si modif (fenêtre horaire, ton, accroche, prix, relances, vouvoiement…) → appelle **d'abord** update_automation_config. " +
+  "Fenêtre d'activité « 6h–15h » → send_window_start=6, send_window_end=15 (pas quiet_hours à l'envers). " +
+  "Confirme la modif **uniquement** si l'outil renvoie success:true — cite configSummary.sendWindow / la valeur renvoyée. " +
+  "INTERDIT de dire « Fenêtre changée » / « c'est bon » si l'outil a échoué ou n'a pas été appelé. " +
+  "Si c'est seulement « c'est fait ? » → vérifie via get_automation / configSummary, puis OUI ou NON + détail. " +
   "**INTERDIT** de répondre uniquement par « Veux-tu activer la campagne maintenant ? » sans confirmer la modif. " +
-  "Ensuite seulement, une proposition **douce et optionnelle** : « Tu peux refaire la simulation, ou dire c'est bon pour activer. » " +
+  "Ensuite seulement, une proposition **douce et optionnelle** : « Tu peux refaire la simulation, ou dire c'est bon. » " +
   "INTERDIT d'appeler show_campaign_simulation sauf demande explicite (« refais la simulation », « reteste »). " +
   "Si question seule (sans demande de modif) → réponds clairement, sans outil de simulation.";
 
@@ -299,12 +299,15 @@ async function buildBusinessContext(
     } else if (thread?.purpose === "groupes") {
       lines.push(
         `## TYPE DE FIL — GROUPES WHATSAPP (OBLIGATOIRE)\n` +
-          `Ce fil est destiné à **publier des messages dans des groupes** où le compte est **administrateur**.\n` +
-          `- Envoi immédiat : \`send_whatsapp_message\` (recipient = nom du groupe ou @g.us). **Ne passe PAS** par save_contact / prospects / get_group_members.\n` +
+          `Ce fil gère les **groupes** où le compte est **administrateur** (publier, programmer, membres).\n` +
+          `- **INTERDIT** de demander un ID @g.us — toujours le **nom** du groupe.\n` +
+          `- Ajouter/retirer : \`manage_group_participants(group_id=nom, action, participants)\` dès que nom + numéro sont connus.\n` +
+          `- Si le nom manque → UNE question « Dans quel groupe ? » (pas « donne l'ID »).\n` +
+          `- Envoi immédiat : \`send_whatsapp_message\` (recipient = nom du groupe). **Ne passe PAS** par save_contact / prospects / get_group_members.\n` +
           `- Programmation : \`schedule_whatsapp_message\` (delay_minutes OU send_at_local) vers le groupe — même si plusieurs horaires, appelle l'outil plusieurs fois.\n` +
           `- INTERDIT d'appeler get_group_members quand l'utilisateur demande d'envoyer/programmer un message dans le groupe.\n` +
           `- Campagne multi-jours (optionnelle) : create_automation type=\`group_broadcast\` — demande **« je valide »** (serveur crée le brouillon).\n` +
-          `- list_whatsapp_groups avec admin_only=true — INTERDIT de proposer un groupe où l'utilisateur n'est pas admin.\n` +
+          `- list_whatsapp_groups avec admin_only=true — pour lister ou lever une ambiguïté de nom.\n` +
           `- Si l'outil renvoie une erreur « pas administrateur » → refuse clairement, ne contourne pas.\n` +
           `- INTERDIT : contact_prospect, group_prospect (DM membres), keyword_sales / inbound, save_contact sur un @g.us.\n` +
           `- INTERDIT : 5 variantes d'accroche, A.I.D.A. cold, questions stickers/handoff support.\n` +
