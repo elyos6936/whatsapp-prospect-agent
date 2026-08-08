@@ -108,6 +108,9 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       const { tryAcceptPendingInviteByEmail } = await import("./team.js");
       await tryAcceptPendingInviteByEmail(user.id);
 
+      const { queueWelcomeEmail } = await import("./mail/welcome.js");
+      queueWelcomeEmail({ to: user.email, name: user.name });
+
       const token = app.signUserToken(user.id);
       return { token, user: publicUser(user) };
     },
@@ -175,6 +178,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       const { sub: googleSub, email, name, avatarUrl } = identity;
 
       let user = await getUserByGoogleSub(googleSub);
+      let isNewAccount = false;
       if (!user) {
         const byEmail = await getUserByEmail(email);
         if (byEmail) {
@@ -185,6 +189,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           user = await linkGoogleAccount(byEmail.id, { googleSub, avatarUrl });
         } else {
           user = await createGoogleUser({ email, name, googleSub, avatarUrl });
+          isNewAccount = true;
         }
       }
 
@@ -195,6 +200,11 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
       const { tryAcceptPendingInviteByEmail } = await import("./team.js");
       await tryAcceptPendingInviteByEmail(user.id);
+
+      if (isNewAccount) {
+        const { queueWelcomeEmail } = await import("./mail/welcome.js");
+        queueWelcomeEmail({ to: user.email, name: user.name });
+      }
 
       const token = app.signUserToken(user.id);
       return { token, user: publicUser(user) };
