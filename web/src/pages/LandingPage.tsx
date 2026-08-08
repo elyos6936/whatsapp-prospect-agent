@@ -4,6 +4,7 @@ import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import { FacebookIcon, LinkedinIcon, YoutubeIcon } from '@/components/brand/SocialIcons';
 import { AnimatedContainer } from '@/components/landing/AnimatedContainer';
 import { BillingSection } from '@/components/landing/BillingSection';
+import { HeroBackdrop } from '@/components/landing/HeroBackdrop';
 import { HeroFloatingIcons } from '@/components/landing/HeroFloatingIcons';
 import { HeroTypingWord } from '@/components/landing/HeroTypingWord';
 import { IntegrationsSection } from '@/components/landing/IntegrationsSection';
@@ -12,7 +13,6 @@ import { TestimonialsSection } from '@/components/landing/TestimonialsSection';
 import { TrustStrip } from '@/components/landing/TrustStrip';
 import { HowItWorks, type HowStep } from '@/components/ui/how-it-works';
 import { CTASection } from '@/components/ui/hero-dithering-card';
-import { ShaderBackground } from '@/components/ui/light-blue-plasma-shader-w-grain-interactive';
 import { ShinyButton } from '@/components/ui/shiny-button';
 import type { LegalKind } from '@/pages/LegalPage';
 import { useNavigate } from 'react-router-dom';
@@ -211,12 +211,7 @@ export function LandingPage(props: LandingPageProps = {}) {
       <main>
         {/* HERO — white canvas + soft brand plasma + 4 integration logos */}
         <section className="relative flex min-h-[calc(100dvh-4rem)] flex-col overflow-hidden bg-white">
-          <div className="pointer-events-none absolute inset-0" aria-hidden>
-            <ShaderBackground className="absolute inset-0 h-full w-full" />
-            {/* Soft white center for text — sides keep the plasma bubbles */}
-            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.88)_0%,rgba(255,255,255,0.45)_36%,rgba(255,255,255,0.08)_62%,transparent_78%)]" />
-          </div>
-
+          <HeroBackdrop />
           <HeroFloatingIcons />
 
           <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-4 py-10 text-center sm:px-6 sm:py-14">

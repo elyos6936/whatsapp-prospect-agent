@@ -25,6 +25,11 @@ export function HeroTypingWord({
   const [phase, setPhase] = useState<'typing' | 'hold' | 'deleting' | 'empty'>('typing');
 
   useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      setN(text.length);
+      return;
+    }
+
     let t: ReturnType<typeof setTimeout>;
     if (phase === 'typing') {
       if (n < text.length) {

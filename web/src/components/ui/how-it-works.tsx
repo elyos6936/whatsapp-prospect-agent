@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react';
 import { LazyMotion, domAnimation, m } from 'motion/react';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { cn } from '@/lib/utils';
 
 type Tone = 'brand' | 'sky' | 'navy';
@@ -125,24 +126,26 @@ function StepImage({ src, alt, tone = 'brand' }: { src: string; alt: string; ton
  */
 export function HowItWorks({ features, className }: HowItWorksProps) {
   const height = 720;
+  const showPathAnim = useMediaQuery(
+    '(min-width: 768px) and (prefers-reduced-motion: no-preference)',
+  );
 
-  return (
-    <LazyMotion features={domAnimation}>
-      <div className={cn('relative overflow-hidden bg-white px-4 py-4 sm:px-6 sm:py-6', className)}>
-        <div
-          className="pointer-events-none absolute inset-0 opacity-[0.06]"
-          style={{
-            backgroundImage: 'linear-gradient(#2057ce 1px, transparent 1px)',
-            backgroundSize: '100% 28px',
-          }}
-        />
-        <div className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-white to-transparent" />
-        <div className="pointer-events-none absolute inset-y-0 right-0 w-1/3 bg-gradient-to-l from-white to-transparent" />
+  const body = (
+    <div className={cn('relative overflow-hidden bg-white px-4 py-4 sm:px-6 sm:py-6', className)}>
+      <div
+        className="pointer-events-none absolute inset-0 opacity-[0.06]"
+        style={{
+          backgroundImage: 'linear-gradient(#2057ce 1px, transparent 1px)',
+          backgroundSize: '100% 28px',
+        }}
+      />
+      <div className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-white to-transparent" />
+      <div className="pointer-events-none absolute inset-y-0 right-0 w-1/3 bg-gradient-to-l from-white to-transparent" />
 
-        <div className="relative z-10 mx-auto max-w-5xl">
-          {/* Desktop dashed path (decorative, non-layout) */}
+      <div className="relative z-10 mx-auto max-w-5xl">
+        {showPathAnim && (
           <div
-            className="pointer-events-none absolute inset-0 hidden md:block"
+            className="pointer-events-none absolute inset-0"
             style={{ '--md-height': `${height}px` } as CSSProperties}
           >
             <svg
@@ -165,42 +168,46 @@ export function HowItWorks({ features, className }: HowItWorksProps) {
               />
             </svg>
           </div>
+        )}
 
-          <ol className="relative flex list-none flex-col gap-10 md:gap-14">
-            {features.map((step, index) => {
-              const tone: Tone = step.tone ?? (['brand', 'sky', 'navy'] as const)[index % 3];
-              const reverse = index % 2 === 1;
-              const number = `0${index + 1}`;
-              const rotate = reverse ? 'md:-rotate-3' : 'md:rotate-3';
+        <ol className="relative flex list-none flex-col gap-10 md:gap-14">
+          {features.map((step, index) => {
+            const tone: Tone = step.tone ?? (['brand', 'sky', 'navy'] as const)[index % 3];
+            const reverse = index % 2 === 1;
+            const number = `0${index + 1}`;
+            const rotate = reverse ? 'md:-rotate-3' : 'md:rotate-3';
 
-              return (
-                <li
-                  key={step.title}
-                  className={cn(
-                    'grid items-center gap-6 md:grid-cols-2 md:gap-10',
-                    reverse && 'md:[&>*:first-child]:order-2',
-                  )}
-                >
-                  <div className={cn('flex justify-center', reverse ? 'md:justify-end' : 'md:justify-start')}>
-                    <StepCard
-                      number={number}
-                      title={step.title}
-                      description={step.description}
-                      tone={tone}
-                      rotate={rotate}
-                    />
-                  </div>
-                  <div className={cn('flex justify-center', reverse ? 'md:justify-start' : 'md:justify-end')}>
-                    <StepImage src={step.imageSrc} alt={step.imageAlt} tone={tone} />
-                  </div>
-                </li>
-              );
-            })}
-          </ol>
-        </div>
+            return (
+              <li
+                key={step.title}
+                className={cn(
+                  'grid items-center gap-6 md:grid-cols-2 md:gap-10',
+                  reverse && 'md:[&>*:first-child]:order-2',
+                )}
+              >
+                <div className={cn('flex justify-center', reverse ? 'md:justify-end' : 'md:justify-start')}>
+                  <StepCard
+                    number={number}
+                    title={step.title}
+                    description={step.description}
+                    tone={tone}
+                    rotate={rotate}
+                  />
+                </div>
+                <div className={cn('flex justify-center', reverse ? 'md:justify-start' : 'md:justify-end')}>
+                  <StepImage src={step.imageSrc} alt={step.imageAlt} tone={tone} />
+                </div>
+              </li>
+            );
+          })}
+        </ol>
       </div>
-    </LazyMotion>
+    </div>
   );
+
+  if (!showPathAnim) return body;
+
+  return <LazyMotion features={domAnimation}>{body}</LazyMotion>;
 }
 
 export default HowItWorks;

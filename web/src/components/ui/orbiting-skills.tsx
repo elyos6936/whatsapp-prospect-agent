@@ -1,4 +1,4 @@
-import { memo, useEffect, useState, type ComponentType, type SVGProps } from 'react';
+import { memo, useEffect, useRef, useState, type ComponentType, type SVGProps } from 'react';
 import { Link } from 'react-router-dom';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import {
@@ -28,11 +28,6 @@ type OrbitItemConfig = {
   color: string;
   Logo: LogoComponent;
   href?: string;
-};
-
-type OrbitingSkillProps = {
-  config: OrbitItemConfig;
-  angle: number;
 };
 
 type GlowingOrbitPathProps = {
@@ -139,11 +134,16 @@ const ORBIT_ITEMS: OrbitItemConfig[] = [
   },
 ];
 
-const OrbitingSkill = memo(function OrbitingSkill({ config, angle }: OrbitingSkillProps) {
+type OrbitingSkillProps = {
+  config: OrbitItemConfig;
+  nodeRef: (el: HTMLDivElement | null) => void;
+};
+
+const OrbitingSkill = memo(function OrbitingSkill({ config, nodeRef }: OrbitingSkillProps) {
   const [isHovered, setIsHovered] = useState(false);
-  const { orbitRadius, size, label, color, Logo, href } = config;
-  const x = Math.cos(angle) * orbitRadius;
-  const y = Math.sin(angle) * orbitRadius;
+  const { size, label, color, Logo, href, orbitRadius, phaseShift } = config;
+  const x0 = Math.cos(phaseShift) * orbitRadius;
+  const y0 = Math.sin(phaseShift) * orbitRadius;
 
   const bubble = (
     <div
@@ -166,11 +166,12 @@ const OrbitingSkill = memo(function OrbitingSkill({ config, angle }: OrbitingSki
 
   return (
     <div
-      className="absolute top-1/2 left-1/2 transition-transform duration-300 ease-out"
+      ref={nodeRef}
+      className="absolute top-1/2 left-1/2 will-change-transform"
       style={{
         width: `${size}px`,
         height: `${size}px`,
-        transform: `translate(calc(${x}px - 50%), calc(${y}px - 50%))`,
+        transform: `translate(calc(${x0}px - 50%), calc(${y0}px - 50%))`,
         zIndex: isHovered ? 40 : 10,
       }}
       title={label}
@@ -188,7 +189,6 @@ const OrbitingSkill = memo(function OrbitingSkill({ config, angle }: OrbitingSki
           {bubble}
         </div>
       )}
-      {/* Outside overflow-hidden so the name stays visible */}
       {isHovered && (
         <div className="pointer-events-none absolute top-full left-1/2 z-50 mt-2 -translate-x-1/2 whitespace-nowrap rounded-lg border border-black/[0.08] bg-white px-2.5 py-1 text-xs font-semibold text-text-100 shadow-[0_8px_20px_-8px_rgba(15,23,42,0.35)]">
           {label}
@@ -251,33 +251,65 @@ type OrbitingSkillsProps = {
   className?: string;
 };
 
-/** Orbiting integrations — Klanvio center, brand-tinted rings (light landing). */
+/** Orbiting integrations — DOM transforms only (no React re-render per frame). */
 export function OrbitingSkills({ className }: OrbitingSkillsProps) {
-  const [time, setTime] = useState(0);
-  const [isPaused, setIsPaused] = useState(false);
-
-  useEffect(() => {
-    if (isPaused) return;
-    let animationFrameId = 0;
-    let lastTime = performance.now();
-
-    const animate = (currentTime: number) => {
-      const deltaTime = (currentTime - lastTime) / 1000;
-      lastTime = currentTime;
-      setTime((prev) => prev + deltaTime);
-      animationFrameId = requestAnimationFrame(animate);
-    };
-
-    animationFrameId = requestAnimationFrame(animate);
-    return () => cancelAnimationFrame(animationFrameId);
-  }, [isPaused]);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const hoverPaused = useRef(false);
+  const inView = useRef(true);
+  const reducedMotion = useRef(false);
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-    const sync = () => setIsPaused(mq.matches);
-    sync();
-    mq.addEventListener('change', sync);
-    return () => mq.removeEventListener('change', sync);
+    const syncReduced = () => {
+      reducedMotion.current = mq.matches;
+    };
+    syncReduced();
+    mq.addEventListener('change', syncReduced);
+
+    const stage = stageRef.current;
+    let io: IntersectionObserver | undefined;
+    if (stage) {
+      io = new IntersectionObserver(
+        ([entry]) => {
+          inView.current = entry?.isIntersecting ?? true;
+        },
+        { rootMargin: '80px 0px', threshold: 0.05 },
+      );
+      io.observe(stage);
+    }
+
+    let raf = 0;
+    let last = performance.now();
+    let time = 0;
+
+    const tick = (now: number) => {
+      raf = requestAnimationFrame(tick);
+      if (reducedMotion.current || hoverPaused.current || !inView.current) {
+        last = now;
+        return;
+      }
+      const dt = Math.min((now - last) / 1000, 0.05);
+      last = now;
+      time += dt;
+
+      for (let i = 0; i < ORBIT_ITEMS.length; i++) {
+        const el = itemRefs.current[i];
+        const cfg = ORBIT_ITEMS[i];
+        if (!el || !cfg) continue;
+        const angle = time * cfg.speed + cfg.phaseShift;
+        const x = Math.cos(angle) * cfg.orbitRadius;
+        const y = Math.sin(angle) * cfg.orbitRadius;
+        el.style.transform = `translate(calc(${x}px - 50%), calc(${y}px - 50%))`;
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      io?.disconnect();
+      mq.removeEventListener('change', syncReduced);
+    };
   }, []);
 
   const orbitConfigs: Array<{ radius: number; glowColor: GlowColor; delay: number }> = [
@@ -286,17 +318,17 @@ export function OrbitingSkills({ className }: OrbitingSkillsProps) {
   ];
 
   return (
-    <div className={cn('relative flex w-full items-center justify-center overflow-visible', className)}>
+    <div className={cn('relative flex w-full items-center justify-center overflow-hidden', className)}>
       <div
-        className="relative flex h-[min(100vw-2.5rem,26rem)] w-[min(100vw-2.5rem,26rem)] items-center justify-center sm:h-[420px] sm:w-[420px] md:h-[450px] md:w-[450px]"
+        ref={stageRef}
+        className="relative mx-auto flex h-[450px] w-[450px] max-w-full shrink-0 items-center justify-center scale-[0.92] lg:scale-100"
         onMouseEnter={() => {
-          if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) setIsPaused(true);
+          hoverPaused.current = true;
         }}
         onMouseLeave={() => {
-          if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) setIsPaused(false);
+          hoverPaused.current = false;
         }}
       >
-        {/* Center — Klanvio */}
         <div className="relative z-10 flex h-[5.25rem] w-[5.25rem] items-center justify-center rounded-full border border-brand/25 bg-white shadow-[0_12px_32px_-12px_rgba(32,87,206,0.45)]">
           <div className="absolute inset-0 rounded-full bg-brand/15 blur-xl" />
           <div className="absolute inset-0 rounded-full bg-[#25D366]/10 blur-2xl" />
@@ -312,11 +344,13 @@ export function OrbitingSkills({ className }: OrbitingSkillsProps) {
           />
         ))}
 
-        {ORBIT_ITEMS.map((config) => (
+        {ORBIT_ITEMS.map((config, index) => (
           <OrbitingSkill
             key={config.id}
             config={config}
-            angle={time * config.speed + config.phaseShift}
+            nodeRef={(el) => {
+              itemRefs.current[index] = el;
+            }}
           />
         ))}
       </div>

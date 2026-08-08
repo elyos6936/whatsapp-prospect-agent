@@ -30,7 +30,9 @@ export function CTASection({
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
+    // Skip WebGL dither on mobile / reduced motion — static card is enough.
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    if (window.matchMedia('(max-width: 767px)').matches) return;
 
     const io = new IntersectionObserver(
       ([entry]) => {

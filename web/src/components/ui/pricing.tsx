@@ -36,7 +36,7 @@ export function Pricing({
 
   const handleToggle = (checked: boolean) => {
     setPeriod(checked ? 'annual' : 'monthly');
-    if (checked && switchRef.current) {
+    if (checked && isDesktop && switchRef.current) {
       const rect = switchRef.current.getBoundingClientRect();
       const x = rect.left + rect.width / 2;
       const y = rect.top + rect.height / 2;

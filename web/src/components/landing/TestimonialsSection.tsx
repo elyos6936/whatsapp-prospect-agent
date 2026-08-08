@@ -1,8 +1,8 @@
-import { motion } from 'motion/react';
 import {
   TestimonialsColumn,
   type Testimonial,
 } from '@/components/ui/testimonials-columns-1';
+import { useMediaQuery } from '@/hooks/use-media-query';
 import { cn } from '@/lib/utils';
 
 const testimonials: Testimonial[] = [
@@ -74,25 +74,47 @@ const testimonials: Testimonial[] = [
 const firstColumn = testimonials.slice(0, 3);
 const secondColumn = testimonials.slice(3, 6);
 const thirdColumn = testimonials.slice(6, 9);
+const mobileCards = testimonials.slice(0, 3);
 
 type TestimonialsSectionProps = {
   className?: string;
 };
 
+function StaticTestimonialCard({ text, image, name, role }: Testimonial) {
+  return (
+    <article className="rounded-2xl border border-black/[0.08] bg-white p-5 text-left shadow-sm">
+      <p className="text-sm leading-relaxed text-text-300">{text}</p>
+      <div className="mt-4 flex items-center gap-2.5">
+        <img
+          width={40}
+          height={40}
+          src={image}
+          alt={name}
+          className="h-10 w-10 rounded-full object-cover"
+          loading="lazy"
+          decoding="async"
+        />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-text-100">{name}</p>
+          <p className="text-xs text-text-400">{role}</p>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 export function TestimonialsSection({ className }: TestimonialsSectionProps) {
+  const isDesktop = useMediaQuery('(min-width: 768px)');
+  const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
+  const useMarquee = isDesktop && !reduceMotion;
+
   return (
     <section
       id="testimonials"
       className={cn('landing-section relative bg-[#f7f8fb]', className)}
     >
       <div className="relative z-10 mx-auto max-w-5xl px-4 sm:px-6">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.1, ease: [0.16, 1, 0.3, 1] }}
-          viewport={{ once: true }}
-          className="mx-auto flex max-w-xl flex-col items-center justify-center text-center"
-        >
+        <div className="mx-auto flex max-w-xl flex-col items-center justify-center text-center">
           <div className="rounded-lg border border-black/[0.08] bg-white px-3.5 py-1 text-xs font-medium text-text-400">
             Témoignages
           </div>
@@ -100,21 +122,25 @@ export function TestimonialsSection({ className }: TestimonialsSectionProps) {
           <p className="landing-lead mt-2.5 text-text-400">
             Des équipes au Bénin qui prospectent et closent sur WhatsApp avec Klanvio.
           </p>
-        </motion.div>
-
-        <div className="mt-10 flex justify-center gap-6 overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_25%,black_75%,transparent)] max-h-[740px]">
-          <TestimonialsColumn testimonials={firstColumn} duration={15} />
-          <TestimonialsColumn
-            testimonials={secondColumn}
-            className="hidden md:block"
-            duration={19}
-          />
-          <TestimonialsColumn
-            testimonials={thirdColumn}
-            className="hidden lg:block"
-            duration={17}
-          />
         </div>
+
+        {useMarquee ? (
+          <div className="mt-10 flex justify-center gap-6 overflow-hidden [mask-image:linear-gradient(to_bottom,transparent,black_25%,black_75%,transparent)] max-h-[740px]">
+            <TestimonialsColumn testimonials={firstColumn} duration={15} />
+            <TestimonialsColumn testimonials={secondColumn} duration={19} />
+            <TestimonialsColumn
+              testimonials={thirdColumn}
+              className="hidden lg:block"
+              duration={17}
+            />
+          </div>
+        ) : (
+          <div className="mx-auto mt-8 grid max-w-lg gap-3 sm:mt-10">
+            {mobileCards.map((item) => (
+              <StaticTestimonialCard key={item.name} {...item} />
+            ))}
+          </div>
+        )}
       </div>
     </section>
   );
