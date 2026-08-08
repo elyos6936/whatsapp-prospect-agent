@@ -151,6 +151,9 @@ export async function ensureUserOutreachSchema(): Promise<void> {
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
   `;
+  // Registre anti-abus : 1 WhatsApp = 1 compte Klanvio
+  const { ensureWhatsAppPhoneRegistrySchema } = await import("./whatsapp-phone-registry.js");
+  await ensureWhatsAppPhoneRegistrySchema();
   schemaReady = true;
 }
 

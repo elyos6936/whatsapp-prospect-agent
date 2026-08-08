@@ -129,9 +129,10 @@ export async function handleConnectionUpdate(userId: number, data: unknown): Pro
         console.warn(
           `⛔ WhatsApp phone conflict user=${userId} — déjà sur ${unique.conflictInstance ?? "?"}`
         );
-        const conflictMsg =
-          "Ce numéro WhatsApp est déjà connecté sur un autre compte Klanvio. " +
-          "Un seul compte par numéro est autorisé — déconnecte l’autre compte ou utilise un autre numéro.";
+        const { WHATSAPP_PHONE_CONFLICT_MESSAGE } = await import(
+          "./whatsapp-phone-registry.js"
+        );
+        const conflictMsg = WHATSAPP_PHONE_CONFLICT_MESSAGE;
         setWhatsAppConnectUiMessage(userId, conflictMsg);
         markWhatsAppLoggedOut(userId);
         const { logoutInstance } = await import("./evolutionapi.js");

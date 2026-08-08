@@ -269,6 +269,53 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
+  app.get<{ Params: { id: string } }>(
+    "/api/admin/users/:id/whatsapp-phones",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      const { listWhatsAppPhoneBindingsForUser } = await import("./whatsapp-phone-registry.js");
+      const bindings = await listWhatsAppPhoneBindingsForUser(id);
+      return { ok: true, bindings };
+    }
+  );
+
+  app.post<{ Params: { id: string }; Body: { phone?: string; releaseAll?: boolean } }>(
+    "/api/admin/users/:id/whatsapp-phones/release",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      const {
+        releaseWhatsAppPhoneBinding,
+        releaseAllWhatsAppPhoneBindingsForUser,
+        listWhatsAppPhoneBindingsForUser,
+      } = await import("./whatsapp-phone-registry.js");
+      const body = request.body ?? {};
+      let released = 0;
+      if (body.releaseAll === true) {
+        released = await releaseAllWhatsAppPhoneBindingsForUser(id);
+      } else {
+        const phone = String(body.phone ?? "").trim();
+        if (!phone) {
+          return reply.status(400).send({ error: "phone requis, ou releaseAll=true." });
+        }
+        const ok = await releaseWhatsAppPhoneBinding(phone);
+        released = ok ? 1 : 0;
+      }
+      const meta = actorMeta(request);
+      await writeAdminAudit({
+        ...meta,
+        action: "user.whatsapp_phone.release",
+        targetUserId: id,
+        payload: { phone: body.phone ?? null, releaseAll: body.releaseAll === true, released },
+      });
+      const bindings = await listWhatsAppPhoneBindingsForUser(id);
+      return { ok: true, released, bindings };
+    }
+  );
+
   app.post<{ Params: { id: string }; Body: { reason?: string } }>(
     "/api/admin/users/:id/suspend",
     { preHandler: requireAdmin },

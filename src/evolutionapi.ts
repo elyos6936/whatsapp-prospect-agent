@@ -2982,9 +2982,10 @@ export async function getInstanceQr(userId: number): Promise<{
       const { markWhatsAppLoggedOut, setWhatsAppConnectUiMessage } = await import(
         "./whatsapp-connection.js"
       );
-      const conflictMsg =
-        "Ce numéro WhatsApp est déjà connecté sur un autre compte Klanvio. " +
-        "Un seul compte par numéro est autorisé — déconnecte l’autre compte ou utilise un autre numéro.";
+      const { WHATSAPP_PHONE_CONFLICT_MESSAGE } = await import(
+        "./whatsapp-phone-registry.js"
+      );
+      const conflictMsg = WHATSAPP_PHONE_CONFLICT_MESSAGE;
       setWhatsAppConnectUiMessage(userId, conflictMsg);
       markWhatsAppLoggedOut(userId);
       await logoutInstance(userId).catch(() => {});
@@ -3179,8 +3180,9 @@ export async function findWhatsAppPhoneConflict(
 }
 
 /**
- * Après connexion (`open`) : refuse si le numéro est déjà pris ailleurs.
- * Appelle logout + marque logout volontaire si conflit.
+ * Après connexion (`open`) : refuse si le numéro est déjà pris ailleurs
+ * (registre DB permanent + instances Evolution ouvertes).
+ * En cas de succès : claim permanent dans la DB (ne se libère pas au logout).
  */
 export async function enforceUniqueWhatsAppPhoneOnConnect(userId: number): Promise<{
   ok: boolean;
@@ -3193,15 +3195,45 @@ export async function enforceUniqueWhatsAppPhoneOnConnect(userId: number): Promi
   const phone = normalizeWhatsAppOwnerPhone(owner);
   if (!phone) return { ok: true };
 
-  const conflict = await findWhatsAppPhoneConflict(userId, phone);
-  if (!conflict) return { ok: true, phone };
+  const {
+    assertWhatsAppPhoneAvailableForUser,
+    claimWhatsAppPhoneForUser,
+  } = await import("./whatsapp-phone-registry.js");
 
-  return {
-    ok: false,
-    phone,
-    conflictInstance: conflict.instanceName,
-    conflictUserId: conflict.otherUserId,
-  };
+  // 1) Registre permanent (survit au logout)
+  const dbCheck = await assertWhatsAppPhoneAvailableForUser(userId, phone);
+  if (!dbCheck.ok) {
+    return {
+      ok: false,
+      phone,
+      conflictUserId: dbCheck.conflictUserId,
+      conflictInstance: `user:${dbCheck.conflictUserId}`,
+    };
+  }
+
+  // 2) Session Evolution ouverte ailleurs (temps réel)
+  const conflict = await findWhatsAppPhoneConflict(userId, phone);
+  if (conflict) {
+    return {
+      ok: false,
+      phone,
+      conflictInstance: conflict.instanceName,
+      conflictUserId: conflict.otherUserId,
+    };
+  }
+
+  // 3) Claim permanent pour ce compte
+  const claimed = await claimWhatsAppPhoneForUser(userId, phone);
+  if (!claimed.ok) {
+    return {
+      ok: false,
+      phone,
+      conflictUserId: claimed.conflictUserId,
+      conflictInstance: `user:${claimed.conflictUserId}`,
+    };
+  }
+
+  return { ok: true, phone };
 }
 
 export async function setEvolutionWebhook(userId: number, webhookUrl: string): Promise<unknown> {
