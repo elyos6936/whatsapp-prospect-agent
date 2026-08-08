@@ -1,33 +1,22 @@
 import { useEffect, useState } from 'react';
-import {
-  ArrowRight,
-  Check,
-  Contact,
-  Menu,
-  MessageSquareText,
-  Minus,
-  Radio,
-  Shield,
-  Target,
-  Users,
-  X,
-} from 'lucide-react';
+import { ArrowRight, Menu, QrCode, Shield, Target, X, type LucideIcon } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import { FacebookIcon, LinkedinIcon, YoutubeIcon } from '@/components/brand/SocialIcons';
 import { AnimatedContainer } from '@/components/landing/AnimatedContainer';
 import { BillingSection } from '@/components/landing/BillingSection';
+import { HeroFloatingIcons } from '@/components/landing/HeroFloatingIcons';
+import { HeroTypingWord } from '@/components/landing/HeroTypingWord';
 import { IntegrationsSection } from '@/components/landing/IntegrationsSection';
 import { LandingFaq } from '@/components/landing/LandingFaq';
+import { TestimonialsSection } from '@/components/landing/TestimonialsSection';
 import { TrustStrip } from '@/components/landing/TrustStrip';
-import { FeatureCard } from '@/components/ui/grid-feature-cards';
-import { HowGlassSteps } from '@/components/ui/glass-cards';
+import { HowItWorks, type HowStep } from '@/components/ui/how-it-works';
 import { CTASection } from '@/components/ui/hero-dithering-card';
-import { HeroGridBackdrop } from '@/components/ui/hero-grid-backdrop';
-import { ShaderBackdrop } from '@/components/ui/shader-backdrop';
+import { ShaderBackground } from '@/components/ui/light-blue-plasma-shader-w-grain-interactive';
 import { ShinyButton } from '@/components/ui/shiny-button';
 import type { LegalKind } from '@/pages/LegalPage';
 import { useNavigate } from 'react-router-dom';
-import { COMPARE_PRICE_LABEL, TRIAL_BADGE, TRIAL_DAYS } from '@/lib/pricing';
+import { TRIAL_BADGE } from '@/lib/pricing';
 import { cn } from '@/lib/utils';
 
 type LandingPageProps = {
@@ -38,9 +27,9 @@ type LandingPageProps = {
 };
 
 const NAV_LINKS = [
-  ['features', 'Fonctionnalités'],
   ['how', 'Comment ça marche'],
   ['integrations', 'Intégrations'],
+  ['testimonials', 'Témoignages'],
   ['pricing', 'Tarif'],
   ['faq', 'FAQ'],
 ] as const;
@@ -63,123 +52,38 @@ const SOCIAL_LINKS = [
   },
 ] as const;
 
-const CAPABILITIES = [
-  'Sans API Meta',
-  'QR en 30 secondes',
-  'Prospection + closing',
-  'Anti-blocage intégré',
-] as const;
+const CAPABILITIES: { label: string; icon: LucideIcon }[] = [
+  { label: 'QR en 30 secondes', icon: QrCode },
+  { label: 'Prospection + closing', icon: Target },
+  { label: 'Anti-blocage intégré', icon: Shield },
+];
 
-const FEATURES = [
+const HOW_FEATURES: HowStep[] = [
   {
-    title: 'Groupes',
-    lead: 'Créez, gérez et animez vos groupes sans jamais y toucher.',
-    icon: Users,
-    items: [
-      'Créer et supprimer des groupes',
-      'Gérer membres et droits',
-      'Modifier profil et invitations',
-    ],
-  },
-  {
-    title: 'Messages & médias',
-    lead: 'Tous les formats, programmables, interactifs.',
-    icon: MessageSquareText,
-    items: [
-      'Texte, images, vidéos, vocaux',
-      "Programmation d'envoi",
-      'Sondages et listes',
-    ],
-  },
-  {
-    title: 'Statuts',
-    lead: 'Restez visible en permanence, sans y penser.',
-    icon: Radio,
-    items: [
-      'Publication automatique',
-      'Programmation multi-jours',
-      'Rotation intelligente',
-    ],
-  },
-  {
-    title: 'Prospection & closing',
-    lead: 'Un commercial WhatsApp autonome qui vend pour vous.',
-    icon: Target,
-    items: [
-      'Extraction de contacts de groupes',
-      'Campagnes multi-listes',
-      'Closing e-commerce',
-    ],
-  },
-  {
-    title: 'Contacts',
-    lead: 'Ciblez juste, filtrez large, protégez vos données.',
-    icon: Contact,
-    items: [
-      'Vérification WhatsApp en masse',
-      'Profils et confidentialité',
-      'Blocage automatisé',
-    ],
-  },
-  {
-    title: 'Anti-blocage & outils',
-    lead: 'La protection intégrée qui garde votre compte en vie.',
-    icon: Shield,
-    items: [
-      "Rythme d'envoi adaptatif",
-      'Présence active',
-      'Seuil de risque maîtrisé',
-    ],
-  },
-] as const;
-
-const COMPARE_ROWS = [
-  ['Réponses automatiques', true, true],
-  ['Extraction illimitée de contacts de groupes', false, true],
-  ['Gestion complète de groupes', false, true],
-  ['Publication de statuts', false, true],
-  ['Prospection listes et groupes entiers', 'limité', true],
-  ['Closing e-commerce automatique', false, true],
-  ['Protection anti-blocage intégrée', false, true],
-  ['Instructions en langage naturel', false, true],
-] as const;
-
-const HOW_STEPS = [
-  {
-    id: 1,
-    step: '01',
     title: 'Scannez le QR code',
     description:
       'Comme WhatsApp Web. Aucune API, aucun développeur, aucun compte Meta. Prêt en 30 secondes.',
-    color: 'rgba(32, 87, 206, 0.8)',
+    imageSrc: '/landing/how/step-01-qr.png',
+    imageAlt: 'Connexion WhatsApp via QR code dans Klanvio',
+    tone: 'brand',
   },
   {
-    id: 2,
-    step: '02',
     title: 'Donnez une instruction en français',
     description:
       '« Extrais les contacts de ce groupe », « lance une campagne », « publie ce statut ». L’agent comprend.',
-    color: 'rgba(32, 87, 206, 0.65)',
+    imageSrc: '/landing/how/step-02-instruction.png',
+    imageAlt: 'Instruction de campagne donnée à l’agent Klanvio',
+    tone: 'sky',
   },
   {
-    id: 3,
-    step: '03',
     title: 'L’agent exécute et rapporte',
     description:
-      'Extraction, prospection, closing, publication — en autonomie, avec un bilan quotidien.',
-    color: 'rgba(32, 87, 206, 0.5)',
+      'Extraction, prospection, closing, publication — en autonomie, avec anti-blocage et suivi en temps réel.',
+    imageSrc: '/landing/how/step-03-execute.png',
+    imageAlt: 'Campagne active et simulation WhatsApp dans Klanvio',
+    tone: 'navy',
   },
-] as const;
-
-function CellMark({ value }: { value: boolean | 'limité' }) {
-  if (value === true) {
-    return <Check className="h-4 w-4 text-brand" strokeWidth={2.5} aria-label="Oui" />;
-  }
-  if (value === 'limité') {
-    return <span className="text-xs font-medium text-text-500">limité</span>;
-  }
-  return <Minus className="h-4 w-4 text-text-500/50" strokeWidth={2} aria-label="Non" />;
-}
+];
 
 export function LandingPage(props: LandingPageProps = {}) {
   const { onLogin, onRegister, onOpenLegal } = props;
@@ -227,7 +131,7 @@ export function LandingPage(props: LandingPageProps = {}) {
           'sticky top-0 z-50 border-b transition-[background-color,border-color,box-shadow] duration-300',
           scrolled
             ? 'border-black/[0.08] bg-white/85 shadow-[0_10px_30px_-24px_rgba(10,15,26,0.45)] backdrop-blur-xl'
-            : 'border-black/[0.05] bg-[#f7f8fb]/80 backdrop-blur-md',
+            : 'border-black/[0.05] bg-white/70 backdrop-blur-md',
         )}
       >
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4 sm:px-6">
@@ -305,39 +209,49 @@ export function LandingPage(props: LandingPageProps = {}) {
       </header>
 
       <main>
-        {/* HERO — fills viewport; denser type so less empty feel */}
-        <section className="relative flex min-h-[calc(100dvh-4rem)] flex-col overflow-hidden">
-          <HeroGridBackdrop />
-          <div className="relative mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-4 py-8 text-center sm:px-6 sm:py-10">
+        {/* HERO — white canvas + soft brand plasma + 4 integration logos */}
+        <section className="relative flex min-h-[calc(100dvh-4rem)] flex-col overflow-hidden bg-white">
+          <div className="pointer-events-none absolute inset-0" aria-hidden>
+            <ShaderBackground className="absolute inset-0 h-full w-full" />
+            {/* Soft white center for text — sides keep the plasma bubbles */}
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,rgba(255,255,255,0.88)_0%,rgba(255,255,255,0.45)_36%,rgba(255,255,255,0.08)_62%,transparent_78%)]" />
+          </div>
+
+          <HeroFloatingIcons />
+
+          <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-4 py-10 text-center sm:px-6 sm:py-14">
             <AnimatedContainer
               eager
               delay={0.05}
-              className="flex w-full max-w-full flex-col items-center"
+              className="flex w-full max-w-full flex-col items-center gap-0"
             >
               <h1 className="landing-h1 w-full text-balance text-text-100">
-                Klanvio — l&apos;agent IA qui automatise{' '}
-                <span className="text-brand">tout WhatsApp</span>, pas juste vos réponses
+                Klanvio l&apos;agent IA qui automatise{' '}
+                <span className="whitespace-nowrap">
+                  <HeroTypingWord text="tout WhatsApp" className="text-brand" />,
+                </span>{' '}
+                pas juste vos réponses
               </h1>
 
-              <p className="landing-lead mx-auto mt-4 max-w-xl text-balance text-text-400">
-                Les autres outils se contentent de répondre aux messages. Klanvio prospecte, relance,
-                close vos ventes, gère vos groupes et publie vos statuts — comme un vrai commercial
-                WhatsApp, 24h/24.
+              <p className="landing-lead mx-auto mt-5 max-w-xl text-balance text-text-400">
+                Klanvio prospecte, relance, close vos ventes, gère vos groupes et publie vos
+                statuts comme un vrai commercial WhatsApp, 24h/24.
               </p>
 
-              <div className="mt-5 flex w-full justify-center">
+              <div className="mt-7 flex w-full justify-center">
                 <ShinyButton onClick={goRegister} className="max-w-full">
-                  Essayer gratuitement {TRIAL_DAYS} jours
+                  Commencer gratuitement
                   <ArrowRight className="h-4 w-4 shrink-0" />
                 </ShinyButton>
               </div>
 
-              <div className="mt-6 flex w-full flex-wrap items-center justify-center gap-2">
-                {CAPABILITIES.map((label) => (
+              <div className="mt-8 flex w-full flex-wrap items-center justify-center gap-2.5">
+                {CAPABILITIES.map(({ label, icon: Icon }) => (
                   <span
                     key={label}
-                    className="inline-flex max-w-full items-center rounded-full border border-black/[0.08] bg-white/90 px-3 py-1 text-[11px] font-medium text-text-300 sm:text-xs"
+                    className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-black/[0.08] bg-white/90 px-3.5 py-1.5 text-[11px] font-medium text-text-300 shadow-sm sm:text-xs"
                   >
+                    <Icon className="h-3.5 w-3.5 shrink-0 text-brand" aria-hidden />
                     {label}
                   </span>
                 ))}
@@ -348,9 +262,9 @@ export function LandingPage(props: LandingPageProps = {}) {
 
         <TrustStrip />
 
-        {/* HOW — glass steps */}
-        <section id="how" className="landing-section mx-auto max-w-6xl px-4 sm:px-6">
-          <AnimatedContainer className="mx-auto max-w-2xl text-center">
+        {/* HOW — pin cards + product screenshots */}
+        <section id="how" className="landing-section">
+          <AnimatedContainer className="mx-auto max-w-2xl px-4 text-center sm:px-6">
             <h2 className="landing-h2 text-text-100">Aussi simple qu’une conversation</h2>
             <p className="landing-lead mt-2.5 text-text-400">
               Là où les autres outils demandent des heures de configuration, Klanvio comprend vos
@@ -358,127 +272,18 @@ export function LandingPage(props: LandingPageProps = {}) {
             </p>
           </AnimatedContainer>
 
-          <div className="mt-6">
-            <HowGlassSteps steps={[...HOW_STEPS]} />
+          <div className="mt-4">
+            <HowItWorks features={HOW_FEATURES} />
           </div>
         </section>
 
-        {/* COMPARE */}
-        <section id="compare" className="landing-section bg-white">
-          <div className="mx-auto max-w-6xl px-4 sm:px-6">
-            <AnimatedContainer className="mx-auto max-w-2xl text-center">
-              <h2 className="landing-h2 text-text-100">
-                Répondre à un message ≠ gérer tout votre WhatsApp
-              </h2>
-              <p className="landing-lead mt-2.5 text-text-400">
-                Les concurrents utilisent l’API Meta, qui bloque groupes et statuts. Klanvio, non.
-              </p>
-            </AnimatedContainer>
-
-            <AnimatedContainer delay={0.1}>
-              {/* Mobile: stacked rows — no horizontal scroll / cutoff */}
-              <div className="mx-auto mt-8 max-w-3xl space-y-2.5 sm:hidden">
-                {COMPARE_ROWS.map(([label, other, ours]) => (
-                  <div
-                    key={label}
-                    className="rounded-xl border border-black/[0.07] bg-white px-4 py-3"
-                  >
-                    <p className="text-sm font-medium text-text-200">{label}</p>
-                    <div className="mt-2.5 grid grid-cols-2 gap-3 text-xs">
-                      <div className="min-w-0">
-                        <p className="mb-1 text-text-500">Autres outils</p>
-                        <CellMark value={other} />
-                      </div>
-                      <div className="min-w-0">
-                        <p className="mb-1 font-medium text-brand">Klanvio</p>
-                        <CellMark value={ours} />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                <div className="rounded-xl border border-black/[0.07] bg-[#f7f8fb] px-4 py-3">
-                  <p className="text-sm font-medium text-text-200">Tarif</p>
-                  <div className="mt-2.5 grid grid-cols-2 gap-3 text-xs">
-                    <p className="text-text-400">40€ à 400€+/mois</p>
-                    <p className="font-semibold text-brand">{COMPARE_PRICE_LABEL}</p>
-                  </div>
-                </div>
-              </div>
-
-              {/* Desktop / tablet table */}
-              <div className="mx-auto mt-8 hidden max-w-3xl overflow-hidden rounded-xl border border-black/[0.07] sm:block">
-                <table className="w-full table-fixed text-left text-sm">
-                  <thead>
-                    <tr className="border-b border-black/[0.06] bg-[#f7f8fb]">
-                      <th className="w-[46%] px-4 py-3 font-medium text-text-500 md:px-5">
-                        Fonctionnalité
-                      </th>
-                      <th className="w-[27%] px-3 py-3 font-medium text-text-500 md:px-5">
-                        Autres outils
-                      </th>
-                      <th className="w-[27%] px-3 py-3 font-semibold text-brand md:px-5">Klanvio</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {COMPARE_ROWS.map(([label, other, ours]) => (
-                      <tr key={label} className="border-b border-black/[0.04] last:border-0">
-                        <td className="px-4 py-3 text-text-300 md:px-5">{label}</td>
-                        <td className="px-3 py-3 md:px-5">
-                          <CellMark value={other} />
-                        </td>
-                        <td className="px-3 py-3 md:px-5">
-                          <CellMark value={ours} />
-                        </td>
-                      </tr>
-                    ))}
-                    <tr className="bg-[#f7f8fb]/60">
-                      <td className="px-4 py-3 font-medium text-text-200 md:px-5">Tarif</td>
-                      <td className="px-3 py-3 text-text-400 md:px-5">40€ à 400€+/mois</td>
-                      <td className="px-3 py-3 font-semibold text-brand md:px-5">
-                        {COMPARE_PRICE_LABEL}
-                      </td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            </AnimatedContainer>
-          </div>
-        </section>
-
-        {/* FEATURES — soft dither OK here */}
-        <section id="features" className="landing-section mx-auto max-w-6xl px-4 sm:px-6">
-          <AnimatedContainer className="mx-auto max-w-2xl text-center">
-            <h2 className="landing-h2 text-text-100">Tout ce que Klanvio automatise</h2>
-            <p className="landing-lead mt-2.5 text-text-400">
-              Six domaines, un seul agent, zéro intervention manuelle — avec une protection
-              anti-blocage intégrée.
-            </p>
-          </AnimatedContainer>
-
-          <AnimatedContainer
-            delay={0.12}
-            className="relative mt-8 overflow-hidden rounded-2xl border border-black/[0.06] bg-white"
-          >
-            <ShaderBackdrop opacity={0.12} />
-            <div className="relative z-10 grid grid-cols-1 divide-y divide-dashed divide-black/10 sm:grid-cols-2 sm:divide-x sm:divide-y md:grid-cols-3">
-              {FEATURES.map((f) => (
-                <FeatureCard
-                  key={f.title}
-                  feature={{
-                    title: f.title,
-                    icon: f.icon,
-                    description: f.lead,
-                    items: f.items,
-                  }}
-                />
-              ))}
-            </div>
-          </AnimatedContainer>
-        </section>
-
-        {/* INTEGRATIONS then PRICING */}
+        {/* INTEGRATIONS → TÉMOIGNAGES → PRICING */}
         <AnimatedContainer>
           <IntegrationsSection />
+        </AnimatedContainer>
+
+        <AnimatedContainer>
+          <TestimonialsSection />
         </AnimatedContainer>
 
         <AnimatedContainer>
@@ -487,7 +292,7 @@ export function LandingPage(props: LandingPageProps = {}) {
 
         <LandingFaq />
 
-        {/* FINAL CTA — dither only here (+ features) */}
+        {/* FINAL CTA */}
         <div className="pb-4 sm:pb-6">
           <AnimatedContainer>
             <CTASection

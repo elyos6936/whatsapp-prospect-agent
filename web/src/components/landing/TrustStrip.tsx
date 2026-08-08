@@ -1,7 +1,8 @@
-import { Clock3, Lock, ShieldCheck } from 'lucide-react';
+import { Clock3, Lock, ShieldCheck, type LucideIcon } from 'lucide-react';
 import { TRIAL_DAYS } from '@/lib/pricing';
+import { cn } from '@/lib/utils';
 
-const POINTS = [
+export const TRUST_POINTS: { icon: LucideIcon; title: string; text: string }[] = [
   {
     icon: ShieldCheck,
     title: 'Anti-blocage intégré',
@@ -17,14 +18,18 @@ const POINTS = [
     title: 'Sans engagement',
     text: 'Résiliable en un clic. Vos données restent les vôtres.',
   },
-] as const;
+];
 
-/** Sobriety trust strip — no invented stats or testimonials. */
-export function TrustStrip() {
+type TrustStripProps = {
+  className?: string;
+};
+
+/** Trust strip with titles + short subtitles. */
+export function TrustStrip({ className }: TrustStripProps) {
   return (
-    <section className="border-y border-black/[0.05] bg-white/70">
+    <section className={cn('border-y border-black/[0.05] bg-white/70', className)}>
       <div className="mx-auto grid max-w-6xl gap-6 px-4 py-8 sm:grid-cols-3 sm:gap-8 sm:px-6 sm:py-9">
-        {POINTS.map(({ icon: Icon, title, text }) => (
+        {TRUST_POINTS.map(({ icon: Icon, title, text }) => (
           <div
             key={title}
             className="flex items-start gap-3 sm:flex-col sm:items-center sm:text-center"

@@ -45,9 +45,10 @@ type MoneyFusionVerifyResponse = {
 };
 
 const PLAN_PRICE_EUR: Record<BillingPlanId, Record<BillingPeriod, number>> = {
-  starter: { monthly: 15, annual: 150 },
-  pro: { monthly: 25, annual: 250 },
-  business: { monthly: 35, annual: 350 },
+  // Un seul tarif public — ids legacy gardés pour les checkouts existants.
+  starter: { monthly: 20, annual: 200 },
+  pro: { monthly: 20, annual: 200 },
+  business: { monthly: 20, annual: 200 },
 };
 
 let billingSchemaReady = false;

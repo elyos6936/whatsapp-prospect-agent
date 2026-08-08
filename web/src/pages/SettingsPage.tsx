@@ -25,9 +25,8 @@ import { GoogleContactsIntegrationCard } from '@/components/settings/GoogleConta
 import { CampaignMemoriesPanel } from '@/components/settings/CampaignMemoriesPanel';
 import { TeamPanel } from '@/components/settings/TeamPanel';
 import {
-  PLANS,
+  PLAN,
   TRIAL_DAYS,
-  accountsLabel,
   formatEuro,
   getPlan,
   periodSuffix,
@@ -435,7 +434,8 @@ export function SettingsPage() {
               </div>
 
               <div className="grid gap-2">
-                {PLANS.map((plan) => {
+                {(() => {
+                  const plan = PLAN;
                   const selected = billingPlan === plan.id;
                   const price = planPrice(plan, billingPeriod);
                   return (
@@ -453,14 +453,12 @@ export function SettingsPage() {
                       <div className="min-w-0">
                         <p className="text-sm font-semibold text-text-100">
                           {plan.name}
-                          {plan.featured ? (
-                            <span className="ml-2 rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">
-                              Populaire
-                            </span>
-                          ) : null}
+                          <span className="ml-2 rounded bg-brand/15 px-1.5 py-0.5 text-[10px] font-medium text-brand">
+                            Tout inclus
+                          </span>
                         </p>
                         <p className="mt-0.5 text-[11px] text-text-500">
-                          {accountsLabel(plan.accounts)}
+                          Un seul plan · sans limite cachée
                         </p>
                       </div>
                       <div className="shrink-0 text-right">
@@ -473,7 +471,7 @@ export function SettingsPage() {
                       </div>
                     </button>
                   );
-                })}
+                })()}
               </div>
 
               <button
