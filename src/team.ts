@@ -292,15 +292,39 @@ export async function createTeamInvite(
     throw new Error("Vous ne pouvez pas vous inviter vous-même.");
   }
 
-  const existingMember = await getUserByEmail(email);
-  if (existingMember) {
-    const memberCtx = await sql<{ c: number }[]>`
-      SELECT COUNT(*)::int AS c
-      FROM workspace_members
-      WHERE user_id = ${existingMember.id}
+  const existingUser = await getUserByEmail(email);
+  if (existingUser) {
+    const memberCtx = await sql<
+      {
+        workspace_id: number;
+        role: string;
+        owner_user_id: number;
+        member_count: number;
+      }[]
+    >`
+      SELECT
+        m.workspace_id,
+        m.role,
+        w.owner_user_id,
+        (SELECT COUNT(*)::int FROM workspace_members m2 WHERE m2.workspace_id = m.workspace_id) AS member_count
+      FROM workspace_members m
+      JOIN workspaces w ON w.id = m.workspace_id
+      WHERE m.user_id = ${existingUser.id}
+      LIMIT 1
     `;
-    if ((memberCtx[0]?.c ?? 0) > 0) {
-      throw new Error("Cette personne appartient déjà à une équipe Klanvio.");
+    if (memberCtx.length) {
+      const row = memberCtx[0];
+      if (Number(row.workspace_id) === workspace.workspaceId) {
+        throw new Error("Cette personne est déjà membre de votre équipe.");
+      }
+      // Compte solo (workspace perso auto) : invitation OK — ils rejoignent à l'acceptation.
+      const isSoloOwner =
+        String(row.role) === "owner" &&
+        Number(row.owner_user_id) === existingUser.id &&
+        Number(row.member_count) <= 1;
+      if (!isSoloOwner) {
+        throw new Error("Cette personne appartient déjà à une autre équipe Klanvio.");
+      }
     }
   }
 
