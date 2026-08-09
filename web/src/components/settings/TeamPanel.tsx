@@ -133,10 +133,15 @@ export function TeamPanel() {
         <h2 className="text-sm font-semibold text-text-100">Équipe</h2>
       </div>
       <p className="mb-5 text-xs text-text-400">
-        Partagez votre espace Klanvio : campagnes, contacts, WhatsApp et intégrations communs.
-        {maxInvites != null
-          ? ` Votre palier permet ${maxInvites} invité${maxInvites > 1 ? 's' : ''} (propriétaire inclus : ${maxInvites + 1} personnes).`
-          : ' Votre palier Business permet un nombre illimité de membres.'}
+        {isOwner
+          ? 'Vous gérez cet espace : invitez des collaborateurs pour partager campagnes, contacts, WhatsApp et intégrations. Votre espace perso reste disponible via le sélecteur en haut.'
+          : canManage
+            ? `Vous êtes admin de l’équipe de ${data?.workspace.workspaceName || 'cet espace'}. Vous pouvez inviter et gérer les membres.`
+            : `Vous êtes membre de l’équipe « ${data?.workspace.workspaceName || '…'} ». Les données affichées sont celles du propriétaire de cet espace.`}
+        {isOwner &&
+          (maxInvites != null
+            ? ` Votre palier permet ${maxInvites} invité${maxInvites > 1 ? 's' : ''} (propriétaire inclus : ${maxInvites + 1} personnes).`
+            : ' Votre palier Business permet un nombre illimité de membres.')}
       </p>
 
       {fb && (

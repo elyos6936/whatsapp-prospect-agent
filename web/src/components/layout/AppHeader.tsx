@@ -1,6 +1,7 @@
 import { ArrowLeft, BarChart3, Settings } from 'lucide-react';
 import { CampaignStatusToggle } from '@/components/automation/CampaignStatusToggle';
 import { MobileNavButton } from '@/components/layout/AppSidebar';
+import { WorkspaceSwitcher } from '@/components/layout/WorkspaceSwitcher';
 import { getOverlayTitle, type OverlayView } from '@/lib/navigation';
 
 type AppHeaderProps = {
@@ -19,6 +20,7 @@ type AppHeaderProps = {
   onOpenMemory?: () => void;
   onOpenMobileNav?: () => void;
   onCampaignStatusChange?: () => void | Promise<void>;
+  onWorkspaceSwitched?: () => void | Promise<void>;
 };
 
 export function AppHeader({
@@ -34,6 +36,7 @@ export function AppHeader({
   onOpenStats,
   onOpenMobileNav,
   onCampaignStatusChange,
+  onWorkspaceSwitched,
 }: AppHeaderProps) {
   const onChat = overlayView == null;
   const title = onChat ? threadTitle || 'Automatisation' : getOverlayTitle(overlayView);
@@ -66,6 +69,8 @@ export function AppHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-1 sm:gap-1.5">
+        <WorkspaceSwitcher onSwitched={onWorkspaceSwitched} />
+
         {level != null && (
           <button
             type="button"

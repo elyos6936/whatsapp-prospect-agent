@@ -26,11 +26,25 @@ export interface AuthUser {
     role: 'owner' | 'admin' | 'member';
     billingPlan: 'starter' | 'pro' | 'business';
     ownerUserId: number;
+    ownerName?: string;
+    isPersonal?: boolean;
   };
+  workspaces?: WorkspaceListItem[];
 }
+
+export type WorkspaceListItem = {
+  id: number;
+  name: string;
+  role: 'owner' | 'admin' | 'member';
+  billingPlan: 'starter' | 'pro' | 'business';
+  ownerUserId: number;
+  ownerName: string;
+  isPersonal: boolean;
+};
 
 export interface MeResponse extends AuthUser {
   whatsapp: { connected: boolean; state: string; message: string };
+  workspaces?: WorkspaceListItem[];
 }
 
 export interface ChatMessage {
@@ -836,6 +850,28 @@ export async function loginWithGoogle(accessToken: string): Promise<{ token: str
 
 export async function fetchMe(): Promise<MeResponse> {
   return request<MeResponse>('/api/me');
+}
+
+export async function fetchWorkspaces(): Promise<{ workspaces: WorkspaceListItem[] }> {
+  return request('/api/team/workspaces');
+}
+
+export async function switchWorkspace(
+  workspaceId: number,
+): Promise<{
+  ok: boolean;
+  workspace: {
+    workspaceId: number;
+    ownerUserId: number;
+    role: 'owner' | 'admin' | 'member';
+    billingPlan: 'starter' | 'pro' | 'business';
+    workspaceName: string;
+  };
+}> {
+  return request('/api/team/workspaces/switch', {
+    method: 'POST',
+    body: JSON.stringify({ workspaceId }),
+  });
 }
 
 export async function saveOnboarding(input: {

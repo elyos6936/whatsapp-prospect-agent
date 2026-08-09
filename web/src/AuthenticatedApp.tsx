@@ -131,7 +131,20 @@ export default function AuthenticatedApp() {
     return () => {
       cancelled = true;
     };
-  }, [user?.onboarding_completed, waConnected, refreshThreads]);
+  }, [user?.onboarding_completed, user?.workspace?.id, waConnected, refreshThreads]);
+
+  const handleWorkspaceSwitched = useCallback(async () => {
+    clear();
+    setActiveThreadId(null);
+    setThreadsLoading(true);
+    try {
+      await refreshThreads(null);
+    } catch {
+      setThreads([]);
+    } finally {
+      setThreadsLoading(false);
+    }
+  }, [clear, refreshThreads]);
 
   const handleNewThread = useCallback(() => {
     setNewAutoModalOpen(true);
@@ -304,9 +317,12 @@ export default function AuthenticatedApp() {
             activeThread?.automation_id ? () => setOverlayView('stats') : undefined
           }
           onOpenMobileNav={() => setMobileNavOpen(true)}
+          onWorkspaceSwitched={handleWorkspaceSwitched}
         />
 
-        {overlayView === 'settings' && <SettingsPage />}
+        {overlayView === 'settings' && (
+          <SettingsPage key={user?.workspace?.id ?? 'settings'} />
+        )}
         {overlayView === 'stats' && activeThreadId != null && (
           <ThreadStatsPage threadId={activeThreadId} />
         )}

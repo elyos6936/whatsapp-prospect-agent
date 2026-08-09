@@ -6,7 +6,9 @@ import {
   createTeamInvite,
   getInvitePreview,
   getTeamOverview,
+  listWorkspacesForUser,
   removeTeamMember,
+  setActiveWorkspace,
   updateMemberRole,
   type InviteRole,
 } from "./team.js";
@@ -22,6 +24,31 @@ export async function registerTeamRoutes(app: FastifyInstance): Promise<void> {
       });
     }
   });
+
+  app.get("/api/team/workspaces", async (request) => {
+    const actorUserId = requireActorUserId(request);
+    const workspaces = await listWorkspacesForUser(actorUserId);
+    return { workspaces };
+  });
+
+  app.post<{ Body: { workspaceId?: number } }>(
+    "/api/team/workspaces/switch",
+    async (request, reply) => {
+      const actorUserId = requireActorUserId(request);
+      const workspaceId = Number(request.body?.workspaceId);
+      if (!Number.isFinite(workspaceId)) {
+        return reply.status(400).send({ error: "workspaceId requis." });
+      }
+      try {
+        const workspace = await setActiveWorkspace(actorUserId, workspaceId);
+        return { ok: true, workspace };
+      } catch (err) {
+        return reply.status(400).send({
+          error: err instanceof Error ? err.message : "Impossible de changer d'espace.",
+        });
+      }
+    }
+  );
 
   app.get("/api/team", async (request) => {
     const actorUserId = requireActorUserId(request);

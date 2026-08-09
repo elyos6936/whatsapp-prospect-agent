@@ -35,6 +35,17 @@ export interface TeamInviteRow {
   invitedByName: string;
 }
 
+export interface WorkspaceListItem {
+  id: number;
+  name: string;
+  role: TeamRole;
+  billingPlan: BillingPlanId;
+  ownerUserId: number;
+  ownerName: string;
+  /** true = workspace dont l'utilisateur est le propriétaire (espace perso). */
+  isPersonal: boolean;
+}
+
 let schemaReady = false;
 
 export async function ensureTeamSchema(): Promise<void> {
@@ -51,11 +62,16 @@ export async function ensureTeamSchema(): Promise<void> {
   await sql`
     CREATE TABLE IF NOT EXISTS workspace_members (
       workspace_id BIGINT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
-      user_id BIGINT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+      user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       role TEXT NOT NULL,
       joined_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       PRIMARY KEY (workspace_id, user_id)
     )
+  `;
+  // Anciennes installs : UNIQUE global user_id → une seule membership.
+  await sql`ALTER TABLE workspace_members DROP CONSTRAINT IF EXISTS workspace_members_user_id_key`;
+  await sql`
+    CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members (user_id)
   `;
   await sql`
     CREATE TABLE IF NOT EXISTS workspace_invites (
@@ -69,6 +85,10 @@ export async function ensureTeamSchema(): Promise<void> {
       accepted_at TIMESTAMPTZ,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
+  `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS active_workspace_id BIGINT
   `;
   schemaReady = true;
 }
@@ -120,9 +140,67 @@ async function createWorkspaceForOwner(userId: number): Promise<WorkspaceContext
   };
 }
 
-/** Résout le workspace d'un utilisateur (membre ou propriétaire). Crée un workspace si besoin. */
+async function loadMembershipContext(
+  actorUserId: number,
+  workspaceId: number
+): Promise<WorkspaceContext | null> {
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT
+      w.id AS workspace_id,
+      w.owner_user_id,
+      w.billing_plan,
+      w.name AS workspace_name,
+      m.role
+    FROM workspace_members m
+    JOIN workspaces w ON w.id = m.workspace_id
+    WHERE m.user_id = ${actorUserId}
+      AND m.workspace_id = ${workspaceId}
+    LIMIT 1
+  `;
+  if (!rows.length) return null;
+  return mapWorkspaceContext(rows[0]);
+}
+
+/** Résout le workspace actif (active_workspace_id) ou fallback perso / première membership. */
 export async function resolveWorkspaceContext(actorUserId: number): Promise<WorkspaceContext> {
   await ensureTeamSchema();
+
+  const activeRows = await sql<{ active_workspace_id: number | null }[]>`
+    SELECT active_workspace_id FROM users WHERE id = ${actorUserId} LIMIT 1
+  `;
+  const activeId = activeRows[0]?.active_workspace_id;
+  if (activeId != null && Number.isFinite(Number(activeId))) {
+    const activeCtx = await loadMembershipContext(actorUserId, Number(activeId));
+    if (activeCtx) return activeCtx;
+  }
+
+  const ownedRows = await sql<Record<string, unknown>[]>`
+    SELECT
+      w.id AS workspace_id,
+      w.owner_user_id,
+      w.billing_plan,
+      w.name AS workspace_name,
+      COALESCE(m.role, 'owner') AS role
+    FROM workspaces w
+    LEFT JOIN workspace_members m
+      ON m.workspace_id = w.id AND m.user_id = ${actorUserId}
+    WHERE w.owner_user_id = ${actorUserId}
+    LIMIT 1
+  `;
+  if (ownedRows.length) {
+    const ctx = mapWorkspaceContext(ownedRows[0]);
+    await sql`
+      INSERT INTO workspace_members (workspace_id, user_id, role)
+      VALUES (${ctx.workspaceId}, ${actorUserId}, 'owner')
+      ON CONFLICT (workspace_id, user_id) DO NOTHING
+    `;
+    await sql`
+      UPDATE users SET active_workspace_id = ${ctx.workspaceId}
+      WHERE id = ${actorUserId}
+        AND (active_workspace_id IS NULL OR active_workspace_id <> ${ctx.workspaceId})
+    `;
+    return ctx;
+  }
 
   const memberRows = await sql<Record<string, unknown>[]>`
     SELECT
@@ -134,27 +212,79 @@ export async function resolveWorkspaceContext(actorUserId: number): Promise<Work
     FROM workspace_members m
     JOIN workspaces w ON w.id = m.workspace_id
     WHERE m.user_id = ${actorUserId}
+    ORDER BY m.joined_at ASC
     LIMIT 1
   `;
-  if (memberRows.length) return mapWorkspaceContext(memberRows[0]);
-
-  const ownerRows = await sql<Record<string, unknown>[]>`
-    SELECT id AS workspace_id, owner_user_id, billing_plan, name AS workspace_name
-    FROM workspaces
-    WHERE owner_user_id = ${actorUserId}
-    LIMIT 1
-  `;
-  if (ownerRows.length) {
-    const ctx = mapWorkspaceContext({ ...ownerRows[0], role: "owner" });
+  if (memberRows.length) {
+    const ctx = mapWorkspaceContext(memberRows[0]);
     await sql`
-      INSERT INTO workspace_members (workspace_id, user_id, role)
-      VALUES (${ctx.workspaceId}, ${actorUserId}, 'owner')
-      ON CONFLICT (workspace_id, user_id) DO NOTHING
+      UPDATE users SET active_workspace_id = ${ctx.workspaceId}
+      WHERE id = ${actorUserId}
     `;
     return ctx;
   }
 
-  return createWorkspaceForOwner(actorUserId);
+  const created = await createWorkspaceForOwner(actorUserId);
+  await sql`
+    UPDATE users SET active_workspace_id = ${created.workspaceId}
+    WHERE id = ${actorUserId}
+  `;
+  return created;
+}
+
+export async function listWorkspacesForUser(actorUserId: number): Promise<WorkspaceListItem[]> {
+  await ensureTeamSchema();
+  // Garantit qu'un workspace perso owned existe.
+  await resolveWorkspaceContext(actorUserId);
+
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT
+      w.id,
+      w.name,
+      w.billing_plan,
+      w.owner_user_id,
+      m.role,
+      COALESCE(NULLIF(TRIM(ou.name), ''), ou.email, '') AS owner_name
+    FROM workspace_members m
+    JOIN workspaces w ON w.id = m.workspace_id
+    JOIN users ou ON ou.id = w.owner_user_id
+    WHERE m.user_id = ${actorUserId}
+    ORDER BY
+      CASE WHEN w.owner_user_id = ${actorUserId} THEN 0 ELSE 1 END,
+      m.joined_at ASC
+  `;
+
+  return rows.map((row) => {
+    const ownerUserId = Number(row.owner_user_id);
+    return {
+      id: Number(row.id),
+      name: String(row.name || "Mon équipe"),
+      role: String(row.role) as TeamRole,
+      billingPlan: normalizePlan(String(row.billing_plan)),
+      ownerUserId,
+      ownerName: String(row.owner_name || ""),
+      isPersonal: ownerUserId === actorUserId,
+    };
+  });
+}
+
+export async function setActiveWorkspace(
+  actorUserId: number,
+  workspaceId: number
+): Promise<WorkspaceContext> {
+  await ensureTeamSchema();
+  if (!Number.isFinite(workspaceId)) {
+    throw new Error("Espace invalide.");
+  }
+  const ctx = await loadMembershipContext(actorUserId, workspaceId);
+  if (!ctx) {
+    throw new Error("Vous n'êtes pas membre de cet espace.");
+  }
+  await sql`
+    UPDATE users SET active_workspace_id = ${workspaceId}
+    WHERE id = ${actorUserId}
+  `;
+  return ctx;
 }
 
 export async function setWorkspaceBillingPlan(
@@ -294,37 +424,14 @@ export async function createTeamInvite(
 
   const existingUser = await getUserByEmail(email);
   if (existingUser) {
-    const memberCtx = await sql<
-      {
-        workspace_id: number;
-        role: string;
-        owner_user_id: number;
-        member_count: number;
-      }[]
-    >`
-      SELECT
-        m.workspace_id,
-        m.role,
-        w.owner_user_id,
-        (SELECT COUNT(*)::int FROM workspace_members m2 WHERE m2.workspace_id = m.workspace_id) AS member_count
-      FROM workspace_members m
-      JOIN workspaces w ON w.id = m.workspace_id
-      WHERE m.user_id = ${existingUser.id}
+    const alreadyInThis = await sql<{ user_id: number }[]>`
+      SELECT user_id FROM workspace_members
+      WHERE workspace_id = ${workspace.workspaceId}
+        AND user_id = ${existingUser.id}
       LIMIT 1
     `;
-    if (memberCtx.length) {
-      const row = memberCtx[0];
-      if (Number(row.workspace_id) === workspace.workspaceId) {
-        throw new Error("Cette personne est déjà membre de votre équipe.");
-      }
-      // Compte solo (workspace perso auto) : invitation OK — ils rejoignent à l'acceptation.
-      const isSoloOwner =
-        String(row.role) === "owner" &&
-        Number(row.owner_user_id) === existingUser.id &&
-        Number(row.member_count) <= 1;
-      if (!isSoloOwner) {
-        throw new Error("Cette personne appartient déjà à une autre équipe Klanvio.");
-      }
+    if (alreadyInThis.length) {
+      throw new Error("Cette personne est déjà membre de votre équipe.");
     }
   }
 
@@ -450,7 +557,36 @@ export async function removeTeamMember(
       AND user_id = ${targetUserId}
       AND role <> 'owner'
   `;
-  await createWorkspaceForOwner(targetUserId);
+
+  // Reset actif vers le perso si on quittait l'espace actif.
+  const activeRows = await sql<{ active_workspace_id: number | null }[]>`
+    SELECT active_workspace_id FROM users WHERE id = ${targetUserId} LIMIT 1
+  `;
+  if (Number(activeRows[0]?.active_workspace_id) === workspace.workspaceId) {
+    const personal = await sql<{ id: number }[]>`
+      SELECT id FROM workspaces WHERE owner_user_id = ${targetUserId} LIMIT 1
+    `;
+    if (personal.length) {
+      await sql`
+        UPDATE users SET active_workspace_id = ${Number(personal[0].id)}
+        WHERE id = ${targetUserId}
+      `;
+    } else {
+      const created = await createWorkspaceForOwner(targetUserId);
+      await sql`
+        UPDATE users SET active_workspace_id = ${created.workspaceId}
+        WHERE id = ${targetUserId}
+      `;
+    }
+  } else {
+    // S'assurer qu'un workspace owned existe toujours (perso).
+    const owned = await sql<{ id: number }[]>`
+      SELECT id FROM workspaces WHERE owner_user_id = ${targetUserId} LIMIT 1
+    `;
+    if (!owned.length) {
+      await createWorkspaceForOwner(targetUserId);
+    }
+  }
 }
 
 export async function getInvitePreview(token: string): Promise<{
@@ -517,20 +653,22 @@ export async function acceptTeamInvite(
   const workspaceId = Number(invite.workspace_id);
   const role = String(invite.role) as InviteRole;
 
-  // Si le membre a un espace solo auto-créé (inscription), on le dissout pour rejoindre l'équipe.
-  await leaveSoloOwnedWorkspaceOrThrow(actorUserId, workspaceId);
+  // Garde le workspace perso ; ajoute seulement la membership équipe.
+  await createWorkspaceForOwner(actorUserId);
 
   await sql`
     INSERT INTO workspace_members (workspace_id, user_id, role)
     VALUES (${workspaceId}, ${actorUserId}, ${role})
-    ON CONFLICT (user_id) DO UPDATE SET
-      workspace_id = EXCLUDED.workspace_id,
-      role = EXCLUDED.role
+    ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role
   `;
   await sql`
     UPDATE workspace_invites
     SET accepted_at = NOW()
     WHERE id = ${Number(invite.id)}
+  `;
+  await sql`
+    UPDATE users SET active_workspace_id = ${workspaceId}
+    WHERE id = ${actorUserId}
   `;
 
   return {
@@ -540,45 +678,6 @@ export async function acceptTeamInvite(
     billingPlan: normalizePlan(String(invite.billing_plan)),
     workspaceName: String(invite.workspace_name || "Équipe Klanvio"),
   };
-}
-
-/**
- * Dissout un workspace perso vide (seul propriétaire) pour permettre de rejoindre une équipe.
- * Refuse si l'utilisateur est déjà dans une vraie équipe (plusieurs membres / pas owner).
- */
-async function leaveSoloOwnedWorkspaceOrThrow(
-  userId: number,
-  joiningWorkspaceId: number
-): Promise<void> {
-  const existing = await sql<Record<string, unknown>[]>`
-    SELECT
-      m.workspace_id,
-      m.role,
-      w.owner_user_id,
-      (SELECT COUNT(*)::int FROM workspace_members m2 WHERE m2.workspace_id = m.workspace_id) AS member_count
-    FROM workspace_members m
-    JOIN workspaces w ON w.id = m.workspace_id
-    WHERE m.user_id = ${userId}
-    LIMIT 1
-  `;
-  if (!existing.length) return;
-
-  const row = existing[0];
-  const currentWsId = Number(row.workspace_id);
-  if (currentWsId === joiningWorkspaceId) return;
-
-  const isSoloOwner =
-    String(row.role) === "owner" &&
-    Number(row.owner_user_id) === userId &&
-    Number(row.member_count) <= 1;
-
-  if (!isSoloOwner) {
-    throw new Error("Vous appartenez déjà à une autre équipe Klanvio.");
-  }
-
-  await sql`DELETE FROM workspace_invites WHERE workspace_id = ${currentWsId}`;
-  await sql`DELETE FROM workspace_members WHERE workspace_id = ${currentWsId}`;
-  await sql`DELETE FROM workspaces WHERE id = ${currentWsId}`;
 }
 
 /** Accepte automatiquement une invitation en attente pour l'email du compte (inscription / Google). */

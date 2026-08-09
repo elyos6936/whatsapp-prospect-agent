@@ -229,8 +229,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       };
     }
 
-    const { resolveWorkspaceContext } = await import("./team.js");
+    const { listWorkspacesForUser, resolveWorkspaceContext } = await import("./team.js");
     const workspace = await resolveWorkspaceContext(actorUserId);
+    const workspaces = await listWorkspacesForUser(actorUserId);
+    const activeMeta = workspaces.find((w) => w.id === workspace.workspaceId);
 
     return {
       ...publicUser(user),
@@ -241,7 +243,10 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         role: workspace.role,
         billingPlan: workspace.billingPlan,
         ownerUserId: workspace.ownerUserId,
+        ownerName: activeMeta?.ownerName ?? "",
+        isPersonal: activeMeta?.isPersonal ?? workspace.ownerUserId === actorUserId,
       },
+      workspaces,
     };
   });
 
