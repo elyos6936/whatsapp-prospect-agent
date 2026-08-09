@@ -303,9 +303,12 @@ export const config = {
   /** URL API MoneyFusion (lien application généré dans leur console). */
   moneyFusionApiUrl: process.env.MONEYFUSION_API_URL?.trim() || "",
   /** URL de vérification d'un paiement : `${base}/{token}`. */
+  // Certificat TLS uniquement sur pay.moneyfusion.net (sans www).
   moneyFusionVerifyBaseUrl:
     (process.env.MONEYFUSION_VERIFY_BASE_URL?.trim() ||
-      "https://www.pay.moneyfusion.net/paiementNotif").replace(/\/$/, ""),
+      "https://pay.moneyfusion.net/paiementNotif")
+      .replace("://www.pay.moneyfusion.net", "://pay.moneyfusion.net")
+      .replace(/\/$/, ""),
 } as const;
 
 /**
