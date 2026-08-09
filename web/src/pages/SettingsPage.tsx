@@ -288,14 +288,6 @@ export function SettingsPage() {
     { id: 'connection', label: 'WhatsApp', icon: Smartphone },
   ];
 
-  const tabLabels: Record<SettingsTab, { short: string; full: string }> = {
-    billing: { short: 'Facturation', full: 'Facturation' },
-    memory: { short: 'Mémoire', full: 'Mémoire' },
-    integrations: { short: 'Intégrations', full: 'Intégrations' },
-    team: { short: 'Équipe', full: 'Équipe' },
-    connection: { short: 'WhatsApp', full: 'WhatsApp' },
-  };
-
   return (
     <div className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto custom-scrollbar">
       <div className="brand-radial">
@@ -315,33 +307,34 @@ export function SettingsPage() {
             </button>
           </div>
 
-          <div
-            className={cn(
-              'mb-6 grid w-full gap-1 rounded-xl border border-black/10 bg-bg-100 p-1',
-              tabs.length >= 5 ? 'grid-cols-5' : 'grid-cols-4',
-            )}
-          >
-            {tabs.map((t) => {
-              const Icon = t.icon;
-              const labels = tabLabels[t.id];
-              return (
-                <button
-                  key={t.id}
-                  type="button"
-                  onClick={() => setTab(t.id)}
-                  className={cn(
-                    'inline-flex min-w-0 flex-col items-center justify-center gap-1 rounded-lg px-1.5 py-2 text-center text-[11px] font-medium transition sm:flex-row sm:gap-2 sm:px-3 sm:text-sm',
-                    tab === t.id
-                      ? 'bg-brand text-white shadow-sm'
-                      : 'text-text-400 hover:bg-bg-200 hover:text-text-200',
-                  )}
-                >
-                  <Icon className="h-4 w-4 shrink-0" />
-                  <span className="truncate sm:hidden">{labels.short}</span>
-                  <span className="hidden truncate sm:inline">{labels.full}</span>
-                </button>
-              );
-            })}
+          <div className="-mx-1 mb-6 overflow-x-auto px-1 custom-scrollbar">
+            <div
+              role="tablist"
+              className="inline-flex min-w-full gap-1 rounded-xl border border-black/10 bg-bg-100 p-1 sm:flex sm:w-full"
+            >
+              {tabs.map((t) => {
+                const Icon = t.icon;
+                return (
+                  <button
+                    key={t.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t.id}
+                    title={t.label}
+                    onClick={() => setTab(t.id)}
+                    className={cn(
+                      'inline-flex shrink-0 flex-1 items-center justify-center gap-1.5 rounded-lg px-3 py-2 text-xs font-medium whitespace-nowrap transition sm:text-sm',
+                      tab === t.id
+                        ? 'bg-brand text-white shadow-sm'
+                        : 'text-text-400 hover:bg-bg-200 hover:text-text-200',
+                    )}
+                  >
+                    <Icon className="h-4 w-4 shrink-0" />
+                    <span>{t.label}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {loading && tab === 'connection' ? (

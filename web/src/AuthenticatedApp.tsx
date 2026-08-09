@@ -26,6 +26,7 @@ import type { OverlayView } from '@/lib/navigation';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { NewAutomationModal } from '@/components/ui/NewAutomationModal';
+import { OutreachLevelModal } from '@/components/outreach/OutreachLevelModal';
 import { PhoneSimulationPanel } from '@/components/chat/PhoneSimulationPanel';
 import { extractLatestSimulationBubbles } from '@/lib/parse-simulation-turns';
 
@@ -41,6 +42,7 @@ export default function AuthenticatedApp() {
   const [creatingThread, setCreatingThread] = useState(false);
   const [newAutoModalOpen, setNewAutoModalOpen] = useState(false);
   const [memoryModalOpen, setMemoryModalOpen] = useState(false);
+  const [levelModalOpen, setLevelModalOpen] = useState(false);
   const [threadsLoading, setThreadsLoading] = useState(true);
 
   const chatEnabled = overlayView == null && !!user?.whatsapp?.connected && activeThreadId != null;
@@ -293,6 +295,7 @@ export default function AuthenticatedApp() {
           memoryName={activeThread?.campaign_memory_name ?? null}
           onGoToChat={() => setOverlayView(null)}
           onOpenSettings={() => setOverlayView('settings')}
+          onOpenLevel={() => setLevelModalOpen(true)}
           onOpenMemory={
             activeThreadId != null ? () => setMemoryModalOpen(true) : undefined
           }
@@ -366,6 +369,13 @@ export default function AuthenticatedApp() {
       onConfirm={(title, description, purpose) =>
         void handleCreateThread(title, description, purpose)
       }
+    />
+
+    <OutreachLevelModal
+      open={levelModalOpen}
+      level={user?.outreach_level ?? null}
+      totalMessagesSent={user?.total_messages_sent ?? 0}
+      onClose={() => setLevelModalOpen(false)}
     />
 
     {activeThreadId != null && (
