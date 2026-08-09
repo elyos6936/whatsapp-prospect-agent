@@ -54,7 +54,82 @@ export type TallyFormSummary = {
   status?: string;
   updatedAt?: string;
   numberOfSubmissions?: number;
+  /** URL publique répondant (`https://tally.so/r/{id}`). */
+  publicUrl: string;
 };
+
+/** Extrait l’id court Tally depuis une URL ou un id brut. */
+export function normalizeTallyFormId(raw: string): string {
+  const s = String(raw ?? "").trim();
+  if (!s) return "";
+  const fromUrl = s.match(/tally\.so\/(?:r|forms)\/([A-Za-z0-9_-]+)/i);
+  if (fromUrl?.[1]) return fromUrl[1];
+  // Si l’agent colle toute l’URL mal parsée
+  if (/^https?:\/\//i.test(s)) {
+    try {
+      const path = new URL(s).pathname;
+      const seg = path.split("/").filter(Boolean).pop();
+      if (seg && /^[A-Za-z0-9_-]+$/.test(seg)) return seg;
+    } catch {
+      /* ignore */
+    }
+  }
+  return s.split(/[?#]/)[0].trim();
+}
+
+function normalizeFormName(name: string): string {
+  return name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Résout un form_id (id court, URL, ou nom) vers l’id API Tally.
+ */
+export async function resolveTallyFormId(
+  apiKey: string,
+  formIdOrName: string,
+): Promise<{ id: string; name: string; matchedBy: "id" | "url" | "name" } | null> {
+  const raw = String(formIdOrName ?? "").trim();
+  if (!raw) return null;
+
+  const normalizedId = normalizeTallyFormId(raw);
+  const forms = await fetchTallyForms(apiKey);
+
+  const byId = forms.find(
+    (f) => f.id.toLowerCase() === normalizedId.toLowerCase(),
+  );
+  if (byId) {
+    return {
+      id: byId.id,
+      name: byId.name,
+      matchedBy: /tally\.so\//i.test(raw) ? "url" : "id",
+    };
+  }
+
+  // Nom (ou fragment) — l’agent envoie parfois le titre au lieu de l’id
+  const needle = normalizeFormName(raw);
+  if (needle.length >= 3 && !/^[A-Za-z0-9_-]{4,12}$/.test(normalizedId)) {
+    const exact = forms.find((f) => normalizeFormName(f.name) === needle);
+    if (exact) return { id: exact.id, name: exact.name, matchedBy: "name" };
+    const partial = forms.find(
+      (f) =>
+        normalizeFormName(f.name).includes(needle) ||
+        needle.includes(normalizeFormName(f.name)),
+    );
+    if (partial) return { id: partial.id, name: partial.name, matchedBy: "name" };
+  }
+
+  // Id inconnu du listing mais peut-être valide directement
+  if (/^[A-Za-z0-9_-]{4,32}$/.test(normalizedId)) {
+    return { id: normalizedId, name: normalizedId, matchedBy: "id" };
+  }
+
+  return null;
+}
 
 export async function fetchTallyForms(apiKey: string): Promise<TallyFormSummary[]> {
   const forms: TallyFormSummary[] = [];
@@ -90,6 +165,7 @@ export async function fetchTallyForms(apiKey: string): Promise<TallyFormSummary[
         status: item.status,
         updatedAt: item.updatedAt,
         numberOfSubmissions: item.numberOfSubmissions,
+        publicUrl: `https://tally.so/r/${item.id}`,
       });
     }
     if (!data.hasMore || !(data.items?.length)) break;
@@ -163,26 +239,14 @@ function answerValueToString(answer: unknown): string {
   return "";
 }
 
-export async function fetchTallyResponses(
+async function fetchTallySubmissionsPage(
   apiKey: string,
   formId: string,
-  pageSize = 25,
-): Promise<TallyResponsesResult> {
-  const capped = Math.min(Math.max(1, pageSize), 100);
-  const url = new URL(`${API_BASE}/forms/${encodeURIComponent(formId)}/submissions`);
-  url.searchParams.set("page", "1");
-  url.searchParams.set("limit", String(capped));
-  url.searchParams.set("filter", "completed");
-
-  const res = await fetch(url.toString(), { headers: authHeaders(apiKey) });
-  if (res.status === 401 || res.status === 403) {
-    throw new TallyAuthError("Clé API Tally invalide ou révoquée.", "revoked");
-  }
-  if (!res.ok) {
-    throw new TallyAuthError(`Tally submissions HTTP ${res.status}`, "http");
-  }
-
-  const data = (await res.json()) as {
+  pageSize: number,
+  filter: "completed" | "all" | "partial",
+): Promise<{
+  status: number;
+  data: {
     questions?: Array<{ id?: string; title?: string; type?: string }>;
     submissions?: Array<{
       id?: string;
@@ -194,8 +258,96 @@ export async function fetchTallyResponses(
         formattedAnswer?: string;
       }>;
     }>;
-    totalNumberOfSubmissionsPerFilter?: { completed?: number; all?: number };
+    totalNumberOfSubmissionsPerFilter?: {
+      completed?: number;
+      all?: number;
+      partial?: number;
+    };
+  } | null;
+}> {
+  const url = new URL(`${API_BASE}/forms/${encodeURIComponent(formId)}/submissions`);
+  url.searchParams.set("page", "1");
+  url.searchParams.set("limit", String(pageSize));
+  url.searchParams.set("filter", filter);
+
+  const res = await fetch(url.toString(), { headers: authHeaders(apiKey) });
+  if (res.status === 401 || res.status === 403) {
+    throw new TallyAuthError("Clé API Tally invalide ou révoquée.", "revoked");
+  }
+  if (!res.ok) {
+    return { status: res.status, data: null };
+  }
+  return {
+    status: res.status,
+    data: (await res.json()) as {
+      questions?: Array<{ id?: string; title?: string; type?: string }>;
+      submissions?: Array<{
+        id?: string;
+        submittedAt?: string;
+        isCompleted?: boolean;
+        responses?: Array<{
+          questionId?: string;
+          answer?: unknown;
+          formattedAnswer?: string;
+        }>;
+      }>;
+      totalNumberOfSubmissionsPerFilter?: {
+        completed?: number;
+        all?: number;
+        partial?: number;
+      };
+    },
   };
+}
+
+export async function fetchTallyResponses(
+  apiKey: string,
+  formIdOrUrlOrName: string,
+  pageSize = 25,
+): Promise<TallyResponsesResult & { resolvedFormName?: string; filterUsed?: string }> {
+  const capped = Math.min(Math.max(1, pageSize), 100);
+  const resolved = await resolveTallyFormId(apiKey, formIdOrUrlOrName);
+  if (!resolved) {
+    throw new TallyAuthError(
+      `Formulaire Tally introuvable pour « ${String(formIdOrUrlOrName).slice(0, 80)} ». Relance list_tally_forms et utilise le champ id exact.`,
+      "invalid",
+    );
+  }
+  const formId = resolved.id;
+
+  let page = await fetchTallySubmissionsPage(apiKey, formId, capped, "completed");
+  let filterUsed: "completed" | "all" = "completed";
+
+  if (page.status === 404) {
+    throw new TallyAuthError(
+      `Formulaire Tally ${formId} introuvable (404). Vérifie l’id via list_tally_forms (publicUrl https://tally.so/r/{id}).`,
+      "http",
+    );
+  }
+  if (page.status !== 200 || !page.data) {
+    throw new TallyAuthError(`Tally submissions HTTP ${page.status}`, "http");
+  }
+
+  const completedCount =
+    page.data.totalNumberOfSubmissionsPerFilter?.completed ??
+    page.data.submissions?.length ??
+    0;
+  // Compteur UI souvent = all ; si 0 completed, retenter sans filtre strict
+  if (completedCount === 0) {
+    const allPage = await fetchTallySubmissionsPage(apiKey, formId, capped, "all");
+    if (allPage.status === 200 && allPage.data) {
+      const allCount =
+        allPage.data.totalNumberOfSubmissionsPerFilter?.all ??
+        allPage.data.submissions?.length ??
+        0;
+      if (allCount > 0) {
+        page = allPage;
+        filterUsed = "all";
+      }
+    }
+  }
+
+  const data = page.data;
 
   const questionMeta = new Map<string, { title: string; type: string }>();
   for (const q of data.questions ?? []) {
@@ -273,8 +425,12 @@ export async function fetchTallyResponses(
 
   return {
     formId,
+    resolvedFormName: resolved.name,
+    filterUsed,
     totalItems:
-      data.totalNumberOfSubmissionsPerFilter?.completed ??
+      (filterUsed === "all"
+        ? data.totalNumberOfSubmissionsPerFilter?.all
+        : data.totalNumberOfSubmissionsPerFilter?.completed) ??
       data.totalNumberOfSubmissionsPerFilter?.all ??
       responses.length,
     responses,

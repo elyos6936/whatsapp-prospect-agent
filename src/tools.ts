@@ -149,6 +149,7 @@ import {
   TallyAuthError,
   fetchTallyForms,
   fetchTallyResponses,
+  resolveTallyFormId,
 } from "./integrations/tally.js";
 import {
   TypeformAuthError,
@@ -1520,7 +1521,8 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       name: "list_tally_forms",
       description:
         "Liste les formulaires Tally du compte connecté (clé API dans Réglages → Intégrations). " +
-        "Ensuite utilise list_tally_responses avec un form_id.",
+        "Chaque item a id + publicUrl (https://tally.so/r/{id}). " +
+        "Ensuite list_tally_responses avec le champ id exact (pas le titre du formulaire).",
       parameters: {
         type: "object",
         properties: {
@@ -1538,14 +1540,16 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "list_tally_responses",
       description:
-        "Lit les soumissions complétées d'un formulaire Tally (form_id depuis list_tally_forms) " +
-        "et propose des leads téléphone (suggested_leads).",
+        "Lit les soumissions d'un formulaire Tally et propose des leads téléphone (suggested_leads). " +
+        "form_id = id exact depuis list_tally_forms, ou URL https://tally.so/r/XXXXXX. " +
+        "Ne passe jamais le titre du formulaire comme form_id.",
       parameters: {
         type: "object",
         properties: {
           form_id: {
             type: "string",
-            description: "ID du formulaire Tally",
+            description:
+              "ID Tally (ex. 3qEPdk) ou URL https://tally.so/r/… — depuis list_tally_forms.id / publicUrl",
           },
           page_size: {
             type: "number",
@@ -4378,6 +4382,7 @@ export async function executeTool(
         const sliced = forms.slice(0, limit).map((f) => ({
           id: f.id,
           name: f.name,
+          publicUrl: f.publicUrl,
           status: f.status ?? null,
           updatedAt: f.updatedAt ?? null,
           numberOfSubmissions: f.numberOfSubmissions ?? null,
@@ -4390,7 +4395,7 @@ export async function executeTool(
           message:
             sliced.length === 0
               ? "Aucun formulaire Tally sur ce compte."
-              : `${sliced.length} formulaire(s). Utilise list_tally_responses avec un form_id.`,
+              : `${sliced.length} formulaire(s). Utilise list_tally_responses avec forms[].id (ou publicUrl), jamais le titre.`,
         });
       } catch (err) {
         if (err instanceof TallyAuthError && err.code === "revoked") {
@@ -4409,7 +4414,9 @@ export async function executeTool(
     case "list_tally_responses": {
       const formId = String(args.form_id ?? "").trim();
       if (!formId) {
-        return JSON.stringify({ error: "form_id requis (depuis list_tally_forms)." });
+        return JSON.stringify({
+          error: "form_id requis (id ou URL depuis list_tally_forms).",
+        });
       }
       const pageSize =
         args.page_size != null && Number.isFinite(Number(args.page_size))
@@ -4417,9 +4424,20 @@ export async function executeTool(
           : 25;
       try {
         const apiKey = await getValidTallyApiKey(userId);
-        const data = await fetchTallyResponses(apiKey, formId, pageSize);
+        // Pré-résolution pour message d’erreur plus clair
+        const resolved = await resolveTallyFormId(apiKey, formId);
+        if (!resolved) {
+          return JSON.stringify({
+            error: `Formulaire introuvable pour « ${formId.slice(0, 80)} ». Relance list_tally_forms.`,
+            code: "invalid",
+          });
+        }
+        const data = await fetchTallyResponses(apiKey, resolved.id, pageSize);
         return JSON.stringify({
           formId: data.formId,
+          formName: data.resolvedFormName ?? resolved.name,
+          publicUrl: `https://tally.so/r/${data.formId}`,
+          filterUsed: data.filterUsed ?? "completed",
           totalItems: data.totalItems,
           returned: data.responses.length,
           responses: data.responses.map((r) => ({
