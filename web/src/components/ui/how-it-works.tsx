@@ -99,23 +99,37 @@ function StepCard({
   );
 }
 
-function StepImage({ src, alt, tone = 'brand' }: { src: string; alt: string; tone?: Tone }) {
+function StepImage({
+  src,
+  alt,
+  tone = 'brand',
+  compact = false,
+}: {
+  src: string;
+  alt: string;
+  tone?: Tone;
+  /** Smaller frame — used for step 1 QR so it doesn’t dominate. */
+  compact?: boolean;
+}) {
   const c = TONE[tone];
   return (
     <div
       className={cn(
-        'w-full max-w-md overflow-hidden rounded-2xl border bg-white p-1.5 shadow-[0_14px_32px_-18px_rgba(15,23,42,0.4)] ring-1',
+        'w-full overflow-hidden rounded-2xl border bg-white p-2 shadow-[0_14px_36px_-18px_rgba(32,87,206,0.35)] ring-1',
+        compact ? 'max-w-[260px] sm:max-w-[280px]' : 'max-w-md',
         c.border,
         c.ring,
       )}
     >
-      <img
-        src={src}
-        alt={alt}
-        loading="lazy"
-        decoding="async"
-        className="block h-auto w-full rounded-[14px] object-cover object-top"
-      />
+      <div className="overflow-hidden rounded-[14px] bg-[#f7f8fb] ring-1 ring-black/[0.04]">
+        <img
+          src={src}
+          alt={alt}
+          loading="lazy"
+          decoding="async"
+          className="block h-auto w-full object-cover object-top"
+        />
+      </div>
     </div>
   );
 }
@@ -131,31 +145,22 @@ export function HowItWorks({ features, className }: HowItWorksProps) {
   );
 
   const body = (
-    <div className={cn('relative overflow-hidden bg-white px-4 py-4 sm:px-6 sm:py-6', className)}>
-      <div
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
-        style={{
-          backgroundImage: 'linear-gradient(#2057ce 1px, transparent 1px)',
-          backgroundSize: '100% 28px',
-        }}
-      />
-      <div className="pointer-events-none absolute inset-y-0 left-0 w-1/3 bg-gradient-to-r from-white to-transparent" />
-      <div className="pointer-events-none absolute inset-y-0 right-0 w-1/3 bg-gradient-to-l from-white to-transparent" />
-
+    <div className={cn('relative overflow-hidden bg-[#f7f8fb] px-4 py-4 sm:px-6 sm:py-6', className)}>
       <div className="relative z-10 mx-auto max-w-5xl">
         {showPathAnim && (
           <div
-            className="pointer-events-none absolute inset-0"
+            className="pointer-events-none absolute inset-0 z-0"
             style={{ '--md-height': `${height}px` } as CSSProperties}
           >
             <svg
-              className="absolute left-1/2 top-8 h-[calc(100%-4rem)] w-[min(100%,720px)] -translate-x-1/2 text-brand/25"
+              className="absolute left-1/2 top-8 h-[calc(100%-4rem)] w-[min(100%,720px)] -translate-x-1/2 text-brand/35"
               viewBox={`0 0 720 ${height}`}
               preserveAspectRatio="none"
               aria-hidden
             >
+              {/* Step 1: arc reaches the compact QR frame (right). Later curves keep step 2–3. */}
               <m.path
-                d="M 180 80 C 360 80, 400 220, 540 240 C 640 255, 360 360, 180 400 C 80 430, 360 520, 540 560"
+                d="M 195 130 C 310 118, 470 145, 618 200 C 680 230, 380 340, 185 400 C 80 435, 400 545, 655 575"
                 stroke="currentColor"
                 strokeWidth="2"
                 strokeDasharray="8 6"
@@ -170,12 +175,14 @@ export function HowItWorks({ features, className }: HowItWorksProps) {
           </div>
         )}
 
-        <ol className="relative flex list-none flex-col gap-10 md:gap-14">
+        <ol className="relative z-[1] flex list-none flex-col gap-10 md:gap-14">
           {features.map((step, index) => {
             const tone: Tone = step.tone ?? (['brand', 'sky', 'navy'] as const)[index % 3];
             const reverse = index % 2 === 1;
             const number = `0${index + 1}`;
             const rotate = reverse ? 'md:-rotate-3' : 'md:rotate-3';
+
+            const compactImage = index === 0;
 
             return (
               <li
@@ -194,8 +201,18 @@ export function HowItWorks({ features, className }: HowItWorksProps) {
                     rotate={rotate}
                   />
                 </div>
-                <div className={cn('flex justify-center', reverse ? 'md:justify-start' : 'md:justify-end')}>
-                  <StepImage src={step.imageSrc} alt={step.imageAlt} tone={tone} />
+                <div
+                  className={cn(
+                    'relative z-[1] flex justify-center',
+                    reverse ? 'md:justify-start' : 'md:justify-end',
+                  )}
+                >
+                  <StepImage
+                    src={step.imageSrc}
+                    alt={step.imageAlt}
+                    tone={tone}
+                    compact={compactImage}
+                  />
                 </div>
               </li>
             );

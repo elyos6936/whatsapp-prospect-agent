@@ -24,7 +24,6 @@ export function CTASection({
   accentColor = '#2057ce',
 }: CTASectionProps) {
   const rootRef = useRef<HTMLDivElement>(null);
-  const [isHovered, setIsHovered] = useState(false);
   const [shaderOn, setShaderOn] = useState(false);
 
   useEffect(() => {
@@ -49,12 +48,7 @@ export function CTASection({
 
   return (
     <section className="flex w-full items-center justify-center px-4 py-6 sm:py-8 md:px-6">
-      <div
-        ref={rootRef}
-        className="relative w-full max-w-4xl min-w-0"
-        onMouseEnter={() => setIsHovered(true)}
-        onMouseLeave={() => setIsHovered(false)}
-      >
+      <div ref={rootRef} className="relative w-full max-w-4xl min-w-0">
         <div className="relative flex flex-col items-center justify-center overflow-hidden rounded-2xl border border-border bg-card px-5 py-9 shadow-sm duration-500 sm:rounded-3xl sm:px-10 sm:py-12">
           {shaderOn && (
             <Suspense fallback={<div className="absolute inset-0 bg-muted/20" />}>
@@ -64,7 +58,7 @@ export function CTASection({
                   colorFront={accentColor}
                   shape="warp"
                   type="4x4"
-                  speed={isHovered ? 0.55 : 0.18}
+                  speed={0}
                   className="size-full"
                   minPixelRatio={1}
                 />
@@ -76,7 +70,6 @@ export function CTASection({
             {badge && (
               <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-brand/15 bg-white/75 px-3 py-1 text-xs font-medium text-brand backdrop-blur-sm">
                 <span className="relative flex h-1.5 w-1.5">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-brand opacity-75" />
                   <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-brand" />
                 </span>
                 {badge}

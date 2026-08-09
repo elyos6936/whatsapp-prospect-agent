@@ -1,0 +1,106 @@
+.landing-hero {
+  background:
+    radial-gradient(ellipse 80% 55% at 50% -10%, rgba(32, 87, 206, 0.14), transparent 55%),
+    linear-gradient(180deg, #ffffff 0%, #f4f7fc 55%, #f7f8fb 100%);
+}
+
+.landing-hero__atmosphere {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.landing-hero__orb {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(90px);
+  will-change: transform, opacity;
+}
+
+.landing-hero__orb--brand {
+  top: -20%;
+  left: 50%;
+  width: min(90vw, 640px);
+  height: min(70vw, 480px);
+  transform: translateX(-50%);
+  background: radial-gradient(circle, rgba(32, 87, 206, 0.22) 0%, rgba(32, 87, 206, 0) 70%);
+  animation: landing-hero-breathe 10s ease-in-out infinite;
+}
+
+.landing-hero__orb--sky {
+  bottom: 8%;
+  right: -8%;
+  width: min(55vw, 380px);
+  height: min(55vw, 380px);
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.16) 0%, rgba(56, 189, 248, 0) 72%);
+  animation: landing-hero-breathe 12s ease-in-out infinite reverse;
+  animation-delay: -4s;
+}
+
+.landing-hero__grid {
+  position: absolute;
+  inset: 0;
+  opacity: 0.45;
+  background-image:
+    linear-gradient(rgba(32, 87, 206, 0.045) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(32, 87, 206, 0.045) 1px, transparent 1px);
+  background-size: 48px 48px;
+  mask-image: radial-gradient(ellipse 65% 55% at 50% 40%, #000 15%, transparent 72%);
+}
+
+.landing-hero__glow {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: min(70%, 520px);
+  height: 120px;
+  transform: translate(-50%, -50%);
+  background: radial-gradient(ellipse at center, rgba(32, 87, 206, 0.1), transparent 70%);
+  animation: landing-hero-beam 7s ease-in-out infinite;
+}
+
+.landing-hero__title {
+  font-family: var(--font-sans);
+  font-size: clamp(2.05rem, 1.25rem + 3.4vw, 3.85rem);
+  line-height: 1.1;
+  letter-spacing: -0.036em;
+  font-weight: 600;
+}
+
+.landing-hero__lead {
+  font-size: clamp(1rem, 0.92rem + 0.4vw, 1.18rem);
+  line-height: 1.55;
+  letter-spacing: -0.012em;
+  font-weight: 400;
+}
+
+@keyframes landing-hero-breathe {
+  0%,
+  100% {
+    opacity: 0.75;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes landing-hero-beam {
+  0%,
+  100% {
+    opacity: 0.45;
+    transform: translate(-50%, -50%) scale(0.94);
+  }
+  50% {
+    opacity: 0.9;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing-hero__orb--brand,
+  .landing-hero__orb--sky,
+  .landing-hero__glow {
+    animation: none;
+  }
+}

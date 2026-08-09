@@ -1,16 +1,13 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Menu, QrCode, Shield, Target, X, type LucideIcon } from 'lucide-react';
+import { Menu, X } from 'lucide-react';
 import { KlanvioLogo } from '@/components/brand/KlanvioLogo';
 import { FacebookIcon, LinkedinIcon, YoutubeIcon } from '@/components/brand/SocialIcons';
 import { AnimatedContainer } from '@/components/landing/AnimatedContainer';
 import { BillingSection } from '@/components/landing/BillingSection';
-import { HeroBackdrop } from '@/components/landing/HeroBackdrop';
-import { HeroFloatingIcons } from '@/components/landing/HeroFloatingIcons';
-import { HeroTypingWord } from '@/components/landing/HeroTypingWord';
 import { IntegrationsSection } from '@/components/landing/IntegrationsSection';
 import { LandingFaq } from '@/components/landing/LandingFaq';
+import { LandingHero } from '@/components/landing/LandingHero';
 import { TestimonialsSection } from '@/components/landing/TestimonialsSection';
-import { TrustStrip } from '@/components/landing/TrustStrip';
 import { HowItWorks, type HowStep } from '@/components/ui/how-it-works';
 import { CTASection } from '@/components/ui/hero-dithering-card';
 import { ShinyButton } from '@/components/ui/shiny-button';
@@ -51,12 +48,6 @@ const SOCIAL_LINKS = [
     icon: YoutubeIcon,
   },
 ] as const;
-
-const CAPABILITIES: { label: string; icon: LucideIcon }[] = [
-  { label: 'QR en 30 secondes', icon: QrCode },
-  { label: 'Prospection + closing', icon: Target },
-  { label: 'Anti-blocage intégré', icon: Shield },
-];
 
 const HOW_FEATURES: HowStep[] = [
   {
@@ -209,53 +200,7 @@ export function LandingPage(props: LandingPageProps = {}) {
       </header>
 
       <main>
-        {/* HERO — white canvas + soft brand plasma + 4 integration logos */}
-        <section className="relative flex min-h-[calc(100dvh-4rem)] flex-col overflow-hidden bg-white">
-          <HeroBackdrop />
-          <HeroFloatingIcons />
-
-          <div className="relative z-10 mx-auto flex w-full max-w-3xl flex-1 flex-col items-center justify-center px-4 py-10 text-center sm:px-6 sm:py-14">
-            <AnimatedContainer
-              eager
-              delay={0.05}
-              className="flex w-full max-w-full flex-col items-center gap-0"
-            >
-              <h1 className="landing-h1 w-full text-balance text-text-100">
-                Klanvio l&apos;agent IA qui automatise{' '}
-                <span className="whitespace-nowrap">
-                  <HeroTypingWord text="tout WhatsApp" className="text-brand" />,
-                </span>{' '}
-                pas juste vos réponses
-              </h1>
-
-              <p className="landing-lead mx-auto mt-5 max-w-xl text-balance text-text-400">
-                Klanvio prospecte, relance, close vos ventes, gère vos groupes et publie vos
-                statuts comme un vrai commercial WhatsApp, 24h/24.
-              </p>
-
-              <div className="mt-7 flex w-full justify-center">
-                <ShinyButton onClick={goRegister} className="max-w-full">
-                  Commencer gratuitement
-                  <ArrowRight className="h-4 w-4 shrink-0" />
-                </ShinyButton>
-              </div>
-
-              <div className="mt-8 flex w-full flex-wrap items-center justify-center gap-2.5">
-                {CAPABILITIES.map(({ label, icon: Icon }) => (
-                  <span
-                    key={label}
-                    className="inline-flex max-w-full items-center gap-1.5 rounded-full border border-black/[0.08] bg-white/90 px-3.5 py-1.5 text-[11px] font-medium text-text-300 shadow-sm sm:text-xs"
-                  >
-                    <Icon className="h-3.5 w-3.5 shrink-0 text-brand" aria-hidden />
-                    {label}
-                  </span>
-                ))}
-              </div>
-            </AnimatedContainer>
-          </div>
-        </section>
-
-        <TrustStrip />
+        <LandingHero onStart={goRegister} />
 
         {/* HOW — pin cards + product screenshots */}
         <section id="how" className="landing-section">
@@ -301,7 +246,7 @@ export function LandingPage(props: LandingPageProps = {}) {
         </div>
       </main>
 
-      <footer className="border-t border-black/[0.06] bg-white">
+      <footer className="border-t border-black/[0.06] bg-[#f7f8fb]">
         <div className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-5 px-4 py-8 sm:px-6 md:grid-cols-3 md:gap-4">
           <div className="flex flex-col items-center gap-1.5 md:items-start">
             <KlanvioLogo variant="full" size="sm" />
