@@ -20,6 +20,8 @@ import { cn } from '@/lib/utils';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { WhatsAppConnectModal } from '@/components/whatsapp/WhatsAppConnectModal';
 import { TypeformIntegrationCard } from '@/components/settings/TypeformIntegrationCard';
+import { CalendlyIntegrationCard } from '@/components/settings/CalendlyIntegrationCard';
+import { TallyIntegrationCard } from '@/components/settings/TallyIntegrationCard';
 import { GoogleSheetsIntegrationCard } from '@/components/settings/GoogleSheetsIntegrationCard';
 import { GoogleContactsIntegrationCard } from '@/components/settings/GoogleContactsIntegrationCard';
 import { CampaignMemoriesPanel } from '@/components/settings/CampaignMemoriesPanel';
@@ -83,6 +85,25 @@ function readTypeformFlash(): { type: 'ok' | 'err'; text: string } | null {
   return null;
 }
 
+function readCalendlyFlash(): { type: 'ok' | 'err'; text: string } | null {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const c = params.get('calendly');
+    if (c === 'connected') {
+      return { type: 'ok', text: 'Calendly connecté avec succès.' };
+    }
+    if (c === 'error') {
+      return {
+        type: 'err',
+        text: params.get('message') || 'Échec de la connexion Calendly.',
+      };
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 function readGoogleFlash(): { type: 'ok' | 'err'; text: string } | null {
   try {
     const params = new URLSearchParams(window.location.search);
@@ -111,6 +132,7 @@ function clearIntegrationQueryParams() {
     if (
       !url.searchParams.has('settings') &&
       !url.searchParams.has('typeform') &&
+      !url.searchParams.has('calendly') &&
       !url.searchParams.has('google') &&
       !url.searchParams.has('provider') &&
       !url.searchParams.has('token') &&
@@ -120,6 +142,7 @@ function clearIntegrationQueryParams() {
     }
     url.searchParams.delete('settings');
     url.searchParams.delete('typeform');
+    url.searchParams.delete('calendly');
     url.searchParams.delete('google');
     url.searchParams.delete('message');
     url.searchParams.delete('provider');
@@ -146,6 +169,7 @@ export function SettingsPage() {
   const [tab, setTab] = useState<SettingsTab>(() => readInitialTab());
   const [loading, setLoading] = useState(true);
   const typeformFlash = useMemo(() => readTypeformFlash(), []);
+  const calendlyFlash = useMemo(() => readCalendlyFlash(), []);
   const googleFlash = useMemo(() => readGoogleFlash(), []);
 
   const [autoReplyOn, setAutoReplyOn] = useState(true);
@@ -185,12 +209,13 @@ export function SettingsPage() {
     if (params.get('provider') === 'moneyfusion') return;
     if (
       typeformFlash ||
+      calendlyFlash ||
       googleFlash ||
       params.get('settings')
     ) {
       clearIntegrationQueryParams();
     }
-  }, [typeformFlash, googleFlash]);
+  }, [typeformFlash, calendlyFlash, googleFlash]);
 
   useEffect(() => {
     const token = readMoneyFusionReturnToken();
@@ -371,6 +396,8 @@ export function SettingsPage() {
                   }
                 />
                 <TypeformIntegrationCard flash={typeformFlash} />
+                <CalendlyIntegrationCard flash={calendlyFlash} />
+                <TallyIntegrationCard />
                 <GoogleSheetsIntegrationCard
                   flash={
                     googleFlash && !/contacts/i.test(googleFlash.text) ? googleFlash : null

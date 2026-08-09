@@ -286,6 +286,10 @@ export const config = {
   typeformClientSecret: process.env.TYPEFORM_CLIENT_SECRET?.trim() || "",
   /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/typeform/callback`. */
   typeformRedirectUri: process.env.TYPEFORM_REDIRECT_URI?.trim() || "",
+  calendlyClientId: process.env.CALENDLY_CLIENT_ID?.trim() || "",
+  calendlyClientSecret: process.env.CALENDLY_CLIENT_SECRET?.trim() || "",
+  /** Optionnel — défaut = `{PUBLIC_URL}/api/integrations/calendly/callback`. */
+  calendlyRedirectUri: process.env.CALENDLY_REDIRECT_URI?.trim() || "",
   /**
    * Clé AES-256 (64 hex). Ne JAMAIS changer en prod : les tokens chiffrés
    * deviennent illisibles. Générer : openssl rand -hex 32

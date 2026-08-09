@@ -1,7 +1,9 @@
 import type { ComponentType, SVGProps } from 'react';
 import {
+  CalendlyLogo,
   GoogleContactsLogo,
   GoogleSheetsLogo,
+  TallyLogo,
   TypeformLogo,
   WhatsAppLogo,
 } from '@/components/brand/IntegrationLogos';
@@ -22,6 +24,8 @@ const LOGOS: Record<
   whatsapp: WhatsAppLogo,
   'google-contacts': GoogleContactsLogo,
   typeform: TypeformLogo,
+  calendly: CalendlyLogo,
+  tally: TallyLogo,
   'google-sheets': GoogleSheetsLogo,
 };
 

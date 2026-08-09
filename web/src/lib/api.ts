@@ -579,9 +579,38 @@ export type TypeformFormSummary = {
   createdAt?: string;
 };
 
+export type CalendlyEventTypeSummary = {
+  uri: string;
+  uuid: string;
+  name: string;
+  schedulingUrl?: string;
+  active?: boolean;
+  duration?: number;
+};
+
+export type CalendlyContactSummary = {
+  uri: string;
+  uuid: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  company?: string | null;
+  jobTitle?: string | null;
+};
+
+export type TallyFormSummary = {
+  id: string;
+  name: string;
+  status?: string;
+  updatedAt?: string;
+  numberOfSubmissions?: number;
+};
+
 export async function fetchIntegrations(): Promise<{
   integrations: IntegrationStatus[];
   typeformConfigured: boolean;
+  calendlyConfigured?: boolean;
+  tallyConfigured?: boolean;
   googleConfigured: boolean;
   googleContactsGranted?: boolean;
 }> {
@@ -590,6 +619,42 @@ export async function fetchIntegrations(): Promise<{
 
 export async function startTypeformConnect(): Promise<{ url: string; redirectUri: string }> {
   return request('/api/integrations/typeform/connect');
+}
+
+export async function startCalendlyConnect(): Promise<{ url: string; redirectUri: string }> {
+  return request('/api/integrations/calendly/connect');
+}
+
+export async function disconnectCalendly(): Promise<void> {
+  await request('/api/integrations/calendly', { method: 'DELETE' });
+}
+
+export async function fetchCalendlyEventTypes(): Promise<{
+  eventTypes: CalendlyEventTypeSummary[];
+}> {
+  return request('/api/integrations/calendly/event-types');
+}
+
+export async function fetchCalendlyContactsList(): Promise<{
+  contacts: CalendlyContactSummary[];
+  suggestedLeads?: Array<{ name: string | null; phone: string; email: string | null }>;
+}> {
+  return request('/api/integrations/calendly/contacts');
+}
+
+export async function connectTally(apiKey: string): Promise<{ ok: boolean }> {
+  return request('/api/integrations/tally/connect', {
+    method: 'POST',
+    body: JSON.stringify({ apiKey }),
+  });
+}
+
+export async function disconnectTally(): Promise<void> {
+  await request('/api/integrations/tally', { method: 'DELETE' });
+}
+
+export async function fetchTallyForms(): Promise<{ forms: TallyFormSummary[] }> {
+  return request('/api/integrations/tally/forms');
 }
 
 export async function dismissGoogleContactsPrompt(): Promise<{

@@ -98,6 +98,7 @@ const ORBIT_ITEMS: OrbitItemConfig[] = [
     label: 'Calendly',
     color: '#006BFF',
     Logo: CalendlyLogo,
+    href: '/integrations/calendly',
   },
   {
     id: 'tally',
@@ -109,6 +110,7 @@ const ORBIT_ITEMS: OrbitItemConfig[] = [
     label: 'Tally',
     color: '#111111',
     Logo: TallyLogo,
+    href: '/integrations/tally',
   },
   {
     id: 'n8n',

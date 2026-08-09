@@ -34,6 +34,16 @@ const LIVE = [
     Logo: TypeformLogo,
   },
   {
+    label: 'Calendly',
+    href: '/integrations/calendly',
+    Logo: CalendlyLogo,
+  },
+  {
+    label: 'Tally',
+    href: '/integrations/tally',
+    Logo: TallyLogo,
+  },
+  {
     label: 'Google Sheets',
     href: '/integrations/google-sheets',
     Logo: GoogleSheetsLogo,
@@ -41,8 +51,6 @@ const LIVE = [
 ] as const;
 
 const COMING = [
-  { label: 'Calendly', Logo: CalendlyLogo },
-  { label: 'Tally', Logo: TallyLogo },
   { label: 'n8n', Logo: N8nLogo },
   { label: 'Zapier', Logo: ZapierLogo },
 ] as const;

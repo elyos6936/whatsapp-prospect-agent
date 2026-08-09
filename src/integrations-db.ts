@@ -57,7 +57,13 @@ export async function listIntegrationStatuses(userId: number): Promise<Integrati
     rows.map((r) => [String(r.provider), r] as const),
   );
 
-  const providers = ["typeform", "google_sheets", "google_contacts"];
+  const providers = [
+    "typeform",
+    "calendly",
+    "tally",
+    "google_sheets",
+    "google_contacts",
+  ];
   return providers.map((provider) => {
     const row = byProvider.get(provider);
     if (!row) {

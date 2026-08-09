@@ -2,6 +2,8 @@ export type IntegrationSlug =
   | 'whatsapp'
   | 'google-contacts'
   | 'typeform'
+  | 'calendly'
+  | 'tally'
   | 'google-sheets';
 
 export type IntegrationMarketingData = {
@@ -146,6 +148,96 @@ export const INTEGRATIONS_MARKETING_DATA: IntegrationMarketingData[] = [
       'Leads webinar / landing → message WhatsApp',
       'Qualification avant appel commercial',
       'Collecte d’adresse / infos livraison puis notif tiers',
+    ],
+  },
+  {
+    slug: 'calendly',
+    name: 'Calendly',
+    shortName: 'Calendly',
+    seoTitle: 'Intégration Calendly | Klanvio',
+    seoDescription:
+      'Connectez Calendly à Klanvio : lisez vos RDV et votre carnet Contacts, puis relancez sur WhatsApp.',
+    headline: 'Calendly → RDV WhatsApp, sans copier-coller',
+    lead: 'Reliez Calendly. L’agent voit vos types d’événements, bookings (invitees) et Contacts pour enrichir le pipeline WhatsApp.',
+    benefits: [
+      {
+        title: 'Types d’événements & RDV',
+        text: 'Liste des event types et lecture des scheduled events / invitees.',
+      },
+      {
+        title: 'Carnet Contacts',
+        text: 'Lecture du carnet Contacts Calendly pour enrichir les leads.',
+      },
+      {
+        title: 'Leads depuis les bookings',
+        text: 'Téléphone (SMS reminder ou questions custom) → suggested_leads WhatsApp.',
+      },
+      {
+        title: 'OAuth sécurisé',
+        text: 'Connexion officielle Calendly, révocable depuis les réglages.',
+      },
+    ],
+    steps: [
+      {
+        title: 'Connecter Calendly',
+        text: 'Réglages → Intégrations → Calendly, puis autorisez l’application.',
+      },
+      {
+        title: 'Choisir une source',
+        text: 'Event type ou carnet Contacts — indiquez-le à l’agent.',
+      },
+      {
+        title: 'Relancer les leads',
+        text: 'L’agent lit les données et peut proposer une campagne WhatsApp.',
+      },
+    ],
+    useCases: [
+      'No-show / confirmation RDV sur WhatsApp',
+      'Relance après booking demo',
+      'Qualification post-calendrier',
+    ],
+  },
+  {
+    slug: 'tally',
+    name: 'Tally',
+    shortName: 'Tally',
+    seoTitle: 'Intégration Tally | Klanvio',
+    seoDescription:
+      'Connectez Tally à Klanvio : lisez vos formulaires et soumissions, puis transformez les réponses en leads WhatsApp.',
+    headline: 'Tally → lead WhatsApp, sans copier-coller',
+    lead: 'Collez votre clé API Tally. L’agent lit formulaires et soumissions pour détecter les téléphones et relancer sur WhatsApp.',
+    benefits: [
+      {
+        title: 'Formulaires & soumissions',
+        text: 'Lecture des forms et submissions (comme Typeform).',
+      },
+      {
+        title: 'Clé API simple',
+        text: 'Pas d’OAuth : une clé API personnelle, chiffrée côté Klanvio.',
+      },
+      {
+        title: 'Leads inbound',
+        text: 'Téléphones détectés → suggested_leads pour campagnes WhatsApp.',
+      },
+    ],
+    steps: [
+      {
+        title: 'Créer une clé API',
+        text: 'Sur Tally → Settings → API keys, créez une clé puis collez-la dans Klanvio.',
+      },
+      {
+        title: 'Connecter dans Klanvio',
+        text: 'Réglages → Intégrations → Tally.',
+      },
+      {
+        title: 'Briefer l’agent',
+        text: 'Demandez la liste des forms puis les réponses d’un formulaire précis.',
+      },
+    ],
+    useCases: [
+      'Landing / waitlist → WhatsApp',
+      'Qualification formulaire → campagne',
+      'Collecte téléphone post-inscription',
     ],
   },
   {

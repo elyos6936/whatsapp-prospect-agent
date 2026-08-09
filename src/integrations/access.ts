@@ -23,6 +23,13 @@ import {
   sheetsScopesOnly,
 } from "./google.js";
 import {
+  CALENDLY_PROVIDER,
+  CALENDLY_SCOPES,
+  CalendlyAuthError,
+  refreshCalendlyToken,
+} from "./calendly.js";
+import { TALLY_PROVIDER, TallyAuthError } from "./tally.js";
+import {
   TYPEFORM_PROVIDER,
   TYPEFORM_SCOPES,
   TypeformAuthError,
@@ -31,6 +38,12 @@ import {
 
 export const TYPEFORM_REAUTH_MESSAGE =
   "Connexion Typeform expirée ou révoquée. Reconnecte Typeform dans Réglages → Intégrations.";
+
+export const CALENDLY_REAUTH_MESSAGE =
+  "Connexion Calendly expirée ou révoquée. Reconnecte Calendly dans Réglages → Intégrations.";
+
+export const TALLY_REAUTH_MESSAGE =
+  "Clé API Tally invalide ou révoquée. Reconnecte Tally dans Réglages → Intégrations.";
 
 export const GOOGLE_REAUTH_MESSAGE =
   "Connexion Google expirée ou révoquée. Reconnecte Google dans Réglages → Intégrations.";
@@ -157,6 +170,62 @@ export async function getValidGoogleSheetsToken(userId: number): Promise<string>
 /** Access token Google Contacts (isolé — une révocation ne touche pas Sheets). */
 export async function getValidGoogleContactsToken(userId: number): Promise<string> {
   return getValidGoogleTokenForProvider(userId, GOOGLE_CONTACTS_PROVIDER);
+}
+
+/** Access token Calendly valide (refresh ~2h + rotation du refresh token). */
+export async function getValidCalendlyAccessToken(userId: number): Promise<string> {
+  const row = await getUserIntegration(userId, CALENDLY_PROVIDER);
+  if (!row) {
+    throw new CalendlyAuthError("Calendly non connecté.", "revoked");
+  }
+
+  const { accessToken, refreshToken } = decryptIntegrationTokens(row);
+  const expiresAt = row.token_expires_at?.getTime() ?? 0;
+  const stillValid = expiresAt > Date.now() + 120_000;
+
+  if (stillValid) return accessToken;
+
+  if (!refreshToken) {
+    await deleteUserIntegration(userId, CALENDLY_PROVIDER);
+    throw new CalendlyAuthError(CALENDLY_REAUTH_MESSAGE, "revoked");
+  }
+
+  try {
+    const tokens = await refreshCalendlyToken(refreshToken);
+    await upsertUserIntegration({
+      userId,
+      provider: CALENDLY_PROVIDER,
+      accessToken: tokens.access_token,
+      refreshToken: tokens.refresh_token ?? refreshToken,
+      expiresInSeconds: tokens.expires_in ?? null,
+      scopes: CALENDLY_SCOPES.join(" "),
+      providerAccountId: row.provider_account_id,
+      providerEmail: row.provider_email,
+    });
+    return tokens.access_token;
+  } catch (err) {
+    if (err instanceof CalendlyAuthError && err.code === "revoked") {
+      await deleteUserIntegration(userId, CALENDLY_PROVIDER);
+      throw new CalendlyAuthError(CALENDLY_REAUTH_MESSAGE, "revoked");
+    }
+    if (expiresAt > Date.now()) return accessToken;
+    await deleteUserIntegration(userId, CALENDLY_PROVIDER);
+    throw new CalendlyAuthError(CALENDLY_REAUTH_MESSAGE, "revoked");
+  }
+}
+
+/** Clé API Tally stockée chiffrée (pas d'expiry OAuth). */
+export async function getValidTallyApiKey(userId: number): Promise<string> {
+  const row = await getUserIntegration(userId, TALLY_PROVIDER);
+  if (!row) {
+    throw new TallyAuthError("Tally non connecté.", "revoked");
+  }
+  const { accessToken } = decryptIntegrationTokens(row);
+  if (!accessToken?.trim()) {
+    await deleteUserIntegration(userId, TALLY_PROVIDER);
+    throw new TallyAuthError(TALLY_REAUTH_MESSAGE, "revoked");
+  }
+  return accessToken;
 }
 
 /**

@@ -19,11 +19,28 @@ import {
   upsertUserIntegration,
 } from "./integrations-db.js";
 import {
+  CALENDLY_REAUTH_MESSAGE,
   GOOGLE_SHEETS_REAUTH_MESSAGE,
+  TALLY_REAUTH_MESSAGE,
   TYPEFORM_REAUTH_MESSAGE,
+  getValidCalendlyAccessToken,
   getValidGoogleSheetsToken,
+  getValidTallyApiKey,
   getValidTypeformAccessToken,
 } from "./integrations/access.js";
+import {
+  CALENDLY_PROVIDER,
+  CALENDLY_SCOPES,
+  CalendlyAuthError,
+  buildCalendlyAuthorizeUrl,
+  calendlyRedirectUri,
+  exchangeCalendlyCode,
+  fetchCalendlyContacts,
+  fetchCalendlyEventTypes,
+  fetchCalendlyUser,
+  generateCalendlyPkce,
+  isCalendlyConfigured,
+} from "./integrations/calendly.js";
 import {
   GOOGLE_CONTACTS_PROVIDER,
   GOOGLE_CONTACTS_SCOPES,
@@ -48,6 +65,12 @@ import {
 import { clearGoogleContactsEnsuredCache } from "./integrations/google-contacts.js";
 import { markGoogleContactsPromptDone } from "./users.js";
 import {
+  TALLY_PROVIDER,
+  TallyAuthError,
+  fetchTallyForms,
+  validateTallyApiKey,
+} from "./integrations/tally.js";
+import {
   TYPEFORM_PROVIDER,
   TYPEFORM_SCOPES,
   TypeformAuthError,
@@ -62,7 +85,13 @@ import { rawQueryParam } from "./oauth-query.js";
 import { appSettingsRedirectUrl, pickOAuthReturnBase } from "./oauth-return.js";
 import { isTokensEncryptionConfigured } from "./secret-crypto.js";
 
-export { getValidGoogleSheetsToken, getValidGoogleContactsToken, getValidTypeformAccessToken } from "./integrations/access.js";
+export {
+  getValidCalendlyAccessToken,
+  getValidGoogleSheetsToken,
+  getValidGoogleContactsToken,
+  getValidTallyApiKey,
+  getValidTypeformAccessToken,
+} from "./integrations/access.js";
 /** @deprecated alias Sheets */
 export { getValidGoogleAccessToken } from "./integrations/access.js";
 
@@ -81,6 +110,8 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
     return {
       integrations,
       typeformConfigured: isTypeformConfigured() && isTokensEncryptionConfigured(),
+      calendlyConfigured: isCalendlyConfigured() && isTokensEncryptionConfigured(),
+      tallyConfigured: isTokensEncryptionConfigured(),
       googleConfigured: isGoogleIntegrationsConfigured() && isTokensEncryptionConfigured(),
       googleContactsGranted: Boolean(
         contacts?.connected && hasGoogleContactsScope(contacts.scopes),
@@ -205,6 +236,229 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
         });
       }
       if (err instanceof TypeformAuthError) {
+        return reply.status(502).send({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  });
+
+  // ── Calendly ──────────────────────────────────────────────────────────────
+
+  app.get("/api/integrations/calendly/connect", async (request, reply) => {
+    const userId = requireUserId(request);
+    if (!isCalendlyConfigured()) {
+      return reply.status(503).send({
+        error: "Calendly n’est pas encore configuré sur le serveur (CLIENT_ID / SECRET).",
+      });
+    }
+    if (!isTokensEncryptionConfigured()) {
+      return reply.status(503).send({
+        error: "TOKENS_ENCRYPTION_KEY manquante sur le serveur.",
+      });
+    }
+    const { verifier, challenge } = generateCalendlyPkce();
+    const state = await createOauthPendingState(
+      userId,
+      CALENDLY_PROVIDER,
+      `pkce:${verifier}`,
+      pickOAuthReturnBase(request),
+    );
+    const url = buildCalendlyAuthorizeUrl(state, challenge);
+    return { url, redirectUri: calendlyRedirectUri() };
+  });
+
+  app.get<{
+    Querystring: { code?: string; state?: string; error?: string; error_description?: string };
+  }>("/api/integrations/calendly/callback", async (request, reply) => {
+    const code = rawQueryParam(request.url, "code") ?? request.query.code;
+    const state = rawQueryParam(request.url, "state") ?? request.query.state;
+    const error = rawQueryParam(request.url, "error") ?? request.query.error;
+    const error_description =
+      rawQueryParam(request.url, "error_description") ?? request.query.error_description;
+
+    if (error) {
+      const msg = error_description || error;
+      return reply.redirect(
+        settingsRedirect({ calendly: "error", message: String(msg).slice(0, 180) }),
+      );
+    }
+
+    if (!code?.trim() || !state?.trim()) {
+      return reply.redirect(
+        settingsRedirect({ calendly: "error", message: "Callback OAuth incomplet." }),
+      );
+    }
+
+    const pending = await consumeOauthPendingState(state.trim(), CALENDLY_PROVIDER);
+    if (!pending) {
+      return reply.redirect(
+        settingsRedirect({
+          calendly: "error",
+          message: "Session OAuth expirée. Réessaie Connecter.",
+        }),
+      );
+    }
+    const userId = pending.userId;
+    const purpose = pending.purpose || "";
+    const codeVerifier = purpose.startsWith("pkce:") ? purpose.slice(5) : "";
+    if (!codeVerifier) {
+      return reply.redirect(
+        settingsRedirect(
+          { calendly: "error", message: "PKCE manquant. Réessaie Connecter." },
+          pending.returnBaseUrl,
+        ),
+      );
+    }
+
+    try {
+      if (!isTokensEncryptionConfigured()) {
+        throw new CalendlyAuthError("TOKENS_ENCRYPTION_KEY manquante.", "config");
+      }
+      const tokens = await exchangeCalendlyCode(code.trim(), codeVerifier);
+      let email: string | null = null;
+      let accountId: string | null = null;
+      try {
+        const me = await fetchCalendlyUser(tokens.access_token);
+        email = me.email?.trim() || null;
+        accountId = me.uri;
+      } catch {
+        accountId = tokens.owner ?? null;
+      }
+
+      await upsertUserIntegration({
+        userId,
+        provider: CALENDLY_PROVIDER,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token ?? null,
+        expiresInSeconds: tokens.expires_in ?? null,
+        scopes: CALENDLY_SCOPES.join(" "),
+        providerAccountId: accountId,
+        providerEmail: email,
+      });
+
+      return reply.redirect(
+        settingsRedirect({ calendly: "connected" }, pending.returnBaseUrl),
+      );
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message.slice(0, 280) : "Échec connexion Calendly.";
+      return reply.redirect(
+        settingsRedirect({ calendly: "error", message: msg }, pending.returnBaseUrl),
+      );
+    }
+  });
+
+  app.delete("/api/integrations/calendly", async (request) => {
+    const userId = requireUserId(request);
+    await deleteUserIntegration(userId, CALENDLY_PROVIDER);
+    return { ok: true };
+  });
+
+  app.get("/api/integrations/calendly/event-types", async (request, reply) => {
+    const userId = requireUserId(request);
+    try {
+      const accessToken = await getValidCalendlyAccessToken(userId);
+      const me = await fetchCalendlyUser(accessToken);
+      const eventTypes = await fetchCalendlyEventTypes(accessToken, me.uri);
+      return { eventTypes };
+    } catch (err) {
+      if (err instanceof CalendlyAuthError && err.code === "revoked") {
+        await deleteUserIntegration(userId, CALENDLY_PROVIDER);
+        return reply.status(409).send({
+          error: CALENDLY_REAUTH_MESSAGE,
+          code: "calendly_reauth_required",
+        });
+      }
+      if (err instanceof CalendlyAuthError) {
+        return reply.status(502).send({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  });
+
+  app.get("/api/integrations/calendly/contacts", async (request, reply) => {
+    const userId = requireUserId(request);
+    try {
+      const accessToken = await getValidCalendlyAccessToken(userId);
+      const me = await fetchCalendlyUser(accessToken);
+      const data = await fetchCalendlyContacts(accessToken, {
+        organizationUri: me.currentOrganization,
+        limit: 50,
+      });
+      return { contacts: data.contacts, suggestedLeads: data.suggestedLeads };
+    } catch (err) {
+      if (err instanceof CalendlyAuthError && err.code === "revoked") {
+        await deleteUserIntegration(userId, CALENDLY_PROVIDER);
+        return reply.status(409).send({
+          error: CALENDLY_REAUTH_MESSAGE,
+          code: "calendly_reauth_required",
+        });
+      }
+      if (err instanceof CalendlyAuthError) {
+        return reply.status(502).send({ error: err.message, code: err.code });
+      }
+      throw err;
+    }
+  });
+
+  // ── Tally (API key) ───────────────────────────────────────────────────────
+
+  app.post<{ Body: { apiKey?: string } }>(
+    "/api/integrations/tally/connect",
+    async (request, reply) => {
+      const userId = requireUserId(request);
+      if (!isTokensEncryptionConfigured()) {
+        return reply.status(503).send({
+          error: "TOKENS_ENCRYPTION_KEY manquante sur le serveur.",
+        });
+      }
+      const apiKey = String(request.body?.apiKey ?? "").trim();
+      if (!apiKey) {
+        return reply.status(400).send({ error: "apiKey requis." });
+      }
+      try {
+        await validateTallyApiKey(apiKey);
+        await upsertUserIntegration({
+          userId,
+          provider: TALLY_PROVIDER,
+          accessToken: apiKey,
+          refreshToken: null,
+          expiresInSeconds: null,
+          scopes: "api_key",
+          providerAccountId: null,
+          providerEmail: null,
+        });
+        return { ok: true };
+      } catch (err) {
+        if (err instanceof TallyAuthError) {
+          return reply.status(400).send({ error: err.message, code: err.code });
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.delete("/api/integrations/tally", async (request) => {
+    const userId = requireUserId(request);
+    await deleteUserIntegration(userId, TALLY_PROVIDER);
+    return { ok: true };
+  });
+
+  app.get("/api/integrations/tally/forms", async (request, reply) => {
+    const userId = requireUserId(request);
+    try {
+      const apiKey = await getValidTallyApiKey(userId);
+      const forms = await fetchTallyForms(apiKey);
+      return { forms };
+    } catch (err) {
+      if (err instanceof TallyAuthError && err.code === "revoked") {
+        await deleteUserIntegration(userId, TALLY_PROVIDER);
+        return reply.status(409).send({
+          error: TALLY_REAUTH_MESSAGE,
+          code: "tally_reauth_required",
+        });
+      }
+      if (err instanceof TallyAuthError) {
         return reply.status(502).send({ error: err.message, code: err.code });
       }
       throw err;

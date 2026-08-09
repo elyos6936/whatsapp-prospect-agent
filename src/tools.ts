@@ -124,16 +124,32 @@ import {
 } from "./automation-plan.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 import {
+  CALENDLY_REAUTH_MESSAGE,
   GOOGLE_SHEETS_REAUTH_MESSAGE,
+  TALLY_REAUTH_MESSAGE,
   TYPEFORM_REAUTH_MESSAGE,
+  getValidCalendlyAccessToken,
   getValidGoogleSheetsToken,
+  getValidTallyApiKey,
   getValidTypeformAccessToken,
 } from "./integrations/access.js";
+import {
+  CalendlyAuthError,
+  fetchCalendlyBookings,
+  fetchCalendlyContacts,
+  fetchCalendlyEventTypes,
+  fetchCalendlyUser,
+} from "./integrations/calendly.js";
 import {
   GOOGLE_SHEETS_PROVIDER,
   GoogleAuthError,
   fetchSpreadsheetValues,
 } from "./integrations/google.js";
+import {
+  TallyAuthError,
+  fetchTallyForms,
+  fetchTallyResponses,
+} from "./integrations/tally.js";
 import {
   TypeformAuthError,
   fetchTypeformForms,
@@ -1437,6 +1453,113 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "list_calendly_event_types",
+      description:
+        "Liste les types d'événements Calendly du compte connecté (Réglages → Intégrations). " +
+        "Ensuite utilise list_calendly_bookings pour lire les rendez-vous / invitees. " +
+        "Si non connecté, invite à reconnecter Calendly.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Nombre max de types d'événements (défaut 50)",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_calendly_bookings",
+      description:
+        "Lit les rendez-vous Calendly (scheduled events + invitees) et propose des leads téléphone " +
+        "(suggested_leads) depuis le numéro SMS ou les questions custom. " +
+        "Optionnel : filtrer par event_type_uri (depuis list_calendly_event_types).",
+      parameters: {
+        type: "object",
+        properties: {
+          event_type_uri: {
+            type: "string",
+            description: "URI du type d'événement Calendly (optionnel)",
+          },
+          limit: {
+            type: "number",
+            description: "Nombre max d'événements (défaut 25, max 50)",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_calendly_contacts",
+      description:
+        "Liste le carnet Contacts Calendly (CRM Calendly, scope contacts:read). " +
+        "Propose suggested_leads si un téléphone est présent. " +
+        "Si accès refusé : Déconnecter puis reconnecter Calendly avec contacts:read.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Nombre max de contacts (défaut 50, max 100)",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_tally_forms",
+      description:
+        "Liste les formulaires Tally du compte connecté (clé API dans Réglages → Intégrations). " +
+        "Ensuite utilise list_tally_responses avec un form_id.",
+      parameters: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "number",
+            description: "Nombre max de formulaires (défaut 50)",
+          },
+        },
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "list_tally_responses",
+      description:
+        "Lit les soumissions complétées d'un formulaire Tally (form_id depuis list_tally_forms) " +
+        "et propose des leads téléphone (suggested_leads).",
+      parameters: {
+        type: "object",
+        properties: {
+          form_id: {
+            type: "string",
+            description: "ID du formulaire Tally",
+          },
+          page_size: {
+            type: "number",
+            description: "Nombre max de soumissions (défaut 25, max 100)",
+          },
+        },
+        required: ["form_id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "list_connected_sheets",
       description:
         "Liste les Google Sheets que l'utilisateur a connectés à Klanvio via le Picker " +
@@ -2038,6 +2161,11 @@ const LOCAL_TOOLS = new Set([
   "get_business_profile",
   "list_typeform_forms",
   "list_typeform_responses",
+  "list_calendly_event_types",
+  "list_calendly_bookings",
+  "list_calendly_contacts",
+  "list_tally_forms",
+  "list_tally_responses",
   "list_connected_sheets",
   "read_google_sheet",
   "create_automation",
@@ -4110,6 +4238,212 @@ export async function executeTool(
         return JSON.stringify({
           error: err instanceof Error ? err.message : "Erreur lecture réponses Typeform.",
           code: err instanceof TypeformAuthError ? err.code : "http",
+        });
+      }
+    }
+
+    case "list_calendly_event_types": {
+      try {
+        const accessToken = await getValidCalendlyAccessToken(userId);
+        const me = await fetchCalendlyUser(accessToken);
+        const types = await fetchCalendlyEventTypes(accessToken, me.uri);
+        const limit =
+          args.limit != null && Number.isFinite(Number(args.limit))
+            ? Math.min(Math.max(1, Number(args.limit)), 100)
+            : 50;
+        const sliced = types.slice(0, limit).map((t) => ({
+          uri: t.uri,
+          uuid: t.uuid,
+          name: t.name,
+          schedulingUrl: t.schedulingUrl ?? null,
+          active: t.active ?? null,
+          duration: t.duration ?? null,
+        }));
+        return JSON.stringify({
+          connected: true,
+          event_types: sliced,
+          count: sliced.length,
+          total: types.length,
+          message:
+            sliced.length === 0
+              ? "Aucun type d'événement Calendly sur ce compte."
+              : `${sliced.length} type(s). Utilise list_calendly_bookings pour lire les RDV / invitees.`,
+        });
+      } catch (err) {
+        if (err instanceof CalendlyAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error: CALENDLY_REAUTH_MESSAGE,
+            code: "calendly_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur Calendly.",
+          code: err instanceof CalendlyAuthError ? err.code : "http",
+        });
+      }
+    }
+
+    case "list_calendly_bookings": {
+      const eventTypeUri = String(args.event_type_uri ?? "").trim() || undefined;
+      const limit =
+        args.limit != null && Number.isFinite(Number(args.limit))
+          ? Number(args.limit)
+          : 25;
+      try {
+        const accessToken = await getValidCalendlyAccessToken(userId);
+        const me = await fetchCalendlyUser(accessToken);
+        const data = await fetchCalendlyBookings(accessToken, me.uri, {
+          eventTypeUri,
+          limit,
+        });
+        return JSON.stringify({
+          totalEvents: data.totalEvents,
+          returned: data.bookings.length,
+          bookings: data.bookings.map((b) => ({
+            eventUuid: b.eventUuid,
+            eventName: b.eventName,
+            startTime: b.startTime,
+            name: b.name,
+            phone: b.phone,
+            email: b.email,
+            answers: b.answers.slice(0, 12),
+          })),
+          suggested_leads: data.suggestedLeads,
+          hint:
+            "Pour prospecter : confirme les numéros avec l'utilisateur, puis create_automation(type=contact_prospect, contacts=[…]) en brouillon.",
+        });
+      } catch (err) {
+        if (err instanceof CalendlyAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error: CALENDLY_REAUTH_MESSAGE,
+            code: "calendly_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur lecture RDV Calendly.",
+          code: err instanceof CalendlyAuthError ? err.code : "http",
+        });
+      }
+    }
+
+    case "list_calendly_contacts": {
+      const limit =
+        args.limit != null && Number.isFinite(Number(args.limit))
+          ? Number(args.limit)
+          : 50;
+      try {
+        const accessToken = await getValidCalendlyAccessToken(userId);
+        const me = await fetchCalendlyUser(accessToken);
+        const data = await fetchCalendlyContacts(accessToken, {
+          organizationUri: me.currentOrganization,
+          limit,
+        });
+        return JSON.stringify({
+          returned: data.contacts.length,
+          contacts: data.contacts.map((c) => ({
+            uri: c.uri,
+            uuid: c.uuid,
+            name: c.name,
+            email: c.email,
+            phone: c.phone,
+            company: c.company ?? null,
+            jobTitle: c.jobTitle ?? null,
+          })),
+          suggested_leads: data.suggestedLeads,
+          hint:
+            "Carnet Contacts Calendly. Confirme les numéros puis create_automation(type=contact_prospect) en brouillon.",
+        });
+      } catch (err) {
+        if (err instanceof CalendlyAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error: CALENDLY_REAUTH_MESSAGE,
+            code: "calendly_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur lecture Contacts Calendly.",
+          code: err instanceof CalendlyAuthError ? err.code : "http",
+        });
+      }
+    }
+
+    case "list_tally_forms": {
+      try {
+        const apiKey = await getValidTallyApiKey(userId);
+        const forms = await fetchTallyForms(apiKey);
+        const limit =
+          args.limit != null && Number.isFinite(Number(args.limit))
+            ? Math.min(Math.max(1, Number(args.limit)), 100)
+            : 50;
+        const sliced = forms.slice(0, limit).map((f) => ({
+          id: f.id,
+          name: f.name,
+          status: f.status ?? null,
+          updatedAt: f.updatedAt ?? null,
+          numberOfSubmissions: f.numberOfSubmissions ?? null,
+        }));
+        return JSON.stringify({
+          connected: true,
+          forms: sliced,
+          count: sliced.length,
+          total: forms.length,
+          message:
+            sliced.length === 0
+              ? "Aucun formulaire Tally sur ce compte."
+              : `${sliced.length} formulaire(s). Utilise list_tally_responses avec un form_id.`,
+        });
+      } catch (err) {
+        if (err instanceof TallyAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error: TALLY_REAUTH_MESSAGE,
+            code: "tally_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur Tally.",
+          code: err instanceof TallyAuthError ? err.code : "http",
+        });
+      }
+    }
+
+    case "list_tally_responses": {
+      const formId = String(args.form_id ?? "").trim();
+      if (!formId) {
+        return JSON.stringify({ error: "form_id requis (depuis list_tally_forms)." });
+      }
+      const pageSize =
+        args.page_size != null && Number.isFinite(Number(args.page_size))
+          ? Number(args.page_size)
+          : 25;
+      try {
+        const apiKey = await getValidTallyApiKey(userId);
+        const data = await fetchTallyResponses(apiKey, formId, pageSize);
+        return JSON.stringify({
+          formId: data.formId,
+          totalItems: data.totalItems,
+          returned: data.responses.length,
+          responses: data.responses.map((r) => ({
+            submissionId: r.submissionId,
+            submittedAt: r.submittedAt,
+            name: r.name,
+            phone: r.phone,
+            email: r.email,
+            answers: r.answers.slice(0, 20),
+          })),
+          suggested_leads: data.suggestedLeads,
+          hint:
+            "Pour prospecter : confirme les numéros avec l'utilisateur, puis create_automation(type=contact_prospect, contacts=[…]) en brouillon.",
+        });
+      } catch (err) {
+        if (err instanceof TallyAuthError && err.code === "revoked") {
+          return JSON.stringify({
+            error: TALLY_REAUTH_MESSAGE,
+            code: "tally_reauth_required",
+          });
+        }
+        return JSON.stringify({
+          error: err instanceof Error ? err.message : "Erreur lecture soumissions Tally.",
+          code: err instanceof TallyAuthError ? err.code : "http",
         });
       }
     }
