@@ -26,8 +26,8 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
     const user = await getUserById(userId);
     if (!user) return reply.status(404).send({ error: "Utilisateur introuvable." });
 
-    const planId = String(request.body?.planId || "").trim().toLowerCase();
-    const billingPeriod = String(request.body?.billingPeriod || "").trim().toLowerCase();
+    const planId = String(request.body?.planId || "pro").trim().toLowerCase();
+    const billingPeriod = String(request.body?.billingPeriod || "monthly").trim().toLowerCase();
     const customerPhone = String(request.body?.customerPhone || "").trim();
 
     if (!isPlanId(planId)) {
@@ -36,21 +36,18 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
     if (!isBillingPeriod(billingPeriod)) {
       return reply.status(400).send({ error: "Période de facturation invalide." });
     }
-    if (!customerPhone || customerPhone.replace(/\D/g, "").length < 8) {
-      return reply.status(400).send({ error: "Numéro client invalide (min 8 chiffres)." });
-    }
 
     try {
       const out = await createMoneyFusionCheckout({
         user,
         planId,
         billingPeriod,
-        customerPhone,
+        customerPhone: customerPhone || undefined,
       });
       return { ok: true, ...out };
     } catch (err) {
       return reply.status(502).send({
-        error: err instanceof Error ? err.message : "Échec de création du paiement MoneyFusion.",
+        error: err instanceof Error ? err.message : "Échec de création du paiement.",
       });
     }
   });
@@ -72,6 +69,7 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
         payment = await syncMoneyFusionPaymentByToken(token);
         if (!payment) return reply.status(404).send({ error: "Paiement introuvable." });
       }
+      const user = await getUserById(userId);
       return {
         ok: true,
         payment: {
@@ -80,11 +78,18 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
           planId: payment.plan_id,
           billingPeriod: payment.billing_period,
           amountEur: payment.amount_eur,
-          customerPhone: payment.customer_phone,
           status: payment.status,
           paidAt: payment.paid_at,
           updatedAt: payment.updated_at,
         },
+        subscription: user
+          ? {
+              status: user.subscription_status,
+              periodEnd: user.subscription_period_end,
+              trialStartedAt: user.trial_started_at,
+              trialConversationsUsed: user.trial_conversations_used,
+            }
+          : null,
       };
     },
   );

@@ -747,9 +747,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       response = await callOpenAiWithRetry(() =>
         toolClient.chat.completions.create({
           model: toolModel,
-          messages,
+        messages,
           tools: toolsForTurn,
-          tool_choice: "auto",
+        tool_choice: "auto",
           temperature: toolProvider === "minimax" ? 1 : 0.7,
           max_tokens: recommendedMaxTokensForProvider(
             toolProvider,

@@ -2,7 +2,10 @@ import { sql } from "./pg.js";
 import { userIdFromEvolutionInstance } from "./config.js";
 import {
   outreachLevelFromTotalSent,
+  TRIAL_DAYS,
   TRIAL_MAX_CONVERSATIONS,
+  SUBSCRIPTION_DAYS_ANNUAL,
+  SUBSCRIPTION_DAYS_MONTHLY,
   type OutreachLevel,
   type SubscriptionStatus,
 } from "./outreach-level.js";
@@ -24,6 +27,8 @@ export interface UserRecord {
   outreach_level: OutreachLevel;
   subscription_status: SubscriptionStatus;
   trial_conversations_used: number;
+  trial_started_at: string | null;
+  subscription_period_end: string | null;
   last_weekly_report_week: string | null;
   last_reported_outreach_level: number | null;
   account_status: AccountStatus;
@@ -56,6 +61,9 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     outreach_level: level,
     subscription_status: status,
     trial_conversations_used: Number(row.trial_conversations_used ?? 0),
+    trial_started_at: row.trial_started_at != null ? String(row.trial_started_at) : null,
+    subscription_period_end:
+      row.subscription_period_end != null ? String(row.subscription_period_end) : null,
     last_weekly_report_week:
       row.last_weekly_report_week != null ? String(row.last_weekly_report_week) : null,
     last_reported_outreach_level:
@@ -94,6 +102,8 @@ export function publicUser(user: UserRecord) {
     outreach_level: user.outreach_level,
     total_messages_sent: user.total_messages_sent,
     trial_conversations_used: user.trial_conversations_used,
+    trial_started_at: user.trial_started_at,
+    subscription_period_end: user.subscription_period_end,
     account_status: user.account_status,
     business: {
       ownerName: user.business_owner_name,
@@ -151,6 +161,14 @@ export async function ensureUserOutreachSchema(): Promise<void> {
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ
   `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ
+  `;
   // Registre anti-abus : 1 WhatsApp = 1 compte Klanvio
   const { ensureWhatsAppPhoneRegistrySchema } = await import("./whatsapp-phone-registry.js");
   await ensureWhatsAppPhoneRegistrySchema();
@@ -166,17 +184,19 @@ export async function createUser(input: {
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO users (
       email, password_hash, name,
-      total_messages_sent, outreach_level, subscription_status, trial_conversations_used
+      total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at
     )
     VALUES (
       ${input.email.trim().toLowerCase()}, ${input.passwordHash}, ${input.name.trim()},
-      0, 1, 'active', 0
+      0, 1, 'trial', 0, NOW()
     )
     RETURNING
       id, email, name, avatar_url, onboarding_completed, onboarding_answers,
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -193,20 +213,22 @@ export async function createGoogleUser(input: {
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO users (
       email, name, google_sub, avatar_url,
-      total_messages_sent, outreach_level, subscription_status, trial_conversations_used
+      total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at
     )
     VALUES (
       ${input.email.trim().toLowerCase()},
       ${input.name.trim()},
       ${input.googleSub},
       ${input.avatarUrl?.trim() || null},
-      0, 1, 'active', 0
+      0, 1, 'trial', 0, NOW()
     )
     RETURNING
       id, email, name, avatar_url, onboarding_completed, onboarding_answers,
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -228,6 +250,7 @@ export async function linkGoogleAccount(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -244,6 +267,7 @@ export async function getUserByEmail(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE email = ${email.trim().toLowerCase()}
@@ -264,6 +288,7 @@ export async function getUserByGoogleSub(googleSub: string): Promise<UserRecord 
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE google_sub = ${googleSub}
@@ -279,11 +304,13 @@ export async function getUserById(id: number): Promise<UserRecord | null> {
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE id = ${id}
   `;
-  return rows.length ? mapUser(rows[0]) : null;
+  if (!rows.length) return null;
+  return syncUserSubscription(mapUser(rows[0]));
 }
 
 export async function userIdFromInstanceName(instance: string): Promise<number | null> {
@@ -335,6 +362,7 @@ export async function completeOnboarding(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -364,6 +392,7 @@ export async function markGoogleContactsPromptDone(userId: number): Promise<User
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -425,10 +454,140 @@ export async function setSubscriptionStatus(
       business_owner_name, business_offer, business_price,
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
   return rows.length ? mapUser(rows[0]) : null;
+}
+
+function addUtcDays(days: number, from = new Date()): Date {
+  const d = new Date(from.getTime());
+  d.setUTCDate(d.getUTCDate() + days);
+  return d;
+}
+
+/** Active un abonnement payé (mensuel = 30j, annuel = 365j). */
+export async function activatePaidSubscription(
+  userId: number,
+  billingPeriod: "monthly" | "annual"
+): Promise<UserRecord | null> {
+  await ensureUserOutreachSchema();
+  const days =
+    billingPeriod === "annual" ? SUBSCRIPTION_DAYS_ANNUAL : SUBSCRIPTION_DAYS_MONTHLY;
+  const periodEnd = addUtcDays(days);
+  const rows = await sql<Record<string, unknown>[]>`
+    UPDATE users SET
+      subscription_status = 'active',
+      subscription_period_end = ${periodEnd.toISOString()}
+    WHERE id = ${userId}
+    RETURNING
+      id, email, name, avatar_url, onboarding_completed, onboarding_answers,
+      business_owner_name, business_offer, business_price,
+      google_contacts_prompt_done,
+      total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
+  `;
+  return rows.length ? mapUser(rows[0]) : null;
+}
+
+export async function setSubscriptionPeriodEnd(
+  userId: number,
+  periodEnd: Date | null
+): Promise<UserRecord | null> {
+  await ensureUserOutreachSchema();
+  const rows = await sql<Record<string, unknown>[]>`
+    UPDATE users SET
+      subscription_period_end = ${periodEnd ? periodEnd.toISOString() : null}
+    WHERE id = ${userId}
+    RETURNING
+      id, email, name, avatar_url, onboarding_completed, onboarding_answers,
+      business_owner_name, business_offer, business_price,
+      google_contacts_prompt_done,
+      total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
+  `;
+  return rows.length ? mapUser(rows[0]) : null;
+}
+
+/** Remet le compte en essai (compteur + date). */
+export async function resetTrialSubscription(userId: number): Promise<UserRecord | null> {
+  await ensureUserOutreachSchema();
+  const rows = await sql<Record<string, unknown>[]>`
+    UPDATE users SET
+      subscription_status = 'trial',
+      trial_conversations_used = 0,
+      trial_started_at = NOW(),
+      subscription_period_end = NULL
+    WHERE id = ${userId}
+    RETURNING
+      id, email, name, avatar_url, onboarding_completed, onboarding_answers,
+      business_owner_name, business_offer, business_price,
+      google_contacts_prompt_done,
+      total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
+      trial_started_at, subscription_period_end,
+      last_weekly_report_week, last_reported_outreach_level, created_at,
+      account_status, suspended_at, suspended_reason, deleted_at
+  `;
+  return rows.length ? mapUser(rows[0]) : null;
+}
+
+/**
+ * Applique l'expiration si l'essai (3j) ou la période payée est dépassée.
+ * Idempotent — safe à appeler avant les gates /api/me.
+ */
+export async function syncUserSubscription(user: UserRecord): Promise<UserRecord> {
+  await ensureUserOutreachSchema();
+  const now = Date.now();
+
+  if (user.subscription_status === "trial") {
+    const start = user.trial_started_at
+      ? new Date(user.trial_started_at).getTime()
+      : user.created_at
+        ? new Date(user.created_at).getTime()
+        : now;
+    const trialEnd = addUtcDays(TRIAL_DAYS, new Date(start)).getTime();
+    if (now > trialEnd) {
+      const updated = await setSubscriptionStatus(user.id, "expired");
+      return updated ?? user;
+    }
+  }
+
+  if (
+    user.subscription_status === "active" &&
+    user.subscription_period_end &&
+    now > new Date(user.subscription_period_end).getTime()
+  ) {
+    const updated = await setSubscriptionStatus(user.id, "expired");
+    return updated ?? user;
+  }
+
+  return user;
+}
+
+/** Job périodique : expire tous les comptes dus. */
+export async function expireDueSubscriptions(): Promise<{ trial: number; paid: number }> {
+  await ensureUserOutreachSchema();
+  const trial = await sql`
+    UPDATE users
+    SET subscription_status = 'expired'
+    WHERE subscription_status = 'trial'
+      AND deleted_at IS NULL
+      AND COALESCE(trial_started_at, created_at) < NOW() - (${TRIAL_DAYS}::text || ' days')::interval
+  `;
+  const paid = await sql`
+    UPDATE users
+    SET subscription_status = 'expired'
+    WHERE subscription_status = 'active'
+      AND deleted_at IS NULL
+      AND subscription_period_end IS NOT NULL
+      AND subscription_period_end < NOW()
+  `;
+  return { trial: Number(trial.count), paid: Number(paid.count) };
 }
 
 export async function markWeeklyReportSent(

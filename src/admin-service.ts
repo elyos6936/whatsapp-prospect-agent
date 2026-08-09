@@ -10,7 +10,6 @@ import {
 } from "./db.js";
 import {
   getUserById,
-  setSubscriptionStatus,
   type UserRecord,
 } from "./users.js";
 import {
@@ -412,6 +411,8 @@ function serializeUser(user: UserRecord) {
     outreachLevel: user.outreach_level,
     totalMessagesSent: user.total_messages_sent,
     trialConversationsUsed: user.trial_conversations_used,
+    trialStartedAt: user.trial_started_at,
+    subscriptionPeriodEnd: user.subscription_period_end,
     dailyCaps: caps,
     accountStatus: user.account_status,
     suspendedAt: user.suspended_at,
@@ -620,13 +621,33 @@ export async function adminUpdateSubscription(
     outreachLevel?: number;
     trialConversationsUsed?: number;
     resetTrial?: boolean;
+    subscriptionPeriodEnd?: string | null;
+    extendDays?: number;
   }
 ): Promise<UserRecord | null> {
+  const {
+    activatePaidSubscription,
+    resetTrialSubscription,
+    setSubscriptionPeriodEnd,
+    setSubscriptionStatus,
+  } = await import("./users.js");
   const user = await getUserById(userId);
   if (!user) return null;
 
-  if (input.status) {
+  if (input.resetTrial) {
+    await resetTrialSubscription(userId);
+  } else if (input.status) {
+    const wasActive = user.subscription_status === "active";
     await setSubscriptionStatus(userId, input.status);
+    if (
+      input.status === "active" &&
+      !wasActive &&
+      input.extendDays == null &&
+      input.subscriptionPeriodEnd == null
+    ) {
+      // Première activation admin sans date : 30 jours par défaut
+      await activatePaidSubscription(userId, "monthly");
+    }
   }
 
   if (input.outreachLevel != null) {
@@ -634,11 +655,30 @@ export async function adminUpdateSubscription(
     await sql`UPDATE users SET outreach_level = ${level} WHERE id = ${userId}`;
   }
 
-  if (input.resetTrial) {
-    await sql`UPDATE users SET trial_conversations_used = 0 WHERE id = ${userId}`;
-  } else if (input.trialConversationsUsed != null) {
+  if (!input.resetTrial && input.trialConversationsUsed != null) {
     const n = Math.max(0, Math.floor(input.trialConversationsUsed));
     await sql`UPDATE users SET trial_conversations_used = ${n} WHERE id = ${userId}`;
+  }
+
+  if (input.extendDays != null && Number.isFinite(input.extendDays)) {
+    const days = Math.max(1, Math.floor(input.extendDays));
+    const base =
+      user.subscription_period_end && new Date(user.subscription_period_end).getTime() > Date.now()
+        ? new Date(user.subscription_period_end)
+        : new Date();
+    base.setUTCDate(base.getUTCDate() + days);
+    await setSubscriptionPeriodEnd(userId, base);
+    await setSubscriptionStatus(userId, "active");
+  } else if (input.subscriptionPeriodEnd !== undefined) {
+    const raw = input.subscriptionPeriodEnd;
+    if (raw === null || raw === "") {
+      await setSubscriptionPeriodEnd(userId, null);
+    } else {
+      const d = new Date(raw);
+      if (!Number.isNaN(d.getTime())) {
+        await setSubscriptionPeriodEnd(userId, d);
+      }
+    }
   }
 
   return getUserById(userId);

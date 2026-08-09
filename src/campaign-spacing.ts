@@ -1,16 +1,16 @@
 /**
  * Espacement anti-blocage proportionnel au volume de prospects.
- * Peu de prospects → délais courts ; beaucoup → délais plus sûrs.
+ * Plancher : 30–60 s (jamais en dessous) ; volume élevé → délais plus longs.
  */
 export function recommendOutboundGaps(prospectCount: number): {
   minDelaySeconds: number;
   maxDelaySeconds: number;
 } {
   const n = Math.max(0, Math.floor(Number(prospectCount) || 0));
-  if (n <= 5) return { minDelaySeconds: 20, maxDelaySeconds: 40 };
-  if (n <= 15) return { minDelaySeconds: 30, maxDelaySeconds: 60 };
-  if (n <= 40) return { minDelaySeconds: 45, maxDelaySeconds: 90 };
-  if (n <= 100) return { minDelaySeconds: 60, maxDelaySeconds: 150 };
+  if (n <= 5) return { minDelaySeconds: 30, maxDelaySeconds: 60 };
+  if (n <= 15) return { minDelaySeconds: 40, maxDelaySeconds: 75 };
+  if (n <= 40) return { minDelaySeconds: 50, maxDelaySeconds: 90 };
+  if (n <= 100) return { minDelaySeconds: 60, maxDelaySeconds: 120 };
   return { minDelaySeconds: 75, maxDelaySeconds: 180 };
 }
 

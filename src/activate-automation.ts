@@ -17,6 +17,7 @@ import {
 } from "./automation-engine.js";
 import { requireEvolutionConnected } from "./evolutionapi.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
+import { recommendOutboundGaps } from "./campaign-spacing.js";
 import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import { needsAppointmentLink } from "./campaign-briefing.js";
 
@@ -220,6 +221,25 @@ export async function activateAutomationCore(
   if (isOutbound) {
     if (!safeConfig.maxPerDay || safeConfig.maxPerDay <= 0) {
       safeConfig.maxPerDay = ANTI_BAN.defaultCampaignMaxPerDay;
+    }
+    // Espacement anti-blocage : plancher 30–60 s, plus long si beaucoup de cibles.
+    // On remonte seulement les délais trop bas (jamais on accélère une config plus prudente).
+    const prospectCount =
+      safeConfig.contactTargets?.length ||
+      safeConfig.groupTargets?.length ||
+      safeConfig.maxMembers ||
+      30;
+    const gaps = recommendOutboundGaps(prospectCount);
+    if (!safeConfig.minDelaySeconds || safeConfig.minDelaySeconds < gaps.minDelaySeconds) {
+      safeConfig.minDelaySeconds = gaps.minDelaySeconds;
+    }
+    if (!safeConfig.maxDelaySeconds || safeConfig.maxDelaySeconds < gaps.maxDelaySeconds) {
+      safeConfig.maxDelaySeconds = Math.max(
+        gaps.maxDelaySeconds,
+        safeConfig.minDelaySeconds + 15
+      );
+    } else if (safeConfig.maxDelaySeconds < safeConfig.minDelaySeconds + 15) {
+      safeConfig.maxDelaySeconds = safeConfig.minDelaySeconds + 15;
     }
     // Heures CALMES (pas d'envoi) : nuit 20h→9h = activité 9h–20h.
     // Ancien défaut 9→20 inversait la logique (« hors fenêtre » toute la journée).

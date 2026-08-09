@@ -75,9 +75,9 @@ function resolveGapMs(opts?: OutboundGapOpts): { min: number; max: number } {
     return { min: ANTI_BAN.minGapMs, max: Math.max(ANTI_BAN.minGapMs + 5_000, ANTI_BAN.maxGapMs) };
   }
 
-  // Autoriser des délais courts (petites campagnes) — plancher absolu 15 s
+  // Plancher absolu 30 s (anti-blocage) — même si la config campagne est trop basse
   const min = Math.max(
-    15_000,
+    30_000,
     Math.round(Number(opts!.minDelaySeconds ?? ANTI_BAN.minGapMs / 1000) * 1000)
   );
   const maxRaw = Math.round(Number(opts!.maxDelaySeconds ?? ANTI_BAN.maxGapMs / 1000) * 1000);
@@ -100,7 +100,7 @@ export function getOutboundSlotWaitMs(userId: number): number {
  * Attend le créneau anti-spam et **prend le mutex** jusqu'à
  * markOutboundSentForUser / releaseOutboundSlot.
  *
- * - campaign / défaut : respecte nextSlot (40–80 s)
+ * - campaign / défaut : respecte nextSlot (30–60 s mini, plus selon volume)
  * - auto_reply : ignore le slot campagne ; attend seulement 2 s mini
  *   depuis le dernier envoi (conversations indépendantes ~60 s)
  */

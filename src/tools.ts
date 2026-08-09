@@ -2201,7 +2201,7 @@ function buildAutomationConfigFromArgs(
   const clampSeconds = (v: unknown): number | undefined => {
     const n = Number(v);
     if (!Number.isFinite(n) || n <= 0) return undefined;
-    return Math.max(15, Math.round(n));
+    return Math.max(30, Math.round(n));
   };
 
   const prospectCount = estimateProspectCountFromArgs(args);
@@ -4784,11 +4784,11 @@ export async function executeTool(
       }
       if (args.max_members != null) merged.maxMembers = Number(args.max_members);
       if (args.min_delay_seconds != null && Number.isFinite(Number(args.min_delay_seconds))) {
-        merged.minDelaySeconds = Math.max(15, Math.round(Number(args.min_delay_seconds)));
+        merged.minDelaySeconds = Math.max(30, Math.round(Number(args.min_delay_seconds)));
       }
       if (args.max_delay_seconds != null && Number.isFinite(Number(args.max_delay_seconds))) {
         merged.maxDelaySeconds = Math.max(
-          merged.minDelaySeconds ?? 20,
+          merged.minDelaySeconds ?? 30,
           Math.round(Number(args.max_delay_seconds))
         );
       }

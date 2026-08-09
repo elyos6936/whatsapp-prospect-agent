@@ -10,6 +10,8 @@ type UserSnapshot = {
   outreachLevel: number;
   totalMessagesSent: number;
   trialConversationsUsed: number;
+  trialStartedAt?: string | null;
+  subscriptionPeriodEnd?: string | null;
   deletedAt: string | null;
 };
 
@@ -17,16 +19,29 @@ type DetailLite = {
   user: UserSnapshot;
 };
 
+type PaymentRow = {
+  id: number;
+  planId: string;
+  billingPeriod: string;
+  amountEur: number;
+  status: string;
+  paidAt: string | null;
+  createdAt: string;
+};
+
 export function UserSubscriptionActionsPage() {
   const { id } = useParams();
   const userId = Number(id);
   const [detail, setDetail] = useState<DetailLite | null>(null);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<string | null>(null);
   const [status, setStatus] = useState("trial");
   const [level, setLevel] = useState("1");
   const [totalSent, setTotalSent] = useState("0");
+  const [periodEnd, setPeriodEnd] = useState("");
+  const [extendDays, setExtendDays] = useState("30");
 
   const reload = useCallback(() => {
     if (!Number.isFinite(userId)) return;
@@ -36,9 +51,17 @@ export function UserSubscriptionActionsPage() {
         setStatus(d.user.subscriptionStatus);
         setLevel(String(d.user.outreachLevel));
         setTotalSent(String(d.user.totalMessagesSent));
+        setPeriodEnd(
+          d.user.subscriptionPeriodEnd
+            ? new Date(d.user.subscriptionPeriodEnd).toISOString().slice(0, 10)
+            : ""
+        );
         setError(null);
       })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Erreur"));
+    api<{ payments: PaymentRow[] }>(`/api/admin/users/${userId}/billing-payments`)
+      .then((r) => setPayments(r.payments || []))
+      .catch(() => setPayments([]));
   }, [userId]);
 
   useEffect(() => {
@@ -67,7 +90,32 @@ export function UserSubscriptionActionsPage() {
         body: JSON.stringify({
           status,
           outreachLevel: Number(level),
+          ...(periodEnd
+            ? { subscriptionPeriodEnd: new Date(periodEnd).toISOString() }
+            : {}),
         }),
+      })
+    );
+  }
+
+  function onExtend(e: FormEvent) {
+    e.preventDefault();
+    void runAction(`Prolonge de ${extendDays} jours`, () =>
+      api(`/api/admin/users/${userId}/subscription`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          status: "active",
+          extendDays: Number(extendDays),
+        }),
+      })
+    );
+  }
+
+  function onResetTrial() {
+    void runAction("Essai reinitialise", () =>
+      api(`/api/admin/users/${userId}/subscription`, {
+        method: "PATCH",
+        body: JSON.stringify({ resetTrial: true }),
       })
     );
   }
@@ -131,7 +179,7 @@ export function UserSubscriptionActionsPage() {
               <form className="detail-card" onSubmit={onSub}>
                 <h3>Statut abonnement</h3>
                 <p className="actions-help">
-                  Gerez l'acces commercial du compte: actif, essai, expire.
+                  Gerez l&apos;acces commercial : actif, essai, expire + date de fin.
                 </p>
                 <div className="field">
                   <label htmlFor="st">Statut</label>
@@ -140,6 +188,15 @@ export function UserSubscriptionActionsPage() {
                     <option value="trial">Essai</option>
                     <option value="expired">Expire</option>
                   </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="pe">Fin de periode (YYYY-MM-DD)</label>
+                  <input
+                    id="pe"
+                    type="date"
+                    value={periodEnd}
+                    onChange={(e) => setPeriodEnd(e.target.value)}
+                  />
                 </div>
                 <div className="field">
                   <label htmlFor="lv">Niveau outreach</label>
@@ -151,16 +208,56 @@ export function UserSubscriptionActionsPage() {
                     ))}
                   </select>
                 </div>
-                <button className="btn btn-primary" type="submit" disabled={busy || !!detail.user.deletedAt}>
-                  Enregistrer
+                <p className="actions-help">
+                  Essai utilise : {detail.user.trialConversationsUsed}/20
+                  {detail.user.trialStartedAt
+                    ? ` · demarre ${new Date(detail.user.trialStartedAt).toLocaleDateString("fr-FR")}`
+                    : ""}
+                </p>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button className="btn btn-primary" type="submit" disabled={busy || !!detail.user.deletedAt}>
+                    Enregistrer
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    disabled={busy || !!detail.user.deletedAt}
+                    onClick={onResetTrial}
+                  >
+                    Reset essai
+                  </button>
+                </div>
+              </form>
+
+              <form className="detail-card" onSubmit={onExtend}>
+                <h3>Prolonger</h3>
+                <p className="actions-help">Ajoute des jours a la periode (passe en actif).</p>
+                <div className="field">
+                  <label htmlFor="ex">Jours a ajouter</label>
+                  <input
+                    id="ex"
+                    type="number"
+                    min={1}
+                    value={extendDays}
+                    onChange={(e) => setExtendDays(e.target.value)}
+                  />
+                </div>
+                <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <button type="button" className="btn" disabled={busy} onClick={() => setExtendDays("30")}>
+                    +30j
+                  </button>
+                  <button type="button" className="btn" disabled={busy} onClick={() => setExtendDays("365")}>
+                    +365j
+                  </button>
+                </div>
+                <button className="btn btn-primary" type="submit" disabled={busy || !!detail.user.deletedAt} style={{ marginTop: 12 }}>
+                  Prolonger
                 </button>
               </form>
 
               <form className="detail-card" onSubmit={onOutreach}>
                 <h3>Compteurs et niveau</h3>
-                <p className="actions-help">
-                  Ajustez manuellement les compteurs operations du compte.
-                </p>
+                <p className="actions-help">Ajustez manuellement les compteurs operations.</p>
                 <div className="field">
                   <label htmlFor="tot">Messages envoyes (lifetime)</label>
                   <input
@@ -185,6 +282,37 @@ export function UserSubscriptionActionsPage() {
                   Mettre a jour
                 </button>
               </form>
+
+              <div className="detail-card">
+                <h3>Paiements</h3>
+                <p className="actions-help">Historique Money Fusion (lecture seule).</p>
+                {payments.length === 0 ? (
+                  <p className="actions-help">Aucun paiement enregistre.</p>
+                ) : (
+                  <table className="data-table" style={{ width: "100%", fontSize: 12 }}>
+                    <thead>
+                      <tr>
+                        <th>Date</th>
+                        <th>Montant</th>
+                        <th>Periode</th>
+                        <th>Statut</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {payments.map((p) => (
+                        <tr key={p.id}>
+                          <td>{new Date(p.createdAt).toLocaleString("fr-FR")}</td>
+                          <td>{p.amountEur}€</td>
+                          <td>
+                            {p.planId}/{p.billingPeriod}
+                          </td>
+                          <td>{p.status}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
             </div>
           </>
         ) : null}

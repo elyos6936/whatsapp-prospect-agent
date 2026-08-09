@@ -178,6 +178,8 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       outreachLevel?: number;
       trialConversationsUsed?: number;
       resetTrial?: boolean;
+      subscriptionPeriodEnd?: string | null;
+      extendDays?: number;
     };
   }>("/api/admin/users/:id/subscription", { preHandler: requireAdmin }, async (request, reply) => {
     const id = Number(request.params.id);
@@ -192,8 +194,40 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       targetUserId: id,
       payload: body as Record<string, unknown>,
     });
-    return { ok: true, user };
+    return { ok: true, user: {
+      id: user.id,
+      email: user.email,
+      subscriptionStatus: user.subscription_status,
+      outreachLevel: user.outreach_level,
+      trialConversationsUsed: user.trial_conversations_used,
+      trialStartedAt: user.trial_started_at,
+      subscriptionPeriodEnd: user.subscription_period_end,
+      totalMessagesSent: user.total_messages_sent,
+    } };
   });
+
+  app.get<{ Params: { id: string } }>(
+    "/api/admin/users/:id/billing-payments",
+    { preHandler: requireAdmin },
+    async (request, reply) => {
+      const id = Number(request.params.id);
+      if (!Number.isFinite(id)) return reply.status(400).send({ error: "ID invalide." });
+      const { listBillingPaymentsForUser } = await import("./billing-moneyfusion.js");
+      const payments = await listBillingPaymentsForUser(id, 30);
+      return {
+        ok: true,
+        payments: payments.map((p) => ({
+          id: p.id,
+          planId: p.plan_id,
+          billingPeriod: p.billing_period,
+          amountEur: p.amount_eur,
+          status: p.status,
+          paidAt: p.paid_at,
+          createdAt: p.created_at,
+        })),
+      };
+    }
+  );
 
   app.patch<{
     Params: { id: string };

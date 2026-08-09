@@ -10,6 +10,13 @@ export type SubscriptionStatus = "trial" | "active" | "expired";
 
 export const TRIAL_MAX_CONVERSATIONS = 20;
 
+/** Essai gratuit en jours (aligné landing / pricing). */
+export const TRIAL_DAYS = 3;
+
+/** Durée abonnement après paiement Money Fusion. */
+export const SUBSCRIPTION_DAYS_MONTHLY = 30;
+export const SUBSCRIPTION_DAYS_ANNUAL = 365;
+
 /** Seuils inclusifs : [minMessages, level] */
 const LEVEL_THRESHOLDS: Array<{ min: number; level: OutreachLevel }> = [
   { min: 4000, level: 5 },

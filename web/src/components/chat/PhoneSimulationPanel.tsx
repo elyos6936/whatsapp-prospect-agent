@@ -480,26 +480,26 @@ export function PhoneSimulationPanel({
             >
               <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
             </button>
-            <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1">
               <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700/80">
                 Simulation
               </p>
               <p className="truncate text-[12px] text-text-300">{helpLine}</p>
             </div>
-            <button
-              type="button"
-              onClick={handleClearDiscussion}
-              disabled={!canClear}
-              className={cn(
+          <button
+            type="button"
+            onClick={handleClearDiscussion}
+            disabled={!canClear}
+            className={cn(
                 'flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition',
-                canClear
+              canClear
                   ? 'bg-red-50 text-red-600 hover:bg-red-100'
                   : 'cursor-not-allowed bg-zinc-100 text-zinc-300',
-              )}
-            >
+            )}
+          >
               <Trash2 className="h-3 w-3" strokeWidth={2} />
               Effacer
-            </button>
+          </button>
           </div>
 
           <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-2 pb-3">

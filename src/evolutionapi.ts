@@ -3050,7 +3050,7 @@ export async function getInstanceQr(userId: number): Promise<{
     message:
       uiMsg ||
       (base64 || pairingCode
-        ? "Scannez le QR code avec WhatsApp (Appareils connectés)."
+      ? "Scannez le QR code avec WhatsApp (Appareils connectés)."
         : raw.message),
   };
 }

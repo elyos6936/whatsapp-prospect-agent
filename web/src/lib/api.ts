@@ -15,6 +15,8 @@ export interface AuthUser {
   outreach_level?: number;
   total_messages_sent?: number;
   trial_conversations_used?: number;
+  trial_started_at?: string | null;
+  subscription_period_end?: string | null;
   business: { ownerName: string; offer: string; price: string };
   whatsapp?: { connected: boolean; state: string; message: string };
   workspace?: {
@@ -513,13 +515,13 @@ export async function setThreadCampaignMemoryApi(
 }
 
 export async function createMoneyFusionCheckout(body: {
-  planId: 'starter' | 'pro' | 'business';
+  planId?: 'starter' | 'pro' | 'business';
   billingPeriod: 'monthly' | 'annual';
-  customerPhone: string;
+  customerPhone?: string;
 }): Promise<{ ok: true; checkoutUrl: string; token: string }> {
   return request('/api/billing/moneyfusion/checkout', {
     method: 'POST',
-    body: JSON.stringify(body),
+    body: JSON.stringify({ planId: body.planId ?? 'pro', ...body }),
   });
 }
 
@@ -531,11 +533,16 @@ export async function verifyMoneyFusionPayment(token?: string): Promise<{
     planId: 'starter' | 'pro' | 'business';
     billingPeriod: 'monthly' | 'annual';
     amountEur: number;
-    customerPhone: string;
     status: 'pending' | 'paid' | 'cancelled' | 'failed';
     paidAt: string | null;
     updatedAt: string;
   };
+  subscription: {
+    status: 'trial' | 'active' | 'expired';
+    periodEnd: string | null;
+    trialStartedAt: string | null;
+    trialConversationsUsed: number;
+  } | null;
 }> {
   const qs = token ? `?token=${encodeURIComponent(token)}` : '';
   return request(`/api/billing/moneyfusion/verify${qs}`);

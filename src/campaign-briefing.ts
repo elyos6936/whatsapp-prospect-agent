@@ -416,11 +416,11 @@ function countBriefingQuestions(
   if (purpose === "prospection" || purpose === "support" || purpose === "groupes") {
     campaignStart = 0;
   } else {
-    for (let i = 0; i < history.length; i++) {
-      const m = history[i];
-      if (m?.role === "user" && isCampaignIntent(m.content)) {
-        campaignStart = i;
-        break;
+  for (let i = 0; i < history.length; i++) {
+    const m = history[i];
+    if (m?.role === "user" && isCampaignIntent(m.content)) {
+      campaignStart = i;
+      break;
       }
     }
   }
@@ -581,18 +581,18 @@ export function assessCampaignBriefing(
     // Fenêtre d'envoi : couverte par la mémoire → seulement le lancement
     const hasLaunch =
       /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|lancer\s+(à|a)|d[eé]marr)\b/i.test(
-        blob
-      );
+      blob
+    );
     if (memoryCoversWindow) {
       if (!hasLaunch) {
         missing.push("jour/heure de lancement de la campagne");
       }
     } else {
-      const hasSchedule =
+  const hasSchedule =
         hasLaunch ||
         /\b(cr[eé]neau|horaire|fen[eê]tre)\b/i.test(blob);
-      if (!hasSchedule) {
-        missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+  if (!hasSchedule) {
+    missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
       }
     }
   }

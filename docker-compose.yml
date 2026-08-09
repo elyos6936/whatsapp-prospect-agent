@@ -41,6 +41,8 @@ services:
       CORS_ORIGINS: ${CORS_ORIGINS:-https://www.klanvio.com,https://klanvio.com,https://klanvio.vercel.app}
       PUBLIC_URL: ${PUBLIC_URL:-https://api.klanvio.com}
       APP_URL: ${APP_URL:-https://www.klanvio.com,https://klanvio.vercel.app}
+      MONEYFUSION_API_URL: ${MONEYFUSION_API_URL:-}
+      MONEYFUSION_VERIFY_BASE_URL: ${MONEYFUSION_VERIFY_BASE_URL:-}
       TYPEFORM_CLIENT_ID: ${TYPEFORM_CLIENT_ID:-}
       TYPEFORM_CLIENT_SECRET: ${TYPEFORM_CLIENT_SECRET:-}
       TYPEFORM_REDIRECT_URI: ${TYPEFORM_REDIRECT_URI:-}

@@ -552,20 +552,6 @@ function mapWhatsAppMessage(row: Record<string, unknown>): WhatsAppMessage {
   };
 }
 
-/** Ignore les IDs de campagnes déjà supprimées (évite 23503 sur messages.automation_id). */
-export async function resolveExistingAutomationId(
-  userId: number,
-  automationId: number | null | undefined
-): Promise<number | null> {
-  if (automationId == null) return null;
-  const id = Math.floor(Number(automationId));
-  if (!Number.isFinite(id) || id <= 0) return null;
-  const rows = await sql`
-    SELECT 1 FROM automations WHERE id = ${id} AND user_id = ${userId} LIMIT 1
-  `;
-  return rows.length ? id : null;
-}
-
 export async function saveWhatsAppMessage(userId: number, input: {
   contactPhone: string;
   direction: "entrant" | "sortant";
@@ -580,25 +566,9 @@ export async function saveWhatsAppMessage(userId: number, input: {
     input.direction === "sortant" ? (input.countsTowardQuota !== false ? 1 : 0) : 1;
   const automationIdRaw =
     input.automationId != null ? Number(input.automationId) : NaN;
-  let automationId = Number.isFinite(automationIdRaw)
+  const automationId = Number.isFinite(automationIdRaw)
     ? Math.floor(automationIdRaw)
     : null;
-  if (automationId != null) {
-    const valid = await resolveExistingAutomationId(userId, automationId);
-    if (valid == null) {
-      // Pointeur contact obsolète après delete_automation — on nettoie pour arrêter le spam FK.
-      console.warn(
-        `[messages] automation_id=${automationId} introuvable pour user=${userId} — insert sans tag`
-      );
-      await sql`
-        UPDATE contacts
-        SET conversation_campaign_id = NULL, updated_at = NOW()
-        WHERE user_id = ${userId}
-          AND conversation_campaign_id = ${automationId}
-      `.catch(() => {});
-      automationId = null;
-    }
-  }
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO messages (user_id, contact_phone, sender_name, direction, body, green_api_id, counts_toward_quota, automation_id)
     VALUES (
@@ -2214,6 +2184,17 @@ export async function canStartNewConversation(
     };
   }
 
+  if (user.subscription_status === "expired") {
+    return {
+      ok: false,
+      reason:
+        "Abonnement terminé. Renouvelez depuis Paramètres → Facturation (carte ou Mobile Money) pour continuer.",
+      code: "trial_exhausted",
+      used: user.trial_conversations_used,
+      limit: 0,
+    };
+  }
+
   if (user.subscription_status === "trial") {
     if (user.trial_conversations_used >= TRIAL_MAX_CONVERSATIONS) {
       return {
@@ -3564,16 +3545,6 @@ export async function deleteAutomation(userId: number, id: number): Promise<bool
     DELETE FROM send_queue
     WHERE user_id = ${userId} AND automation_id = ${id} AND status = 'pending'
   `;
-  // Détacher avant DELETE : messages.automation_id a une FK stricte ; contacts.conversation_campaign_id n'en a pas.
-  await sql`
-    UPDATE messages SET automation_id = NULL
-    WHERE user_id = ${userId} AND automation_id = ${id}
-  `;
-  await sql`
-    UPDATE contacts SET conversation_campaign_id = NULL, updated_at = NOW()
-    WHERE user_id = ${userId} AND conversation_campaign_id = ${id}
-  `;
-  await sql`DELETE FROM contact_automation_state WHERE user_id = ${userId} AND automation_id = ${id}`;
   await sql`DELETE FROM automations WHERE user_id = ${userId} AND id = ${id}`;
   return true;
 }

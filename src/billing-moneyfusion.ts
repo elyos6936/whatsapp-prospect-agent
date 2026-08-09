@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 import { sql } from "./pg.js";
-import { setSubscriptionStatus, type UserRecord } from "./users.js";
+import type { UserRecord } from "./users.js";
 import { setWorkspaceBillingPlan } from "./team.js";
+import { listWhatsAppPhoneBindingsForUser } from "./whatsapp-phone-registry.js";
 
 export type BillingPlanId = "starter" | "pro" | "business";
 export type BillingPeriod = "monthly" | "annual";
@@ -174,7 +175,7 @@ export async function createMoneyFusionCheckout(input: {
   user: UserRecord;
   planId: BillingPlanId;
   billingPeriod: BillingPeriod;
-  customerPhone: string;
+  customerPhone?: string;
 }): Promise<{ checkoutUrl: string; token: string }> {
   await ensureBillingSchema();
   const price = PLAN_PRICE_EUR[input.planId][input.billingPeriod];
@@ -182,6 +183,21 @@ export async function createMoneyFusionCheckout(input: {
   const returnUrl = `${config.appUrl}/?settings=billing&provider=moneyfusion`;
   const orderRef = `${input.user.id}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const customerName = input.user.name?.trim() || input.user.email;
+
+  // FusionPay exige numeroSend ; la page checkout permet carte + Mobile Money.
+  // On ne demande pas le numéro dans l'UI SaaS — WhatsApp lié ou placeholder API.
+  let customerPhone = String(input.customerPhone || "").replace(/\D/g, "");
+  if (customerPhone.length < 8) {
+    try {
+      const bindings = await listWhatsAppPhoneBindingsForUser(input.user.id);
+      customerPhone = String(bindings[0]?.phoneKey || "").replace(/\D/g, "");
+    } catch {
+      /* ignore */
+    }
+  }
+  if (customerPhone.length < 8) {
+    customerPhone = "01010101";
+  }
 
   const payload = {
     totalPrice: price,
@@ -200,7 +216,7 @@ export async function createMoneyFusionCheckout(input: {
         billingPeriod: input.billingPeriod,
       },
     ],
-    numeroSend: input.customerPhone,
+    numeroSend: customerPhone,
     nomclient: customerName,
     return_url: returnUrl,
     webhook_url: webhookUrl,
@@ -214,7 +230,7 @@ export async function createMoneyFusionCheckout(input: {
     )
     VALUES (
       ${input.user.id}, 'moneyfusion', ${created.token!}, ${created.url!}, ${input.planId},
-      ${input.billingPeriod}, ${price}, ${input.customerPhone}, ${customerName},
+      ${input.billingPeriod}, ${price}, ${customerPhone}, ${customerName},
       'pending', 'payin.session.pending', ${JSON.stringify(created)}::jsonb
     )
     ON CONFLICT (provider_token)
@@ -239,6 +255,22 @@ export async function getLatestBillingPaymentForUser(userId: number): Promise<Bi
   return rows.length ? mapPayment(rows[0]) : null;
 }
 
+export async function listBillingPaymentsForUser(
+  userId: number,
+  limit = 20
+): Promise<BillingPaymentRecord[]> {
+  await ensureBillingSchema();
+  const safeLimit = Math.min(50, Math.max(1, Math.floor(limit)));
+  const rows = await sql<Record<string, unknown>[]>`
+    SELECT *
+    FROM billing_payments
+    WHERE user_id = ${userId}
+    ORDER BY id DESC
+    LIMIT ${safeLimit}
+  `;
+  return rows.map(mapPayment);
+}
+
 export async function findBillingPaymentByToken(token: string): Promise<BillingPaymentRecord | null> {
   await ensureBillingSchema();
   const rows = await sql<Record<string, unknown>[]>`
@@ -250,8 +282,13 @@ export async function findBillingPaymentByToken(token: string): Promise<BillingP
   return rows.length ? mapPayment(rows[0]) : null;
 }
 
-async function applyPaidSubscription(userId: number, planId?: BillingPlanId): Promise<void> {
-  await setSubscriptionStatus(userId, "active");
+async function applyPaidSubscription(
+  userId: number,
+  planId?: BillingPlanId,
+  billingPeriod?: BillingPeriod,
+): Promise<void> {
+  const { activatePaidSubscription } = await import("./users.js");
+  await activatePaidSubscription(userId, billingPeriod === "annual" ? "annual" : "monthly");
   if (planId) {
     await setWorkspaceBillingPlan(userId, planId);
   }
@@ -296,7 +333,7 @@ export async function syncMoneyFusionPaymentByToken(
 
   const updated = rows.length ? mapPayment(rows[0]) : null;
   if (updated?.status === "paid") {
-    await applyPaidSubscription(updated.user_id, updated.plan_id);
+    await applyPaidSubscription(updated.user_id, updated.plan_id, updated.billing_period);
   }
   return updated;
 }

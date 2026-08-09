@@ -458,10 +458,10 @@ ${input.senderName}: ${input.incomingText}
   const inboundSystem = inbound ? SUPPORT_INBOUND_REPLY_ADDENDUM : undefined;
 
   const buildMessages = (extraSystem?: string): OpenAI.Chat.Completions.ChatCompletionMessageParam[] => [
-    { role: "system", content: WHATSAPP_REPLY_PROMPT },
+      { role: "system", content: WHATSAPP_REPLY_PROMPT },
     ...(inboundSystem ? [{ role: "system" as const, content: inboundSystem }] : []),
     ...(extraSystem ? [{ role: "system" as const, content: extraSystem }] : []),
-    { role: "user", content: userContent },
+      { role: "user", content: userContent },
   ];
 
   const callReply = async (extraSystem?: string) => {

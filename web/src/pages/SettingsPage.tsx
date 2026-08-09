@@ -155,7 +155,6 @@ export function SettingsPage() {
   const [billingBusy, setBillingBusy] = useState(false);
   const [billingPlan, setBillingPlan] = useState<PlanId>('pro');
   const [billingPeriod, setBillingPeriod] = useState<BillingPeriod>('monthly');
-  const [billingPhone, setBillingPhone] = useState('');
 
   const [disconnecting, setDisconnecting] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
@@ -198,26 +197,26 @@ export function SettingsPage() {
     if (!token) return;
     setTab('billing');
     setBillingBusy(true);
-    setBillingNote('Verification du paiement MoneyFusion en cours...');
+    setBillingNote('Vérification du paiement en cours…');
     void verifyMoneyFusionPayment(token)
       .then((res) => {
         if (res.payment.status === 'paid') {
-          setBillingNote('Paiement confirme. Ton abonnement est maintenant actif.');
+          setBillingNote('Paiement confirmé. Ton abonnement est maintenant actif.');
           void refreshUser();
           return;
         }
         if (res.payment.status === 'pending') {
-          setBillingNote('Paiement en attente de confirmation. Reessaye dans quelques secondes.');
+          setBillingNote('Paiement en attente de confirmation. Réessaie dans quelques secondes.');
           return;
         }
         if (res.payment.status === 'cancelled') {
-          setBillingNote('Paiement annule. Tu peux relancer le paiement.');
+          setBillingNote('Paiement annulé. Tu peux relancer le paiement.');
           return;
         }
-        setBillingNote('Paiement non valide. Verifie puis relance.');
+        setBillingNote('Paiement non validé. Vérifie puis relance.');
       })
       .catch((err) => {
-        setBillingNote(err instanceof Error ? err.message : 'Impossible de verifier le paiement.');
+        setBillingNote(err instanceof Error ? err.message : 'Impossible de vérifier le paiement.');
       })
       .finally(() => {
         setBillingBusy(false);
@@ -395,10 +394,49 @@ export function SettingsPage() {
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-100">Abonnement Klanvio</h2>
                 <p className="mt-1 text-xs leading-relaxed text-text-400">
-                  Choisissez votre palier · essai {TRIAL_DAYS} jours inclus · résiliable à tout
-                  moment
+                  Essai {TRIAL_DAYS} jours · carte bancaire ou Mobile Money · sans engagement
                 </p>
               </div>
+
+              {(() => {
+                const status = user?.subscription_status ?? 'trial';
+                const periodEnd = user?.subscription_period_end
+                  ? new Date(user.subscription_period_end)
+                  : null;
+                const statusLabel =
+                  status === 'active'
+                    ? 'Actif'
+                    : status === 'expired'
+                      ? 'Expiré'
+                      : 'Essai';
+                return (
+                  <div className="rounded-xl border border-black/10 bg-bg-0 px-3.5 py-3 text-xs text-text-400">
+                    <p>
+                      Statut :{' '}
+                      <strong className="font-semibold text-text-200">{statusLabel}</strong>
+                      {status === 'trial' && (
+                        <>
+                          {' '}
+                          · {user?.trial_conversations_used ?? 0}/20 conversations
+                        </>
+                      )}
+                    </p>
+                    {status === 'active' && periodEnd && !Number.isNaN(periodEnd.getTime()) && (
+                      <p className="mt-1">
+                        Valable jusqu&apos;au{' '}
+                        <strong className="font-semibold text-text-200">
+                          {periodEnd.toLocaleDateString('fr-FR')}
+                        </strong>
+                      </p>
+                    )}
+                    {status === 'expired' && (
+                      <p className="mt-1 text-amber-700">
+                        Renouvelez ci-dessous pour réactiver l&apos;envoi.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
 
               <div className="flex flex-wrap items-center gap-2.5">
                 <button
@@ -478,24 +516,20 @@ export function SettingsPage() {
                 type="button"
                 disabled={billingBusy}
                 onClick={() => {
-                  const cleanPhone = billingPhone.trim();
-                  if (cleanPhone.replace(/\D/g, '').length < 8) {
-                    setBillingNote('Entre un numero valide (minimum 8 chiffres) pour payer.');
-                    return;
-                  }
                   setBillingBusy(true);
                   setBillingNote(null);
                   void createMoneyFusionCheckout({
                     planId: billingPlan,
                     billingPeriod,
-                    customerPhone: cleanPhone,
                   })
                     .then((res) => {
                       window.location.href = res.checkoutUrl;
                     })
                     .catch((err) => {
                       setBillingNote(
-                        err instanceof Error ? err.message : 'Impossible de demarrer le paiement.',
+                        err instanceof Error
+                          ? err.message
+                          : 'Impossible de démarrer le paiement.',
                       );
                     })
                     .finally(() => {
@@ -508,22 +542,12 @@ export function SettingsPage() {
                 <span className="truncate">
                   {billingBusy
                     ? 'Redirection…'
-                    : `Continuer — ${formatEuro(planPrice(getPlan(billingPlan), billingPeriod))}${periodSuffix(billingPeriod)}`}
+                    : `${user?.subscription_status === 'expired' || user?.subscription_status === 'active' ? 'Renouveler' : 'Payer'} — ${formatEuro(planPrice(getPlan(billingPlan), billingPeriod))}${periodSuffix(billingPeriod)}`}
                 </span>
               </button>
-
-              <label className="block">
-                <span className="mb-1 block text-xs text-text-400">
-                  Numero Mobile Money (MoneyFusion)
-                </span>
-                <input
-                  type="tel"
-                  value={billingPhone}
-                  onChange={(e) => setBillingPhone(e.target.value)}
-                  placeholder="Ex: 0700000000"
-                  className="w-full rounded-xl border border-black/10 bg-bg-0 px-3 py-2 text-sm text-text-100 outline-none transition focus:border-brand"
-                />
-              </label>
+              <p className="text-center text-[11px] text-text-500">
+                Paiement sécurisé · carte Visa/Mastercard ou Mobile Money
+              </p>
 
               {billingNote && (
                 <p className="break-words rounded-xl border border-brand/20 bg-brand/5 px-3 py-2.5 text-xs leading-relaxed text-text-400">
