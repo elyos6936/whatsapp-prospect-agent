@@ -874,10 +874,13 @@ try {
   void watchWhatsAppConnections(listActiveUserIds).catch(() => {});
 
   const { expireDueSubscriptions } = await import("./users.js");
+  const { sendDueSubscriptionRenewalReminders } = await import("./subscription-reminders.js");
   setInterval(() => {
     void expireDueSubscriptions().catch(() => {});
+    void sendDueSubscriptionRenewalReminders().catch(() => {});
   }, 15 * 60_000);
   void expireDueSubscriptions().catch(() => {});
+  void sendDueSubscriptionRenewalReminders().catch(() => {});
 } catch (err) {
   app.log.error(err);
   process.exit(1);

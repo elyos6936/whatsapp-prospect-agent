@@ -29,6 +29,10 @@ export interface UserRecord {
   trial_conversations_used: number;
   trial_started_at: string | null;
   subscription_period_end: string | null;
+  /** Dernière activation / renouvellement payé. */
+  subscription_activated_at: string | null;
+  /** Clé anti-doublon rappels email, ex. `2026-09-08T00:00:00.000Z#7`. */
+  subscription_renewal_reminder_key: string | null;
   last_weekly_report_week: string | null;
   last_reported_outreach_level: number | null;
   account_status: AccountStatus;
@@ -64,6 +68,12 @@ function mapUser(row: Record<string, unknown>): UserRecord {
     trial_started_at: row.trial_started_at != null ? String(row.trial_started_at) : null,
     subscription_period_end:
       row.subscription_period_end != null ? String(row.subscription_period_end) : null,
+    subscription_activated_at:
+      row.subscription_activated_at != null ? String(row.subscription_activated_at) : null,
+    subscription_renewal_reminder_key:
+      row.subscription_renewal_reminder_key != null
+        ? String(row.subscription_renewal_reminder_key)
+        : null,
     last_weekly_report_week:
       row.last_weekly_report_week != null ? String(row.last_weekly_report_week) : null,
     last_reported_outreach_level:
@@ -104,6 +114,7 @@ export function publicUser(user: UserRecord) {
     trial_conversations_used: user.trial_conversations_used,
     trial_started_at: user.trial_started_at,
     subscription_period_end: user.subscription_period_end,
+    subscription_activated_at: user.subscription_activated_at,
     account_status: user.account_status,
     business: {
       ownerName: user.business_owner_name,
@@ -169,6 +180,31 @@ export async function ensureUserOutreachSchema(): Promise<void> {
     ALTER TABLE users
       ADD COLUMN IF NOT EXISTS subscription_period_end TIMESTAMPTZ
   `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS subscription_activated_at TIMESTAMPTZ
+  `;
+  await sql`
+    ALTER TABLE users
+      ADD COLUMN IF NOT EXISTS subscription_renewal_reminder_key TEXT
+  `;
+  // Backfill date d'activation depuis le dernier paiement confirmé.
+  try {
+    await sql`
+      UPDATE users u
+      SET subscription_activated_at = p.paid_at
+      FROM (
+        SELECT DISTINCT ON (user_id) user_id, paid_at
+        FROM billing_payments
+        WHERE status = 'paid' AND paid_at IS NOT NULL
+        ORDER BY user_id, paid_at DESC
+      ) p
+      WHERE u.id = p.user_id
+        AND u.subscription_activated_at IS NULL
+    `;
+  } catch {
+    /* billing_payments peut ne pas exister encore au boot */
+  }
   // Registre anti-abus : 1 WhatsApp = 1 compte Klanvio
   const { ensureWhatsAppPhoneRegistrySchema } = await import("./whatsapp-phone-registry.js");
   await ensureWhatsAppPhoneRegistrySchema();
@@ -197,6 +233,7 @@ export async function createUser(input: {
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -229,6 +266,7 @@ export async function createGoogleUser(input: {
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -251,6 +289,7 @@ export async function linkGoogleAccount(
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -268,6 +307,7 @@ export async function getUserByEmail(
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE email = ${email.trim().toLowerCase()}
@@ -289,6 +329,7 @@ export async function getUserByGoogleSub(googleSub: string): Promise<UserRecord 
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE google_sub = ${googleSub}
@@ -305,6 +346,7 @@ export async function getUserById(id: number): Promise<UserRecord | null> {
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
     FROM users WHERE id = ${id}
@@ -363,6 +405,7 @@ export async function completeOnboarding(
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -393,6 +436,7 @@ export async function markGoogleContactsPromptDone(userId: number): Promise<User
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -455,6 +499,7 @@ export async function setSubscriptionStatus(
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -479,7 +524,9 @@ export async function activatePaidSubscription(
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE users SET
       subscription_status = 'active',
-      subscription_period_end = ${periodEnd.toISOString()}
+      subscription_period_end = ${periodEnd.toISOString()},
+      subscription_activated_at = NOW(),
+      subscription_renewal_reminder_key = NULL
     WHERE id = ${userId}
     RETURNING
       id, email, name, avatar_url, onboarding_completed, onboarding_answers,
@@ -487,6 +534,7 @@ export async function activatePaidSubscription(
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -508,6 +556,7 @@ export async function setSubscriptionPeriodEnd(
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;
@@ -522,7 +571,9 @@ export async function resetTrialSubscription(userId: number): Promise<UserRecord
       subscription_status = 'trial',
       trial_conversations_used = 0,
       trial_started_at = NOW(),
-      subscription_period_end = NULL
+      subscription_period_end = NULL,
+      subscription_activated_at = NULL,
+      subscription_renewal_reminder_key = NULL
     WHERE id = ${userId}
     RETURNING
       id, email, name, avatar_url, onboarding_completed, onboarding_answers,
@@ -530,6 +581,7 @@ export async function resetTrialSubscription(userId: number): Promise<UserRecord
       google_contacts_prompt_done,
       total_messages_sent, outreach_level, subscription_status, trial_conversations_used,
       trial_started_at, subscription_period_end,
+      subscription_activated_at, subscription_renewal_reminder_key,
       last_weekly_report_week, last_reported_outreach_level, created_at,
       account_status, suspended_at, suspended_reason, deleted_at
   `;

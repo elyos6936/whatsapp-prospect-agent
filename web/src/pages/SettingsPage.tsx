@@ -393,9 +393,6 @@ export function SettingsPage() {
             <div className="panel min-w-0 space-y-5 overflow-hidden p-4 sm:p-5">
               <div className="min-w-0">
                 <h2 className="text-sm font-semibold text-text-100">Abonnement Klanvio</h2>
-                <p className="mt-1 text-xs leading-relaxed text-text-400">
-                  Essai {TRIAL_DAYS} jours · carte bancaire ou Mobile Money · sans engagement
-                </p>
               </div>
 
               {(() => {
@@ -403,37 +400,134 @@ export function SettingsPage() {
                 const periodEnd = user?.subscription_period_end
                   ? new Date(user.subscription_period_end)
                   : null;
+                const activatedAt = user?.subscription_activated_at
+                  ? new Date(user.subscription_activated_at)
+                  : null;
+                const trialStart = user?.trial_started_at
+                  ? new Date(user.trial_started_at)
+                  : null;
+                const trialEnd =
+                  trialStart && !Number.isNaN(trialStart.getTime())
+                    ? new Date(trialStart.getTime() + TRIAL_DAYS * 86_400_000)
+                    : null;
+
+                const fmtDate = (d: Date | null) => {
+                  if (!d || Number.isNaN(d.getTime())) return '—';
+                  return d.toLocaleDateString('fr-FR', {
+                    day: 'numeric',
+                    month: 'long',
+                    year: 'numeric',
+                  });
+                };
+                const daysLeft = (end: Date | null) => {
+                  if (!end || Number.isNaN(end.getTime())) return null;
+                  return Math.max(
+                    0,
+                    Math.ceil((end.getTime() - Date.now()) / 86_400_000),
+                  );
+                };
+
                 const statusLabel =
                   status === 'active'
                     ? 'Actif'
                     : status === 'expired'
                       ? 'Expiré'
                       : 'Essai';
+                const statusTone =
+                  status === 'active'
+                    ? 'text-emerald-700 bg-emerald-500/10 border-emerald-500/20'
+                    : status === 'expired'
+                      ? 'text-amber-800 bg-amber-500/10 border-amber-500/25'
+                      : 'text-brand bg-brand/10 border-brand/20';
+
+                const endForCountdown =
+                  status === 'active'
+                    ? periodEnd
+                    : status === 'trial'
+                      ? trialEnd
+                      : periodEnd;
+                const remaining = daysLeft(endForCountdown);
+
+                const rows: Array<{ label: string; value: string }> = [];
+                if (status === 'active') {
+                  rows.push({
+                    label: 'Abonnement pris le',
+                    value: fmtDate(activatedAt ?? trialStart),
+                  });
+                  rows.push({
+                    label: 'Prochaine échéance',
+                    value: fmtDate(periodEnd),
+                  });
+                  if (remaining != null) {
+                    rows.push({
+                      label: 'Jours restants',
+                      value:
+                        remaining === 0
+                          ? "Expire aujourd'hui"
+                          : remaining === 1
+                            ? '1 jour'
+                            : `${remaining} jours`,
+                    });
+                  }
+                } else if (status === 'trial') {
+                  rows.push({ label: "Début de l'essai", value: fmtDate(trialStart) });
+                  rows.push({ label: "Fin de l'essai", value: fmtDate(trialEnd) });
+                  if (remaining != null) {
+                    rows.push({
+                      label: 'Jours restants',
+                      value:
+                        remaining === 0
+                          ? "Expire aujourd'hui"
+                          : remaining === 1
+                            ? '1 jour'
+                            : `${remaining} jours`,
+                    });
+                  }
+                  rows.push({
+                    label: 'Conversations',
+                    value: `${user?.trial_conversations_used ?? 0} / 20`,
+                  });
+                } else {
+                  rows.push({
+                    label: 'Expiré le',
+                    value: fmtDate(periodEnd ?? trialEnd),
+                  });
+                  rows.push({
+                    label: 'Action',
+                    value: 'Renouvelle ci-dessous pour réactiver',
+                  });
+                }
+
                 return (
-                  <div className="rounded-xl border border-black/10 bg-bg-0 px-3.5 py-3 text-xs text-text-400">
-                    <p>
-                      Statut :{' '}
-                      <strong className="font-semibold text-text-200">{statusLabel}</strong>
-                      {status === 'trial' && (
-                        <>
-                          {' '}
-                          · {user?.trial_conversations_used ?? 0}/20 conversations
-                        </>
+                  <div className="rounded-xl border border-black/10 bg-bg-0 px-3.5 py-3.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span
+                        className={cn(
+                          'inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-semibold',
+                          statusTone,
+                        )}
+                      >
+                        {statusLabel}
+                      </span>
+                      {status === 'active' && remaining != null && remaining <= 7 && (
+                        <span className="text-[11px] font-medium text-amber-700">
+                          Renouvellement bientôt
+                        </span>
                       )}
-                    </p>
-                    {status === 'active' && periodEnd && !Number.isNaN(periodEnd.getTime()) && (
-                      <p className="mt-1">
-                        Valable jusqu&apos;au{' '}
-                        <strong className="font-semibold text-text-200">
-                          {periodEnd.toLocaleDateString('fr-FR')}
-                        </strong>
-                      </p>
-                    )}
-                    {status === 'expired' && (
-                      <p className="mt-1 text-amber-700">
-                        Renouvelez ci-dessous pour réactiver l&apos;envoi.
-                      </p>
-                    )}
+                    </div>
+                    <dl className="mt-3 space-y-2">
+                      {rows.map((row) => (
+                        <div
+                          key={row.label}
+                          className="flex items-baseline justify-between gap-3 text-xs"
+                        >
+                          <dt className="shrink-0 text-text-500">{row.label}</dt>
+                          <dd className="min-w-0 text-right font-medium text-text-200">
+                            {row.value}
+                          </dd>
+                        </div>
+                      ))}
+                    </dl>
                   </div>
                 );
               })()}

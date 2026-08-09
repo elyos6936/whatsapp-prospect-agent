@@ -17,6 +17,7 @@ export interface AuthUser {
   trial_conversations_used?: number;
   trial_started_at?: string | null;
   subscription_period_end?: string | null;
+  subscription_activated_at?: string | null;
   business: { ownerName: string; offer: string; price: string };
   whatsapp?: { connected: boolean; state: string; message: string };
   workspace?: {
