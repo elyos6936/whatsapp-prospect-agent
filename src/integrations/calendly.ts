@@ -455,10 +455,18 @@ export async function fetchCalendlyContacts(
     const res = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    if (res.status === 401 || res.status === 403) {
+    if (res.status === 401) {
       throw new CalendlyAuthError(
-        "Accès Contacts refusé. Reconnecte Calendly (scope contacts:read).",
+        "Token Calendly invalide ou révoqué.",
         "revoked",
+      );
+    }
+    // 403 = scope/plan Contacts — ne pas traiter comme révocation OAuth
+    // (sinon la carte Réglages efface toute la connexion après un Connect réussi).
+    if (res.status === 403) {
+      throw new CalendlyAuthError(
+        "Carnet Contacts indisponible (scope contacts:read manquant ou non accordé). Les RDV restent utilisables.",
+        "http",
       );
     }
     if (!res.ok) {

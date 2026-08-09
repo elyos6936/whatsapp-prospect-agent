@@ -387,8 +387,8 @@ export async function registerIntegrationRoutes(app: FastifyInstance): Promise<v
       });
       return { contacts: data.contacts, suggestedLeads: data.suggestedLeads };
     } catch (err) {
+      // Un échec Contacts ne doit PAS supprimer l’intégration (RDV / event types OK).
       if (err instanceof CalendlyAuthError && err.code === "revoked") {
-        await deleteUserIntegration(userId, CALENDLY_PROVIDER);
         return reply.status(409).send({
           error: CALENDLY_REAUTH_MESSAGE,
           code: "calendly_reauth_required",

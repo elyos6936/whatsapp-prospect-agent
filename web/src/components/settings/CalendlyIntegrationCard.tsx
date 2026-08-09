@@ -20,6 +20,7 @@ type Props = {
 type BundleCache = {
   eventTypes: CalendlyEventTypeSummary[];
   contacts: CalendlyContactSummary[];
+  contactsNote: string | null;
   fetchedAt: number;
 };
 const cache = new Map<string, BundleCache>();
@@ -33,6 +34,7 @@ export function CalendlyIntegrationCard({ flash }: Props) {
   const [disconnecting, setDisconnecting] = useState(false);
   const [eventTypes, setEventTypes] = useState<CalendlyEventTypeSummary[]>([]);
   const [contacts, setContacts] = useState<CalendlyContactSummary[]>([]);
+  const [contactsNote, setContactsNote] = useState<string | null>(null);
   const [listLoading, setListLoading] = useState(false);
   const [fb, setFb] = useState<{ type: 'ok' | 'err'; text: string } | null>(flash ?? null);
   const loadedRef = useRef(false);
@@ -59,6 +61,7 @@ export function CalendlyIntegrationCard({ flash }: Props) {
   const applyBundle = (bundle: BundleCache) => {
     setEventTypes(bundle.eventTypes);
     setContacts(bundle.contacts);
+    setContactsNote(bundle.contactsNote);
   };
 
   const loadLists = useCallback(
@@ -72,13 +75,27 @@ export function CalendlyIntegrationCard({ flash }: Props) {
       setListLoading(true);
       setFb(null);
       try {
-        const [et, ct] = await Promise.all([
+        const [et, ctResult] = await Promise.all([
           fetchCalendlyEventTypes(),
-          fetchCalendlyContactsList(),
+          fetchCalendlyContactsList()
+            .then((data) => ({ ok: true as const, data }))
+            .catch((err: unknown) => {
+              const msg =
+                err instanceof Error ? err.message : 'Contacts Calendly indisponibles.';
+              // Soft-fail : ne pas déconnecter pour un échec Contacts seul
+              if (/contacts:read|Contacts indisponible|carnet Contacts/i.test(msg)) {
+                return { ok: false as const, message: msg };
+              }
+              if (/Reconnecte Calendly|révoqu|expirée|calendly_reauth/i.test(msg)) {
+                throw err;
+              }
+              return { ok: false as const, message: msg };
+            }),
         ]);
         const bundle: BundleCache = {
           eventTypes: et.eventTypes,
-          contacts: ct.contacts,
+          contacts: ctResult.ok ? ctResult.data.contacts : [],
+          contactsNote: ctResult.ok ? null : ctResult.message,
           fetchedAt: Date.now(),
         };
         cache.set(key, bundle);
@@ -87,9 +104,10 @@ export function CalendlyIntegrationCard({ flash }: Props) {
         const msg = err instanceof Error ? err.message : 'Erreur chargement Calendly.';
         setEventTypes([]);
         setContacts([]);
+        setContactsNote(null);
         cache.delete(key);
         setFb({ type: 'err', text: msg });
-        if (/Reconnecte Calendly|révoqu|expirée|calendly_reauth|contacts:read/i.test(msg)) {
+        if (/Reconnecte Calendly|révoqu|expirée|calendly_reauth/i.test(msg)) {
           loadedRef.current = false;
           await loadStatus();
         }
@@ -144,6 +162,7 @@ export function CalendlyIntegrationCard({ flash }: Props) {
       cache.delete('calendly');
       setEventTypes([]);
       setContacts([]);
+      setContactsNote(null);
       loadedRef.current = false;
       setStatus({
         provider: 'calendly',
@@ -276,11 +295,11 @@ export function CalendlyIntegrationCard({ flash }: Props) {
               key: c.uri,
               label: [c.name || 'Sans nom', c.email, c.phone].filter(Boolean).join(' · '),
             })),
-            'Aucun contact (scope contacts:read ou carnet vide).',
+            contactsNote || 'Aucun contact (carnet vide ou scope contacts:read).',
           )}
           <p className="mt-3 text-[11px] leading-relaxed text-text-500">
-            L’agent lit les RDV / invitees et le carnet Contacts (téléphones → leads). Si Contacts
-            échoue : Déconnecter puis Connecter pour le scope contacts:read.
+            L’agent lit les RDV / invitees (et Contacts si le scope est accordé). Un échec Contacts
+            n’empêche pas d’utiliser les rendez-vous.
           </p>
         </>
       )}

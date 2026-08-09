@@ -172,6 +172,9 @@ export async function getValidGoogleContactsToken(userId: number): Promise<strin
   return getValidGoogleTokenForProvider(userId, GOOGLE_CONTACTS_PROVIDER);
 }
 
+/** Évite 2 refresh parallèles (rotation refresh token → invalid_grant → déconnexion). */
+const calendlyRefreshInflight = new Map<number, Promise<string>>();
+
 /** Access token Calendly valide (refresh ~2h + rotation du refresh token). */
 export async function getValidCalendlyAccessToken(userId: number): Promise<string> {
   const row = await getUserIntegration(userId, CALENDLY_PROVIDER);
@@ -190,28 +193,38 @@ export async function getValidCalendlyAccessToken(userId: number): Promise<strin
     throw new CalendlyAuthError(CALENDLY_REAUTH_MESSAGE, "revoked");
   }
 
-  try {
-    const tokens = await refreshCalendlyToken(refreshToken);
-    await upsertUserIntegration({
-      userId,
-      provider: CALENDLY_PROVIDER,
-      accessToken: tokens.access_token,
-      refreshToken: tokens.refresh_token ?? refreshToken,
-      expiresInSeconds: tokens.expires_in ?? null,
-      scopes: CALENDLY_SCOPES.join(" "),
-      providerAccountId: row.provider_account_id,
-      providerEmail: row.provider_email,
-    });
-    return tokens.access_token;
-  } catch (err) {
-    if (err instanceof CalendlyAuthError && err.code === "revoked") {
+  const inflight = calendlyRefreshInflight.get(userId);
+  if (inflight) return inflight;
+
+  const refreshJob = (async () => {
+    try {
+      const tokens = await refreshCalendlyToken(refreshToken);
+      await upsertUserIntegration({
+        userId,
+        provider: CALENDLY_PROVIDER,
+        accessToken: tokens.access_token,
+        refreshToken: tokens.refresh_token ?? refreshToken,
+        expiresInSeconds: tokens.expires_in ?? null,
+        scopes: CALENDLY_SCOPES.join(" "),
+        providerAccountId: row.provider_account_id,
+        providerEmail: row.provider_email,
+      });
+      return tokens.access_token;
+    } catch (err) {
+      if (err instanceof CalendlyAuthError && err.code === "revoked") {
+        await deleteUserIntegration(userId, CALENDLY_PROVIDER);
+        throw new CalendlyAuthError(CALENDLY_REAUTH_MESSAGE, "revoked");
+      }
+      if (expiresAt > Date.now()) return accessToken;
       await deleteUserIntegration(userId, CALENDLY_PROVIDER);
       throw new CalendlyAuthError(CALENDLY_REAUTH_MESSAGE, "revoked");
+    } finally {
+      calendlyRefreshInflight.delete(userId);
     }
-    if (expiresAt > Date.now()) return accessToken;
-    await deleteUserIntegration(userId, CALENDLY_PROVIDER);
-    throw new CalendlyAuthError(CALENDLY_REAUTH_MESSAGE, "revoked");
-  }
+  })();
+
+  calendlyRefreshInflight.set(userId, refreshJob);
+  return refreshJob;
 }
 
 /** Clé API Tally stockée chiffrée (pas d'expiry OAuth). */
