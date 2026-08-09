@@ -55,7 +55,16 @@ const PLAN_PRICE_EUR: Record<BillingPlanId, Record<BillingPeriod, number>> = {
 /** Parité fixe EUR → XOF (FCFA) — FusionPay attend un montant en francs (≥ 200 F). */
 const EUR_TO_XOF = 655.957;
 
+/**
+ * TEMP test : forcer le checkout à 202 F (au-dessus du min Money Fusion).
+ * Remettre à `null` pour facturer le vrai tarif EUR→XOF.
+ */
+const FORCE_CHECKOUT_AMOUNT_XOF: number | null = 202;
+
 function eurToXof(amountEur: number): number {
+  if (FORCE_CHECKOUT_AMOUNT_XOF != null) {
+    return Math.max(200, Math.floor(FORCE_CHECKOUT_AMOUNT_XOF));
+  }
   const xof = Math.round(Number(amountEur) * EUR_TO_XOF);
   // Garde-fou au-dessus du minimum Money Fusion (200 F).
   return Math.max(200, xof);
