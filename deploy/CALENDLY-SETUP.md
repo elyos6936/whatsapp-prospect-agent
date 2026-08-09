@@ -26,7 +26,9 @@ Scopes demandés par Klanvio : `users:read` · `event_types:read` · `scheduled_
 
 **Important** : après ajout de scopes, l’utilisateur doit **Déconnecter puis Connecter** Calendly dans Réglages pour re-consentir.
 
-## 2. Variables Hostinger (`.env`)
+## 2. Variables Hostinger (Docker)
+
+Dans le panel **Environment** Hostinger **et** dans `docker-compose.yml` → `environment:` (sinon le conteneur ignore les vars) :
 
 ```env
 CALENDLY_CLIENT_ID=...
@@ -36,7 +38,13 @@ APP_URL=https://www.klanvio.com
 TOKENS_ENCRYPTION_KEY=...   # déjà présent pour Typeform
 ```
 
-Puis rebuild / redéploie l’API Hostinger.
+Puis rebuild le conteneur :
+
+```bash
+docker compose up -d --build klanvio-api
+# Vérifier (sans afficher le secret) :
+docker exec klanvio-api printenv CALENDLY_CLIENT_ID
+```
 
 ## 3. Test
 
