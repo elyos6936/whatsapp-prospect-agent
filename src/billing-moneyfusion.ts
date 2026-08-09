@@ -52,6 +52,15 @@ const PLAN_PRICE_EUR: Record<BillingPlanId, Record<BillingPeriod, number>> = {
   business: { monthly: 20, annual: 200 },
 };
 
+/** Parité fixe EUR → XOF (FCFA) — FusionPay attend un montant en francs (≥ 200 F). */
+const EUR_TO_XOF = 655.957;
+
+function eurToXof(amountEur: number): number {
+  const xof = Math.round(Number(amountEur) * EUR_TO_XOF);
+  // Garde-fou au-dessus du minimum Money Fusion (200 F).
+  return Math.max(200, xof);
+}
+
 let billingSchemaReady = false;
 
 export async function ensureBillingSchema(): Promise<void> {
@@ -199,12 +208,14 @@ export async function createMoneyFusionCheckout(input: {
     customerPhone = "01010101";
   }
 
+  // Affichage SaaS en € ; API Money Fusion / Mobile Money en XOF (FCFA).
+  const priceXof = eurToXof(price);
   const payload = {
-    totalPrice: price,
+    totalPrice: priceXof,
     article: [
       {
-        name: planLabel(input.planId, input.billingPeriod),
-        price,
+        name: `${planLabel(input.planId, input.billingPeriod)} — ${price}€`,
+        price: priceXof,
         quantity: 1,
       },
     ],
@@ -214,6 +225,8 @@ export async function createMoneyFusionCheckout(input: {
         orderRef,
         planId: input.planId,
         billingPeriod: input.billingPeriod,
+        amountEur: price,
+        amountXof: priceXof,
       },
     ],
     numeroSend: customerPhone,
