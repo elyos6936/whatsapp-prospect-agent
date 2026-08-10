@@ -8,6 +8,7 @@
     "start": "tsx src/server.ts",
     "build": "tsc --noEmit",
     "build:ops": "npm --prefix admin install && npm --prefix admin run build",
+    "build:support": "npm --prefix support install && npm --prefix support run build",
     "setup": "npm install",
     "tunnel": "npx cloudflared tunnel --url http://localhost:3000",
     "db:migrate": "node scripts/migrate-sqlite-to-supabase.mjs",

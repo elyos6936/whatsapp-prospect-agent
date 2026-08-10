@@ -632,7 +632,7 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   await requireEvolutionConnected(userId, "le chargement des membres du groupe");
 
   const trialGate = await tryConsumeTrialGroupExtract(userId, groupId);
-  if (!trialGate.ok) {
+  if (trialGate.ok === false) {
     await failAutomationNoTargets(userId, automationId, trialGate.reason);
   }
 

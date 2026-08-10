@@ -53,6 +53,7 @@ import { registerIntegrationRoutes } from "./integration-routes.js";
 import { registerBillingRoutes } from "./billing-routes.js";
 import { registerTeamRoutes } from "./team-routes.js";
 import { registerCampaignMemoryRoutes } from "./campaign-memory-routes.js";
+import { registerSupportRoutes } from "./support-routes.js";
 import {
   ensureCampaignMemoriesSchema,
   getCampaignMemory,
@@ -143,10 +144,35 @@ app.get("/ops/*", async (request, reply) => {
   return reply.sendFile("ops/index.html");
 });
 
+/** SPA support client — api.klanvio.com/support */
+app.get("/support", async (_request, reply) => {
+  reply.header("X-Robots-Tag", "noindex, nofollow");
+  return reply.sendFile("support/index.html");
+});
+app.get("/support/", async (_request, reply) => {
+  reply.header("X-Robots-Tag", "noindex, nofollow");
+  return reply.sendFile("support/index.html");
+});
+app.get("/support/*", async (request, reply) => {
+  reply.header("X-Robots-Tag", "noindex, nofollow");
+  const urlPath = (request.url.split("?")[0] ?? "").replace(/^\/support\/?/, "");
+  if (urlPath && !urlPath.includes("..") && /\.[a-zA-Z0-9]+$/.test(urlPath)) {
+    return reply.sendFile(`support/${urlPath}`);
+  }
+  return reply.sendFile("support/index.html");
+});
+
 app.addHook("onSend", async (request, reply, payload) => {
   const path = request.url.split("?")[0] ?? "";
-  if (path.startsWith("/ops") || path.startsWith("/api/admin")) {
-    reply.header("X-Robots-Tag", "noindex, nofollow");
+  if (
+    path.startsWith("/ops") ||
+    path.startsWith("/support") ||
+    path.startsWith("/api/admin") ||
+    path.startsWith("/api/support/tickets")
+  ) {
+    if (!path.startsWith("/api/support/tickets/mine")) {
+      reply.header("X-Robots-Tag", "noindex, nofollow");
+    }
   }
   return payload;
 });
@@ -842,6 +868,7 @@ await registerFeatureRoutes(app);
 await registerIntegrationRoutes(app);
 await registerBillingRoutes(app);
 await registerTeamRoutes(app);
+await registerSupportRoutes(app);
 
 try {
   await app.listen({ port: config.port, host: "0.0.0.0" });

@@ -1053,4 +1053,60 @@ export async function postSimulationPreview(input: {
   });
 }
 
+export type SupportTicketStatus = 'open' | 'pending' | 'done';
+export type SupportMessageRole = 'user' | 'assistant' | 'ops' | 'system';
+
+export type SupportTicketDto = {
+  id: number;
+  user_id: number;
+  status: SupportTicketStatus;
+  subject: string;
+  summary: string | null;
+  handoff_reason: string | null;
+  client_phone: string | null;
+  last_message_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SupportMessageDto = {
+  id: number;
+  ticket_id: number;
+  role: SupportMessageRole;
+  content: string;
+  image_urls: string[];
+  created_at: string;
+};
+
+export async function fetchSupportThread(): Promise<{
+  ticket: SupportTicketDto;
+  messages: SupportMessageDto[];
+  tickets: SupportTicketDto[];
+}> {
+  return request('/api/support/thread');
+}
+
+export async function sendSupportChat(body: {
+  message?: string;
+  imageUrls?: string[];
+  ticketId?: number;
+}): Promise<{
+  ticket: SupportTicketDto;
+  messages: SupportMessageDto[];
+  assistantMessage: SupportMessageDto;
+  escalated: boolean;
+}> {
+  return request('/api/support/chat', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function fetchMySupportTicket(id: number): Promise<{
+  ticket: SupportTicketDto;
+  messages: SupportMessageDto[];
+}> {
+  return request(`/api/support/tickets/mine/${id}`);
+}
+
 export { ApiError };

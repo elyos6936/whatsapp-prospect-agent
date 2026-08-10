@@ -304,6 +304,18 @@ export const config = {
   adminPassword: process.env.ADMIN_PASSWORD?.trim() || "",
   /** Optionnel : bcrypt hash ; prioritaire sur ADMIN_PASSWORD si défini. */
   adminPasswordHash: process.env.ADMIN_PASSWORD_HASH?.trim() || "",
+  /**
+   * UserId dont l’instance Evolution envoie les notifs support + réponses ops.
+   * Optionnel : défaut = compte plateforme historique (id 1 / automax-prospection).
+   */
+  supportWhatsAppUserId: (() => {
+    const raw = process.env.SUPPORT_WHATSAPP_USER_ID?.trim();
+    if (!raw) return 1;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 1;
+  })(),
+  /** Numéro humain support (notif handoff). Optionnel — défaut +22969360940. */
+  supportHandoffPhone: process.env.SUPPORT_HANDOFF_PHONE?.trim() || "+22969360940",
   /** URL API MoneyFusion (lien application généré dans leur console). */
   moneyFusionApiUrl: process.env.MONEYFUSION_API_URL?.trim() || "",
   /** URL de vérification d'un paiement : `${base}/{token}`. */

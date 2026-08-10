@@ -28,7 +28,14 @@ function isPublicRoute(url: string): boolean {
 /** Routes ops : auth dédiée (role=admin), pas le JWT client. */
 function isAdminApiRoute(url: string): boolean {
   const path = url.split("?")[0] ?? url;
-  return path.startsWith("/api/admin/");
+  if (path.startsWith("/api/admin/")) return true;
+  // Inbox support ops — requireAdmin sur les handlers
+  if (path === "/api/support/tickets" || path.startsWith("/api/support/tickets/")) {
+    // Routes user : /api/support/tickets/mine…
+    if (path.startsWith("/api/support/tickets/mine")) return false;
+    return true;
+  }
+  return false;
 }
 
 export async function hashPassword(password: string): Promise<string> {
