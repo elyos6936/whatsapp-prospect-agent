@@ -143,9 +143,8 @@ const FORCE_SIMULATION_NUDGE =
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
   "Le 1er tour « toi » = l'accroche validée (initial_message) — même texte / style qu'il a validé " +
   "(Attention recommandé ; si risque accepté, garde SON format même avec prix/lien). " +
-  "Tours suivants : exécute le PROCESS de la MÉMOIRE liée (ordre des étapes — ex. oui → offre → inscription → lien). " +
-  "DIRECT et précis ; léger créatif sur les mots seulement. INTERDIT « comment finaliser » / tourner en rond. " +
-  "Identité = prénom + pourquoi ; vouvoiement sauf si la mémoire impose autre chose. " +
+  "Les tours suivants : même mission / pacing (pousser l'intérêt, pas de « Ah super » / « Super. » vide), vouvoiement, sans prénom du prospect à tout va. " +
+  "Identité = prénom + pourquoi ; sur oui/ok = question ou détail nouveau (pas pitch immédiat sauf si déjà dans l'opener validé). " +
   "La simulation s'affiche UNIQUEMENT sur le **téléphone à droite** — INTERDIT de recopier le fil Toi → / Prospect → dans ta réponse chat. " +
   "Après l'outil : confirme en 1–2 phrases courtes (le footer de l'outil guide déjà le feedback). " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +

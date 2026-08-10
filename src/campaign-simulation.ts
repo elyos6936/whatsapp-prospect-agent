@@ -1,6 +1,5 @@
 /**
  * Simulation campagne : formatage + génération directe (sans tool calling).
- * Fidélité mémoire = process prioritaire (variable par campagne).
  */
 import type OpenAI from "openai";
 import { config } from "./config.js";
@@ -13,10 +12,6 @@ import {
   resolveLlmRoleModel,
   resolveLlmRoleProvider,
 } from "./llm.js";
-import {
-  assessSimulationMemoryFidelity,
-  extractUrlsFromText,
-} from "./simulation-memory-fidelity.js";
 
 export type SimulationTurn = {
   speaker: "toi" | "prospect";
@@ -86,6 +81,7 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
   const trimmed = content.trim();
   if (!trimmed) return null;
 
+  // JSON direct ou dans un fence
   const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
   const jsonCandidate = fence?.[1]?.trim() || trimmed;
   try {
@@ -97,6 +93,7 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
     /* fall through → lignes Toi → */
   }
 
+  // Tentative : extraire un objet JSON imbriqué dans du texte
   const brace = /\{[\s\S]*"turns"\s*:\s*\[[\s\S]*\][\s\S]*\}/.exec(trimmed);
   if (brace) {
     try {
@@ -130,12 +127,50 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
   return turns.length >= 3 && turns.length <= 4 ? turns : null;
 }
 
-async function runSimCompletion(
+/**
+ * Génère la simulation sans outils (JSON direct).
+ */
+export async function generateCampaignSimulationDirect(
   client: OpenAI,
-  system: string,
-  user: string,
-  temperature: number
-): Promise<SimulationTurn[] | null> {
+  opts: {
+    businessContext: string;
+    recentTranscript: string;
+    /** Accroche validée — le 1er tour « toi » doit coller à ce texte (légère reformulation OK). */
+    approvedOpener?: string | null;
+    /** Guide / mémoire / prix / lien — même inputs que le live. */
+    campaignBrief?: string | null;
+  }
+): Promise<{ display: string; turns: SimulationTurn[] } | null> {
+  const openerRule = opts.approvedOpener?.trim()
+    ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 280)} » — micro-variation de mots OK, PAS de nouvel angle. Si elle contient prix/lien, conserve-les (l'utilisateur les a validés).\n`
+    : `- Le 1er message « toi » = accroche A.I.D.A. Attention recommandée (1-2 phrases, sans prix/lien/pitch, vouvoiement, sans prénom du prospect)\n`;
+
+  const brief = opts.campaignBrief?.trim()
+    ? `\n## Cadre campagne (OBLIGATOIRE — même cadre que les réponses live)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
+    : "";
+
+  const system =
+    "Tu rédiges une simulation WhatsApp courte pour valider une campagne Klanvio.\n" +
+    "Cette simulation SERA la trajectoire suivie ensuite avec les VRAIS prospects — sois fidèle au cadre.\n" +
+    "Réponds UNIQUEMENT avec un JSON valide de la forme :\n" +
+    '{"turns":[{"speaker":"toi","text":"..."},{"speaker":"prospect","name":"Prospect","text":"..."},{"speaker":"toi","text":"..."}]}\n' +
+    "Règles strictes :\n" +
+    "- Exactement 6 ou 7 turns (JAMAIS plus)\n" +
+    "- Alternance toi / prospect (commencer par toi)\n" +
+    openerRule +
+    "- Les tours suivants : même pacing / mission (Interest → Desire → Action) ; interdiction des réactions vides (« Ah super », « Super. ») ; " +
+    "identité = prénom + pourquoi (pas titre LinkedIn) ; sur oui/ok → question ou détail nouveau ; vouvoiement ; pas le prénom du prospect à tout va\n" +
+    "- Textes réels, naturels, sans crochets [ ]\n" +
+    "- Inclure prix / lien seulement APRÈS que le prospect a engagé, s'ils sont dans le contexte\n" +
+    "- Respecte le guide / mémoire / offre du cadre campagne\n" +
+    "- Aucune phrase hors JSON";
+
+  const user =
+    `## Contexte business\n${opts.businessContext.slice(0, 3500)}\n` +
+    brief +
+    `\n## Fil récent (agence)\n${opts.recentTranscript.slice(0, 4000)}\n\n` +
+    `Génère maintenant la simulation JSON (6 ou 7 turns max).`;
+
   const simRole = config.toolLlmConfigured ? "tools" : "chat";
   const simProvider = resolveLlmRoleProvider(simRole);
   const simModel = resolveLlmRoleModel(simRole);
@@ -145,10 +180,10 @@ async function runSimCompletion(
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    max_tokens: recommendedMaxTokensForProvider(simProvider, simModel, 1100, {
+    max_tokens: recommendedMaxTokensForProvider(simProvider, simModel, 900, {
       thinkingEnabled: false,
     }),
-    temperature,
+    temperature: 0.7,
     ...llmExtrasForProvider(simProvider, simModel, { enableThinking: false }),
   };
 
@@ -162,116 +197,7 @@ async function runSimCompletion(
   const turns = parseTurnsFromModelText(content);
   if (!turns) {
     console.warn("[simulation] parse failed, raw:", content.slice(0, 400));
-  }
-  return turns;
-}
-
-function buildOutboundSimSystem(opts: {
-  approvedOpener?: string | null;
-  memoryInstructions?: string | null;
-}): string {
-  const openerRule = opts.approvedOpener?.trim()
-    ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 400)} » — micro-variation OK, PAS de nouvel angle.\n`
-    : `- Le 1er message « toi » = accroche courte (format Attention recommandé si la mémoire ne dicte pas autrement).\n`;
-
-  const mem = (opts.memoryInstructions ?? "").trim();
-  const urls = extractUrlsFromText(mem);
-
-  return (
-    "Tu rédiges une simulation WhatsApp courte pour valider une campagne Klanvio.\n" +
-    "Cette simulation SERA la trajectoire suivie avec les VRAIS prospects.\n" +
-    "Réponds UNIQUEMENT avec un JSON valide :\n" +
-    '{"turns":[{"speaker":"toi","text":"..."},{"speaker":"prospect","name":"Prospect","text":"..."},{"speaker":"toi","text":"..."}]}\n' +
-    "\n## PRIORITÉ ABSOLUE — MÉMOIRE / PROCESS CAMPAGNE\n" +
-    "La mémoire (bloc ci-dessous) = SCRIPT D'EXÉCUTION. Elle varie d'une campagne à l'autre.\n" +
-    "- Suis l'ORDRE des étapes mémoire (ex. oui → présenter l'offre → demander inscription → puis lien).\n" +
-    "- Chaque réponse « oui/ok » du prospect = avancer d'UNE étape précise du process — jamais une phrase vague.\n" +
-    "- Sois DIRECT, FIDÈLE et PRÉCIS. Légèrement créatif sur les formulations seulement.\n" +
-    "- INTERDIT : « comment préférez-vous finaliser », « on avance avec vous », tourner en rond.\n" +
-    "- A.I.D.A. générique = SECOURS seulement si la mémoire est silencieuse sur une étape.\n" +
-    (urls.length
-      ? `- Liens mémoire à coller au BON moment du process (pas trop tôt) : ${urls.join(" ")}\n`
-      : "") +
-    "\n## Format\n" +
-    "- Exactement 6 ou 7 turns (JAMAIS plus)\n" +
-    "- Alternance toi / prospect (commencer par toi)\n" +
-    openerRule +
-    "- Textes réels, naturels, sans crochets [ ]\n" +
-    "- Aucune phrase hors JSON"
-  );
-}
-
-/**
- * Génère la simulation sans outils (JSON direct), fidèle à la mémoire campagne.
- */
-export async function generateCampaignSimulationDirect(
-  client: OpenAI,
-  opts: {
-    businessContext: string;
-    recentTranscript: string;
-    /** Accroche validée — le 1er tour « toi » doit coller à ce texte (légère reformulation OK). */
-    approvedOpener?: string | null;
-    /**
-     * Brief campagne (guide/config). Peut inclure la mémoire ; préférer aussi memoryInstructions
-     * pour le contrôle de fidélité et le budget dédié.
-     */
-    campaignBrief?: string | null;
-    /** Instructions mémoire brutes (source de vérité process). */
-    memoryInstructions?: string | null;
-    memoryName?: string | null;
-  }
-): Promise<{ display: string; turns: SimulationTurn[] } | null> {
-  const memoryInstructions = (opts.memoryInstructions ?? "").trim();
-  // Si seule campaignBrief contient déjà le bloc mémoire, on s'en sert pour le check
-  const fidelitySource =
-    memoryInstructions ||
-    (opts.campaignBrief?.includes("MÉMOIRE CAMPAGNE")
-      ? opts.campaignBrief
-      : opts.campaignBrief) ||
-    "";
-
-  const system = buildOutboundSimSystem({
-    approvedOpener: opts.approvedOpener,
-    memoryInstructions: memoryInstructions || fidelitySource,
-  });
-
-  // Mémoire en premier, non tronquée ; business / transcript ensuite (tronqués)
-  const memorySection = memoryInstructions
-    ? `\n## MÉMOIRE CAMPAGNE (SCRIPT — PRIORITAIRE)\n« ${opts.memoryName || "Mémoire"} »\n${memoryInstructions}\n`
-    : "";
-  const briefSection = opts.campaignBrief?.trim()
-    ? `\n## Cadre campagne (secondaire si conflit avec la mémoire)\n${opts.campaignBrief.trim().slice(0, 2000)}\n`
-    : "";
-
-  const user =
-    memorySection +
-    briefSection +
-    `## Contexte business (secondaire)\n${opts.businessContext.slice(0, 2000)}\n` +
-    `\n## Fil récent (agence)\n${opts.recentTranscript.slice(0, 2500)}\n\n` +
-    `Génère maintenant la simulation JSON (6 ou 7 turns). Exécute le process mémoire étape par étape.`;
-
-  let turns = await runSimCompletion(client, system, user, 0.4);
-  if (!turns) return null;
-
-  const firstCheck = assessSimulationMemoryFidelity(turns, fidelitySource);
-  if (!firstCheck.ok && firstCheck.repairHint) {
-    console.warn(
-      "[simulation] fidelity issues:",
-      firstCheck.issues.map((i) => i.code).join(", ")
-    );
-    const repairUser =
-      user +
-      `\n\n## CORRECTION OBLIGATOIRE\nLa simulation précédente violait la mémoire :\n` +
-      JSON.stringify(turns, null, 0).slice(0, 2500) +
-      `\n\n${firstCheck.repairHint}\n` +
-      `Régénère TOUTE la simulation JSON corrigée (6-7 turns), fidèle au process mémoire.`;
-    const repaired = await runSimCompletion(client, system, repairUser, 0.25);
-    if (repaired) {
-      const second = assessSimulationMemoryFidelity(repaired, fidelitySource);
-      if (second.ok || second.issues.length <= firstCheck.issues.length) {
-        turns = repaired;
-      }
-    }
+    return null;
   }
 
   try {
