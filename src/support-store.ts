@@ -135,37 +135,45 @@ export async function listSupportTicketsForUser(
   status?: SupportTicketStatus | "active"
 ): Promise<SupportTicket[]> {
   await ensureSupportSchema();
+  // Uniquement les tickets qui ont au moins un message (évite les coquilles vides).
   if (status === "active") {
     const rows = await sql<Record<string, unknown>[]>`
-      SELECT * FROM support_tickets
-      WHERE user_id = ${userId} AND status IN ('open', 'pending')
-      ORDER BY last_message_at DESC, id DESC
+      SELECT t.* FROM support_tickets t
+      WHERE t.user_id = ${userId}
+        AND t.status IN ('open', 'pending')
+        AND EXISTS (SELECT 1 FROM support_messages m WHERE m.ticket_id = t.id)
+      ORDER BY t.last_message_at DESC, t.id DESC
       LIMIT 50
     `;
     return rows.map(mapTicket);
   }
   if (status === "done") {
     const rows = await sql<Record<string, unknown>[]>`
-      SELECT * FROM support_tickets
-      WHERE user_id = ${userId} AND status = 'done'
-      ORDER BY last_message_at DESC, id DESC
+      SELECT t.* FROM support_tickets t
+      WHERE t.user_id = ${userId}
+        AND t.status = 'done'
+        AND EXISTS (SELECT 1 FROM support_messages m WHERE m.ticket_id = t.id)
+      ORDER BY t.last_message_at DESC, t.id DESC
       LIMIT 50
     `;
     return rows.map(mapTicket);
   }
   if (status) {
     const rows = await sql<Record<string, unknown>[]>`
-      SELECT * FROM support_tickets
-      WHERE user_id = ${userId} AND status = ${status}
-      ORDER BY last_message_at DESC, id DESC
+      SELECT t.* FROM support_tickets t
+      WHERE t.user_id = ${userId}
+        AND t.status = ${status}
+        AND EXISTS (SELECT 1 FROM support_messages m WHERE m.ticket_id = t.id)
+      ORDER BY t.last_message_at DESC, t.id DESC
       LIMIT 50
     `;
     return rows.map(mapTicket);
   }
   const rows = await sql<Record<string, unknown>[]>`
-    SELECT * FROM support_tickets
-    WHERE user_id = ${userId}
-    ORDER BY last_message_at DESC, id DESC
+    SELECT t.* FROM support_tickets t
+    WHERE t.user_id = ${userId}
+      AND EXISTS (SELECT 1 FROM support_messages m WHERE m.ticket_id = t.id)
+    ORDER BY t.last_message_at DESC, t.id DESC
     LIMIT 50
   `;
   return rows.map(mapTicket);
@@ -231,6 +239,18 @@ export async function getOrCreateActiveSupportTicket(
         WHERE id = ${ticket.id}
       `;
       ticket.client_phone = opts.clientPhone;
+    }
+    const nextSubject = (opts?.subject ?? "").trim().slice(0, 120);
+    if (
+      nextSubject &&
+      (!ticket.subject || /^support klanvio$/i.test(ticket.subject.trim()))
+    ) {
+      await sql`
+        UPDATE support_tickets
+        SET subject = ${nextSubject}, updated_at = NOW()
+        WHERE id = ${ticket.id}
+      `;
+      ticket.subject = nextSubject;
     }
     return ticket;
   }

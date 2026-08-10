@@ -1079,7 +1079,7 @@ export type SupportMessageDto = {
 };
 
 export async function fetchSupportThread(): Promise<{
-  ticket: SupportTicketDto;
+  ticket: SupportTicketDto | null;
   messages: SupportMessageDto[];
   tickets: SupportTicketDto[];
 }> {

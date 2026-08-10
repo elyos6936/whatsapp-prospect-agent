@@ -5,7 +5,6 @@ import { handleSupportUserChat, sendOpsSupportReply } from "./support-bot.js";
 import {
   assertTicketOwnedByUser,
   ensureSupportSchema,
-  getOrCreateActiveSupportTicket,
   getSupportTicketById,
   listSupportMessages,
   listSupportTicketsForUser,
@@ -13,25 +12,19 @@ import {
   updateSupportTicket,
   type SupportTicketStatus,
 } from "./support-store.js";
-import { getConnectedOwnerId } from "./evolutionapi.js";
 
 export async function registerSupportRoutes(app: FastifyInstance): Promise<void> {
   await ensureSupportSchema().catch((err) => {
     console.error("[support] ensureSupportSchema:", err);
   });
 
-  /** Thread actif + liste des tickets du user. */
+  /** Thread actif (s’il existe) + liste des tickets avec messages. Ne crée pas de ticket vide. */
   app.get("/api/support/thread", async (request) => {
     const userId = requireUserId(request);
-    let clientPhone: string | null = null;
-    try {
-      clientPhone = await getConnectedOwnerId(userId);
-    } catch {
-      clientPhone = null;
-    }
-    const ticket = await getOrCreateActiveSupportTicket(userId, { clientPhone });
-    const messages = await listSupportMessages(ticket.id);
     const tickets = await listSupportTicketsForUser(userId);
+    const ticket =
+      tickets.find((t) => t.status === "open" || t.status === "pending") ?? null;
+    const messages = ticket ? await listSupportMessages(ticket.id) : [];
     return { ticket, messages, tickets };
   });
 

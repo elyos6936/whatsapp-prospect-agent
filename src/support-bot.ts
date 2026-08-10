@@ -184,6 +184,17 @@ async function runGraceDecision(input: {
   };
 }
 
+function looksLikeResolvedCue(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  return (
+    /^(ok|merci|parfait|super|nickel|top|cool|d['']accord)[\s!.]*$/i.test(t) ||
+    /\b(c['']est\s+bon|c['']est\s+clair|c['']est\s+réglé|c['']est\s+not[eé]|plus\s+besoin|tout\s+bon|ok\s+merci|merci\s+beaucoup|parfait\s+merci)\b/i.test(
+      t
+    )
+  );
+}
+
 export async function handleSupportUserChat(
   userId: number,
   input: { message?: string; imageUrls?: string[]; ticketId?: number }
@@ -221,8 +232,9 @@ export async function handleSupportUserChat(
     imageUrls,
   });
 
-  let escalated = decision.action === "escalate";
+  const escalated = decision.action === "escalate";
   let replyText = decision.message;
+  const userResolved = looksLikeResolvedCue(userContent);
 
   if (escalated) {
     const updated = await updateSupportTicket(ticket.id, {
@@ -246,8 +258,6 @@ export async function handleSupportUserChat(
         replyText +
         "\n\nUn membre de l'équipe Klanvio va vous répondre ici, dans ce chat d'aide.";
     }
-  } else if (ticket.status === "done") {
-    await updateSupportTicket(ticket.id, { status: "pending" });
   }
 
   const assistantMessage = await appendSupportMessage({
@@ -255,6 +265,15 @@ export async function handleSupportUserChat(
     role: "assistant",
     content: replyText,
   });
+
+  if (!escalated) {
+    // Ouverts = pending (bot) ; Terminés = done si le client clôture
+    await updateSupportTicket(ticket.id, {
+      status: userResolved ? "done" : "pending",
+      summary: replyText.slice(0, 400),
+      subject: decision.subject || ticket.subject,
+    });
+  }
 
   const messages = await listSupportMessages(ticket.id);
   const { getSupportTicketById } = await import("./support-store.js");

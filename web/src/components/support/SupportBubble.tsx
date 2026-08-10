@@ -108,6 +108,12 @@ export function SupportBubble() {
   }, [open, refreshThread]);
 
   useEffect(() => {
+    if (open && view === 'messages') {
+      void refreshThread();
+    }
+  }, [open, view, refreshThread]);
+
+  useEffect(() => {
     if (view === 'chat') {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
@@ -160,7 +166,9 @@ export function SupportBubble() {
         const others = prev.filter((t) => t.id !== result.ticket.id);
         return [result.ticket, ...others];
       });
-    } catch (err) {
+      if (result.ticket.status === 'done') {
+        setMsgTab('done');
+      }    } catch (err) {
       setError(err instanceof Error ? err.message : 'Envoi impossible');
     } finally {
       setBusy(false);
@@ -337,10 +345,22 @@ export function SupportBubble() {
                       onClick={() => void openChat(t)}
                       className="mb-2 w-full rounded-xl border border-black/[0.06] px-3 py-3 text-left hover:border-brand-border"
                     >
-                      <p className="truncate text-sm font-semibold text-text-100">{t.subject}</p>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-sm font-semibold text-text-100">{t.subject}</p>
+                        <span className="shrink-0 text-[10px] font-medium uppercase tracking-wide text-text-500">
+                          {t.status === 'done'
+                            ? 'Terminé'
+                            : t.status === 'open'
+                              ? 'Support'
+                              : 'En cours'}
+                        </span>
+                      </div>
                       <p className="mt-0.5 truncate text-xs text-text-500">
                         {t.summary || formatWhen(t.last_message_at)}
                       </p>
+                      {t.summary ? (
+                        <p className="mt-0.5 text-[10px] text-text-500">{formatWhen(t.last_message_at)}</p>
+                      ) : null}
                     </button>
                   ))}
               </div>
