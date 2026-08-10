@@ -2,10 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Brain,
   CreditCard,
-  LifeBuoy,
   Link2,
   LogOut,
-  MessageCircle,
   Smartphone,
   Unplug,
   Users,
@@ -42,7 +40,7 @@ import {
   type PlanId,
 } from '@/lib/pricing';
 
-type SettingsTab = 'connection' | 'integrations' | 'billing' | 'memory' | 'team' | 'support';
+type SettingsTab = 'connection' | 'integrations' | 'billing' | 'memory' | 'team';
 
 function Feedback({ text, type }: { text: string; type?: 'ok' | 'err' }) {
   if (!text) return null;
@@ -65,7 +63,6 @@ function readInitialTab(): SettingsTab {
     const params = new URLSearchParams(window.location.search);
     if (params.get('settings') === 'integrations') return 'integrations';
     if (params.get('settings') === 'team') return 'team';
-    if (params.get('settings') === 'support') return 'support';
   } catch {
     /* ignore */
   }
@@ -190,7 +187,6 @@ export function SettingsPage() {
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
   const [connectModalOpen, setConnectModalOpen] = useState(false);
   const [disconnectError, setDisconnectError] = useState('');
-  const [supportOpen, setSupportOpen] = useState(false);
 
   const connected = user?.whatsapp?.connected ?? false;
 
@@ -324,7 +320,6 @@ export function SettingsPage() {
     { id: 'integrations', label: 'Intégrations', icon: Link2 },
     ...(canAccessTeam ? [{ id: 'team' as const, label: 'Équipe', icon: Users }] : []),
     { id: 'connection', label: 'WhatsApp', icon: Smartphone },
-    { id: 'support', label: 'Aide', icon: LifeBuoy },
   ];
 
   return (
@@ -423,26 +418,6 @@ export function SettingsPage() {
             <CampaignMemoriesPanel />
           ) : tab === 'team' ? (
             <TeamPanel />
-          ) : tab === 'support' ? (
-            <div className="panel space-y-4 p-6">
-              <div className="mb-1 flex items-center gap-2">
-                <LifeBuoy className="h-4 w-4 text-brand" />
-                <h2 className="text-sm font-semibold text-text-100">Aide & support</h2>
-              </div>
-              <p className="text-sm text-text-400">
-                Besoin d’un coup de main ? Grace, notre assistante, répond tout de suite. Si
-                besoin, un humain du support prend le relais.
-              </p>
-              <button
-                type="button"
-                onClick={() => setSupportOpen(true)}
-                className="inline-flex items-center gap-2 rounded-xl bg-brand px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:opacity-95"
-              >
-                <MessageCircle className="h-4 w-4" />
-                Ouvrir le chat support
-              </button>
-              <SupportBubble open={supportOpen} onClose={() => setSupportOpen(false)} />
-            </div>
           ) : tab === 'billing' ? (
             <div className="panel min-w-0 space-y-5 overflow-hidden p-4 sm:p-5">
               <div className="min-w-0">
@@ -730,6 +705,9 @@ export function SettingsPage() {
         onClose={() => setConnectModalOpen(false)}
         onConnected={() => setConnectModalOpen(false)}
       />
+
+      {/* Bulle aide — uniquement sur Paramètres, hors simulation chat */}
+      <SupportBubble />
     </div>
   );
 }

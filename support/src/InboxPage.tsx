@@ -25,6 +25,12 @@ function fmt(iso: string): string {
   }
 }
 
+function statusLabel(status: SupportTicket["status"]): string {
+  if (status === "done") return "Terminé";
+  if (status === "pending") return "En cours";
+  return "Ouvert";
+}
+
 export function InboxPage() {
   const { email, logout } = useAuth();
   const [tab, setTab] = useState<"active" | "done">("active");
@@ -167,14 +173,14 @@ export function InboxPage() {
             className={`tab ${tab === "active" ? "active" : ""}`}
             onClick={() => setTab("active")}
           >
-            Open
+            Ouverts
           </button>
           <button
             type="button"
             className={`tab ${tab === "done" ? "active" : ""}`}
             onClick={() => setTab("done")}
           >
-            Done
+            Terminés
           </button>
         </div>
         <div className="ticket-list">
@@ -189,7 +195,7 @@ export function InboxPage() {
             >
               <p className="title">
                 #{t.id} {t.subject}
-                <span className={`badge ${t.status}`}>{t.status}</span>
+                <span className={`badge ${t.status}`}>{statusLabel(t.status)}</span>
               </p>
               <p className="meta">
                 {t.user_name || t.user_email || `user #${t.user_id}`} · {fmt(t.last_message_at)}
