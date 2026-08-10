@@ -125,9 +125,10 @@ export function formatLivePlaybookForWhatsApp(
   lines.push(
     "",
     inbound
-      ? `RÈGLE : playbook = boussole. Client a initié — pas de cold outreach.`
+      ? `RÈGLE : playbook = boussole. Client a initié — pas de cold outreach. Mémoire campagne = process prioritaire.`
       : `RÈGLE : playbook = boussole (ton/objectif). Message réel du prospect = priorité. ` +
-          `Pas de dérive fade (« Super. »), pas d'offre inventée, pas d'intro inbound si tu as déjà ouvert.`
+          `Exécute le process MÉMOIRE étape par étape (direct, précis). ` +
+          `Pas de dérive vague (« Super. », « comment finaliser »), pas d'offre inventée, pas d'intro inbound si tu as déjà ouvert.`
   );
   return lines.filter((l) => l !== undefined && l !== "").join("\n");
 }

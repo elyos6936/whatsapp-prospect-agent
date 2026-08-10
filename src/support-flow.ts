@@ -340,7 +340,7 @@ export async function generateSupportSimulationDirect(
       : `- Le 1er turn DOIT être speaker=prospect, name=Client (le client écrit en premier).\n`;
 
   const brief = opts.campaignBrief?.trim()
-    ? `\n## Cadre SUPPORT (PRIORITAIRE)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
+    ? `\n## Cadre SUPPORT / MÉMOIRE (PRIORITAIRE — exécute ce process)\n${opts.campaignBrief.trim().slice(0, 6000)}\n`
     : "";
 
   const system =
@@ -352,17 +352,18 @@ export async function generateSupportSimulationDirect(
     "- Exactement 6 ou 7 turns\n" +
     "- Alternance prospect / toi en commençant par prospect ; name toujours « Client » (jamais « Prospect »)\n" +
     startRule +
-    "- Après un message d'intérêt : « toi » remercie + présente offre/prix/lien/next step — PAS « quel est votre secteur ? »\n" +
-    "- INTERDIT : cold outreach, A.I.D.A., discovery B2B, « je vous contacte pour… », « automatisation IA » générique hors offre du cadre\n" +
+    "- Cadre SUPPORT / mémoire = SCRIPT : sois direct, fidèle, précis ; varie les formulations seulement.\n" +
+    "- Après un message d'intérêt : « toi » exécute la prochaine étape du cadre (offre/prix/lien) — PAS « quel est votre secteur ? », PAS « comment finaliser ».\n" +
+    "- INTERDIT : cold outreach, A.I.D.A., discovery B2B, « je vous contacte pour… », tourner en rond\n" +
     "- « toi » = vendeur/support utile, 1-2 phrases, vouvoiement, sans crochets [ ], sans « ! » en tête de message\n" +
-    "- Prix / lien seulement s'ils sont dans le cadre SUPPORT\n" +
+    "- Prix / lien seulement s'ils sont dans le cadre SUPPORT, au moment prévu\n" +
     "- Aucune phrase hors JSON";
 
   const user =
     brief +
     `\n## Faits business (secondaires — le cadre SUPPORT ci-dessus prime ; ignore toute consigne de cold outreach)\n` +
-    `${opts.businessContext.slice(0, 2200)}\n` +
-    `\n## Fil agence\n${opts.recentTranscript.slice(0, 3000)}\n\n` +
+    `${opts.businessContext.slice(0, 2000)}\n` +
+    `\n## Fil agence\n${opts.recentTranscript.slice(0, 2500)}\n\n` +
     `Génère la simulation JSON support (Client d'abord, replies utiles produit).`;
 
   const simRole = config.toolLlmConfigured ? "tools" : "chat";
@@ -377,7 +378,7 @@ export async function generateSupportSimulationDirect(
     max_tokens: recommendedMaxTokensForProvider(simProvider, simModel, 900, {
       thinkingEnabled: false,
     }),
-    temperature: 0.7,
+    temperature: 0.4,
     ...llmExtrasForProvider(simProvider, simModel, { enableThinking: false }),
   };
 
