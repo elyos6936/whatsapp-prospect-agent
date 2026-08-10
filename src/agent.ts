@@ -141,10 +141,9 @@ const CONFIRM_ACTIVATE_NOW_NUDGE =
 const FORCE_SIMULATION_NUDGE =
   "L'utilisateur a ACCEPTÉ / demandé une simulation. Tu DOIS appeler l'outil show_campaign_simulation MAINTENANT " +
   "avec exactement 6 ou 7 tours (speaker toi/prospect, textes réels SANS crochets). " +
-  "Le 1er tour « toi » = l'accroche validée (initial_message) — même texte / style qu'il a validé " +
-  "(Attention recommandé ; si risque accepté, garde SON format même avec prix/lien). " +
+  "Le 1er tour « toi » = l'accroche validée (initial_message) — Attention seulement, PAS de prix/lien/pitch. " +
   "Les tours suivants : même mission / pacing (pousser l'intérêt, pas de « Ah super » / « Super. » vide), vouvoiement, sans prénom du prospect à tout va. " +
-  "Identité = prénom + pourquoi ; sur oui/ok = question ou détail nouveau (pas pitch immédiat sauf si déjà dans l'opener validé). " +
+  "Identité = prénom + pourquoi ; sur oui/ok = question ou détail nouveau (pas pitch immédiat). " +
   "La simulation s'affiche UNIQUEMENT sur le **téléphone à droite** — INTERDIT de recopier le fil Toi → / Prospect → dans ta réponse chat. " +
   "Après l'outil : confirme en 1–2 phrases courtes (le footer de l'outil guide déjà le feedback). " +
   "INTERDIT d'annoncer sans outil. INTERDIT de dépasser 7 messages. " +
@@ -1039,27 +1038,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             continue;
           }
 
-          if (
-            !briefing.isInboundClosing &&
-            !briefing.isGroupsFlow &&
-            briefing.openerNeedsRiskConsent
-          ) {
-            const block = JSON.stringify({
-              error:
-                "INTERDIT de créer le brouillon tant que l'utilisateur n'a pas tranché après l'avertissement risques " +
-                "(garder son 1er message hors Attention, ou prendre la version courte). " +
-                "Préviens / attends sa confirmation, puis create avec opener_risk_accepted=true s'il garde sa version.",
-            });
-            messages.push({
-              role: "tool",
-              tool_call_id: toolCall.id,
-              content: block,
-            });
-            const nudge = buildBriefingNudge(briefing, history, userMessage);
-            if (nudge) messages.push({ role: "system", content: nudge });
-            continue;
-          }
-
           // Closing entrant : pas d'opener sortant → skip variantes.
           // Si variantes déjà proposées OU choix 1–5 → angle considéré collecté.
           if (
@@ -1131,16 +1109,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           ) as Record<string, unknown>;
         } catch {
           args = {};
-        }
-
-        // Consentement risque déjà détecté dans le fil → autorise create/update hors Attention
-        if (
-          briefing.openerRiskAccepted &&
-          (toolCall.function.name === "create_automation" ||
-            toolCall.function.name === "update_automation_config") &&
-          args.opener_risk_accepted !== true
-        ) {
-          args.opener_risk_accepted = true;
         }
 
         let result: string;
@@ -1414,10 +1382,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         role: "system",
         content:
           "INTERDIT de proposer les 5 variantes maintenant. " +
-          "Tu dois d'abord proposer UNE seule accroche (format Attention recommandé), " +
+          "Tu dois d'abord proposer UNE seule accroche Attention (1-2 phrases, sans prix/lien), " +
           "demander validation, puis attendre. " +
-          "S'il a collé un message avec prix/lien/pitch : préviens des risques d'abord. " +
-          "Réécris ton message en UNE accroche unique + question de validation (ou avertissement risques).",
+          "Réécris ton message en UNE accroche unique + question de validation.",
       });
       continue;
     }
