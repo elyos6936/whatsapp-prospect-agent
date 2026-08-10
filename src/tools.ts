@@ -115,7 +115,12 @@ import {
   unblockContact,
 } from "./db.js";
 import { getContactPresence } from "./notifications.js";
-import { formatAttentionOpenerError, isValidAttentionOpener, validateOutboundAbVariants } from "./opener-frame.js";
+import {
+  attentionOpenerEmptyIssue,
+  attentionOpenerSoftIssues,
+  openerRiskGatePayload,
+  validateOutboundAbVariants,
+} from "./opener-frame.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
 import {
@@ -1651,7 +1656,12 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           initial_message: {
             type: "string",
             description:
-              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases, ≤200 car., vouvoiement, SANS prénom du prospect). INTERDIT : prix, lien, pitch complet. = accroche validée / référence simu ; les 5 ab_variants tournent à l'envoi. Pour group_broadcast : 1er post dans le(s) groupe(s).",
+              "Premier message sortant. Format recommandé = A.I.D.A. Attention (1-2 phrases, sans prix/lien/pitch). Si l'utilisateur impose un autre format après avertissement des risques → passe son texte + opener_risk_accepted=true. = référence simu ; les 5 ab_variants tournent à l'envoi. Pour group_broadcast : 1er post dans le(s) groupe(s).",
+          },
+          opener_risk_accepted: {
+            type: "boolean",
+            description:
+              "true UNIQUEMENT si l'utilisateur a été prévenu (prix/lien/pitch dans le 1er message) et a confirmé qu'il garde SA version. Autorise create hors cadre Attention.",
           },
           max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
           max_per_day: {
@@ -1800,7 +1810,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "array",
             items: { type: "object" },
             description:
-              "Exactement 5 accroches Attention DISTINCTES validées avec l'utilisateur : [{id:'v1',message:'…'}, … {id:'v5',message:'…'}]. Obligatoire en prospection sortante. Même si l'utilisateur n'en choisit qu'une pour initial_message, tu DOIS passer les 5 textes — ne garde jamais un seul message.",
+              "Exactement 5 formulations DISTINCTES validées avec l'utilisateur : [{id:'v1',message:'…'}, … {id:'v5',message:'…'}]. Obligatoire en prospection sortante. Style Attention recommandé ; si opener_risk_accepted, dérive du style imposé par l'utilisateur.",
           },
           sequence_steps: {
             type: "array",
@@ -1883,7 +1893,16 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         type: "object",
         properties: {
           automation_id: { type: "number" },
-          initial_message: { type: "string" },
+          initial_message: {
+            type: "string",
+            description:
+              "1er message. Format Attention recommandé ; hors cadre → opener_risk_accepted=true après consentement utilisateur.",
+          },
+          opener_risk_accepted: {
+            type: "boolean",
+            description:
+              "true si l'utilisateur a confirmé garder un 1er message hors Attention (prix/lien/pitch).",
+          },
           conversation_guide: { type: "string" },
           trigger_phrases: { type: "array", items: { type: "string" } },
           inbound_catch_all: {
@@ -4733,16 +4752,19 @@ export async function executeTool(
           error: "initial_message contient des crochets. Remplace-les par de vraies valeurs.",
         });
       }
+      const openerRiskAccepted = Boolean(args.opener_risk_accepted);
+      if (config.initialMessage && attentionOpenerEmptyIssue(config.initialMessage)) {
+        return JSON.stringify({ error: "initial_message vide." });
+      }
       if (
         type !== "group_broadcast" &&
         type !== "keyword_sales" &&
         config.initialMessage &&
         !args.ab_variants_from_chat &&
-        !isValidAttentionOpener(config.initialMessage)
+        !openerRiskAccepted &&
+        attentionOpenerSoftIssues(config.initialMessage).length > 0
       ) {
-        return JSON.stringify({
-          error: formatAttentionOpenerError("initial_message", config.initialMessage),
-        });
+        return JSON.stringify(openerRiskGatePayload("initial_message", config.initialMessage));
       }
       const abVariantsParsed = parseAbVariantsArg(args.ab_variants);
       const abVariantsExplicit = Boolean(abVariantsParsed);
@@ -4751,8 +4773,19 @@ export async function executeTool(
       if (isOutbound && abVariantsExplicit) {
         const early = validateOutboundAbVariants(abVariantsParsed!, {
           fromUserValidatedChat: abFromChat,
+          riskAccepted: openerRiskAccepted,
         });
-        if (early) return JSON.stringify({ error: early });
+        if (early) {
+          const sample = abVariantsParsed!.find(
+            (v) => attentionOpenerSoftIssues(String(v.message ?? "")).length > 0
+          );
+          if (sample && !openerRiskAccepted && !abFromChat) {
+            return JSON.stringify(
+              openerRiskGatePayload(`ab_variants.${sample.id ?? "v1"}`, String(sample.message))
+            );
+          }
+          return JSON.stringify({ error: early });
+        }
       }
 
       /** Persist draft — update existing if reusable, else create. */
@@ -4795,8 +4828,19 @@ export async function executeTool(
         if (isOutbound) {
           const abErr = validateOutboundAbVariants(merged.abVariants, {
             fromUserValidatedChat: abFromChat,
+            riskAccepted: openerRiskAccepted,
           });
-          if (abErr) return JSON.stringify({ error: abErr });
+          if (abErr) {
+            const sample = (merged.abVariants ?? []).find(
+              (v) => attentionOpenerSoftIssues(v.message ?? "").length > 0
+            );
+            if (sample && !openerRiskAccepted && !abFromChat) {
+              return JSON.stringify(
+                openerRiskGatePayload(`ab_variants.${sample.id}`, sample.message)
+              );
+            }
+            return JSON.stringify({ error: abErr });
+          }
           merged.personalizeMessages = false;
         }
 
@@ -5286,18 +5330,35 @@ export async function executeTool(
         detail.automation.type === "contact_prospect" ||
         detail.automation.type === "group_prospect" ||
         merged.mode === "outbound_prospect";
-      if (
-        isOutboundType &&
-        merged.initialMessage &&
-        !isValidAttentionOpener(merged.initialMessage)
-      ) {
-        return JSON.stringify({
-          error: formatAttentionOpenerError("initial_message", merged.initialMessage),
-        });
+      const openerRiskAccepted = Boolean(args.opener_risk_accepted);
+      if (isOutboundType && merged.initialMessage) {
+        if (attentionOpenerEmptyIssue(merged.initialMessage)) {
+          return JSON.stringify({ error: "initial_message vide." });
+        }
+        if (
+          !openerRiskAccepted &&
+          attentionOpenerSoftIssues(merged.initialMessage).length > 0
+        ) {
+          return JSON.stringify(
+            openerRiskGatePayload("initial_message", merged.initialMessage)
+          );
+        }
       }
       if (parseAbVariantsArg(args.ab_variants)) {
-        const abErr = validateOutboundAbVariants(merged.abVariants);
-        if (abErr) return JSON.stringify({ error: abErr });
+        const abErr = validateOutboundAbVariants(merged.abVariants, {
+          riskAccepted: openerRiskAccepted,
+        });
+        if (abErr) {
+          const sample = (merged.abVariants ?? []).find(
+            (v) => attentionOpenerSoftIssues(v.message ?? "").length > 0
+          );
+          if (sample && !openerRiskAccepted) {
+            return JSON.stringify(
+              openerRiskGatePayload(`ab_variants.${sample.id}`, sample.message)
+            );
+          }
+          return JSON.stringify({ error: abErr });
+        }
         merged.personalizeMessages = false;
       } else if (
         isOutboundType &&

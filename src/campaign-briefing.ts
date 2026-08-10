@@ -10,6 +10,12 @@ import {
   extractGroupNamesFromHistory,
   extractGroupPostMessage,
 } from "./groups-flow.js";
+import {
+  attentionOpenerSoftIssues,
+  hasAgentWarnedOpenerRisk,
+  hasUserAcceptedOpenerRisk,
+  proposeShortAttentionOpener,
+} from "./opener-frame.js";
 
 const CAMPAIGN_INTENT_RE =
   /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|g[eè]re[rz]?\s+tout|tous\s+(mes\s+)?messages|compte\s+whatsapp|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
@@ -107,6 +113,13 @@ export type BriefingAssessment = {
   openerSingleValidated: boolean;
   /** Les 5 variantes ont été proposées dans le chat. */
   openerVariantsProposed: boolean;
+  /**
+   * Le 1er message retenu a des soft issues (prix/lien/pitch) et l'utilisateur
+   * n'a pas encore accepté le risque → l'agent doit prévenir avant les 5 variantes.
+   */
+  openerNeedsRiskConsent: boolean;
+  /** L'utilisateur a accepté de garder un 1er message hors cadre Attention. */
+  openerRiskAccepted: boolean;
   /** L'agent a posé la question stickers (messages assistant uniquement). */
   stickersQuestionAsked: boolean;
   /** L'agent a posé la question notification tiers (messages assistant uniquement). */
@@ -158,6 +171,38 @@ function isSubstantiveUserReply(text: string): boolean {
   if (t.length < 12) return false;
   if (/^(oui|non|ok|ouais|non merci|peu importe|d'accord|vas[- ]y|nickel|parfait)$/i.test(t)) return false;
   return true;
+}
+
+/** Dernier texte candidat pour le 1er message (brouillon user ou accroche agent). */
+export function findLatestOpenerCandidate(
+  history: AgentMessage[],
+  userMessage: string
+): string | null {
+  if (looksLikeOpenerDraft(userMessage)) return userMessage.trim();
+  for (let i = history.length - 1; i >= Math.max(0, history.length - 16); i--) {
+    const m = history[i];
+    if (!m) continue;
+    if (m.role === "user" && looksLikeOpenerDraft(m.content)) return m.content.trim();
+  }
+  const singleIdx = lastSingleOpenerAssistantIndex(history);
+  if (singleIdx >= 0) {
+    const content = history[singleIdx]!.content;
+    const quoted =
+      content.match(/[«"]\s*([^»"]{20,1200})\s*[»"]/) ||
+      content.match(/accroche[^:\n]*[:：]\s*\n?\s*[«"]?([^»"\n]{20,1200})/);
+    if (quoted?.[1]) return quoted[1].trim();
+  }
+  return null;
+}
+
+export function openerCandidateNeedsRiskConsent(
+  history: AgentMessage[],
+  userMessage: string
+): boolean {
+  const candidate = findLatestOpenerCandidate(history, userMessage);
+  if (!candidate) return false;
+  if (attentionOpenerSoftIssues(candidate).length === 0) return false;
+  return !hasUserAcceptedOpenerRisk(history, userMessage);
 }
 
 /** Long texte type accroche WhatsApp (pas une liste de numéros / commande courte). */
@@ -474,6 +519,8 @@ export function assessCampaignBriefing(
       openerSingleProposed: false,
       openerSingleValidated: false,
       openerVariantsProposed: false,
+      openerNeedsRiskConsent: false,
+      openerRiskAccepted: false,
       stickersQuestionAsked: false,
       thirdPartyQuestionAsked: false,
       handoffKeywordsQuestionAsked: false,
@@ -502,6 +549,8 @@ export function assessCampaignBriefing(
       openerSingleProposed: true,
       openerSingleValidated: true,
       openerVariantsProposed: true,
+      openerNeedsRiskConsent: false,
+      openerRiskAccepted: false,
       stickersQuestionAsked: true,
       thirdPartyQuestionAsked: true,
       handoffKeywordsQuestionAsked: true,
@@ -653,6 +702,12 @@ export function assessCampaignBriefing(
       openerSingleProposed ||
       hasUserProvidedOpenerDirection(history, userMessage);
   const inboundPacingAsked = true;
+  const openerRiskAccepted = inbound
+    ? true
+    : hasUserAcceptedOpenerRisk(history, userMessage);
+  const openerNeedsRiskConsent = inbound
+    ? false
+    : openerCandidateNeedsRiskConsent(history, userMessage);
 
   return {
     inCampaignFlow: true,
@@ -666,6 +721,8 @@ export function assessCampaignBriefing(
     openerSingleProposed,
     openerSingleValidated,
     openerVariantsProposed,
+    openerNeedsRiskConsent,
+    openerRiskAccepted,
     stickersQuestionAsked,
     thirdPartyQuestionAsked,
     handoffKeywordsQuestionAsked,
@@ -755,6 +812,31 @@ export function buildBriefingNudge(
       );
     }
 
+    // Soft gate : message hors Attention → prévenir, puis accepter si l'utilisateur confirme
+    if (assessment.openerNeedsRiskConsent) {
+      const candidate = findLatestOpenerCandidate(history, userMessage) ?? "";
+      const issues = attentionOpenerSoftIssues(candidate);
+      const short = proposeShortAttentionOpener(candidate);
+      if (!hasAgentWarnedOpenerRisk(history)) {
+        return (
+          "L'utilisateur a imposé un 1er message hors cadre Attention (" +
+          `${issues.join(", ") || "format atypique"}). ` +
+          "**Préviens-le des risques** (spam / moins de réponses / pitch trop tôt) en 2-3 phrases claires. " +
+          "Propose aussi le format de base Attention en option" +
+          (short ? ` — ex. « ${short} »` : "") +
+          ". Demande s'il **garde SA version** ou préfère la courte. " +
+          "**INTERDIT** : 5 variantes, create_automation, simulation tant qu'il n'a pas choisi."
+        );
+      }
+      return (
+        "Tu as prévenu des risques du 1er message — **ATTENDS** sa réponse. " +
+        "S'il confirme (« je garde », « ok », « crée les variantes ») → accepte SON texte et propose les **5 variantes dans SON style** " +
+        "(pas forcer Attention) puis create avec opener_risk_accepted=true. " +
+        "S'il préfère la version courte → reformule Attention, puis 5 variantes classiques. " +
+        "INTERDIT brouillon / simu avant ce choix."
+      );
+    }
+
     // Étape 1 : UNE seule accroche (pas encore les 5)
     if (!assessment.openerSingleProposed) {
       const delegated =
@@ -764,11 +846,12 @@ export function buildBriefingNudge(
         (delegated
           ? "L'utilisateur t'a délégué l'accroche (« propose » / « comme tu veux »). "
           : "L'utilisateur a indiqué son angle pour le 1er message. ") +
-        "Propose maintenant **UNE seule accroche** A.I.D.A. Attention (1-2 phrases, ≤200 car., vouvoiement, SANS prix/lien/pitch, sans prénom du prospect)" +
+        "Propose maintenant **UNE seule accroche** A.I.D.A. Attention (format de base recommandé : 1-2 phrases, ≤200 car., vouvoiement, SANS prix/lien/pitch, sans prénom du prospect)" +
         (delegated
           ? " — inventée à partir de la **mémoire / offre**"
           : ", alignée sur **SA** direction") +
         ". Présente-la clairement (ex. « Voici l'accroche que je propose : « … » ») et demande s'il valide. " +
+        "S'il colle ensuite un message avec prix/lien/pitch → préviens des risques, ne bloque pas. " +
         "**INTERDIT** de lister 5 variantes dans ce message. Attends sa validation / correction."
       );
     }
@@ -777,15 +860,19 @@ export function buildBriefingNudge(
       return (
         "Tu as proposé **une** accroche — **ATTENDS** la validation de l'utilisateur (oui / ok / valide, ou une version corrigée). " +
         "S'il refuse ou ajuste → reformule **UNE** nouvelle accroche, puis re-attends. " +
+        "S'il impose un texte avec prix/lien/pitch → préviens des risques puis attends son OK. " +
         "INTERDIT : 5 variantes, create_automation, simulation tant qu'il n'a pas validé cette accroche."
       );
     }
 
     // Étape 2 : après validation → montrer les 5 variantes SEULEMENT (pas encore brouillon/sim)
     if (!assessment.openerVariantsProposed) {
+      const riskNote = assessment.openerRiskAccepted
+        ? "L'utilisateur a **accepté le risque** : dérive les 5 variantes du **style qu'il a imposé** (même structure, formulations distinctes) — ne force PAS le format Attention. "
+        : "Format de base Attention recommandé (SANS prix/lien/pitch sauf s'il a déjà accepté le risque). ";
       return (
         "L'accroche unique est **validée**. Propose maintenant **exactement 5 variantes** dérivées de cette accroche " +
-        "(liste numérotée 1–5, même intention, formulations distinctes — Attention seulement, SANS prix/lien/pitch). " +
+        `(liste numérotée 1–5, même intention, formulations distinctes). ${riskNote}` +
         "Explique en une phrase que le **premier message réel** sera **l'une de ces 5** (rotation). " +
         "Demande un OK sur l'ensemble (« oui » / « c'est bon »). " +
         "**INTERDIT** dans ce message : create_automation, simulation, téléphone, activer. " +
@@ -794,11 +881,15 @@ export function buildBriefingNudge(
     }
 
     // Étape 3 : 5 validées → brouillon + simulation téléphone (puis validation sim → lancement)
+    const riskFlag = assessment.openerRiskAccepted
+      ? " Passe aussi opener_risk_accepted=true (1er message hors Attention accepté par l'utilisateur)."
+      : "";
     return (
       "Les 5 variantes ont été proposées et l'utilisateur les valide. " +
       "ORDRE STRICT : (1) create_automation draft avec initial_message = accroche validée (ou v1) " +
-      "ET ab_variants = les **5 textes complets** (jamais un seul). personalize_messages=false. " +
-      "(2) Immédiatement après : show_campaign_simulation (6-7 tours) pour le **téléphone à droite** " +
+      "ET ab_variants = les **5 textes complets** (jamais un seul). personalize_messages=false." +
+      riskFlag +
+      " (2) Immédiatement après : show_campaign_simulation (6-7 tours) pour le **téléphone à droite** " +
       "(fence ```klanvio-sim obligatoire). " +
       "(3) Demande validation de la sim — INTERDIT d'activer tant qu'il n'a pas validé la simulation. " +
       "Utilise tool_calls natif — INTERDIT DSML / invoke dans le texte. " +

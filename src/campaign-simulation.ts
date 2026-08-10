@@ -142,8 +142,8 @@ export async function generateCampaignSimulationDirect(
   }
 ): Promise<{ display: string; turns: SimulationTurn[] } | null> {
   const openerRule = opts.approvedOpener?.trim()
-    ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 280)} » — micro-variation de mots OK, PAS de nouvel angle, PAS de prix/lien/pitch\n`
-    : `- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet, vouvoiement, sans prénom du prospect)\n`;
+    ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 280)} » — micro-variation de mots OK, PAS de nouvel angle. Si elle contient prix/lien, conserve-les (l'utilisateur les a validés).\n`
+    : `- Le 1er message « toi » = accroche A.I.D.A. Attention recommandée (1-2 phrases, sans prix/lien/pitch, vouvoiement, sans prénom du prospect)\n`;
 
   const brief = opts.campaignBrief?.trim()
     ? `\n## Cadre campagne (OBLIGATOIRE — même cadre que les réponses live)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
