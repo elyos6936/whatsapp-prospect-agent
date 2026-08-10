@@ -4166,10 +4166,20 @@ export async function executeTool(
         });
       }
       await setThreadCampaignMemory(userId, threadId, mem.id);
+      let syncNote = "";
+      try {
+        const { syncThreadAutomationFromMemory } = await import("./campaign-sync.js");
+        const r = await syncThreadAutomationFromMemory(userId, threadId);
+        if (r.synced && r.automationId != null) {
+          syncNote = ` Campagne #${r.automationId} synchronisée avec la mémoire.`;
+        }
+      } catch (err) {
+        console.warn("[set_campaign_memory] sync:", err);
+      }
       return JSON.stringify({
         success: true,
         memory: { id: mem.id, name: mem.name },
-        message: `Mémoire « ${mem.name} » active sur ce fil. Ne repose plus présentation / stickers / fenêtre / ton.`,
+        message: `Mémoire « ${mem.name} » active sur ce fil.${syncNote} Ne repose plus présentation / stickers / fenêtre / ton.`,
       });
     }
 

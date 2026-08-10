@@ -310,17 +310,42 @@ function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-async function businessContextBlock(userId: number): Promise<string> {
+function automationContextHasCampaignMemory(automationContext?: string | null): boolean {
+  return /=== MÉMOIRE CAMPAGNE/i.test(automationContext?.trim() ?? "");
+}
+
+function automationContextHasActiveCampaign(automationContext?: string | null): boolean {
+  return /=== CAMPAGNE ACTIVE/i.test(automationContext?.trim() ?? "");
+}
+
+/** Profil Réglages ≠ mémoire campagne : ne l'injecte pas quand une campagne/mémoire est active. */
+async function buildWhatsAppSourceBlock(
+  userId: number,
+  automationContext?: string
+): Promise<string> {
+  if (automationContextHasCampaignMemory(automationContext)) {
+    return [
+      "Source UNIQUE = bloc MÉMOIRE CAMPAGNE + consignes CAMPAGNE ci-dessous.",
+      "INTERDIT d'utiliser le profil business (Réglages / onboarding) — il peut être obsolète ou différent.",
+      "INTERDIT d'inventer nom, offre, prix ou lien absents de la mémoire / campagne.",
+    ].join("\n");
+  }
+  if (automationContextHasActiveCampaign(automationContext)) {
+    return [
+      "Source = consignes CAMPAGNE ci-dessous uniquement (pas le profil Réglages).",
+      "INTERDIT d'inventer hors campagne.",
+    ].join("\n");
+  }
   const s = await getAppSettings(userId);
   const price = s.business_price?.trim();
-  const lines = [
-    `Prénom / nom à utiliser : ${s.business_owner_name || "(non configuré — ne pas inventer, ne pas mettre de crochets)"}`,
-    `Offre / formation : ${s.business_offer || "(non configuré — ne pas inventer)"}`,
+  return [
+    "⚠️ Aucune mémoire campagne — fallback profil général (limité).",
+    `Prénom / nom : ${s.business_owner_name || "(non configuré — ne pas inventer)"}`,
+    `Offre : ${s.business_offer || "(non configuré — ne pas inventer)"}`,
     price
       ? `Tarif (FCFA) : ${price}`
-      : `Tarif (FCFA) : NON COMMUNIQUÉ — si on te demande le prix, dis que tu confirmes juste après. INTERDIT d'écrire [prix] ou tout autre crochet.`,
-  ];
-  return lines.join("\n");
+      : `Tarif : NON COMMUNIQUÉ — ne pas inventer [prix].`,
+  ].join("\n");
 }
 
 export async function generateWhatsAppReply(userId: number, input: {
@@ -429,8 +454,8 @@ export async function generateWhatsAppReply(userId: number, input: {
             `Si ack / quantité (« ok », « 1 ») : enchaîne la prochaine question utile (souvent le LIEU DE LIVRAISON) — jamais un faux lien.\n`
           : "";
 
-  const userContent = `## Identité & offre (ne jamais inventer hors de ça)
-${await businessContextBlock(userId)}
+  const userContent = `## Identité & offre
+${await buildWhatsAppSourceBlock(userId, input.automationContext)}
 ${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES\n${input.automationContext}\n` : "\n⚠️ Pas de campagne active — réponse courte et générale.\n"}
 ${hardOverride}${askedBlock}
 ## Contact

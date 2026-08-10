@@ -191,6 +191,7 @@ const CORE_TOOL_NAMES = new Set([
   "save_business_profile",
   "get_business_profile",
   "list_campaign_memories",
+  "get_active_campaign_memory",
   "set_campaign_memory",
   "create_automation",
   "activate_automation",
