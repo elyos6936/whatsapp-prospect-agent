@@ -111,7 +111,7 @@ export function InboxPage() {
       setDraft("");
       await loadTickets();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Envoi WhatsApp impossible");
+      setError(err instanceof ApiError ? err.message : "Envoi impossible");
     } finally {
       setBusy(false);
     }
@@ -208,7 +208,7 @@ export function InboxPage() {
       <main className="main">
         {error && <div className="error-banner" style={{ margin: 12 }}>{error}</div>}
         {!ticket ? (
-          <div className="main-empty">Sélectionnez une demande pour répondre sur WhatsApp.</div>
+          <div className="main-empty">Sélectionnez une demande pour répondre dans la bulle d’aide.</div>
         ) : (
           <>
             <div className="main-head">
@@ -242,7 +242,7 @@ export function InboxPage() {
                     {m.role === "user"
                       ? "Client"
                       : m.role === "ops"
-                        ? "Vous (WhatsApp)"
+                        ? "Vous (bulle)"
                         : m.role === "assistant"
                           ? "Grace"
                           : "Système"}{" "}
@@ -263,7 +263,7 @@ export function InboxPage() {
                 <textarea
                   value={draft}
                   onChange={(e) => setDraft(e.target.value)}
-                  placeholder="Répondre au client sur WhatsApp…"
+                  placeholder="Répondre au client dans la bulle d’aide…"
                   rows={2}
                 />
                 <button
@@ -272,7 +272,7 @@ export function InboxPage() {
                   disabled={busy || !draft.trim()}
                   onClick={() => void sendReply()}
                 >
-                  {busy ? "Envoi…" : "Envoyer sur WA"}
+                  {busy ? "Envoi…" : "Envoyer"}
                 </button>
               </div>
             )}

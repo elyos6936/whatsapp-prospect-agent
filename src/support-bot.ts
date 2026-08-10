@@ -44,7 +44,7 @@ Tu DOIS répondre UNIQUEMENT avec un JSON valide (pas de markdown) de la forme :
 {"action":"reply"|"escalate","message":"...","reason":"optionnel si escalate","subject":"titre court optionnel"}
 
 Le champ "message" est TOUJOURS le texte montré à l'utilisateur.
-En cas d'escalate, message doit prévenir qu'un humain va prendre le relais sur WhatsApp rapidement.`;
+- En cas d'escalate, message doit prévenir qu'un humain va répondre dans ce chat d'aide (pas sur WhatsApp).`;
 
 export type SupportChatResult = {
   ticket: SupportTicket;
@@ -123,7 +123,7 @@ async function runGraceDecision(input: {
     return {
       action: "escalate",
       message:
-        "Je transmets votre demande à un membre de l'équipe Klanvio. Un humain va prendre le relais très bientôt sur WhatsApp.",
+        "Je transmets votre demande à un membre de l'équipe Klanvio. Un humain va vous répondre ici, dans ce chat d'aide.",
       reason: "llm_unavailable",
     };
   }
@@ -179,7 +179,7 @@ async function runGraceDecision(input: {
   return {
     action: "escalate",
     message:
-      "Je n'ai pas pu traiter cette demande automatiquement. Un humain de l'équipe Klanvio va prendre le relais sur WhatsApp.",
+      "Je n'ai pas pu traiter cette demande automatiquement. Un humain de l'équipe Klanvio va vous répondre ici, dans ce chat d'aide.",
     reason: "llm_error",
   };
 }
@@ -241,10 +241,10 @@ export async function handleSupportUserChat(
       userMessage: userContent,
       reason: decision.reason,
     });
-    if (!/humain|relais|équipe/i.test(replyText)) {
+    if (!/humain|relais|équipe|chat d'aide|ici/i.test(replyText)) {
       replyText =
         replyText +
-        "\n\nUn membre de l'équipe Klanvio va prendre le relais sur WhatsApp très bientôt.";
+        "\n\nUn membre de l'équipe Klanvio va vous répondre ici, dans ce chat d'aide.";
     }
   } else if (ticket.status === "done") {
     await updateSupportTicket(ticket.id, { status: "pending" });
@@ -279,36 +279,7 @@ export async function sendOpsSupportReply(
   const ticket = await getSupportTicketById(ticketId);
   if (!ticket) throw new Error("Ticket introuvable.");
 
-  let clientPhone = ticket.client_phone;
-  if (!clientPhone) {
-    try {
-      clientPhone = await getConnectedOwnerId(ticket.user_id);
-      if (clientPhone) {
-        await updateSupportTicket(ticket.id, { clientPhone });
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  if (!clientPhone) {
-    throw new Error("Numéro WhatsApp du client introuvable (compte non connecté).");
-  }
-
-  const opsUserId = config.supportWhatsAppUserId;
-  try {
-    await sendWhatsAppMessage(opsUserId, clientPhone, text, {
-      enableAutoReply: false,
-      countsTowardQuota: false,
-      bypassOutboundGates: true,
-      outboundProfile: "auto_reply",
-    });
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Envoi WhatsApp impossible (instance support #${opsUserId}) : ${msg}`
-    );
-  }
-
+  // Réponse humaine → uniquement dans la bulle d’aide (pas d’envoi WhatsApp client).
   const saved = await appendSupportMessage({
     ticketId: ticket.id,
     role: "ops",
