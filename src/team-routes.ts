@@ -50,9 +50,15 @@ export async function registerTeamRoutes(app: FastifyInstance): Promise<void> {
     }
   );
 
-  app.get("/api/team", async (request) => {
+  app.get("/api/team", async (request, reply) => {
     const actorUserId = requireActorUserId(request);
-    return getTeamOverview(actorUserId);
+    try {
+      return await getTeamOverview(actorUserId);
+    } catch (err) {
+      return reply.status(403).send({
+        error: err instanceof Error ? err.message : "Équipe indisponible.",
+      });
+    }
   });
 
   app.post<{ Body: { email?: string; role?: InviteRole } }>(

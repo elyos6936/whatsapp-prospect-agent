@@ -29,6 +29,8 @@ import { TeamPanel } from '@/components/settings/TeamPanel';
 import {
   PLAN,
   TRIAL_DAYS,
+  TRIAL_MAX_CONVERSATIONS,
+  TRIAL_MAX_GROUP_EXTRACTS_PER_DAY,
   formatEuro,
   getPlan,
   periodSuffix,
@@ -300,16 +302,22 @@ export function SettingsPage() {
   };
 
   const isOwner = user?.workspace?.role === 'owner' || !user?.workspace;
+  const isPaid = user?.subscription_status === 'active';
+  const canAccessTeam = isPaid;
 
   useEffect(() => {
-    if (!isOwner && tab === 'billing') setTab('team');
-  }, [isOwner, tab]);
+    if (!isOwner && tab === 'billing') setTab(canAccessTeam ? 'team' : 'connection');
+  }, [isOwner, tab, canAccessTeam]);
+
+  useEffect(() => {
+    if (!canAccessTeam && tab === 'team') setTab(isOwner ? 'billing' : 'connection');
+  }, [canAccessTeam, tab, isOwner]);
 
   const tabs: { id: SettingsTab; label: string; icon: typeof Smartphone }[] = [
     ...(isOwner ? [{ id: 'billing' as const, label: 'Facturation', icon: CreditCard }] : []),
     { id: 'memory', label: 'Mémoire', icon: Brain },
     { id: 'integrations', label: 'Intégrations', icon: Link2 },
-    { id: 'team', label: 'Équipe', icon: Users },
+    ...(canAccessTeam ? [{ id: 'team' as const, label: 'Équipe', icon: Users }] : []),
     { id: 'connection', label: 'WhatsApp', icon: Smartphone },
   ];
 
@@ -504,8 +512,12 @@ export function SettingsPage() {
                     });
                   }
                   rows.push({
-                    label: 'Conversations',
-                    value: `${user?.trial_conversations_used ?? 0} / 20`,
+                    label: 'Conversations (à vie)',
+                    value: `${user?.trial_conversations_used ?? 0} / ${TRIAL_MAX_CONVERSATIONS}`,
+                  });
+                  rows.push({
+                    label: 'Groupes WhatsApp / jour',
+                    value: `${TRIAL_MAX_GROUP_EXTRACTS_PER_DAY} extraction max`,
                   });
                 } else {
                   rows.push({

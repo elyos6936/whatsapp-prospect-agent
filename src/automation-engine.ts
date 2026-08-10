@@ -27,6 +27,7 @@ import {
   formatLocalDateTime,
   countAutomationMessagesInRange,
   countUserMessagesInRange,
+  tryConsumeTrialGroupExtract,
   type Automation,
   type AutomationConfig,
 } from "./db.js";
@@ -629,6 +630,11 @@ export async function bootstrapGroupProspectTargets(userId: number, automationId
   const groupId = auto.config.groupId!;
 
   await requireEvolutionConnected(userId, "le chargement des membres du groupe");
+
+  const trialGate = await tryConsumeTrialGroupExtract(userId, groupId);
+  if (!trialGate.ok) {
+    await failAutomationNoTargets(userId, automationId, trialGate.reason);
+  }
 
   const group = await getGroupMembers(userId, groupId);
   const maxMembers = Math.min(Math.max(auto.config.maxMembers ?? 30, 1), 50);

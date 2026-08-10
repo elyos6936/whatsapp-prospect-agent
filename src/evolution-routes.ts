@@ -6,6 +6,7 @@ import {
   getRecentIncomingMessages,
   getWhatsAppMessageStats,
   listIncomingMessages,
+  tryConsumeTrialGroupExtract,
 } from "./db.js";
 import {
   chatIdToDisplay,
@@ -187,6 +188,14 @@ export async function registerEvolutionRoutes(app: FastifyInstance): Promise<voi
     const groupId = request.query.groupId?.trim();
     if (!groupId) return reply.status(400).send({ error: "groupId requis." });
     try {
+      const trialGate = await tryConsumeTrialGroupExtract(userId, groupId);
+      if (!trialGate.ok) {
+        return reply.status(403).send({
+          error: trialGate.reason,
+          code: "trial_group_extract_limit",
+          limit: trialGate.limit,
+        });
+      }
       const group = await getGroupMembers(userId, groupId);
       return { group };
     } catch (err) {

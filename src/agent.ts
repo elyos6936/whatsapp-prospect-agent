@@ -8,6 +8,7 @@ import {
   getOutreachQuotaSnapshot,
   getRecentAgentMessages,
   listAutomations,
+  tryConsumeTrialGroupExtract,
   type AgentMessage,
   type AppSettings,
 } from "./db.js";
@@ -444,6 +445,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           `Groupe introuvable : « ${membersQuick.groupQuery} ».\n\n` +
           `Vérifiez le nom exact (copier-coller depuis WhatsApp) ou demandez « liste mes groupes ».`
         );
+      }
+      const trialGate = await tryConsumeTrialGroupExtract(userId, found.id);
+      if (!trialGate.ok) {
+        return trialGate.reason;
       }
       const data = await getGroupMembers(userId, found.id);
       const allMembers = data.participants.map((p) => ({

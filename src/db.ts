@@ -1842,6 +1842,101 @@ export async function getOutboundQuotaBonus(userId: number): Promise<number> {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
 
+function trialGroupExtractKey(): string {
+  return `trial_group_extract_${formatLocalDateTime(new Date()).slice(0, 10)}`;
+}
+
+function parseTrialGroupExtractIds(raw: string): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (Array.isArray(parsed)) {
+      return parsed.map(String).filter(Boolean);
+    }
+    if (parsed && typeof parsed === "object" && Array.isArray((parsed as { groupIds?: unknown }).groupIds)) {
+      return ((parsed as { groupIds: unknown[] }).groupIds).map(String).filter(Boolean);
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+/**
+ * Essai : 1 groupe WhatsApp distinct extractible / jour (relecture du même groupe OK).
+ * Abonnement actif / expiré hors essai → pas de plafond.
+ */
+export async function tryConsumeTrialGroupExtract(
+  userId: number,
+  groupId: string
+): Promise<{ ok: true; reused: boolean } | { ok: false; reason: string; limit: number }> {
+  const { getUserById } = await import("./users.js");
+  const { TRIAL_MAX_GROUP_EXTRACTS_PER_DAY } = await import("./outreach-level.js");
+  const user = await getUserById(userId);
+  if (!user || user.subscription_status !== "trial") {
+    return { ok: true, reused: false };
+  }
+
+  const gid = String(groupId || "").trim();
+  if (!gid) {
+    return {
+      ok: false,
+      reason: "Groupe invalide pour l'extraction.",
+      limit: TRIAL_MAX_GROUP_EXTRACTS_PER_DAY,
+    };
+  }
+
+  const key = trialGroupExtractKey();
+  const used = parseTrialGroupExtractIds(await getSetting(userId, key));
+  if (used.includes(gid)) {
+    return { ok: true, reused: true };
+  }
+  if (used.length >= TRIAL_MAX_GROUP_EXTRACTS_PER_DAY) {
+    return {
+      ok: false,
+      reason:
+        `Essai gratuit : extraction limitée à ${TRIAL_MAX_GROUP_EXTRACTS_PER_DAY} groupe WhatsApp par jour. ` +
+        `Vous avez déjà extrait un groupe aujourd'hui — réessayez demain, ou activez votre abonnement pour extraire sans limite.`,
+      limit: TRIAL_MAX_GROUP_EXTRACTS_PER_DAY,
+    };
+  }
+
+  used.push(gid);
+  await setSetting(userId, key, JSON.stringify({ groupIds: used }));
+  return { ok: true, reused: false };
+}
+
+export async function getTrialGroupExtractSnapshot(userId: number): Promise<{
+  trial: boolean;
+  usedToday: number;
+  limit: number;
+  remainingToday: number;
+  groupIdsToday: string[];
+}> {
+  const { getUserById } = await import("./users.js");
+  const { TRIAL_MAX_GROUP_EXTRACTS_PER_DAY } = await import("./outreach-level.js");
+  const user = await getUserById(userId);
+  const trial = user?.subscription_status === "trial";
+  if (!trial) {
+    return {
+      trial: false,
+      usedToday: 0,
+      limit: TRIAL_MAX_GROUP_EXTRACTS_PER_DAY,
+      remainingToday: TRIAL_MAX_GROUP_EXTRACTS_PER_DAY,
+      groupIdsToday: [],
+    };
+  }
+  const groupIdsToday = parseTrialGroupExtractIds(await getSetting(userId, trialGroupExtractKey()));
+  const usedToday = groupIdsToday.length;
+  return {
+    trial: true,
+    usedToday,
+    limit: TRIAL_MAX_GROUP_EXTRACTS_PER_DAY,
+    remainingToday: Math.max(0, TRIAL_MAX_GROUP_EXTRACTS_PER_DAY - usedToday),
+    groupIdsToday,
+  };
+}
+
 /** Plafonds journaliers (nouveaux fils) selon niveau — ou illimités côté niveau en essai. */
 export async function getUserDailyConversationCaps(
   userId: number
@@ -1850,7 +1945,7 @@ export async function getUserDailyConversationCaps(
   const { dailyCapsForLevel, TRIAL_MAX_CONVERSATIONS } = await import("./outreach-level.js");
   const user = await getUserById(userId);
   if (!user || user.subscription_status === "trial") {
-    // Essai : le plafond 20 à vie remplace le système de niveau (pas de cap jour niveau)
+    // Essai : le plafond à vie (TRIAL_MAX_CONVERSATIONS) remplace le système de niveau
     return {
       inbound: TRIAL_MAX_CONVERSATIONS,
       outbound: TRIAL_MAX_CONVERSATIONS,
@@ -1912,10 +2007,14 @@ export async function getOutreachQuotaSnapshot(userId: number): Promise<{
     .join(" · ");
 
   let summary: string;
+  const groupExtract = await getTrialGroupExtractSnapshot(userId);
+
   if (trial) {
     summary =
       `Compte en ESSAI (trial). Plafond : ${TRIAL_MAX_CONVERSATIONS} nouvelles conversations à vie ` +
       `(utilisées ${trialUsed}, restantes ${trialRemaining}). ` +
+      `Extraction groupes WhatsApp : ${groupExtract.limit} groupe distinct / jour ` +
+      `(aujourd'hui ${groupExtract.usedToday}/${groupExtract.limit}, restantes ${groupExtract.remainingToday}). ` +
       `Les plafonds journaliers par niveau ne s'appliquent qu'après passage en abonnement actif. ` +
       `Niveau lifetime actuel (messages sortants comptés) : ${level}/5, total envoyé : ${total}` +
       (untilNext != null ? `, encore ${untilNext} message(s) sortant(s) avant le niveau suivant.` : " (niveau max).") +

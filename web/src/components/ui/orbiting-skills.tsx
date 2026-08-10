@@ -37,6 +37,8 @@ type GlowingOrbitPathProps = {
 };
 
 const TWO_PI = Math.PI * 2;
+/** Design size of the orbit stage — scaled down via ResizeObserver on narrow viewports. */
+const STAGE_SIZE = 450;
 
 /** Inner = live Klanvio integrations · Outer = upcoming / ecosystem */
 const ORBIT_ITEMS: OrbitItemConfig[] = [
@@ -150,7 +152,7 @@ const OrbitingSkill = memo(function OrbitingSkill({ config, nodeRef }: OrbitingS
   const bubble = (
     <div
       className={cn(
-        'relative flex h-full w-full items-center justify-center overflow-hidden rounded-full border border-black/[0.08] bg-white p-1 shadow-md shadow-black/10 transition-all duration-300',
+        'relative flex h-full w-full items-center justify-center overflow-hidden rounded-full border border-black/[0.08] bg-white p-1 shadow-md shadow-black/10 transition-transform duration-300',
         isHovered && 'scale-110 shadow-xl',
         href && 'cursor-pointer hover:border-brand-border',
       )}
@@ -169,7 +171,7 @@ const OrbitingSkill = memo(function OrbitingSkill({ config, nodeRef }: OrbitingS
   return (
     <div
       ref={nodeRef}
-      className="absolute top-1/2 left-1/2 will-change-transform"
+      className="absolute top-1/2 left-1/2"
       style={{
         width: `${size}px`,
         height: `${size}px`,
@@ -253,13 +255,35 @@ type OrbitingSkillsProps = {
   className?: string;
 };
 
-/** Orbiting integrations — DOM transforms only (no React re-render per frame). */
+/**
+ * Orbiting integrations — DOM transforms only (no React re-render per frame).
+ * Layout width/height track the scaled stage so mobile never overflows horizontally.
+ */
 export function OrbitingSkills({ className }: OrbitingSkillsProps) {
+  const wrapRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
   const hoverPaused = useRef(false);
   const inView = useRef(true);
   const reducedMotion = useRef(false);
+  const [scale, setScale] = useState(1);
+
+  useEffect(() => {
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+
+    const measure = () => {
+      const w = wrap.clientWidth;
+      // Fit stage into available width (outer orbit ~214px radius + bubble).
+      const next = Math.min(1, Math.max(0.58, (w - 4) / STAGE_SIZE));
+      setScale((prev) => (Math.abs(prev - next) < 0.01 ? prev : next));
+    };
+
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -276,7 +300,7 @@ export function OrbitingSkills({ className }: OrbitingSkillsProps) {
         ([entry]) => {
           inView.current = entry?.isIntersecting ?? true;
         },
-        { rootMargin: '80px 0px', threshold: 0.05 },
+        { rootMargin: '60px 0px', threshold: 0.08 },
       );
       io.observe(stage);
     }
@@ -319,42 +343,53 @@ export function OrbitingSkills({ className }: OrbitingSkillsProps) {
     { radius: 188, glowColor: 'emerald', delay: 1.2 },
   ];
 
+  const layoutSize = STAGE_SIZE * scale;
+
   return (
-    <div className={cn('relative flex w-full items-center justify-center overflow-hidden', className)}>
-      <div
-        ref={stageRef}
-        className="relative mx-auto flex h-[450px] w-[450px] max-w-full shrink-0 items-center justify-center scale-[0.92] lg:scale-100"
-        onMouseEnter={() => {
-          hoverPaused.current = true;
-        }}
-        onMouseLeave={() => {
-          hoverPaused.current = false;
-        }}
-      >
-        <div className="relative z-10 flex h-[5.25rem] w-[5.25rem] items-center justify-center rounded-full border border-brand/25 bg-white shadow-[0_12px_32px_-12px_rgba(32,87,206,0.45)]">
-          <div className="absolute inset-0 rounded-full bg-brand/15 blur-xl" />
-          <div className="absolute inset-0 rounded-full bg-[#25D366]/10 blur-2xl" />
-          <KlanvioLogo variant="icon" size="xl" className="relative z-10 !h-11 !w-11" />
+    <div ref={wrapRef} className={cn('relative mx-auto w-full max-w-[450px]', className)}>
+      <div className="relative mx-auto overflow-visible" style={{ width: layoutSize, height: layoutSize }}>
+        <div
+          ref={stageRef}
+          className="absolute left-1/2 top-1/2 flex items-center justify-center"
+          style={{
+            width: STAGE_SIZE,
+            height: STAGE_SIZE,
+            transform: `translate(-50%, -50%) scale(${scale})`,
+            transformOrigin: 'center center',
+          }}
+          onPointerEnter={(e) => {
+            // Avoid sticky pause after tap on touch devices.
+            if (e.pointerType === 'mouse') hoverPaused.current = true;
+          }}
+          onPointerLeave={() => {
+            hoverPaused.current = false;
+          }}
+        >
+          <div className="relative z-10 flex h-[5.25rem] w-[5.25rem] items-center justify-center rounded-full border border-brand/25 bg-white shadow-[0_12px_32px_-12px_rgba(32,87,206,0.45)]">
+            <div className="absolute inset-0 rounded-full bg-brand/15 blur-xl" />
+            <div className="absolute inset-0 rounded-full bg-[#25D366]/10 blur-2xl" />
+            <KlanvioLogo variant="icon" size="xl" className="relative z-10 !h-11 !w-11" />
+          </div>
+
+          {orbitConfigs.map((config) => (
+            <GlowingOrbitPath
+              key={`path-${config.radius}`}
+              radius={config.radius}
+              glowColor={config.glowColor}
+              animationDelay={config.delay}
+            />
+          ))}
+
+          {ORBIT_ITEMS.map((config, index) => (
+            <OrbitingSkill
+              key={config.id}
+              config={config}
+              nodeRef={(el) => {
+                itemRefs.current[index] = el;
+              }}
+            />
+          ))}
         </div>
-
-        {orbitConfigs.map((config) => (
-          <GlowingOrbitPath
-            key={`path-${config.radius}`}
-            radius={config.radius}
-            glowColor={config.glowColor}
-            animationDelay={config.delay}
-          />
-        ))}
-
-        {ORBIT_ITEMS.map((config, index) => (
-          <OrbitingSkill
-            key={config.id}
-            config={config}
-            nodeRef={(el) => {
-              itemRefs.current[index] = el;
-            }}
-          />
-        ))}
       </div>
     </div>
   );

@@ -8,7 +8,14 @@ export type OutreachLevel = 1 | 2 | 3 | 4 | 5;
 
 export type SubscriptionStatus = "trial" | "active" | "expired";
 
-export const TRIAL_MAX_CONVERSATIONS = 20;
+/** Nouvelles conversations (fils) à vie pendant l’essai — pas un plafond journalier. */
+export const TRIAL_MAX_CONVERSATIONS = 50;
+
+/**
+ * Pendant l’essai : nombre de groupes WhatsApp distincts dont on peut extraire
+ * les membres (get_group_members / prospection groupe) par jour calendaire local.
+ */
+export const TRIAL_MAX_GROUP_EXTRACTS_PER_DAY = 1;
 
 /** Essai gratuit en jours (aligné landing / pricing). */
 export const TRIAL_DAYS = 3;

@@ -86,6 +86,7 @@ import {
   getContactThread,
   getDailyBilan,
   getOutreachQuotaSnapshot,
+  tryConsumeTrialGroupExtract,
   listContacts,
   listIncomingMessages,
   listScheduledMessages,
@@ -2641,6 +2642,14 @@ export async function executeTool(
     case "get_group_members": {
       try {
       const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
+      const trialGate = await tryConsumeTrialGroupExtract(userId, groupId);
+      if (!trialGate.ok) {
+        return JSON.stringify({
+          error: trialGate.reason,
+          code: "trial_group_extract_limit",
+          limit: trialGate.limit,
+        });
+      }
       const data = await getGroupMembers(userId, groupId);
         const allMembers = data.participants.map((p) => ({
           id: p.id,

@@ -2,6 +2,10 @@
 
 export const TRIAL_DAYS = 3;
 export const REFUND_DAYS = 14;
+/** Aligné sur `src/outreach-level.ts` — conversations (nouveaux fils) à vie en essai. */
+export const TRIAL_MAX_CONVERSATIONS = 50;
+/** Aligné sur `src/outreach-level.ts` — groupes WhatsApp extractibles / jour en essai. */
+export const TRIAL_MAX_GROUP_EXTRACTS_PER_DAY = 1;
 
 export type BillingPeriod = 'monthly' | 'annual';
 
@@ -29,7 +33,7 @@ export const PLAN: PricingPlan = {
   annualMonthly: 17,
   valueAnchor: 'Valeur réelle : 150€+/mois ailleurs',
   description:
-    'Toutes les fonctionnalités. Aucune limite cachée. Essai 3 jours sans carte bancaire.',
+    'Toutes les fonctionnalités. Essai 3 jours sans carte (50 conversations, 1 groupe WhatsApp/jour).',
   features: [
     'Prospection & diffusion WhatsApp automatisées',
     'Agent IA conversationnel (texte, voix, image, PDF)',
@@ -38,7 +42,7 @@ export const PLAN: PricingPlan = {
     'Sheets, Contacts, Typeform, Calendly, Tally',
     'n8n & Make pour aller plus loin',
     'Stats campagnes + bilan quotidien + rapport hebdo',
-    'Équipe & rôles inclus',
+    'Équipe & rôles (abonnement)',
   ],
 };
 

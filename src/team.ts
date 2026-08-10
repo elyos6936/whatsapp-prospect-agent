@@ -311,6 +311,7 @@ export async function getTeamOverview(actorUserId: number): Promise<{
   };
 }> {
   const workspace = await resolveWorkspaceContext(actorUserId);
+  await assertPaidTeamAccess(workspace.ownerUserId);
   const maxInvites = maxInviteSlots(workspace.billingPlan);
 
   const memberRows = await sql<Record<string, unknown>[]>`
@@ -399,6 +400,16 @@ async function sendTeamInviteEmail(input: {
   }
 }
 
+/** Équipe réservée aux workspaces dont le propriétaire a un abonnement actif. */
+async function assertPaidTeamAccess(ownerUserId: number): Promise<void> {
+  const owner = await getUserById(ownerUserId);
+  if (!owner || owner.subscription_status !== "active") {
+    throw new Error(
+      "L'équipe est réservée aux comptes abonnés. Passez à Klanvio pour inviter des collaborateurs.",
+    );
+  }
+}
+
 export async function createTeamInvite(
   actorUserId: number,
   input: { email: string; role: InviteRole }
@@ -412,6 +423,7 @@ export async function createTeamInvite(
   }
 
   const workspace = await resolveWorkspaceContext(actorUserId);
+  await assertPaidTeamAccess(workspace.ownerUserId);
   if (!canManageTeam(workspace.role)) {
     throw new Error("Seuls le propriétaire et les admins peuvent inviter.");
   }
@@ -494,6 +506,7 @@ export async function createTeamInvite(
 
 export async function cancelTeamInvite(actorUserId: number, inviteId: number): Promise<void> {
   const workspace = await resolveWorkspaceContext(actorUserId);
+  await assertPaidTeamAccess(workspace.ownerUserId);
   if (!canManageTeam(workspace.role)) {
     throw new Error("Permission refusée.");
   }
@@ -511,6 +524,7 @@ export async function updateMemberRole(
   role: InviteRole
 ): Promise<void> {
   const workspace = await resolveWorkspaceContext(actorUserId);
+  await assertPaidTeamAccess(workspace.ownerUserId);
   if (workspace.role !== "owner") {
     throw new Error("Seul le propriétaire peut modifier les rôles.");
   }
@@ -534,6 +548,7 @@ export async function removeTeamMember(
   targetUserId: number
 ): Promise<void> {
   const workspace = await resolveWorkspaceContext(actorUserId);
+  await assertPaidTeamAccess(workspace.ownerUserId);
   if (!canManageTeam(workspace.role)) {
     throw new Error("Permission refusée.");
   }

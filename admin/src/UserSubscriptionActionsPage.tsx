@@ -209,7 +209,7 @@ export function UserSubscriptionActionsPage() {
                   </select>
                 </div>
                 <p className="actions-help">
-                  Essai utilise : {detail.user.trialConversationsUsed}/20
+                  Essai utilise : {detail.user.trialConversationsUsed}/50
                   {detail.user.trialStartedAt
                     ? ` · demarre ${new Date(detail.user.trialStartedAt).toLocaleDateString("fr-FR")}`
                     : ""}
