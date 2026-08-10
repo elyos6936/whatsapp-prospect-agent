@@ -512,7 +512,7 @@ function addUtcDays(days: number, from = new Date()): Date {
   return d;
 }
 
-/** Active un abonnement payé (mensuel = 30j, annuel = 365j). */
+/** Active un abonnement payé (mensuel = 30j, annuel = 365j). Renouvellement anticipé : jours ajoutés à la fin actuelle. */
 export async function activatePaidSubscription(
   userId: number,
   billingPeriod: "monthly" | "annual"
@@ -520,12 +520,24 @@ export async function activatePaidSubscription(
   await ensureUserOutreachSchema();
   const days =
     billingPeriod === "annual" ? SUBSCRIPTION_DAYS_ANNUAL : SUBSCRIPTION_DAYS_MONTHLY;
-  const periodEnd = addUtcDays(days);
+
+  const existing = await getUserById(userId);
+  const now = new Date();
+  let base = now;
+  if (
+    existing?.subscription_status === "active" &&
+    existing.subscription_period_end &&
+    new Date(existing.subscription_period_end).getTime() > now.getTime()
+  ) {
+    base = new Date(existing.subscription_period_end);
+  }
+  const periodEnd = addUtcDays(days, base);
+
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE users SET
       subscription_status = 'active',
       subscription_period_end = ${periodEnd.toISOString()},
-      subscription_activated_at = NOW(),
+      subscription_activated_at = COALESCE(subscription_activated_at, NOW()),
       subscription_renewal_reminder_key = NULL
     WHERE id = ${userId}
     RETURNING
