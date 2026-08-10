@@ -305,8 +305,9 @@ export const config = {
   /** Optionnel : bcrypt hash ; prioritaire sur ADMIN_PASSWORD si défini. */
   adminPasswordHash: process.env.ADMIN_PASSWORD_HASH?.trim() || "",
   /**
-   * UserId dont l’instance Evolution envoie les notifs support + réponses ops.
-   * Optionnel : défaut = compte plateforme historique (id 1 / automax-prospection).
+   * Compte WhatsApp Klanvio déjà branché côté serveur (Evolution) pour les
+   * alertes support et les réponses humaines. Défaut : userId 1. Rien à
+   * configurer côté client.
    */
   supportWhatsAppUserId: (() => {
     const raw = process.env.SUPPORT_WHATSAPP_USER_ID?.trim();

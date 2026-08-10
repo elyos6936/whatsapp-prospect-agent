@@ -26,7 +26,6 @@ import type { OverlayView } from '@/lib/navigation';
 import { OnboardingPage } from '@/pages/OnboardingPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { NewAutomationModal } from '@/components/ui/NewAutomationModal';
-import { SupportBubble } from '@/components/support/SupportBubble';
 import { OutreachLevelModal } from '@/components/outreach/OutreachLevelModal';
 import { PhoneSimulationPanel } from '@/components/chat/PhoneSimulationPanel';
 import { extractLatestSimulationBubbles } from '@/lib/parse-simulation-turns';
@@ -262,30 +261,15 @@ export default function AuthenticatedApp() {
   if (!user) return null;
 
   if (!user.onboarding_completed) {
-    return (
-      <>
-        <OnboardingPage />
-        <SupportBubble />
-      </>
-    );
+    return <OnboardingPage />;
   }
 
   if (!waConnected && gateConfirmed) {
-    return (
-      <>
-        <ConnectWhatsAppGate />
-        <SupportBubble />
-      </>
-    );
+    return <ConnectWhatsAppGate />;
   }
 
   if (waConnected && !user.google_contacts_prompt_done) {
-    return (
-      <>
-        <ConnectGoogleContactsGate />
-        <SupportBubble />
-      </>
-    );
+    return <ConnectGoogleContactsGate />;
   }
 
   return (
@@ -424,7 +408,6 @@ export default function AuthenticatedApp() {
       />
     )}
 
-    <SupportBubble />
     </>
   );
 }
