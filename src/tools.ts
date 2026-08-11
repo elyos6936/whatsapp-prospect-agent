@@ -4939,14 +4939,18 @@ export async function executeTool(
 
       if (type === "contact_prospect") {
         if (!args.initial_message) {
-          return JSON.stringify({ error: "contact_prospect requiert initial_message." });
+          return JSON.stringify({
+            error: userFacingError("contact_prospect requiert initial_message."),
+          });
         }
         const rawContacts = Array.isArray(args.contacts)
           ? args.contacts.map(String).map((s) => s.trim()).filter(Boolean)
           : [];
         if (!rawContacts.length) {
           return JSON.stringify({
-            error: "contact_prospect requiert au moins un contact (numéro, chatId ou nom).",
+            error: userFacingError(
+              "contact_prospect requiert au moins un contact (numéro, chatId ou nom).",
+            ),
           });
         }
         try {
@@ -5011,7 +5015,7 @@ export async function executeTool(
       if (type === "group_prospect") {
         if (!args.group_id || !args.initial_message) {
           return JSON.stringify({
-            error: "group_prospect requiert group_id et initial_message.",
+            error: userFacingError("group_prospect requiert group_id et initial_message."),
           });
         }
         try {
@@ -5030,7 +5034,9 @@ export async function executeTool(
       if (type === "group_broadcast") {
         if (!args.initial_message) {
           return JSON.stringify({
-            error: "group_broadcast requiert initial_message (texte à publier dans les groupes).",
+            error: userFacingError(
+              "group_broadcast requiert initial_message (texte à publier dans les groupes).",
+            ),
           });
         }
         const rawGroups = Array.isArray(args.group_ids)
@@ -5040,8 +5046,9 @@ export async function executeTool(
             : [];
         if (!rawGroups.length) {
           return JSON.stringify({
-            error:
+            error: userFacingError(
               "group_broadcast requiert group_ids (un ou plusieurs groupes où vous êtes admin). Utilise list_whatsapp_groups(admin_only=true).",
+            ),
           });
         }
         try {
@@ -5082,9 +5089,10 @@ export async function executeTool(
         const phrases = config.triggerPhrases ?? [];
         if (!catchAll && !phrases.length) {
           return JSON.stringify({
-            error:
+            error: userFacingError(
               "keyword_sales requiert trigger_phrases (mot/phrase exact), " +
-              "OU inbound_catch_all=true pour gérer tout le compte WhatsApp.",
+                "OU inbound_catch_all=true pour gérer tout le compte WhatsApp.",
+            ),
           });
         }
         if (catchAll) {

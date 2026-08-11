@@ -33,6 +33,7 @@ import {
   buildSupportConversationGuide,
   generateSupportSimulationDirect,
 } from "./support-flow.js";
+import { userFacingError } from "./user-facing.js";
 
 export {
   runDeterministicGroupsDraft,
@@ -259,9 +260,9 @@ export async function runDeterministicDraftAndSim(opts: {
   const draft = parseToolJson(draftRaw);
   if (!draft.ok) {
     console.warn("[deterministic] draft error:", draft.error || draftRaw.slice(0, 240));
-    return (
+    return userFacingError(
       draft.error ||
-      "Impossible d'enregistrer le brouillon avec les 5 accroches. Réessaie « oui »."
+        "Impossible d'enregistrer le brouillon avec les 5 accroches. Réessaie « oui ».",
     );
   }
 
@@ -652,9 +653,9 @@ export async function runDeterministicActivation(opts: {
   });
   const parsed = parseToolJson(raw);
   if (!parsed.ok) {
-    return (
+    return userFacingError(
       parsed.error ||
-      "Impossible d'activer la campagne pour le moment. Vérifie WhatsApp / la mémoire, puis réessaie « active »."
+        "Impossible d'activer la campagne pour le moment. Vérifie WhatsApp / la mémoire, puis réessaie « active ».",
     );
   }
   return (
@@ -687,8 +688,8 @@ export function shouldDeterministicActivate(
 
   if (/^(lance|lancer|active|activer|démarre|demarre|go)(\s|$|[!.])/i.test(t)) return true;
   if (
-    /\b(active|activer|lance|lancer)\s+(les?\s+)?(campagnes?|automatisations?|maintenant)\b/i.test(
-      t
+    /\b(active|activer|lance|lancer)\s+(?:(?:le[s]?|la|l[''])\s+)?(campagnes?|automatisations?|maintenant)\b/i.test(
+      t,
     )
   ) {
     return true;

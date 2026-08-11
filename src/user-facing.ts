@@ -1,7 +1,69 @@
+/** Erreur outil / param technique — ne doit jamais apparaître telle quelle dans le chat. */
+export function looksLikeTechnicalToolError(raw: string): boolean {
+  const m = raw.toLowerCase();
+  return (
+    /\b(group_prospect|group_broadcast|contact_prospect|keyword_sales)\b/.test(m) ||
+    /\b(group_id|initial_message|automation_id|trigger_phrases|group_ids|closing_link)\b/.test(
+      m,
+    ) ||
+    (/\brequiert\b/.test(m) && /_/.test(raw)) ||
+    /\blist_whatsapp_groups\s*\(/.test(m)
+  );
+}
+
+function humanizeToolConfigError(raw: string): string | null {
+  const m = raw.toLowerCase();
+  if (!looksLikeTechnicalToolError(raw)) return null;
+
+  if (/group_prospect|group_id/.test(m) && /initial_message|message/.test(m)) {
+    return (
+      "Il me manque le groupe ou le message d'accroche pour cette campagne. " +
+      "Indiquez le groupe, validez l'accroche, puis réessayez « active »."
+    );
+  }
+  if (/contact_prospect/.test(m)) {
+    return (
+      "Il me manque des contacts ou le message d'accroche. " +
+      "Donnez le(s) numéro(s), validez le brouillon, puis réessayez."
+    );
+  }
+  if (/group_broadcast/.test(m)) {
+    return (
+      "Il me manque le message ou le(s) groupe(s) pour la diffusion. " +
+      "Précisez-les puis réessayez."
+    );
+  }
+  if (/keyword_sales|trigger_phrases/.test(m)) {
+    return (
+      "Il me manque la phrase déclencheur ou le message pour le closing. " +
+      "Complétez le brief Support, puis réessayez."
+    );
+  }
+  if (/closing_link/.test(m)) {
+    return "Il me manque le lien de prise de rendez-vous ou de paiement. Indiquez-le puis réessayez.";
+  }
+  return (
+    "Je n'ai pas pu finaliser cette étape — il manque encore un détail. " +
+    "Reformulez ou dites « active » si le brouillon est déjà prêt."
+  );
+}
+
+/** Dernière passe avant affichage chat — bloque les fuites techniques restantes. */
+export function sanitizeUserVisibleReply(text: string | null | undefined): string {
+  const t = String(text ?? "").trim();
+  if (!t) return t;
+  const human = humanizeToolConfigError(t);
+  if (human) return human;
+  return t;
+}
+
 /** Messages d'erreur lisibles — jamais de jargon technique pour l'utilisateur. */
 export function userFacingError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const m = raw.toLowerCase();
+
+  const toolErr = humanizeToolConfigError(raw);
+  if (toolErr) return toolErr;
 
   if (/failed to fetch|networkerror|load failed|econn|enotfound|network/i.test(m)) {
     return "La connexion a été interrompue un instant. Réessayez — je suis prêt.";

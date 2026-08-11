@@ -65,6 +65,7 @@ import {
   formatVerticalContactList,
   formatVerticalGroupList,
   formatVerticalMemberList,
+  sanitizeUserVisibleReply,
   userFacingError,
 } from "./user-facing.js";
 import {
@@ -607,7 +608,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         history,
         userMessage,
       });
-      if (msg) return msg;
+      if (msg) return sanitizeUserVisibleReply(msg);
     } catch (err) {
       console.warn("[agent] send-window routing failed:", err);
     }
@@ -637,7 +638,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         existingAutomationId: thread?.automation_id ?? null,
         inboundCatchAll: briefing.inboundCatchAll,
       });
-      if (drafted) return drafted;
+      if (drafted) return sanitizeUserVisibleReply(drafted);
     } catch (err) {
       console.warn("[agent] support draft/sim failed:", err);
     }
@@ -657,7 +658,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         threadTitle: thread?.title,
         existingAutomationId: thread?.automation_id ?? null,
       });
-      if (drafted) return drafted;
+      if (drafted) return sanitizeUserVisibleReply(drafted);
     } catch (err) {
       console.warn("[agent] groups draft failed:", err);
     }
@@ -670,7 +671,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     !briefing.isGroupsFlow &&
     briefing.openerVariantsProposed &&
     isShortCampaignValidation(userMessage) &&
-    !hasSimAlready
+    !hasSimAlready &&
+    !shouldDeterministicActivate(history, userMessage)
   ) {
     try {
       const drafted = await runDeterministicDraftAndSim({
@@ -684,7 +686,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         threadTitle: thread?.title,
         existingAutomationId: thread?.automation_id ?? null,
       });
-      if (drafted) return drafted;
+      if (drafted) return sanitizeUserVisibleReply(drafted);
     } catch (err) {
       console.warn("[agent] fast path variants→draft/sim:", err);
     }
@@ -702,7 +704,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         history,
         userMessage,
       });
-      if (activated) return activated;
+      if (activated) return sanitizeUserVisibleReply(activated);
     } catch (err) {
       console.warn("[agent] deterministic activate failed:", err);
     }
@@ -866,7 +868,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
               history,
               userMessage,
             });
-            if (activated) return activated;
+            if (activated) return sanitizeUserVisibleReply(activated);
           }
           if (toolCall.function.name === "show_campaign_simulation") {
             if (briefing.isGroupsFlow || thread?.purpose === "groupes") {
@@ -924,6 +926,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             continue;
           }
           if (toolCall.function.name === "create_automation") {
+            if (shouldDeterministicActivate(history, userMessage)) {
+              const activated = await runDeterministicActivation({
+                userId,
+                threadId,
+                history,
+                userMessage,
+              });
+              if (activated) return sanitizeUserVisibleReply(activated);
+            }
             if (briefing.isInboundClosing) {
               const drafted = await runDeterministicSupportDraftAndSim({
                 userId,
@@ -936,7 +947,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
                 existingAutomationId: thread?.automation_id ?? null,
                 inboundCatchAll: briefing.inboundCatchAll,
               });
-              if (drafted) return drafted;
+              if (drafted) return sanitizeUserVisibleReply(drafted);
             } else if (briefing.isGroupsFlow || thread?.purpose === "groupes") {
               const drafted = await runDeterministicGroupsDraft({
                 userId,
@@ -945,7 +956,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
                 threadTitle: thread?.title,
                 existingAutomationId: thread?.automation_id ?? null,
               });
-              if (drafted) return drafted;
+              if (drafted) return sanitizeUserVisibleReply(drafted);
             } else {
               const drafted = await runDeterministicDraftAndSim({
                 userId,
@@ -958,7 +969,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
                 threadTitle: thread?.title,
                 existingAutomationId: thread?.automation_id ?? null,
               });
-              if (drafted) return drafted;
+              if (drafted) return sanitizeUserVisibleReply(drafted);
             }
           }
           messages.push({
@@ -1453,7 +1464,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       continue;
     }
 
-    return text;
+    return sanitizeUserVisibleReply(text);
   }
 
   // Plafond atteint : une dernière réponse texte (sans outils) à partir du travail déjà fait.
@@ -1480,9 +1491,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     if (wrapText) {
       if (containsDsmlToolMarkup(wrapText)) {
         const cleaned = stripDsmlMarkup(wrapText);
-        if (cleaned) return cleaned;
+        if (cleaned) return sanitizeUserVisibleReply(cleaned);
       } else {
-        return wrapText;
+        return sanitizeUserVisibleReply(wrapText);
       }
     }
   } catch {
