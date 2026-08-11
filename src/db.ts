@@ -3414,14 +3414,21 @@ export async function claimNextPendingTarget(
   userId: number,
   automationId: number
 ): Promise<AutomationTarget | null> {
-  // Débloque les claims abandonnés (crash entre claim et envoi)
+  // Débloque les claims abandonnés (crash entre claim et envoi) — pas si un envoi est encore en file.
   await sql`
-    UPDATE automation_targets
+    UPDATE automation_targets at
     SET status = 'pending'
-    WHERE user_id = ${userId}
-      AND automation_id = ${automationId}
-      AND status = 'queued'
-      AND last_action_at < NOW() - INTERVAL '3 minutes'
+    WHERE at.user_id = ${userId}
+      AND at.automation_id = ${automationId}
+      AND at.status = 'queued'
+      AND at.last_action_at < NOW() - INTERVAL '3 minutes'
+      AND NOT EXISTS (
+        SELECT 1 FROM send_queue sq
+        WHERE sq.user_id = at.user_id
+          AND sq.automation_id = at.automation_id
+          AND sq.recipient = at.target_id
+          AND sq.status IN ('pending', 'processing')
+      )
   `;
   const rows = await sql<Record<string, unknown>[]>`
     UPDATE automation_targets
