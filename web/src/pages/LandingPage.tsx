@@ -9,10 +9,11 @@ import { LandingFaq } from '@/components/landing/LandingFaq';
 import { LandingHero } from '@/components/landing/LandingHero';
 import { TestimonialsSection } from '@/components/landing/TestimonialsSection';
 import { HowItWorks, type HowStep } from '@/components/ui/how-it-works';
-import { FinalCta } from '@/components/landing/FinalCta';
+import { CTASection } from '@/components/ui/hero-dithering-card';
 import { ShinyButton } from '@/components/ui/shiny-button';
 import type { LegalKind } from '@/pages/LegalPage';
 import { useNavigate } from 'react-router-dom';
+import { TRIAL_BADGE } from '@/lib/pricing';
 import { cn } from '@/lib/utils';
 
 type LandingPageProps = {
@@ -231,7 +232,18 @@ export function LandingPage(props: LandingPageProps = {}) {
 
         <LandingFaq />
 
-        <FinalCta onRegister={goRegister} />
+        {/* FINAL CTA */}
+        <div className="pb-4 sm:pb-6">
+          <AnimatedContainer>
+            <CTASection
+              badge={TRIAL_BADGE}
+              title="Prêt à laisser Klanvio automatiser tout votre WhatsApp ?"
+              description="Prospection, closing, groupes, statuts, anti-blocage. Connectez votre numéro et laissez l’agent travailler."
+              buttonLabel="Commencer gratuitement"
+              onButtonClick={goRegister}
+            />
+          </AnimatedContainer>
+        </div>
       </main>
 
       <footer className="border-t border-black/[0.06] bg-[#f7f8fb]">
