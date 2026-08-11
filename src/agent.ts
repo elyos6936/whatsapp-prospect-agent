@@ -559,9 +559,17 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const forceSim = turnMode === "force_sim";
   const silentTweakAfterSim = turnMode === "silent_tweak";
 
-  // MiniMax garde show_campaign_simulation visible (sinon il annonce le téléphone sans fence).
-  // create / activate restent masqués : exécution 100 % déterministe côté serveur.
+  // create / activate : jamais via args MiniMax (déterministe).
+  // show_campaign_simulation : visible seulement quand une simu est pertinente —
+  // sinon MiniMax l'appelle sur un simple « B » / choix d'angle et dump un faux message « dis simule ».
   const HIDDEN_FROM_MINIMAX = new Set(["create_automation", "activate_automation"]);
+  const allowSimTool =
+    forceSim ||
+    shouldDeterministicSimulate(history, userMessage) ||
+    Boolean(thread?.automation_id) ||
+    briefing.openerVariantsProposed ||
+    briefing.openerSingleValidated;
+  if (!allowSimTool) HIDDEN_FROM_MINIMAX.add("show_campaign_simulation");
   const toolsForTurn = selectToolsForAgentTurn({
     purpose: thread?.purpose,
     userMessage,
@@ -853,6 +861,27 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
               });
               continue;
             }
+            const userAskedSim =
+              forceSim || shouldDeterministicSimulate(history, userMessage);
+            const readyForSim =
+              Boolean(thread?.automation_id) ||
+              briefing.openerVariantsProposed ||
+              briefing.openerSingleValidated ||
+              userAskedSim;
+            if (!readyForSim) {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error:
+                    "Trop tôt pour la simulation. L'utilisateur avance le briefing " +
+                    "(choix d'angle A/B, accroche, contacts…) — ce n'est PAS une demande de simu. " +
+                    "Réponds en texte : continue l'étape en cours (ex. propose l'accroche selon son choix). " +
+                    "INTERDIT de demander « simule » / « fais la simulation » maintenant.",
+                }),
+              });
+              continue;
+            }
             forcedSimUsed = true;
             const sim = await runDeterministicSimulation({
               userId,
@@ -863,6 +892,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
               userMessage,
             });
             if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: JSON.stringify({
+                error: userAskedSim
+                  ? "Simulation indisponible pour le moment. Demande de réessayer « simule »."
+                  : "Pas encore de brouillon prêt pour la simulation. Continue le briefing en texte.",
+              }),
+            });
+            continue;
           }
           if (toolCall.function.name === "create_automation") {
             if (briefing.isInboundClosing) {
@@ -907,8 +946,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             tool_call_id: toolCall.id,
             content: JSON.stringify({
               error:
-                "Cet outil est géré côté serveur (pas MiniMax). " +
-                "Dis à l'utilisateur de répondre « oui » / « simule » / « active » — le système s'en charge.",
+                toolCall.function.name === "create_automation"
+                  ? "Brouillon non créé. Continue le briefing en texte (accroches, contacts) — " +
+                    "n'invente pas de consigne « dis simule »."
+                  : "Action gérée côté serveur. Continue en français, sans jargon technique.",
             }),
           });
           continue;
