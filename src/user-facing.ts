@@ -3,6 +3,41 @@ export function userFacingError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err ?? "");
   const m = raw.toLowerCase();
 
+  // Params / outils internes — jamais visibles dans le chat
+  if (
+    /closing_link|closing_goal|ab_variants|inbound_catch_all|trigger_phrases|keep_opener_as_is|initial_message|conversation_guide|automation_id|keyword_sales|contact_prospect|group_prospect|group_broadcast|show_campaign_simulation|create_automation|activate_automation|update_automation/i.test(
+      raw
+    )
+  ) {
+    if (/rendez[- ]?vous|rdv|appointment|r[eé]serv|calendly|booking/i.test(m)) {
+      return (
+        "Il me manque encore ton lien de réservation (Calendly, Google Agenda ou une autre URL). " +
+        "Colle-le ici — ensuite je m'occupe du brouillon et de la simulation."
+      );
+    }
+    if (/lien manquant|sans closing|url/i.test(m)) {
+      return (
+        "Il me manque encore le lien à envoyer aux prospects. " +
+        "Colle l'URL complète ici (ou le domaine, ex. monlien.pro)."
+      );
+    }
+    if (/prix manquant|price/i.test(m)) {
+      return "Il me manque le prix exact (ex. 15 000 FCFA). Indique-le et on continue.";
+    }
+    if (/m[eé]moire|memory_required/i.test(m)) {
+      return (
+        "Aucune mémoire n'est reliée à ce fil. Clique sur Mémoire en haut du chat pour en choisir une, puis réessaie."
+      );
+    }
+    if (/5\s*accroches|ab_variants|variantes/i.test(m)) {
+      return (
+        "Il me faut encore les 5 accroches validées dans le chat. " +
+        "Envoie-les en liste 1. à 5., puis redis « je valide »."
+      );
+    }
+    return "Je n'ai pas pu terminer cette étape. Reformule en une phrase simple — je m'en occupe.";
+  }
+
   if (/failed to fetch|networkerror|load failed|econn|enotfound|network/i.test(m)) {
     return "La connexion a été interrompue un instant. Réessayez — je suis prêt.";
   }

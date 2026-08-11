@@ -12,6 +12,8 @@ import {
 } from "./db.js";
 import { executeTool } from "./tools.js";
 import { generateCampaignSimulationDirect } from "./campaign-simulation.js";
+import { userFacingError } from "./user-facing.js";
+import { extractUsefulLinkFromText } from "./campaign-memory.js";
 import {
   allowsActivateWithoutSimulation,
   isActivationNegation,
@@ -123,8 +125,8 @@ function conversationBlob(history: AgentMessage[]): string {
 
 function extractHttpLink(history: AgentMessage[]): string | null {
   for (let i = history.length - 1; i >= 0; i--) {
-    const hit = history[i]?.content.match(/https?:\/\/\S+/i);
-    if (hit?.[0]) return hit[0].replace(/[),.;]+$/, "");
+    const fromMsg = extractUsefulLinkFromText(history[i]?.content ?? "");
+    if (fromMsg) return fromMsg;
   }
   return null;
 }
@@ -216,6 +218,8 @@ export async function runDeterministicDraftAndSim(opts: {
   }
 
   let autoType: string;
+  const link = extractHttpLink(history);
+  const price = extractPriceHint(history);
   const draftArgs: Record<string, unknown> = {
     name: threadTitle?.trim() || "Campagne",
     status: "draft",
@@ -224,6 +228,8 @@ export async function runDeterministicDraftAndSim(opts: {
     ab_variants_from_chat: true,
     personalize_messages: false,
     stickers_enabled: false,
+    ...(link ? { closing_link: link } : {}),
+    ...(price ? { price } : {}),
     ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
   };
 
@@ -260,7 +266,7 @@ export async function runDeterministicDraftAndSim(opts: {
   if (!draft.ok) {
     console.warn("[deterministic] draft error:", draft.error || draftRaw.slice(0, 240));
     return (
-      draft.error ||
+      userFacingError(draft.error || draftRaw) ||
       "Impossible d'enregistrer le brouillon avec les 5 accroches. Réessaie « oui »."
     );
   }
@@ -404,7 +410,7 @@ export async function runDeterministicSupportDraftAndSim(opts: {
   if (!draft.ok) {
     console.warn("[deterministic] support draft error:", draft.error || draftRaw.slice(0, 240));
     return (
-      draft.error ||
+      userFacingError(draft.error || draftRaw) ||
       "Impossible d'enregistrer le brouillon Support. Réessaie « crée le brouillon »."
     );
   }
@@ -653,7 +659,7 @@ export async function runDeterministicActivation(opts: {
   const parsed = parseToolJson(raw);
   if (!parsed.ok) {
     return (
-      parsed.error ||
+      userFacingError(parsed.error || "") ||
       "Impossible d'activer la campagne pour le moment. Vérifie WhatsApp / la mémoire, puis réessaie « active »."
     );
   }
