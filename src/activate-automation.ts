@@ -123,7 +123,8 @@ export async function activateAutomationCore(
   ) {
     return {
       ok: false,
-      error: "Lien manquant (closing_link) — complétez la configuration avant d'activer.",
+      error:
+        "Il me manque encore le lien à envoyer aux prospects avant d'activer. Colle l'URL ici.",
       automationId: id,
     };
   }
@@ -138,7 +139,8 @@ export async function activateAutomationCore(
   ) {
     return {
       ok: false,
-      error: "Objectif RDV sans lien de réservation — ajoutez le lien avant d'activer.",
+      error:
+        "Il me manque encore ton lien de réservation avant d'activer. Colle l'URL ici.",
       automationId: id,
     };
   }

@@ -206,6 +206,33 @@ export function legacyFieldsToInstructions(fields: {
   return lines.join("\n");
 }
 
+/**
+ * Extrait une URL utile (https ou domaine nu type willwvs.pro) depuis un texte.
+ */
+export function extractUsefulLinkFromText(text: string): string | null {
+  const raw = (text || "").trim();
+  if (!raw) return null;
+  const http = raw.match(/https?:\/\/[^\s<>"'\)\]]+/i);
+  if (http?.[0]) {
+    const url = http[0].replace(/[),.;!?]+$/g, "");
+    if (!/example\.com|placeholder|votre[-_]?lien|\[URL\]/i.test(url)) return url;
+  }
+  const bare = raw.match(
+    /(?:^|[\s:(«"'])((?:www\.)?(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+(?:com|fr|pro|io|co|net|org|app|dev|me|link|site|book|page)(?:\/[^\s<>"'\)\]]*)?)/i
+  );
+  if (bare?.[1]) {
+    const hostPath = bare[1].replace(/[),.;!?]+$/g, "");
+    if (
+      hostPath.length >= 4 &&
+      !/^(?:www\.)?(?:example|localhost|test)\b/i.test(hostPath) &&
+      !/\[/.test(hostPath)
+    ) {
+      return `https://${hostPath.replace(/^https?:\/\//i, "")}`;
+    }
+  }
+  return null;
+}
+
 /** Indices dérivés du texte libre (seed create_automation / briefing). */
 export function parseMemoryHints(instructions: string): {
   ownerName: string;

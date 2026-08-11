@@ -186,6 +186,7 @@ import {
   memoryToQuietHours,
   memoryToneLabel,
   parseMemoryHints,
+  extractUsefulLinkFromText,
   setThreadCampaignMemory,
 } from "./campaign-memory.js";
 import {
@@ -4714,7 +4715,9 @@ export async function executeTool(
       ) {
         return JSON.stringify({
           error:
-            "Lien manquant (closing_link). Pour un objectif RDV / paiement / lien, exige l'URL réelle auprès de l'utilisateur avant de créer la campagne.",
+            config.closingGoal === "appointment"
+              ? "Il me manque encore ton lien de réservation (Calendly, Google Agenda ou une autre URL). Colle-le ici."
+              : "Il me manque encore le lien à envoyer aux prospects. Colle l'URL complète ici.",
         });
       }
       {
@@ -4729,7 +4732,7 @@ export async function executeTool(
         ) {
           return JSON.stringify({
             error:
-              "Objectif rendez-vous détecté sans closing_link. Demande d'abord le lien de réservation (Calendly, Google Agenda, autre URL) puis réessaie avec closing_goal=appointment et closing_link=URL.",
+              "Il me manque encore ton lien de réservation (Calendly, Google Agenda ou une autre URL). Colle-le ici, puis on continue.",
           });
         }
       }

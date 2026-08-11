@@ -559,6 +559,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const forceSim = turnMode === "force_sim";
   const silentTweakAfterSim = turnMode === "silent_tweak";
 
+  // MiniMax garde show_campaign_simulation visible (sinon il annonce le téléphone sans fence).
+  // create / activate restent masqués : exécution 100 % déterministe côté serveur.
+  const HIDDEN_FROM_MINIMAX = new Set(["create_automation", "activate_automation"]);
   const toolsForTurn = selectToolsForAgentTurn({
     purpose: thread?.purpose,
     userMessage,
@@ -566,7 +569,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }).filter(
     (t) =>
       t.type !== "function" ||
-      !POWER_CAMPAIGN_TOOLS.has(String(t.function?.name ?? ""))
+      !HIDDEN_FROM_MINIMAX.has(String(t.function?.name ?? ""))
   );
 
   // ── Routeur déterministe (pas de boucle LLM) ─────────────────────────────
