@@ -1,0 +1,38 @@
+---
+description: Fichiers sensibles agent/campagne — ne pas modifier sans demande explicite
+alwaysApply: true
+---
+
+# Pipeline agent / config campagne — ZONE GELÉE
+
+Les régressions viennent surtout de modifications larges dans le routeur agent, le briefing et le seed de config.
+
+## Interdit sans instruction explicite de l'utilisateur
+
+Ne **pas** modifier le comportement de :
+
+- `src/persona.ts` — consignes système MiniMax
+- `src/campaign-memory.ts` — injection mémoire, `formatMemoryForAgent`
+- `src/deterministic-campaign.ts` — brouillon, sim, activation déterministes
+- `src/campaign-briefing.ts` — gates briefing / variantes
+- `src/campaign-sync.ts` — sync mémoire ↔ automatisation
+- Seed mémoire dans `create_automation` (`src/tools.ts`, bloc linkedMem / quiet hours)
+- `HIDDEN_FROM_MINIMAX` et l'ordre du routeur déterministe dans `src/agent.ts` (sauf le hook documenté ci-dessous)
+
+## Autorisé pour bugs ciblés (sans toucher aux configs)
+
+- **`src/send-window-routing.ts`** — seul module pour « Change 8h–19h » → `update_automation_config` avec `send_window_*` uniquement
+- **`src/db.ts`** — `claimNextPendingTarget` (anti re-queue hors fenêtre)
+- **`src/send-queue.ts`** — avancer la file après élargissement de fenêtre
+- Fallback `automation_id` du fil dans `update_automation_config` (pas la logique de merge config)
+
+## Règle d'or
+
+Un fix fenêtre horaire ou file d'envoi **ne doit jamais** :
+
+1. Injecter `send_window_*` au brouillon / `create_automation`
+2. Changer le seed mémoire à la création
+3. Réordonner simulation ↔ brouillon ↔ activation
+4. Élargir les imports depuis `deterministic-campaign.ts` dans `agent.ts`
+
+Tester après changement : liste membres → « okay » → simulation téléphone (capture stable).

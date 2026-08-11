@@ -5138,12 +5138,15 @@ export async function executeTool(
     }
 
     case "update_automation_config": {
-      const id = Number(args.automation_id);
+      let id = args.automation_id != null ? Number(args.automation_id) : NaN;
       if (!Number.isFinite(id)) {
-        return JSON.stringify({ error: "automation_id invalide." });
+        const threadBound = await requireThreadAutomationId(userId, threadId);
+        if (!threadBound.ok) return JSON.stringify({ error: threadBound.error });
+        id = threadBound.automationId;
+      } else {
+        const bound = await requireThreadAutomationId(userId, threadId, id);
+        if (!bound.ok) return JSON.stringify({ error: bound.error });
       }
-      const bound = await requireThreadAutomationId(userId, threadId, id);
-      if (!bound.ok) return JSON.stringify({ error: bound.error });
       const detail = await getAutomationDetail(userId, id);
       if (!detail) {
         return JSON.stringify({ error: `Campagne #${id} introuvable.` });
@@ -5420,6 +5423,14 @@ export async function executeTool(
       }
       if (detail.automation.status === "active") {
         await resumeAutomationMessaging(userId, id);
+        if (windowChanged) {
+          try {
+            const { recheckPendingSendQueueAfterWindowChange } = await import("./send-queue.js");
+            await recheckPendingSendQueueAfterWindowChange(userId, id);
+          } catch {
+            /* best effort */
+          }
+        }
       }
       const plan = await persistVisualPlan(userId, id);
       const quietStart = updated?.config.quietHoursStart;

@@ -40,6 +40,10 @@ import {
   shouldDeterministicGroupsDraft,
   POWER_CAMPAIGN_TOOLS,
 } from "./deterministic-campaign.js";
+import {
+  shouldRouteSendWindowChange,
+  tryApplySendWindowFromUserMessage,
+} from "./send-window-routing.js";
 import { SUPPORT_FIL_SYSTEM_ADDENDUM } from "./support-flow.js";
 import { GROUPS_FIL_SYSTEM_ADDENDUM } from "./groups-flow.js";
 import {
@@ -592,6 +596,22 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const bareValidation =
     isShortCampaignValidation(userMessage) &&
     !/\b(lance|lancer|active|activer|démarre|demarre)\b/i.test(userMessage);
+
+  // Hook isolé — send-window-routing.ts (voir .cursor/rules/campaign-config-frozen.mdc)
+  if (thread?.automation_id && shouldRouteSendWindowChange(history, userMessage, thread.automation_id)) {
+    try {
+      const msg = await tryApplySendWindowFromUserMessage({
+        userId,
+        threadId,
+        automationId: thread.automation_id,
+        history,
+        userMessage,
+      });
+      if (msg) return msg;
+    } catch (err) {
+      console.warn("[agent] send-window routing failed:", err);
+    }
+  }
 
   // Support : brouillon + sim déterministes (pas MiniMax)
   if (
