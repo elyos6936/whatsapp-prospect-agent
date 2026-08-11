@@ -111,7 +111,7 @@ export async function activateAutomationCore(
   ) {
     return {
       ok: false,
-      error: "Il me manque le prix exact — indique-le avant d'activer.",
+      error: "Prix manquant — complétez la configuration avant d'activer.",
       automationId: id,
     };
   }
@@ -123,10 +123,7 @@ export async function activateAutomationCore(
   ) {
     return {
       ok: false,
-      error:
-        auto.config.closingGoal === "appointment"
-          ? "Il me manque encore ton lien de réservation avant d'activer. Colle l'URL ici."
-          : "Il me manque encore le lien à envoyer aux prospects avant d'activer. Colle l'URL ici.",
+      error: "Lien manquant (closing_link) — complétez la configuration avant d'activer.",
       automationId: id,
     };
   }
@@ -141,8 +138,7 @@ export async function activateAutomationCore(
   ) {
     return {
       ok: false,
-      error:
-        "Il me manque encore ton lien de réservation avant d'activer. Colle l'URL ici.",
+      error: "Objectif RDV sans lien de réservation — ajoutez le lien avant d'activer.",
       automationId: id,
     };
   }

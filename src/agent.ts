@@ -49,7 +49,6 @@ import {
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
   isShortCampaignValidation,
-  wantsCampaignSimulation,
 } from "./campaign-briefing.js";
 import {
   hasSimulationThread,
@@ -67,7 +66,6 @@ import {
 import {
   formatMemoryForAgent,
   getLinkedCampaignMemory,
-  extractUsefulLinkFromText,
 } from "./campaign-memory.js";
 import {
   detectQuickGroupMembersIntent,
@@ -584,56 +582,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     isShortCampaignValidation(userMessage) &&
     !/\b(lance|lancer|active|activer|démarre|demarre)\b/i.test(userMessage);
 
-  // Lien collé seul (ex. willwvs.pro) après une demande de lien → enregistre + sim
-  {
-    const pasted = extractUsefulLinkFromText(userMessage);
-    const linkOnly =
-      Boolean(pasted) &&
-      userMessage.trim().length <= 120 &&
-      /^(https?:\/\/\S+|(?:www\.)?[a-z0-9][a-z0-9.-]+\.[a-z]{2,24}(?:\/\S*)?)\s*$/i.test(
-        userMessage.trim()
-      );
-    if (linkOnly && pasted && thread?.automation_id && !briefing.isGroupsFlow) {
-      let askedForLink = false;
-      for (let i = history.length - 1; i >= 0 && i >= history.length - 6; i--) {
-        const m = history[i];
-        if (m?.role !== "assistant") continue;
-        askedForLink =
-          /lien|r[eé]servation|calendly|google agenda|url|coll(e|er)|booking/i.test(
-            m.content
-          );
-        break;
-      }
-      if (askedForLink) {
-        try {
-          await executeTool(userId, threadId, "update_automation_config", {
-            automation_id: thread.automation_id,
-            closing_link: pasted,
-            closing_goal: "appointment",
-          });
-          if (!hasSimAlready) {
-            const sim = await runDeterministicSimulation({
-              userId,
-              threadId,
-              client: await getSimLlmClient(userId),
-              businessContext,
-              history,
-              userMessage,
-            });
-            if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) {
-              return (
-                `Parfait, j'ai enregistré le lien **${pasted}**.\n\n` + sim.trim()
-              );
-            }
-          }
-          return `Parfait, j'ai enregistré le lien **${pasted}**. Dis « simule » pour l'aperçu téléphone, ou « active » pour lancer.`;
-        } catch (err) {
-          console.warn("[agent] paste-link update failed:", err);
-        }
-      }
-    }
-  }
-
   // Support : brouillon + sim déterministes (pas MiniMax)
   if (
     briefing.isInboundClosing &&
@@ -684,63 +632,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Simulation déterministe (Claude) — AVANT re-brouillon sur « oui »
-  // (sinon « oui » après « veux-tu tester une simulation ? » relance create_automation
-  // et peut afficher une erreur technique au lieu du téléphone).
-  if (
-    !briefing.isGroupsFlow &&
-    thread?.purpose !== "groupes" &&
-    (shouldDeterministicSimulate(history, userMessage) || forceSim)
-  ) {
-    try {
-      const sim = await runDeterministicSimulation({
-        userId,
-        threadId,
-        client: await getSimLlmClient(userId),
-        businessContext,
-        history,
-        userMessage,
-      });
-      if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
-      if (sim?.trim() && !/```klanvio-sim\b/i.test(sim)) {
-        // Message métier (ex. fil Groupes) sans fence — OK à renvoyer
-        if (/fil \*\*Groupes\*\*|pas de simulation/i.test(sim)) return sim;
-        console.warn("[agent] simulation sans fence klanvio-sim — rejetée");
-      }
-    } catch (err) {
-      console.warn("[agent] deterministic simulation failed:", err);
-    }
-    // Brouillon déjà là : ne pas retomber sur create_automation
-    if (thread?.automation_id) {
-      return (
-        "Je n'ai pas pu générer la simulation pour le moment. " +
-        "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
-      );
-    }
-  }
-
-  if (
-    (briefing.isGroupsFlow || thread?.purpose === "groupes") &&
-    (forceSim || shouldDeterministicSimulate(history, userMessage))
-  ) {
-    return (
-      "Sur le fil **Groupes**, pas de simulation téléphone. " +
-      "Envoi ponctuel → je publie / programme. Diffusion → « je valide » puis **« active »**."
-    );
-  }
-
-  // « oui » après les 5 variantes → brouillon + sim (sauf acceptation pure d'une sim déjà proposée)
+  // « oui » après les 5 variantes → brouillon + sim AVANT toute tentative d'activation
   // (évite le faux positif : guillemets + « simulation » + « je lance » → activate sans campagne)
   if (
     !briefing.isInboundClosing &&
     !briefing.isGroupsFlow &&
     briefing.openerVariantsProposed &&
     isShortCampaignValidation(userMessage) &&
-    !hasSimAlready &&
-    !(
-      Boolean(thread?.automation_id) &&
-      wantsCampaignSimulation(userMessage, history)
-    )
+    !hasSimAlready
   ) {
     try {
       const drafted = await runDeterministicDraftAndSim({
@@ -776,6 +675,44 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     } catch (err) {
       console.warn("[agent] deterministic activate failed:", err);
     }
+  }
+
+  // Simulation déterministe (Claude) — pas MiniMax — PAS pour Groupes
+  if (
+    !briefing.isGroupsFlow &&
+    thread?.purpose !== "groupes" &&
+    (shouldDeterministicSimulate(history, userMessage) || forceSim)
+  ) {
+    try {
+      const sim = await runDeterministicSimulation({
+        userId,
+        threadId,
+        client: await getSimLlmClient(userId),
+        businessContext,
+        history,
+        userMessage,
+      });
+      if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
+      if (sim?.trim()) {
+        console.warn("[agent] simulation sans fence klanvio-sim — rejetée");
+      }
+    } catch (err) {
+      console.warn("[agent] deterministic simulation failed:", err);
+    }
+    return (
+      "Je n'ai pas pu générer la simulation pour le moment. " +
+      "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
+    );
+  }
+
+  if (
+    (briefing.isGroupsFlow || thread?.purpose === "groupes") &&
+    (forceSim || shouldDeterministicSimulate(history, userMessage))
+  ) {
+    return (
+      "Sur le fil **Groupes**, pas de simulation téléphone. " +
+      "Envoi ponctuel → je publie / programme. Diffusion → « je valide » puis **« active »**."
+    );
   }
 
   // Simulation LLM fallback déjà tentée via runDeterministicSimulation plus haut.
@@ -1227,29 +1164,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           });
         }
 
-        // Jamais de jargon outil (closing_link=…) vers MiniMax ni en réponse directe
-        try {
-          const parsedErr = JSON.parse(result) as {
-            error?: string;
-            needsUserConfirmation?: boolean;
-            warning?: string;
-          };
-          if (parsedErr.error && !parsedErr.needsUserConfirmation) {
-            const safe = userFacingError(parsedErr.error);
-            result = JSON.stringify({ ...parsedErr, error: safe });
-            // create / update : renvoyer directement le message humain (évite le parroting)
-            if (
-              toolCall.function.name === "create_automation" ||
-              toolCall.function.name === "update_automation_config" ||
-              toolCall.function.name === "activate_automation"
-            ) {
-              return safe;
-            }
-          }
-        } catch {
-          /* fall through */
-        }
-
         // Listes préformatées : afficher `display` tel quel (évite le rewrite LLM en mur de texte).
         // get_group_members : TOUJOURS (même si « action » sur un groupe).
         // catalogue groupes : seulement si demandé explicitement.
@@ -1388,32 +1302,24 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       return "Je n'ai pas pu générer de réponse. Réessayez.";
     }
 
-    // Interdit : annoncer la simu sans payload téléphone (fence) → générer côté serveur
+    // Interdit : annoncer la simu sans payload téléphone (fence)
     {
       const rawAssistant =
         typeof assistantMsg.content === "string" ? assistantMsg.content : text;
-      const announcesSimWithoutFence =
-        (/simulation (affichée|sur le)|voici la simulation|t[ée]l[ée]phone [àa] droite|simulation pr[eê]te/i.test(
-          text
-        ) ||
-          isBrokenSimulationPreview(text)) &&
+      if (
+        /simulation affichée sur le/i.test(text) &&
         !/```klanvio-sim\b/i.test(rawAssistant) &&
-        !hasSimulationThread(rawAssistant);
-      if (announcesSimWithoutFence) {
-        if (!briefing.isGroupsFlow && thread?.purpose !== "groupes") {
-          try {
-            const sim = await runDeterministicSimulation({
-              userId,
-              threadId,
-              client: await getSimLlmClient(userId),
-              businessContext,
-              history,
-              userMessage,
-            });
-            if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
-          } catch (err) {
-            console.warn("[agent] sim after empty announce failed:", err);
-          }
+        !hasSimulationThread(rawAssistant)
+      ) {
+        if (rounds < MAX_TOOL_ROUNDS) {
+          messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
+          messages.push({
+            role: "system",
+            content:
+              "INTERDIT d'annoncer « Simulation affichée » sans le fence ```klanvio-sim (6-7 tours Toi/Prospect). " +
+              "Appelle show_campaign_simulation maintenant.",
+          });
+          continue;
         }
         return "Je n'ai pas pu générer la simulation. Réessaie « simule ».";
       }
@@ -1426,8 +1332,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       messages.push({
         role: "system",
         content:
-          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. " +
-          "Ne termine JAMAIS sur «\u00A0:\u00A0». Dis à l'utilisateur de répondre « simule » — le système génère le téléphone.",
+          "Ta réponse s'est arrêtée sur une annonce se terminant par «\u00A0:\u00A0» sans fournir le contenu. Appelle MAINTENANT l'outil show_campaign_simulation (6-7 tours). INTERDIT de coller le fil Toi/Prospect dans le chat — le téléphone à droite l'affiche. Ne termine JAMAIS sur «\u00A0:\u00A0».",
       });
       continue;
     }
@@ -1443,54 +1348,23 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       continue;
     }
 
-    // Garde-fou simulation vide / incomplète → Claude côté serveur (outil retiré de MiniMax)
-    if (isBrokenSimulationPreview(text) && simFixAttempts < 3) {
+    // Garde-fou simulation vide / incomplète.
+    if (isBrokenSimulationPreview(text) && simFixAttempts < 3 && rounds < MAX_TOOL_ROUNDS) {
       simFixAttempts++;
-      try {
-        const sim = await runDeterministicSimulation({
-          userId,
-          threadId,
-          client: await getSimLlmClient(userId),
-          businessContext,
-          history,
-          userMessage,
-        });
-        if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
-      } catch (err) {
-        console.warn("[agent] sim fix attempt failed:", err);
-      }
-      if (rounds < MAX_TOOL_ROUNDS) {
-        messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
-        messages.push({
-          role: "system",
-          content:
-            "INTERDIT d'annoncer une simulation sans le téléphone. " +
-            "Dis seulement à l'utilisateur de répondre « simule » — le système s'en charge. Pas de jargon technique.",
-        });
-        continue;
-      }
-      return "Je n'ai pas pu générer la simulation. Réessaie « simule ».";
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
+      messages.push({
+        role: "system",
+        content:
+          "INTERDIT : tu as annoncé une simulation/aperçu SANS générer le fil. Appelle MAINTENANT l'outil show_campaign_simulation avec exactement 6 ou 7 tours (speaker toi/prospect + texte réel sans crochets). INTERDIT de coller Toi → / Prospect → dans le chat — uniquement sur le téléphone. Puis 1 phrase de confirmation. MAX 7 messages.",
+      });
+      continue;
     }
 
-    // Si on forçait la simulation et qu'on a du texte sans fil → Claude direct
-    if (forceSim && !forcedSimUsed && !hasSimulationThread(text)) {
-      try {
-        const sim = await runDeterministicSimulation({
-          userId,
-          threadId,
-          client: await getSimLlmClient(userId),
-          businessContext,
-          history,
-          userMessage,
-        });
-        if (sim?.trim() && /```klanvio-sim\b/i.test(sim)) return sim;
-      } catch (err) {
-        console.warn("[agent] forceSim direct failed:", err);
-      }
-      return (
-        "Je n'ai pas pu générer la simulation pour le moment. " +
-        "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
-      );
+    // Si on forçait la simulation et qu'on a du texte sans fil → forcer l'outil
+    if (forceSim && !forcedSimUsed && !hasSimulationThread(text) && rounds < MAX_TOOL_ROUNDS) {
+      messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
+      messages.push({ role: "system", content: FORCE_SIMULATION_NUDGE });
+      continue;
     }
 
     // Garde-fou briefing sortant : ne jamais sauter l'étape « UNE accroche à valider ».

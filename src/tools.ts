@@ -185,7 +185,6 @@ import {
   listCampaignMemories,
   memoryToQuietHours,
   memoryToneLabel,
-  extractUsefulLinkFromText,
   parseMemoryHints,
   setThreadCampaignMemory,
 } from "./campaign-memory.js";
@@ -4647,34 +4646,6 @@ export async function executeTool(
             config.quietHoursStart = q.quietHoursStart;
             config.quietHoursEnd = q.quietHoursEnd;
           }
-          // Lien / prix depuis la mémoire AVANT de baker le guide
-          // (sinon le guide évoque un RDV et bloque sans closingLink).
-          if (!config.closingLink?.trim()) {
-            const fromMem = extractUsefulLinkFromText(mem.instructions);
-            if (fromMem) config.closingLink = fromMem;
-          }
-          if (!config.price?.trim()) {
-            const priceHit = mem.instructions.match(
-              /\b(\d[\d\s.,]{1,12}\s*(?:fcfa|f\b|€|euros?))\b/i
-            );
-            if (priceHit?.[1]) config.price = priceHit[1].replace(/\s+/g, " ").trim();
-          }
-          // Objectif seulement si on a déjà de quoi passer les gardes (évite d'exiger un prix
-          // sur un brouillon sortant qui n'en avait pas besoin avant).
-          if (!config.closingGoal && config.closingLink?.trim()) {
-            if (
-              /rdv|rendez[- ]?vous|calendly|cal\.com|booking|r[eé]servation/i.test(
-                mem.instructions
-              )
-            ) {
-              if (config.price?.trim() || type === "keyword_sales") {
-                config.closingGoal = "appointment";
-              }
-            } else if (config.price?.trim() || type === "keyword_sales") {
-              config.closingGoal = "link";
-            }
-          }
-
           const { bakeConversationGuideFromMemory } = await import("./campaign-sync.js");
           config.conversationGuide = bakeConversationGuideFromMemory(
             mem,
@@ -4708,16 +4679,6 @@ export async function executeTool(
         /* ignore */
       }
 
-      // Dernier filet : lien déjà dans le guide / args texte (domaine nu inclus)
-      if (!config.closingLink?.trim()) {
-        const fromGuide = extractUsefulLinkFromText(
-          [config.conversationGuide, config.initialMessage, config.salesScript]
-            .filter(Boolean)
-            .join("\n")
-        );
-        if (fromGuide) config.closingLink = fromGuide;
-      }
-
       // Interdit de stocker des crochets dans les textes de campagne (ils finiraient chez les prospects).
       const badFields = findPlaceholderFields([
         { label: "initial_message", value: config.initialMessage },
@@ -4732,9 +4693,9 @@ export async function executeTool(
       ]);
       if (badFields.length) {
         return JSON.stringify({
-          error: userFacingError(
-            "Texte avec crochets interdit. Demande les vraies valeurs (prix, lien…) sans […]."
-          ),
+          error:
+            `Texte avec crochets interdit (${badFields.join(", ")}). ` +
+            `Demande d'abord à l'utilisateur les vraies valeurs (prix en FCFA, lien réel…) et réessaie SANS aucun […].`,
         });
       }
 
@@ -4742,7 +4703,7 @@ export async function executeTool(
       if (needsSaleInfo && !config.price?.trim()) {
         return JSON.stringify({
           error:
-            "Il me manque le prix exact (ex. 15 000 FCFA). Indique-le et on continue.",
+            "Prix manquant. Avant de créer la campagne, demande le prix exact (ex. 15000 FCFA) et passe-le dans price — jamais [prix].",
         });
       }
       if (
@@ -4753,9 +4714,7 @@ export async function executeTool(
       ) {
         return JSON.stringify({
           error:
-            config.closingGoal === "appointment"
-              ? "Il me manque encore ton lien de réservation (Calendly, Google Agenda ou une autre URL). Colle-le ici."
-              : "Il me manque encore le lien à envoyer aux prospects. Colle l'URL complète ici.",
+            "Lien manquant (closing_link). Pour un objectif RDV / paiement / lien, exige l'URL réelle auprès de l'utilisateur avant de créer la campagne.",
         });
       }
       {
@@ -4770,7 +4729,7 @@ export async function executeTool(
         ) {
           return JSON.stringify({
             error:
-              "Il me manque encore ton lien de réservation (Calendly, Google Agenda ou une autre URL). Colle-le ici — ensuite je m'occupe du brouillon et de la simulation.",
+              "Objectif rendez-vous détecté sans closing_link. Demande d'abord le lien de réservation (Calendly, Google Agenda, autre URL) puis réessaie avec closing_goal=appointment et closing_link=URL.",
           });
         }
       }
@@ -5348,9 +5307,7 @@ export async function executeTool(
       ]);
       if (badFields.length) {
           return JSON.stringify({
-          error: userFacingError(
-            "Texte avec crochets interdit. Demande les vraies valeurs (prix, lien…) sans […]."
-          ),
+          error: `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
         });
       }
       const isOutboundType =

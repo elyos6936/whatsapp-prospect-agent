@@ -203,27 +203,14 @@ export function stripDsmlMarkup(text: string): string {
   return out;
 }
 
-/** Texte sûr pour l'utilisateur (jamais de DSML brut ni params outils). */
+/** Texte sûr pour l'utilisateur (jamais de DSML brut). */
 export function userSafeAssistantText(
   text: string | null | undefined,
   fallback = "Je finalise l'action… Un instant.",
 ): string {
-  let cleaned = stripDsmlMarkup(String(text ?? "")).trim();
+  const cleaned = stripDsmlMarkup(String(text ?? "")).trim();
   if (!cleaned) return fallback;
   if (containsDsmlToolMarkup(cleaned)) return fallback;
-  // Fuite typique : consignes internes (closing_link=URL, closing_goal=…)
-  if (
-    /closing_link\s*=|closing_goal\s*=|ab_variants\s*=|keep_opener_as_is|inbound_catch_all\s*=/i.test(
-      cleaned
-    ) ||
-    /r[eé]essaie avec\s+closing_/i.test(cleaned) ||
-    /Objectif rendez-vous d[eé]tect[eé] sans closing_link/i.test(cleaned)
-  ) {
-    return (
-      "Il me manque encore ton lien de réservation (Calendly, Google Agenda ou une autre URL). " +
-      "Colle-le ici — ensuite je m'occupe du brouillon et de la simulation."
-    );
-  }
   return cleaned;
 }
 
