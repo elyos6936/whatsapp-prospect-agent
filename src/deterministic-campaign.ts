@@ -33,10 +33,6 @@ import {
   buildSupportConversationGuide,
   generateSupportSimulationDirect,
 } from "./support-flow.js";
-import {
-  extractSendWindowForDraft,
-  extractSendWindowFromMessages,
-} from "./quiet-hours.js";
 
 export {
   runDeterministicGroupsDraft,
@@ -49,7 +45,6 @@ function parseToolJson(raw: string): {
   error?: string;
   message?: string;
   automationId?: number;
-  configSummary?: { sendWindow?: string | null };
 } {
   try {
     const parsed = JSON.parse(raw) as {
@@ -58,14 +53,12 @@ function parseToolJson(raw: string): {
       message?: string;
       automationId?: number;
       id?: number;
-      configSummary?: { sendWindow?: string | null };
     };
     if (parsed.error) return { ok: false, error: parsed.error };
     return {
       ok: Boolean(parsed.success || parsed.automationId || parsed.id || parsed.message),
       message: parsed.message,
       automationId: parsed.automationId ?? parsed.id,
-      configSummary: parsed.configSummary,
     };
   } catch {
     if (/error|échec|impossible/i.test(raw)) return { ok: false, error: raw.slice(0, 240) };
@@ -261,12 +254,6 @@ export async function runDeterministicDraftAndSim(opts: {
     );
   }
 
-  const sendWindow = extractSendWindowForDraft(history, userMessage);
-  if (sendWindow) {
-    draftArgs.send_window_start = sendWindow.start;
-    draftArgs.send_window_end = sendWindow.end;
-  }
-
   const draftRaw = await executeTool(userId, threadId, "create_automation", draftArgs);
 
   const draft = parseToolJson(draftRaw);
@@ -411,12 +398,6 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     ...(price ? { price } : {}),
     ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
   };
-
-  const sendWindow = extractSendWindowForDraft(history, userMessage);
-  if (sendWindow) {
-    draftArgs.send_window_start = sendWindow.start;
-    draftArgs.send_window_end = sendWindow.end;
-  }
 
   const draftRaw = await executeTool(userId, threadId, "create_automation", draftArgs);
   const draft = parseToolJson(draftRaw);
@@ -680,39 +661,6 @@ export async function runDeterministicActivation(opts: {
     parsed.message?.trim() ||
     `Campagne activée. Les envois démarrent selon ta fenêtre horaire — auto-reply ON.`
   );
-}
-
-/** Changement de fenêtre d'envoi — sans laisser MiniMax refuser au nom de la mémoire. */
-export function shouldDeterministicSendWindowChange(
-  history: AgentMessage[],
-  userMessage: string,
-  automationId: number | null | undefined
-): boolean {
-  if (!automationId) return false;
-  return extractSendWindowFromMessages(history, userMessage) != null;
-}
-
-export async function runDeterministicSendWindowChange(opts: {
-  userId: number;
-  threadId: number;
-  history: AgentMessage[];
-  userMessage: string;
-}): Promise<string | null> {
-  const win = extractSendWindowFromMessages(opts.history, opts.userMessage);
-  if (!win) return null;
-
-  const raw = await executeTool(opts.userId, opts.threadId, "update_automation_config", {
-    send_window_start: win.start,
-    send_window_end: win.end,
-  });
-  const parsed = parseToolJson(raw);
-  if (!parsed.ok) {
-    return parsed.error || "Impossible de changer la fenêtre d'envoi pour cette campagne.";
-  }
-  const sw = parsed.configSummary?.sendWindow;
-  return sw
-    ? `C'est fait — fenêtre d'envoi **${sw}** pour cette campagne.`
-    : `Fenêtre d'envoi mise à jour pour cette campagne (${win.start}h–${win.end}h).`;
 }
 
 /** Faut-il forcer une simulation sans LLM tool-loop ? */

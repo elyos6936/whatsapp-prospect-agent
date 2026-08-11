@@ -4642,12 +4642,7 @@ export async function executeTool(
           if (args.stickers_enabled === undefined) {
             config.stickersEnabled = hints.stickersEnabled || mem.stickersEnabled;
           }
-          if (
-            args.quiet_hours_start == null &&
-            args.quiet_hours_end == null &&
-            args.send_window_start == null &&
-            args.send_window_end == null
-          ) {
+          if (args.quiet_hours_start == null && args.quiet_hours_end == null) {
             const q = memoryToQuietHours(mem);
             config.quietHoursStart = q.quietHoursStart;
             config.quietHoursEnd = q.quietHoursEnd;
@@ -5425,14 +5420,6 @@ export async function executeTool(
       }
       if (detail.automation.status === "active") {
         await resumeAutomationMessaging(userId, id);
-        if (windowChanged) {
-          try {
-            const { recheckPendingSendQueueAfterWindowChange } = await import("./send-queue.js");
-            await recheckPendingSendQueueAfterWindowChange(userId, id);
-          } catch {
-            /* best effort */
-          }
-        }
       }
       const plan = await persistVisualPlan(userId, id);
       const quietStart = updated?.config.quietHoursStart;

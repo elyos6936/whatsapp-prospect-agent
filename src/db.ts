@@ -3913,20 +3913,6 @@ export async function rescheduleSendQueueItem(userId: number, id: number, sendAt
   `;
 }
 
-export async function listPendingSendQueueForAutomation(
-  userId: number,
-  automationId: number
-): Promise<QueueItem[]> {
-  const rows = await sql<Record<string, unknown>[]>`
-    SELECT * FROM send_queue
-    WHERE user_id = ${userId}
-      AND automation_id = ${automationId}
-      AND status = 'pending'
-    ORDER BY send_at ASC
-  `;
-  return rows.map(mapQueueItem);
-}
-
 export async function cancelPendingSendQueue(userId: number): Promise<number> {
   const result = await sql`
     UPDATE send_queue SET status = 'cancelled', error = 'Annulé manuellement'
