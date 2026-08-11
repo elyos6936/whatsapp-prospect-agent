@@ -697,20 +697,17 @@ export async function runDeterministicSendWindowChange(opts: {
   threadId: number;
   history: AgentMessage[];
   userMessage: string;
-  automationId?: number | null;
 }): Promise<string | null> {
   const win = extractSendWindowFromMessages(opts.history, opts.userMessage);
   if (!win) return null;
 
   const raw = await executeTool(opts.userId, opts.threadId, "update_automation_config", {
-    ...(opts.automationId ? { automation_id: opts.automationId } : {}),
     send_window_start: win.start,
     send_window_end: win.end,
   });
   const parsed = parseToolJson(raw);
   if (!parsed.ok) {
-    const { userFacingError } = await import("./user-facing.js");
-    return userFacingError(parsed.error || "Impossible de changer la fenêtre d'envoi pour cette campagne.");
+    return parsed.error || "Impossible de changer la fenêtre d'envoi pour cette campagne.";
   }
   const sw = parsed.configSummary?.sendWindow;
   return sw

@@ -5143,15 +5143,12 @@ export async function executeTool(
     }
 
     case "update_automation_config": {
-      let id = args.automation_id != null ? Number(args.automation_id) : NaN;
+      const id = Number(args.automation_id);
       if (!Number.isFinite(id)) {
-        const threadBound = await requireThreadAutomationId(userId, threadId);
-        if (!threadBound.ok) return JSON.stringify({ error: threadBound.error });
-        id = threadBound.automationId;
-      } else {
-        const bound = await requireThreadAutomationId(userId, threadId, id);
-        if (!bound.ok) return JSON.stringify({ error: bound.error });
+        return JSON.stringify({ error: "automation_id invalide." });
       }
+      const bound = await requireThreadAutomationId(userId, threadId, id);
+      if (!bound.ok) return JSON.stringify({ error: bound.error });
       const detail = await getAutomationDetail(userId, id);
       if (!detail) {
         return JSON.stringify({ error: `Campagne #${id} introuvable.` });

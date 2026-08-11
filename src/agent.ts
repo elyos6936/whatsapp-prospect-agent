@@ -603,7 +603,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         threadId,
         history,
         userMessage,
-        automationId: thread?.automation_id ?? null,
       });
       if (updated) return updated;
     } catch (err) {
