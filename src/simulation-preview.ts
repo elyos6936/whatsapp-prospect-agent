@@ -383,6 +383,11 @@ export async function replyInSimulationPreview(
       reply = sanitizeInventedCampaignUrls(reply, {
         allowedLink: campaignConfig?.closingLink,
         closingGoal: campaignConfig?.closingGoal,
+        knownLinkSources: [
+          enrichedContext,
+          campaignConfig?.conversationGuide,
+          campaignConfig?.initialMessage,
+        ],
       });
     }
   } catch {

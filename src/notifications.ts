@@ -527,15 +527,15 @@ export interface WhatsappPollHealth {
 
 function newPollHealth(): WhatsappPollHealth {
   return {
-    lastPollAt: null,
-    lastSyncAt: null,
-    lastIncomingAt: null,
-    lastError: null,
-    webhookBlocked: false,
-    authorized: true,
-    processedTotal: 0,
-    syncTotal: 0,
-  };
+  lastPollAt: null,
+  lastSyncAt: null,
+  lastIncomingAt: null,
+  lastError: null,
+  webhookBlocked: false,
+  authorized: true,
+  processedTotal: 0,
+  syncTotal: 0,
+};
 }
 
 /** État de santé du poller, isolé par tenant. */
@@ -834,13 +834,13 @@ async function buildAutomationContext(
   }
 
   if (!activeCampaign) {
-    const followups = (await listActiveAutomations(userId)).filter(
+  const followups = (await listActiveAutomations(userId)).filter(
       (a) =>
         a.type === "group_prospect" ||
         a.type === "contact_prospect" ||
         a.type === "custom_followup"
-    );
-    for (const auto of followups) {
+  );
+  for (const auto of followups) {
       const target = await findMatchingAutomationTarget(userId, auto.id, chatId);
       if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
       if (auto.config.conversationGuide || auto.config.initialMessage || auto.config.livePlaybook?.turns?.length) {
@@ -864,9 +864,9 @@ async function buildAutomationContext(
         } catch {
           /* ignore */
         }
-        parts.push(
+      parts.push(
           buildActiveCampaignContext(auto, { memoryBlock, playbookBlock })
-        );
+      );
       }
     }
   }
@@ -1262,6 +1262,11 @@ async function runAutoReply(
         reply = sanitizeInventedCampaignUrls(reply, {
           allowedLink: activeCampaign?.config.closingLink,
           closingGoal: activeCampaign?.config.closingGoal,
+          knownLinkSources: [
+            automationContext,
+            activeCampaign?.config.conversationGuide,
+            activeCampaign?.config.initialMessage,
+          ],
         });
       }
     }
@@ -1336,8 +1341,8 @@ async function runAutoReply(
             { enableAutoReply: false, automationId: activeCampaign.id }
           );
         } else {
-          const sent = await sendWhatsAppMessage(userId, chatId, reply, {
-            enableAutoReply: false,
+    const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+      enableAutoReply: false,
             outboundProfile: "auto_reply",
             automationId: activeCampaign.id,
           });
@@ -1375,8 +1380,8 @@ async function runAutoReply(
         enableAutoReply: false,
         outboundProfile: "auto_reply",
         automationId: activeCampaign?.id ?? null,
-      });
-      console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+    });
+    console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
     }
     if (activeCampaign) {
       await incrementMessagesHandled(userId, activeCampaign.id);
@@ -1639,7 +1644,7 @@ export async function syncIncomingFromHistory(): Promise<number> {
   let added = 0;
   for (const userId of userIds) {
     try {
-      added += await syncIncomingFromHistoryForUser(userId);
+    added += await syncIncomingFromHistoryForUser(userId);
     } catch (err) {
       console.error(`❌ Sync historique user ${userId}:`, err instanceof Error ? err.message : err);
     }

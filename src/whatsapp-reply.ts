@@ -540,6 +540,7 @@ ${input.senderName}: ${input.incomingText}
   styled = sanitizeInventedCampaignUrls(styled, {
     allowedLink: input.closingLink,
     closingGoal: input.closingGoal,
+    knownLinkSources: [input.automationContext],
   });
   return styled;
 }
