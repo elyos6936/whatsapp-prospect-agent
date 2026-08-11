@@ -348,7 +348,7 @@ export function memoryToQuietHours(memory: CampaignMemory): {
 }
 
 /** Plafond injection agent chat (le live WhatsApp garde la mémoire via campaign-sync). */
-const AGENT_MEMORY_INJECT_MAX = 4_000;
+const AGENT_MEMORY_INJECT_MAX = 10_000;
 
 /** Texte injecté dans le contexte agent. */
 export function formatMemoryForAgent(memory: CampaignMemory): string {

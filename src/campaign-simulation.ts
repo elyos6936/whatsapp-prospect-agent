@@ -12,6 +12,7 @@ import {
   resolveLlmRoleModel,
   resolveLlmRoleProvider,
 } from "./llm.js";
+import { resolveReplyTone, toneLabel } from "./reply-tone.js";
 
 export type SimulationTurn = {
   speaker: "toi" | "prospect";
@@ -141,9 +142,14 @@ export async function generateCampaignSimulationDirect(
     campaignBrief?: string | null;
   }
 ): Promise<{ display: string; turns: SimulationTurn[] } | null> {
+  const tone = resolveReplyTone({
+    sentMessages: [opts.approvedOpener],
+    campaignTexts: [opts.campaignBrief, opts.businessContext],
+  });
+  const toneLbl = toneLabel(tone);
   const openerRule = opts.approvedOpener?.trim()
     ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 280)} » — micro-variation de mots OK, PAS de nouvel angle, PAS de prix/lien/pitch\n`
-    : `- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet, vouvoiement, sans prénom du prospect)\n`;
+    : `- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet, ${toneLbl}, sans prénom du prospect)\n`;
 
   const brief = opts.campaignBrief?.trim()
     ? `\n## Cadre campagne (OBLIGATOIRE — même cadre que les réponses live)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
@@ -159,7 +165,7 @@ export async function generateCampaignSimulationDirect(
     "- Alternance toi / prospect (commencer par toi)\n" +
     openerRule +
     "- Les tours suivants : même pacing / mission (Interest → Desire → Action) ; interdiction des réactions vides (« Ah super », « Super. ») ; " +
-    "identité = prénom + pourquoi (pas titre LinkedIn) ; sur oui/ok → question ou détail nouveau ; vouvoiement ; pas le prénom du prospect à tout va\n" +
+    `identité = prénom + pourquoi (pas titre LinkedIn) ; sur oui/ok → question ou détail nouveau ; ${toneLbl} partout ; pas le prénom du prospect à tout va\n` +
     "- Textes réels, naturels, sans crochets [ ]\n" +
     "- Inclure prix / lien seulement APRÈS que le prospect a engagé, s'ils sont dans le contexte\n" +
     "- Respecte le guide / mémoire / offre du cadre campagne\n" +

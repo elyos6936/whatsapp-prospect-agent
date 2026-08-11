@@ -1242,6 +1242,17 @@ async function runAutoReply(
             activeCampaign.config.mode === "inbound_closing")
             ? "inbound"
             : "outbound",
+        toneSources: [
+          activeCampaign?.config.initialMessage,
+          activeCampaign?.config.conversationGuide,
+          activeCampaign?.config.livePlaybook?.openerSnapshot,
+        ],
+        knownLinkSources: [
+          activeCampaign?.config.initialMessage,
+          activeCampaign?.config.conversationGuide,
+          activeCampaign?.config.closingLink,
+          ...(activeCampaign?.config.abVariants?.map((v) => v.message) ?? []),
+        ],
       });
       // Silence post-adieu (défense en profondeur si le générateur renvoie vide).
       if (!reply.trim()) {
@@ -1262,6 +1273,12 @@ async function runAutoReply(
         reply = sanitizeInventedCampaignUrls(reply, {
           allowedLink: activeCampaign?.config.closingLink,
           closingGoal: activeCampaign?.config.closingGoal,
+          knownLinkSources: [
+            activeCampaign?.config.initialMessage,
+            activeCampaign?.config.conversationGuide,
+            activeCampaign?.config.closingLink,
+            ...(activeCampaign?.config.abVariants?.map((v) => v.message) ?? []),
+          ],
         });
       }
     }

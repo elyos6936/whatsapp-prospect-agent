@@ -19,6 +19,7 @@ import {
   resolveLlmRoleModel,
   resolveLlmRoleProvider,
 } from "./llm.js";
+import { resolveReplyTone, toneLabel } from "./reply-tone.js";
 
 /** Contexte système injecté UNIQUEMENT sur fil purpose=support. */
 export const SUPPORT_FIL_SYSTEM_ADDENDUM = `## MODULE SUPPORT CLIENT (prioritaire sur toute consigne prospection)
@@ -332,6 +333,10 @@ export async function generateSupportSimulationDirect(
     catchAll?: boolean;
   }
 ): Promise<{ display: string; turns: SimulationTurn[] } | null> {
+  const tone = resolveReplyTone({
+    campaignTexts: [opts.campaignBrief, opts.businessContext],
+  });
+  const toneLbl = toneLabel(tone);
   const triggers = (opts.triggerPhrases || []).filter(Boolean);
   const startRule = opts.catchAll
     ? `- Le 1er turn DOIT être speaker=prospect, name=Client (bonjour / question produit).\n`
@@ -354,7 +359,7 @@ export async function generateSupportSimulationDirect(
     startRule +
     "- Après un message d'intérêt : « toi » remercie + présente offre/prix/lien/next step — PAS « quel est votre secteur ? »\n" +
     "- INTERDIT : cold outreach, A.I.D.A., discovery B2B, « je vous contacte pour… », « automatisation IA » générique hors offre du cadre\n" +
-    "- « toi » = vendeur/support utile, 1-2 phrases, vouvoiement, sans crochets [ ], sans « ! » en tête de message\n" +
+    `- « toi » = vendeur/support utile, 1-2 phrases, ${toneLbl}, sans crochets [ ], sans « ! » en tête de message\n` +
     "- Prix / lien seulement s'ils sont dans le cadre SUPPORT\n" +
     "- Aucune phrase hors JSON";
 

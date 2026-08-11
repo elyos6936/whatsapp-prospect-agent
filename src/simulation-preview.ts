@@ -371,6 +371,18 @@ export async function replyInSimulationPreview(
       closingLink: campaignConfig?.closingLink,
       closingGoal: campaignConfig?.closingGoal,
       forceDeliverPendingLink: affirmingLink,
+      toneSources: [
+        campaignConfig?.initialMessage,
+        campaignConfig?.conversationGuide,
+        campaignConfig?.livePlaybook?.openerSnapshot,
+        ...history.filter((h) => h.role === "you").map((h) => h.text),
+      ],
+      knownLinkSources: [
+        campaignConfig?.initialMessage,
+        campaignConfig?.conversationGuide,
+        campaignConfig?.closingLink,
+        ...(campaignConfig?.abVariants?.map((v) => v.message) ?? []),
+      ],
     });
     reply = ensurePendingLinkInReply(
       reply,
@@ -383,6 +395,12 @@ export async function replyInSimulationPreview(
       reply = sanitizeInventedCampaignUrls(reply, {
         allowedLink: campaignConfig?.closingLink,
         closingGoal: campaignConfig?.closingGoal,
+        knownLinkSources: [
+          campaignConfig?.initialMessage,
+          campaignConfig?.conversationGuide,
+          campaignConfig?.closingLink,
+          ...(campaignConfig?.abVariants?.map((v) => v.message) ?? []),
+        ],
       });
     }
   } catch {

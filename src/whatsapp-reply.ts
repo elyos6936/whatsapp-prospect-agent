@@ -15,12 +15,14 @@ import {
   ensurePendingLinkInReply,
 } from "./lead-scoring.js";
 import { shouldSilenceAfterFarewell, isOutboundDiagnosticAsk } from "./stop-policy.js";
+import { resolveReplyTone, toneInstruction, toneLabel } from "./reply-tone.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté (Afrique francophone) qui répond comme un **vrai humain** — jamais comme un bot.
 
 ## SORTIE OBLIGATOIRE (CRITIQUE)
 - Tu réfléchis EN SILENCE. N'écris JAMAIS ton analyse, ton plan, ni des phrases du type « Il vient de… », « Je reste transparent… », « puis je relance… ».
-- Ta réponse = UNIQUEMENT le texte WhatsApp adressé au contact (vouvoiement : vous / votre).
+- Ta réponse = UNIQUEMENT le texte WhatsApp adressé au contact.
+- TON = celui imposé par la consigne « TON DU FIL » (tutoiement ou vouvoiement) — jamais l'autre.
 - Commence TOUJOURS par une majuscule.
 - INTERDIT : notes internes, coaching, stratégie, « mission », « recadrer », parler du contact à la 3ᵉ personne.
 
@@ -51,7 +53,7 @@ Si le contact demande juste le lien / le prix / un seul message → uniquement l
 5b. Messages courts (ok/oui) : lis TON dernier message ; exécute ou avance — pas de bio.
 6. ENTRANT : support, pas cold outreach — intérêt → offre concrète (prix/lien), PAS « quel type de tâche / secteur ».
 7. ZÉRO CROCHETS [prix], [lien].
-8. VOUVOIEMENT. Pas de prénom du contact à tout va.
+8. TON = celui imposé par « TON DU FIL ». Pas de prénom du contact à tout va.
 9. Pas de réaction vide (« Super. ») : réagir + avancer.
 10. Infos multiples → noter + UNE question manquante.
 11. Refus intérêt → clôture polie. « Non » à une question de qualification → continue.
@@ -345,6 +347,9 @@ export async function generateWhatsAppReply(userId: number, input: {
    * n'est pas encore en base).
    */
   forceDeliverPendingLink?: boolean;
+  /** Textes campagne / mémoire pour déduire le ton et whitelister les liens. */
+  toneSources?: Array<string | null | undefined>;
+  knownLinkSources?: Array<string | null | undefined>;
 }): Promise<string> {
   const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
@@ -362,6 +367,18 @@ export async function generateWhatsAppReply(userId: number, input: {
     20,
     input.automationId
   );
+
+  const sentMessages = policyHistory
+    .filter((m) => m.direction === "sortant")
+    .map((m) => m.body);
+  const tone = resolveReplyTone({
+    sentMessages,
+    campaignTexts: [
+      ...(input.toneSources ?? []),
+      input.automationContext,
+    ],
+  });
+  const toneSystem = toneInstruction(tone);
 
   // Filet anti-relance : adieu déjà envoyé + ack court → silence (pas de LLM / pas de lien).
   if (shouldSilenceAfterFarewell(input.incomingText, policyHistory)) {
@@ -445,7 +462,7 @@ ${historyText || "(historique fourni dans le bloc campagne / simulation ci-dessu
 --- NOUVEAU MESSAGE ---
 ${input.senderName}: ${input.incomingText}
 
-Écris UNIQUEMENT le message WhatsApp au ${inbound ? "client" : "prospect"} (1-2 phrases, vouvoiement, majuscule en tête). Pas d'analyse, pas de plan, pas de « Il vient de… ».${
+Écris UNIQUEMENT le message WhatsApp au ${inbound ? "client" : "prospect"} (1-2 phrases, ${toneLabel(tone)}, majuscule en tête). Pas d'analyse, pas de plan, pas de « Il vient de… ».${
     affirmingPendingSend ? " Inclus l'URL campagne." : ""
   }${
     !inbound && ongoing && shortAck && !affirmingPendingSend
@@ -458,10 +475,11 @@ ${input.senderName}: ${input.incomingText}
   const inboundSystem = inbound ? SUPPORT_INBOUND_REPLY_ADDENDUM : undefined;
 
   const buildMessages = (extraSystem?: string): OpenAI.Chat.Completions.ChatCompletionMessageParam[] => [
-      { role: "system", content: WHATSAPP_REPLY_PROMPT },
+    { role: "system", content: WHATSAPP_REPLY_PROMPT },
+    { role: "system", content: toneSystem },
     ...(inboundSystem ? [{ role: "system" as const, content: inboundSystem }] : []),
     ...(extraSystem ? [{ role: "system" as const, content: extraSystem }] : []),
-      { role: "user", content: userContent },
+    { role: "user", content: userContent },
   ];
 
   const callReply = async (extraSystem?: string) => {
@@ -540,6 +558,12 @@ ${input.senderName}: ${input.incomingText}
   styled = sanitizeInventedCampaignUrls(styled, {
     allowedLink: input.closingLink,
     closingGoal: input.closingGoal,
+    knownLinkSources: [
+      ...(input.knownLinkSources ?? []),
+      ...(input.toneSources ?? []),
+      input.automationContext,
+      input.closingLink,
+    ],
   });
   return styled;
 }
