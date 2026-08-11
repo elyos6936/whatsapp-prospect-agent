@@ -38,41 +38,14 @@ function urlAllowed(candidate: string, allowedLink: string): boolean {
   return c === a || c.startsWith(a) || a.startsWith(c);
 }
 
-/** Retire les URL listées et recolle proprement (« le lien : » orphelin, doubles espaces…). */
-function stripUrls(text: string, urls: string[]): string {
-  let out = text;
-  for (const u of urls) {
-    out = out.split(u).join(" ");
-  }
-  return out
-    .replace(/\(\s*\)/g, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .replace(/\s+([,.!?…])/g, "$1")
-    .replace(/\s*[:;]\s*(?=$|\n)/gm, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
-}
-
-/** Reste-t-il une phrase exploitable après retrait de l'URL ? */
-function hasUsableSentence(text: string): boolean {
-  return text.length >= 15 && /[a-zàâäéèêëïîôùûüç]/i.test(text);
-}
-
 /**
  * Filet dur : l'IA invente parfois https://example.com / faux liens boutique.
- * - closingLink présent → les URL qui ne matchent pas sont remplacées par le lien réel.
- * - Sinon → l'URL inventée est retirée et le reste du message est conservé.
- *   Écraser tout le message figeait la réponse, qui se répétait alors à chaque tour.
- * Les liens déjà présents dans la campagne (guide, accroche, mémoire) sont légitimes :
- * `knownLinkSources` évite de censurer un lien que l'utilisateur a lui-même fourni.
+ * - Pas de closingLink campagne → aucune URL autorisée (remplace le message si besoin).
+ * - closingLink présent → seules les URL qui matchent sont gardées ; les autres → lien réel.
  */
 export function sanitizeInventedCampaignUrls(
   text: string,
-  opts?: {
-    allowedLink?: string | null;
-    closingGoal?: string | null;
-    knownLinkSources?: Array<string | null | undefined>;
-  }
+  opts?: { allowedLink?: string | null; closingGoal?: string | null }
 ): string {
   const raw = String(text ?? "").trim();
   if (!raw) return raw;
@@ -82,44 +55,32 @@ export function sanitizeInventedCampaignUrls(
   const allowed = opts?.allowedLink?.trim() || "";
   const goal = (opts?.closingGoal || "").toLowerCase();
 
-  const whitelist = [allowed];
-  for (const source of opts?.knownLinkSources ?? []) {
-    const found = String(source ?? "").match(URL_IN_TEXT_RE);
-    if (found) whitelist.push(...found);
-  }
-  const knownLinks = whitelist.map((l) => l.trim()).filter(Boolean);
-
-  const unauthorized = urls.filter(
-    (u) => !knownLinks.some((link) => urlAllowed(u, link))
-  );
+  const unauthorized = urls.filter((u) => !allowed || !urlAllowed(u, allowed));
   if (!unauthorized.length) return raw;
 
   console.warn(
     `⚠️ URL non autorisée dans réponse WhatsApp — filet. Brut: ${raw.slice(0, 160)}`
   );
 
-  // Lien campagne connu : remplace les faux URL par le vrai.
-  if (allowed) {
-    let out = raw;
-    for (const u of unauthorized) {
-      out = out.split(u).join(allowed);
+  if (!allowed) {
+    if (goal === "delivery") {
+      return "Parfait. Indiquez-moi le lieu de livraison (quartier / ville), s'il vous plaît.";
     }
-    return out.replace(/\s{2,}/g, " ").trim();
+    if (goal === "payment") {
+      return "Parfait. Je vous confirme le mode de paiement exact juste après.";
+    }
+    if (goal === "appointment") {
+      return "Parfait. Quel jour et quelle heure vous arrangent pour le rendez-vous ?";
+    }
+    return "Parfait. Dites-moi comment vous préférez finaliser, et j'avance avec vous.";
   }
 
-  const stripped = stripUrls(raw, unauthorized);
-  if (hasUsableSentence(stripped)) return stripped;
-
-  if (goal === "delivery") {
-    return "Parfait. Indiquez-moi le lieu de livraison (quartier / ville), s'il vous plaît.";
+  // Lien campagne connu : remplace les faux URL par le vrai.
+  let out = raw;
+  for (const u of unauthorized) {
+    out = out.split(u).join(allowed);
   }
-  if (goal === "payment") {
-    return "Parfait. Je vous confirme le mode de paiement exact juste après.";
-  }
-  if (goal === "appointment") {
-    return "Parfait. Quel jour et quelle heure vous arrangent pour le rendez-vous ?";
-  }
-  return "Parfait. Dites-moi comment vous préférez finaliser, et j'avance avec vous.";
+  return out.replace(/\s{2,}/g, " ").trim();
 }
 
 /** Majuscule en tête + retire artefacts (!, #…) — qualité WhatsApp. */
