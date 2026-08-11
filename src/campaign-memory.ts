@@ -389,7 +389,9 @@ export function formatMemoryForAgent(memory: CampaignMemory): string {
   return (
     `## Mémoire active — « ${memory.name} »\n` +
     `Source de vérité CE fil. Applique à la lettre ; n'invente pas ; ne repose pas ce qui est déjà écrit. ` +
-    `Conflit explicite utilisateur → suis-le. Changer de mémoire → bouton Mémoire / set_campaign_memory.\n\n` +
+    `Conflit explicite utilisateur → suis-le (fenêtre horaire, prix, ton…). ` +
+    `Une fenêtre demandée pour CETTE campagne prime sur la mémoire — update_automation_config ou send_window_* à la création. ` +
+    `Changer de mémoire → bouton Mémoire / set_campaign_memory.\n\n` +
     `${body}${truncatedNote}`
   );
 }

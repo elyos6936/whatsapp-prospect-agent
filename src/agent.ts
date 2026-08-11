@@ -34,10 +34,12 @@ import {
   runDeterministicSupportDraftAndSim,
   runDeterministicGroupsDraft,
   runDeterministicSimulation,
+  runDeterministicSendWindowChange,
   shouldDeterministicActivate,
   shouldDeterministicSimulate,
   shouldDeterministicSupportDraft,
   shouldDeterministicGroupsDraft,
+  shouldDeterministicSendWindowChange,
   POWER_CAMPAIGN_TOOLS,
 } from "./deterministic-campaign.js";
 import { SUPPORT_FIL_SYSTEM_ADDENDUM } from "./support-flow.js";
@@ -592,6 +594,21 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const bareValidation =
     isShortCampaignValidation(userMessage) &&
     !/\b(lance|lancer|active|activer|démarre|demarre)\b/i.test(userMessage);
+
+  // Fenêtre d'envoi : update_automation_config côté serveur (priorité user > mémoire)
+  if (shouldDeterministicSendWindowChange(history, userMessage, thread?.automation_id)) {
+    try {
+      const updated = await runDeterministicSendWindowChange({
+        userId,
+        threadId,
+        history,
+        userMessage,
+      });
+      if (updated) return updated;
+    } catch (err) {
+      console.warn("[agent] deterministic send window failed:", err);
+    }
+  }
 
   // Support : brouillon + sim déterministes (pas MiniMax)
   if (

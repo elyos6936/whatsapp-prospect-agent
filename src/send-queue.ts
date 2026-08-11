@@ -15,6 +15,7 @@ import {
   rescheduleSendQueueItem,
   saveAgentMessage,
   incrementMessagesHandled,
+  listPendingSendQueueForAutomation,
   type QueueItem,
 } from "./db.js";
 import { chatIdToDisplay, sendWhatsAppMedia, sendWhatsAppMessage } from "./evolutionapi.js";
@@ -379,6 +380,43 @@ async function processSendQueueForUser(userId: number, limit: number): Promise<n
   }
 
   return sent;
+}
+
+/**
+ * Après élargissement de la fenêtre d'envoi : remet à « maintenant » les messages
+ * encore en attente alors qu'on est désormais dans la plage d'activité.
+ */
+export async function recheckPendingSendQueueAfterWindowChange(
+  userId: number,
+  automationId: number
+): Promise<number> {
+  const auto = await getAutomation(userId, automationId);
+  if (!auto) return 0;
+  const quiet = resolveOutboundQuietHours(
+    auto.config.quietHoursStart,
+    auto.config.quietHoursEnd
+  );
+  if (isWithinQuietHours(quiet)) return 0;
+
+  const items = await listPendingSendQueueForAutomation(userId, automationId);
+  const now = formatLocalDateTime(new Date());
+  let bumped = 0;
+  for (const item of items) {
+    if (bypassQuietHours(item)) continue;
+    const sendAt = new Date(item.send_at);
+    if (sendAt.getTime() <= Date.now()) continue;
+    await rescheduleSendQueueItem(userId, item.id, now);
+    bumped++;
+    const label = item.recipient_label || chatIdToDisplay(item.recipient);
+    console.log(`⏩ Queue #${item.id} → ${label} avancé à ${now} (nouvelle fenêtre d'envoi)`);
+    await addAutomationLog(
+      userId,
+      automationId,
+      "info",
+      `Envoi à ${label} avancé à ${now} (fenêtre d'envoi élargie).`
+    );
+  }
+  return bumped;
 }
 
 export async function processSendQueue(limit = 2): Promise<number> {
