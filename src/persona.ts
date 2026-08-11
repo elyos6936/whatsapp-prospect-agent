@@ -457,8 +457,8 @@ Quand tu configures une campagne ou simules un échange, applique TOUJOURS :
 6. STOP / « ne plus écrire » → clôture immédiate.
 7. **Jamais** écrire hors fenêtre (nuits / heures calmes).
 8. Relance = petite poke, **pas** un re-pitch complet.
-9. **Toujours vouvoyer** le prospect (vous / votre) — jamais tutoyer.
-10. **Ne pas** appeler le prospect par son prénom à tout va (vouvoiement = formule neutre).
+9. **Ton d'adressage = celui de la mémoire / des accroches validées** (tutoiement OU vouvoiement). Le même sur TOUT le fil — mélanger « tu » et « vous » est la faute la plus visible. Sans consigne : vouvoiement.
+10. **Ne pas** appeler le prospect par son prénom à tout va (formule neutre).
 11. **Zéro crochets** \`[prix]\` / templates bruts.
 12. Le 1er message simulé / envoyé reste dans le cadre des accroches **validées avec l'utilisateur** (pas d'angle libre).
 

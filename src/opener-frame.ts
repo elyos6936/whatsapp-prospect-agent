@@ -58,6 +58,54 @@ export function proposeShortAttentionOpener(text: string): string | null {
   return short;
 }
 
+/** Risque réel encouru, formulé pour l'utilisateur (pas une règle produit). */
+const OPENER_RISK_EXPLANATIONS: Array<{ test: (t: string) => boolean; risk: string }> = [
+  {
+    test: (t) => URL_RE.test(t),
+    risk:
+      "un lien dès le 1er message : c'est le principal facteur de blocage WhatsApp en prospection à froid, et le taux de réponse chute",
+  },
+  {
+    test: (t) => PRICE_RE.test(t),
+    risk:
+      "un prix dès le 1er message : annoncé avant que l'intérêt soit créé, il fait décrocher la majorité des prospects",
+  },
+  {
+    test: (t) => t.length > 140 && PITCH_DUMP_RE.test(t),
+    risk:
+      "un pitch complet dès le 1er message : les pavés commerciaux en ouverture sont les plus signalés comme spam",
+  },
+];
+
+/**
+ * Avertissement — PAS un refus.
+ *
+ * Le cadre A.I.D.A. est une recommandation anti-blocage, pas une contrainte produit :
+ * les stratégies varient d'une campagne et d'un utilisateur à l'autre. On expose donc
+ * le risque et on demande l'accord, au lieu d'imposer un format unique.
+ */
+export function formatAttentionOpenerWarning(
+  label: string,
+  text: string,
+  opts?: { confirmField?: string }
+): string {
+  const opener = text.trim();
+  const risks = OPENER_RISK_EXPLANATIONS.filter((r) => r.test(opener)).map((r) => r.risk);
+  const field = opts?.confirmField ?? "keep_opener_as_is";
+  const tooLong = opener.length > ATTENTION_OPENER_MAX_CHARS;
+  const short = tooLong ? proposeShortAttentionOpener(opener) : null;
+  return (
+    `${label} sort du cadre A.I.D.A. Attention recommandé. ` +
+    `AVERTIS l'utilisateur des risques puis DEMANDE-LUI s'il veut quand même garder son message tel quel — ` +
+    `n'impose aucun format, c'est sa campagne et sa stratégie.\n` +
+    `Risques à lui exposer : ${risks.length ? risks.join(" ; ") : "message hors cadre recommandé"}.` +
+    (short ? `\nAlternative possible à lui proposer : « ${short} ».` : "") +
+    `\nAlternative : lien → closing_link, prix → price, détails → conversation_guide.\n` +
+    `S'il confirme vouloir garder son texte (« oui », « garde comme ça », « je préfère ainsi ») : ` +
+    `rappelle le même outil avec ${field}=true et son message inchangé. Ne reformule PAS sans son accord.`
+  );
+}
+
 export function formatAttentionOpenerError(label: string, text: string): string {
   const hard = attentionOpenerHardIssues(text);
   if (hard.length) {
@@ -79,12 +127,13 @@ export function formatAttentionOpenerError(label: string, text: string): string 
 /**
  * Prospection sortante : exactement 5 accroches DISTINCTES.
  * Empêche de ne garder que initial_message (ou 5 copies du même texte).
- * @param opts.fromUserValidatedChat — textes déjà validés dans le chat : on n'applique
- *   pas le filtre A.I.D.A. strict (longueur / pitch) qui rejetterait sinon tout le lot.
+ *
+ * Contrôles STRUCTURELS uniquement (la rotation A/B en a besoin pour fonctionner).
+ * Le style des accroches relève de l'avertissement, pas du refus : voir
+ * `outboundVariantsOutOfFrame` + `formatAttentionOpenerWarning`.
  */
 export function validateOutboundAbVariants(
-  variants: Array<{ id?: string; message?: string }> | null | undefined,
-  opts?: { fromUserValidatedChat?: boolean }
+  variants: Array<{ id?: string; message?: string }> | null | undefined
 ): string | null {
   const cleaned = (variants ?? [])
     .map((v, i) => ({
@@ -102,14 +151,6 @@ export function validateOutboundAbVariants(
     );
   }
 
-  if (!opts?.fromUserValidatedChat) {
-    for (const v of cleaned) {
-      if (!isValidAttentionOpener(v.message)) {
-        return formatAttentionOpenerError(`ab_variants.${v.id}`, v.message);
-      }
-    }
-  }
-
   const unique = new Set(cleaned.map((v) => v.message.toLowerCase().replace(/\s+/g, " ")));
   if (unique.size < 3) {
     return (
@@ -119,5 +160,22 @@ export function validateOutboundAbVariants(
     );
   }
 
+  return null;
+}
+
+/**
+ * Première variante hors cadre recommandé, s'il y en a une.
+ * Sert à AVERTIR (jamais à refuser) : l'utilisateur garde le dernier mot.
+ */
+export function outboundVariantsOutOfFrame(
+  variants: Array<{ id?: string; message?: string }> | null | undefined
+): { id: string; message: string } | null {
+  const cleaned = (variants ?? []).map((v, i) => ({
+    id: v.id || `v${i + 1}`,
+    message: String(v.message ?? "").trim(),
+  }));
+  for (const v of cleaned) {
+    if (v.message && !isValidAttentionOpener(v.message)) return v;
+  }
   return null;
 }
