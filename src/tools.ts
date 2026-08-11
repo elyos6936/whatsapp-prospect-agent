@@ -115,12 +115,7 @@ import {
   unblockContact,
 } from "./db.js";
 import { getContactPresence } from "./notifications.js";
-import {
-  formatAttentionOpenerWarning,
-  isValidAttentionOpener,
-  outboundVariantsOutOfFrame,
-  validateOutboundAbVariants,
-} from "./opener-frame.js";
+import { formatAttentionOpenerError, isValidAttentionOpener, validateOutboundAbVariants } from "./opener-frame.js";
 import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
 import {
@@ -1656,7 +1651,7 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           initial_message: {
             type: "string",
             description:
-              "Premier message sortant = A.I.D.A. Attention (1-2 phrases, ≤200 car., ton d'adressage de la mémoire, SANS prénom du prospect). RECOMMANDÉ (pas imposé) : sans prix, sans lien, sans pitch complet — si l'utilisateur veut autre chose, avertis-le des risques puis respecte son choix (keep_opener_as_is). = accroche validée / référence simu ; les 5 ab_variants tournent à l'envoi. Pour group_broadcast : 1er post dans le(s) groupe(s).",
+              "Premier message sortant = A.I.D.A. Attention SEULEMENT (1-2 phrases, ≤200 car., vouvoiement, SANS prénom du prospect). INTERDIT : prix, lien, pitch complet. = accroche validée / référence simu ; les 5 ab_variants tournent à l'envoi. Pour group_broadcast : 1er post dans le(s) groupe(s).",
           },
           max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
           max_per_day: {
@@ -1806,11 +1801,6 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             items: { type: "object" },
             description:
               "Exactement 5 accroches Attention DISTINCTES validées avec l'utilisateur : [{id:'v1',message:'…'}, … {id:'v5',message:'…'}]. Obligatoire en prospection sortante. Même si l'utilisateur n'en choisit qu'une pour initial_message, tu DOIS passer les 5 textes — ne garde jamais un seul message.",
-          },
-          keep_opener_as_is: {
-            type: "boolean",
-            description:
-              "true UNIQUEMENT après que l'utilisateur, averti des risques (lien / prix / pitch dans le 1er message), a confirmé vouloir garder son texte tel quel. Ne jamais mettre true de ta propre initiative.",
           },
           sequence_steps: {
             type: "array",
@@ -1971,11 +1961,6 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
             type: "array",
             items: { type: "object" },
             description: "Remplacer les 5 accroches Attention : [{id,message}, …] (exactement 5)",
-          },
-          keep_opener_as_is: {
-            type: "boolean",
-            description:
-              "true UNIQUEMENT après que l'utilisateur, averti des risques (lien / prix / pitch dans le 1er message), a confirmé vouloir garder son texte tel quel. Ne jamais mettre true de ta propre initiative.",
           },
         },
         required: ["automation_id"],
@@ -2659,7 +2644,7 @@ export async function executeTool(
       const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
       const trialGate = await tryConsumeTrialGroupExtract(userId, groupId);
       if (!trialGate.ok) {
-      return JSON.stringify({
+        return JSON.stringify({
           error: trialGate.reason,
           code: "trial_group_extract_limit",
           limit: trialGate.limit,
@@ -4738,39 +4723,26 @@ export async function executeTool(
           error: "initial_message contient des crochets. Remplace-les par de vraies valeurs.",
         });
       }
-      // Hors cadre A.I.D.A. : on avertit et on demande l'accord, on n'impose pas.
-      const openerFrameConfirmed =
-        Boolean(args.keep_opener_as_is) || Boolean(args.ab_variants_from_chat);
       if (
         type !== "group_broadcast" &&
         type !== "keyword_sales" &&
         config.initialMessage &&
-        !openerFrameConfirmed &&
+        !args.ab_variants_from_chat &&
         !isValidAttentionOpener(config.initialMessage)
       ) {
         return JSON.stringify({
-          needsUserConfirmation: true,
-          warning: formatAttentionOpenerWarning("initial_message", config.initialMessage),
+          error: formatAttentionOpenerError("initial_message", config.initialMessage),
         });
       }
       const abVariantsParsed = parseAbVariantsArg(args.ab_variants);
       const abVariantsExplicit = Boolean(abVariantsParsed);
+      const abFromChat = Boolean(args.ab_variants_from_chat);
       // Pré-contrôle si ab_variants est fourni (évite un merge inutile)
       if (isOutbound && abVariantsExplicit) {
-        const early = validateOutboundAbVariants(abVariantsParsed!);
+        const early = validateOutboundAbVariants(abVariantsParsed!, {
+          fromUserValidatedChat: abFromChat,
+        });
         if (early) return JSON.stringify({ error: early });
-        if (!openerFrameConfirmed) {
-          const offFrame = outboundVariantsOutOfFrame(abVariantsParsed!);
-          if (offFrame) {
-            return JSON.stringify({
-              needsUserConfirmation: true,
-              warning: formatAttentionOpenerWarning(
-                `ab_variants.${offFrame.id}`,
-                offFrame.message
-              ),
-            });
-          }
-        }
       }
 
       /** Persist draft — update existing if reusable, else create. */
@@ -4811,7 +4783,9 @@ export async function executeTool(
 
         // Toujours 5 variantes en sortant (après merge) — empêche de ne garder que initial_message
         if (isOutbound) {
-          const abErr = validateOutboundAbVariants(merged.abVariants);
+          const abErr = validateOutboundAbVariants(merged.abVariants, {
+            fromUserValidatedChat: abFromChat,
+          });
           if (abErr) return JSON.stringify({ error: abErr });
           merged.personalizeMessages = false;
         }
@@ -5305,29 +5279,15 @@ export async function executeTool(
       if (
         isOutboundType &&
         merged.initialMessage &&
-        !args.keep_opener_as_is &&
         !isValidAttentionOpener(merged.initialMessage)
       ) {
         return JSON.stringify({
-          needsUserConfirmation: true,
-          warning: formatAttentionOpenerWarning("initial_message", merged.initialMessage),
+          error: formatAttentionOpenerError("initial_message", merged.initialMessage),
         });
       }
       if (parseAbVariantsArg(args.ab_variants)) {
         const abErr = validateOutboundAbVariants(merged.abVariants);
         if (abErr) return JSON.stringify({ error: abErr });
-        if (!args.keep_opener_as_is) {
-          const offFrame = outboundVariantsOutOfFrame(merged.abVariants);
-          if (offFrame) {
-            return JSON.stringify({
-              needsUserConfirmation: true,
-              warning: formatAttentionOpenerWarning(
-                `ab_variants.${offFrame.id}`,
-                offFrame.message
-              ),
-            });
-          }
-        }
         merged.personalizeMessages = false;
       } else if (
         isOutboundType &&

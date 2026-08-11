@@ -4,7 +4,6 @@ import { callOpenAiWithRetry, describeOpenAiError } from "./openai-retry.js";
 import { createLlmClient, extractAssistantContent, llmProviderLabel, llmChatExtras } from "./llm.js";
 import { sanitizeProspectFacingReply } from "./prospect-facing-sanitize.js";
 import { sanitizeOutboundWhatsAppText } from "./outbound-sanitize.js";
-import { resolveReplyTone, toneLabel } from "./reply-tone.js";
 import type OpenAI from "openai";
 
 function normalizeForCompare(s: string): string {
@@ -70,12 +69,6 @@ export async function generatePersonalizedOpener(
 
   const client = createLlmClient(key);
 
-  // Le modèle validé par l'utilisateur fixe le ton : ne jamais le réécrire.
-  const tone = resolveReplyTone({
-    sentMessages: [input.template],
-    campaignTexts: [input.conversationGuide],
-  });
-
   const buildPrompt = (attempt: number) =>
     ({
       role: "system" as const,
@@ -85,9 +78,7 @@ export async function generatePersonalizedOpener(
         "- Garde EXACTEMENT la même intention / angle / offre du message modèle. Change seulement quelques mots ou le rythme.\n" +
         "- INTERDIT d'ajouter des infos absentes du modèle (date, places, prix, lien, pitch complet, digression).\n" +
         "- INTERDIT le chitchat inventé (« profite de ta pause », « je traînais dans le coin », « ravi de te croiser »…).\n" +
-        (tone === "tu"
-          ? "- TUTOIEMENT obligatoire (tu / toi / tes) — comme le message modèle. Jamais vous / votre.\n"
-          : "- VOUVOIEMENT obligatoire (vous / votre). Jamais tu / ton / ta / te.\n") +
+        "- VOUVOIEMENT obligatoire (vous / votre). Jamais tu / ton / ta / te.\n" +
         "- N'utilise PAS le prénom du prospect.\n" +
         "- 1 à 2 phrases max, ≤ 200 caractères idéalement.\n" +
         "- Pas de prix, pas de lien, pas de placeholders [ ].\n" +
@@ -100,7 +91,7 @@ export async function generatePersonalizedOpener(
   const userPrompt =
     `Contexte campagne (indicatif) : ${input.groupName}\n` +
     `Message modèle VALIDÉ (référence — ne change pas le sens) : ${input.template}\n` +
-    `Consignes campagne : ${input.conversationGuide || `Rester professionnel, ${toneLabel(tone)}, accroche courte`}\n` +
+    `Consignes campagne : ${input.conversationGuide || "Rester professionnel, vouvoyer, accroche courte"}\n` +
     (avoid.length
       ? `\nFormulations DÉJÀ envoyées (évite de les recopier mot pour mot, mais reste dans le même cadre) :\n` +
         avoid.map((m, i) => `${i + 1}. « ${m.slice(0, 180)} »`).join("\n")

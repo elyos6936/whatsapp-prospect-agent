@@ -8,35 +8,17 @@ import type { AgentMessage, AutomationConfig } from "./db.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
 
 const MAX_MSG_CHARS = 1_800;
-/**
- * Les derniers tours restent lisibles : « corrige la 2e phrase » / « change le
- * ton du 3e message » exige le texte exact. Tronquer ces tours-là était la cause
- * des réponses « je n'ai pas la main » et des corrections dans le vide.
- */
-const MAX_RECENT_MSG_CHARS = 5_000;
-const MAX_HISTORY_CHARS = 34_000;
-/** Tours de fin gardés en détail (simulation comprise). */
-const DETAILED_TAIL_MESSAGES = 6;
+const MAX_HISTORY_CHARS = 28_000;
 
-/**
- * Remplace les pavés simu / plan (bruit pour le LLM, utiles seulement à l'UI).
- * `keepDetail` = tour récent : la simulation et le texte complet sont conservés,
- * car c'est précisément ce que l'utilisateur demande de modifier.
- */
-export function compactAgentMessageContent(
-  content: string,
-  opts?: { keepDetail?: boolean }
-): string {
+/** Remplace les pavés simu / plan (bruit pour le LLM, utiles seulement à l'UI). */
+export function compactAgentMessageContent(content: string): string {
   let text = content ?? "";
   if (!text) return text;
-  const keepDetail = opts?.keepDetail === true;
 
-  if (!keepDetail) {
-    text = text.replace(
-      /```klanvio-sim\b[\s\S]*?```/gi,
-      "```klanvio-sim\n[Simulation compactée — affichée sur le téléphone.]\n```"
-    );
-  }
+  text = text.replace(
+    /```klanvio-sim\b[\s\S]*?```/gi,
+    "```klanvio-sim\n[Simulation compactée — affichée sur le téléphone.]\n```"
+  );
   text = text.replace(
     /```klanvio-plan\b[\s\S]*?```/gi,
     "```klanvio-plan\n[Plan compacté — détail UI.]\n```"
@@ -48,7 +30,7 @@ export function compactAgentMessageContent(
   );
 
   // Toi → / Prospect → collé en clair (simu ratée dans le chat)
-  if (!keepDetail && /^\s*Toi\s*→/m.test(text) && /Prospect\s*→/m.test(text) && text.length > 400) {
+  if (/^\s*Toi\s*→/m.test(text) && /Prospect\s*→/m.test(text) && text.length > 400) {
     const lines = text.split("\n").filter((l) => /^\s*(Toi|Prospect)\s*→/.test(l));
     if (lines.length >= 4) {
       text = text.replace(
@@ -58,18 +40,18 @@ export function compactAgentMessageContent(
     }
   }
 
-  const limit = keepDetail ? MAX_RECENT_MSG_CHARS : MAX_MSG_CHARS;
-  if (text.length > limit) {
-    text = text.slice(0, limit - 40).trimEnd() + "\n…[tronqué pour budget contexte]";
+  if (text.length > MAX_MSG_CHARS) {
+    text =
+      text.slice(0, MAX_MSG_CHARS - 40).trimEnd() +
+      "\n…[tronqué pour budget contexte]";
   }
   return text;
 }
 
 export function compactAgentHistory(history: AgentMessage[]): AgentMessage[] {
-  const detailFrom = Math.max(0, history.length - DETAILED_TAIL_MESSAGES);
-  const compacted = history.map((m, i) => ({
+  const compacted = history.map((m) => ({
     ...m,
-    content: compactAgentMessageContent(m.content, { keepDetail: i >= detailFrom }),
+    content: compactAgentMessageContent(m.content),
   }));
 
   let total = compacted.reduce((n, m) => n + m.content.length, 0);
@@ -96,17 +78,7 @@ export function compactAgentHistory(history: AgentMessage[]): AgentMessage[] {
   return kept;
 }
 
-/**
- * Config campagne pour le LLM : faits utiles + le contenu réellement discuté.
- *
- * Le guide, les variantes et le playbook sont la vérité de la campagne (≠ mémoire,
- * qui décrit l'entreprise). N'envoyer que leur *longueur* rendait l'agent infidèle :
- * il ne pouvait ni citer ni corriger ce qu'il avait lui-même produit.
- */
-const GUIDE_MAX_CHARS = 3_000;
-const PLAYBOOK_TURN_MAX_CHARS = 240;
-const PLAYBOOK_MAX_TURNS = 8;
-
+/** Config campagne pour le LLM : faits utiles, sans guide/playbook complets (déjà en mémoire système). */
 export function slimAutomationConfigForLlm(
   config: AutomationConfig | null | undefined
 ): Record<string, unknown> | null {
@@ -114,16 +86,6 @@ export function slimAutomationConfigForLlm(
   const variants = (config.abVariants ?? [])
     .map((v) => String(v.message ?? "").trim())
     .filter(Boolean);
-  const guide = String(config.conversationGuide ?? "").trim();
-  const playbookTurns = (config.livePlaybook?.turns ?? [])
-    .slice(0, PLAYBOOK_MAX_TURNS)
-    .map((t) => {
-      const text = String(t.text ?? "").trim();
-      return `${t.speaker ?? "toi"}: ${text.slice(0, PLAYBOOK_TURN_MAX_CHARS)}${
-        text.length > PLAYBOOK_TURN_MAX_CHARS ? "…" : ""
-      }`;
-    })
-    .filter((line) => line.length > 5);
   return {
     initialMessage: config.initialMessage ?? null,
     productName: config.productName ?? null,
@@ -139,18 +101,12 @@ export function slimAutomationConfigForLlm(
     thirdPartyNotification: Boolean(config.thirdPartyNotification),
     personalizeMessages: config.personalizeMessages ?? null,
     abVariantsCount: variants.length,
-    // Texte intégral : l'utilisateur demande « change la variante 3 ».
-    abVariants: variants.map((m, i) => `${i + 1}. ${m}`),
-    conversationGuide: guide
-      ? guide.length > GUIDE_MAX_CHARS
-        ? `${guide.slice(0, GUIDE_MAX_CHARS).trimEnd()}…[guide tronqué]`
-        : guide
-      : null,
+    abVariantsPreview: variants.map((m, i) => `${i + 1}. ${m.slice(0, 72)}${m.length > 72 ? "…" : ""}`),
+    conversationGuideChars: config.conversationGuide?.length ?? 0,
+    conversationGuideNote:
+      "Guide complet = mémoire active (système). Ne pas redemander / recopier ici.",
     livePlaybookTurns: config.livePlaybook?.turns?.length ?? 0,
-    // Trajectoire validée en simulation : référence pour toute correction demandée.
-    livePlaybook: playbookTurns.length ? playbookTurns : null,
-    openerSnapshot: config.livePlaybook?.openerSnapshot ?? null,
-    relanceMessages: config.relance?.messages ?? null,
+    openerSnapshot: config.livePlaybook?.openerSnapshot?.slice(0, 120) ?? null,
     relanceCount: config.relance?.messages?.length ?? 0,
     enableAutoReply: config.enableAutoReply ?? null,
   };
@@ -205,10 +161,9 @@ export function slimToolResultForLlm(toolName: string, rawJson: string): string 
     obj.recentLogs = obj.recentLogs.slice(0, 8);
   }
 
-  // Plafond relevé : la config porte maintenant le guide et le playbook réels.
   const out = JSON.stringify(obj);
-  if (out.length > 14_000) {
-    return out.slice(0, 14_000) + "…\"}";
+  if (out.length > 6_000) {
+    return out.slice(0, 6_000) + "…\"}";
   }
   return out;
 }

@@ -347,13 +347,8 @@ export function memoryToQuietHours(memory: CampaignMemory): {
   };
 }
 
-/**
- * Plafond injection agent chat (le live WhatsApp garde la mémoire via campaign-sync).
- * 4 000 caractères coupaient les mémoires réelles (offre + prix + FAQ + objections)
- * en plein milieu : l'agent « oubliait » alors des consignes que l'utilisateur avait
- * bien écrites. La mémoire est la source de vérité du fil — elle passe en entier.
- */
-const AGENT_MEMORY_INJECT_MAX = 12_000;
+/** Plafond injection agent chat (le live WhatsApp garde la mémoire via campaign-sync). */
+const AGENT_MEMORY_INJECT_MAX = 4_000;
 
 /** Texte injecté dans le contexte agent. */
 export function formatMemoryForAgent(memory: CampaignMemory): string {

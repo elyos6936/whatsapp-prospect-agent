@@ -12,7 +12,6 @@ import {
 } from "./campaign-simulation.js";
 import { config } from "./config.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { resolveReplyTone, toneLabel } from "./reply-tone.js";
 import {
   extractAssistantContent,
   llmExtrasForProvider,
@@ -344,10 +343,6 @@ export async function generateSupportSimulationDirect(
     ? `\n## Cadre SUPPORT (PRIORITAIRE)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
     : "";
 
-  const tone = resolveReplyTone({
-    campaignTexts: [opts.campaignBrief, opts.businessContext],
-  });
-
   const system =
     "Tu rédiges une simulation WhatsApp SUPPORT CLIENT (closing entrant) pour Klanvio.\n" +
     "Le CLIENT écrit en premier — ce n'est PAS de la prospection sortante.\n" +
@@ -359,7 +354,7 @@ export async function generateSupportSimulationDirect(
     startRule +
     "- Après un message d'intérêt : « toi » remercie + présente offre/prix/lien/next step — PAS « quel est votre secteur ? »\n" +
     "- INTERDIT : cold outreach, A.I.D.A., discovery B2B, « je vous contacte pour… », « automatisation IA » générique hors offre du cadre\n" +
-    `- « toi » = vendeur/support utile, 1-2 phrases, ${toneLabel(tone)} sur tous les tours, sans crochets [ ], sans « ! » en tête de message\n` +
+    "- « toi » = vendeur/support utile, 1-2 phrases, vouvoiement, sans crochets [ ], sans « ! » en tête de message\n" +
     "- Prix / lien seulement s'ils sont dans le cadre SUPPORT\n" +
     "- Aucune phrase hors JSON";
 

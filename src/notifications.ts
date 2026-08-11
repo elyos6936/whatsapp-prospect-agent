@@ -1242,12 +1242,6 @@ async function runAutoReply(
             activeCampaign.config.mode === "inbound_closing")
             ? "inbound"
             : "outbound",
-        // Le ton suit l'accroche validée / le playbook avant la mémoire.
-        toneSources: [
-          activeCampaign?.config.initialMessage,
-          activeCampaign?.config.livePlaybook?.openerSnapshot,
-          activeCampaign?.config.conversationGuide,
-        ],
       });
       // Silence post-adieu (défense en profondeur si le générateur renvoie vide).
       if (!reply.trim()) {

@@ -371,16 +371,6 @@ export async function replyInSimulationPreview(
       closingLink: campaignConfig?.closingLink,
       closingGoal: campaignConfig?.closingGoal,
       forceDeliverPendingLink: affirmingLink,
-      // Le ton suit les tours déjà simulés, puis l'accroche validée.
-      toneSources: [
-        history
-          .filter((t) => t.role === "you")
-          .map((t) => t.text)
-          .join("\n"),
-        campaignConfig?.initialMessage,
-        campaignConfig?.livePlaybook?.openerSnapshot,
-        campaignConfig?.conversationGuide,
-      ],
     });
     reply = ensurePendingLinkInReply(
       reply,
