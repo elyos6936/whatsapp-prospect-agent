@@ -4647,6 +4647,11 @@ export async function executeTool(
             config.quietHoursStart = q.quietHoursStart;
             config.quietHoursEnd = q.quietHoursEnd;
           }
+          // Lien mémoire AVANT bake du guide (évite RDV sans URL → blocage)
+          if (!config.closingLink?.trim()) {
+            const fromMem = extractUsefulLinkFromText(mem.instructions);
+            if (fromMem) config.closingLink = fromMem;
+          }
           const { bakeConversationGuideFromMemory } = await import("./campaign-sync.js");
           config.conversationGuide = bakeConversationGuideFromMemory(
             mem,
