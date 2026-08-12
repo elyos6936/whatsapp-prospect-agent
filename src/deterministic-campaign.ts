@@ -364,7 +364,29 @@ export async function runDeterministicSupportDraftAndSim(opts: {
 
   const handoffKeywords = extractSupportHandoffKeywords(history);
   const link = extractHttpLink(history);
-  const price = extractPriceHint(history);
+  let price = extractPriceHint(history);
+  if (!price) {
+    try {
+      const { getAppSettings } = await import("./db.js");
+      const { getLinkedCampaignMemory } = await import("./campaign-memory.js");
+      const s = await getAppSettings(userId);
+      price = (s.business_price || "").trim() || null;
+      if (!price) {
+        const mem = await getLinkedCampaignMemory(userId, threadId);
+        if (mem?.instructions) {
+          const hit =
+            mem.instructions.match(
+              /(?:prix|tarif|montant)\s*[:=]?\s*([^\n.]{0,40}?\b\d[\d\s.,]{1,12}\s*(?:fcfa|f\b|€|euros?)?)/i,
+            )?.[1] ||
+            mem.instructions.match(/\b(\d[\d\s.,]{2,12}\s*(?:fcfa|f\b|€|euros?))\b/i)?.[1];
+          const cleaned = hit?.replace(/\s+/g, " ").trim();
+          if (cleaned && !/\[indiquer/i.test(cleaned)) price = cleaned.slice(0, 80);
+        }
+      }
+    } catch {
+      /* ignore */
+    }
+  }
   const productHint = extractSupportProductHint(history);
   const historyBlob = history.map((m) => m.content).join("\n");
   const closingGoal: "payment" | "delivery" | "link" | "appointment" = link
@@ -404,9 +426,9 @@ export async function runDeterministicSupportDraftAndSim(opts: {
   const draft = parseToolJson(draftRaw);
   if (!draft.ok) {
     console.warn("[deterministic] support draft error:", draft.error || draftRaw.slice(0, 240));
-    return (
+    return userFacingError(
       draft.error ||
-      "Impossible d'enregistrer le brouillon Support. Réessaie « crée le brouillon »."
+        "Impossible d'enregistrer le brouillon Support. Réessaie « crée le brouillon ».",
     );
   }
 

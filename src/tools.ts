@@ -4652,6 +4652,38 @@ export async function executeTool(
             const fromMem = extractUsefulLinkFromText(mem.instructions);
             if (fromMem) config.closingLink = fromMem;
           }
+          // Prix : mémoire liée + profil business (évite « Prix manquant… passe-le dans price »)
+          if (!config.price?.trim()) {
+            const fromMem =
+              mem.instructions.match(
+                /(?:prix|tarif|montant)\s*[:=]?\s*([^\n.]{0,40}?\b\d[\d\s.,]{1,12}\s*(?:fcfa|f\b|€|euros?)?)/i,
+              )?.[1] ||
+              mem.instructions.match(/\b(\d[\d\s.,]{2,12}\s*(?:fcfa|f\b|€|euros?))\b/i)?.[1];
+            const cleaned = fromMem?.replace(/\s+/g, " ").trim();
+            if (cleaned && !/\[indiquer/i.test(cleaned)) {
+              config.price = cleaned.slice(0, 80);
+            }
+          }
+          if (!config.price?.trim()) {
+            try {
+              const { getAppSettings } = await import("./db.js");
+              const s = await getAppSettings(userId);
+              const bp = (s.business_price || "").trim();
+              if (bp) config.price = bp.slice(0, 80);
+            } catch {
+              /* ignore */
+            }
+          }
+          if (!config.productName?.trim()) {
+            const offerHit =
+              mem.instructions.match(
+                /(?:produit|offre|service)\s*[:=]\s*([^\n]{3,120})/i,
+              )?.[1] || null;
+            const cleaned = offerHit?.replace(/[\[\]]/g, "").trim();
+            if (cleaned && !/^décrire|^indiquer/i.test(cleaned)) {
+              config.productName = cleaned.slice(0, 120);
+            }
+          }
           const { bakeConversationGuideFromMemory } = await import("./campaign-sync.js");
           config.conversationGuide = bakeConversationGuideFromMemory(
             mem,
@@ -4708,8 +4740,9 @@ export async function executeTool(
       const needsSaleInfo = type === "keyword_sales" || Boolean(config.closingGoal);
       if (needsSaleInfo && !config.price?.trim()) {
         return JSON.stringify({
-          error:
+          error: userFacingError(
             "Prix manquant. Avant de créer la campagne, demande le prix exact (ex. 15000 FCFA) et passe-le dans price — jamais [prix].",
+          ),
         });
       }
       if (

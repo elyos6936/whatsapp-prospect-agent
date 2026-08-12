@@ -7,12 +7,26 @@ export function looksLikeTechnicalToolError(raw: string): boolean {
       m,
     ) ||
     (/\brequiert\b/.test(m) && /_/.test(raw)) ||
-    /\blist_whatsapp_groups\s*\(/.test(m)
+    /\blist_whatsapp_groups\s*\(/.test(m) ||
+    /\bpasse[- ]?le dans\s+price\b/.test(m) ||
+    (/\[prix\]|\bjamais\s+\[/.test(m) && /\bprice\b/.test(m)) ||
+    (/prix manquant/.test(m) && /\bprice\b/.test(m))
   );
 }
 
 function humanizeToolConfigError(raw: string): string | null {
   const m = raw.toLowerCase();
+
+  if (
+    /prix manquant/.test(m) ||
+    (/\bpasse[- ]?le dans\s+price\b/.test(m) && /prix|price|\[prix\]/.test(m))
+  ) {
+    return (
+      "Je n'ai pas retrouvé le prix dans la mémoire de cette campagne. " +
+      "Indiquez le tarif exact (ex. 15 000 FCFA) et je continue."
+    );
+  }
+
   if (!looksLikeTechnicalToolError(raw)) return null;
 
   if (/group_prospect|group_id/.test(m) && /initial_message|message/.test(m)) {

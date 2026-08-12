@@ -111,7 +111,7 @@ export async function activateAutomationCore(
   ) {
     return {
       ok: false,
-      error: "Prix manquant — complétez la configuration avant d'activer.",
+      error: "Il me manque encore le prix de l'offre avant d'activer. Indiquez le tarif exact (ex. 15 000 FCFA).",
       automationId: id,
     };
   }
