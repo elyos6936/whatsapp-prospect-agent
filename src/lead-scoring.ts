@@ -32,7 +32,7 @@ const URL_DELIVERED =
  * Handoff livraison déjà fait (pas une simple proposition « le livreur peut… ? »).
  */
 const DELIVERY_HANDOFF_DONE =
-  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé]).{0,50}livreur|le livreur (vous |t['']|te )?(appelle|recontacte|contactera|recontactera)|il (vous |te )(appelle|recontacte|contactera|recontactera)|adresse (not[eé]e|re[cç]ue)|quartier .{0,40}(not[eé]|bien not[eé])|c['']est (not[eé]|confirm[eé]).{0,40}(livraison|livreur)|tout est (en place|confirm[eé]).{0,60}livr/i;
+  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé]).{0,50}livreur|le livreur (vous |t['']|te )?(appelle|contactera)|adresse (not[eé]e|re[cç]ue)|c['']est (not[eé]|confirm[eé]).{0,40}(livraison|livreur)/i;
 
 /**
  * L'agent a PROPOSÉ d'envoyer un lien / d'agir, sans l'avoir encore livré
@@ -130,7 +130,7 @@ export function ensurePendingLinkInReply(
  * Ne match PAS une simple offre (« le livreur peut passer… ? »).
  */
 export const VERBAL_CLOSE_DONE =
-  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé])|le livreur (vous |t['’]|te )?(appelle|recontacte|contactera|recontactera)|il (vous |te )(appelle|recontacte|contactera|recontactera)|dans (quelques minutes|les prochaines heures)|sous peu.{0,40}(livreur|livraison|cr[eé]neau)|tout est (en place|confirm[eé]).{0,80}(livreur|livraison)|bonne continuation|bonne journ[eé]e|c['’]est not[eé] de mon c[oô]t[eé]|je (ne )?(vous |te )?(d[eé]range|contacte|ecri) plus|n['’]?h[eé]sitez pas.{0,40}recontact|passez une excellente/i;
+  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé])|le livreur (vous |t['’]|te )?(appelle|contactera)|il (vous |te )contactera|dans quelques minutes|bonne continuation|bonne journ[eé]e|c['’]est not[eé] de mon c[oô]t[eé]|je (ne )?(vous |te )?(d[eé]range|contacte|ecri) plus|n['’]?h[eé]sitez pas.{0,40}recontact|passez une excellente/i;
 
 export interface ScoringResult {
   newScore: number;

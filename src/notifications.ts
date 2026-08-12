@@ -712,16 +712,15 @@ function buildActiveCampaignContext(
     inbound && cfg.initialMessage
       ? `Réponse type / ton de référence (PAS un opener sortant) : « ${cfg.initialMessage} »`
       : "",
-    // Campagnes actives : cadre Support frais (playbook à jour) — évite un vieux guide « INTERDIT clôturer » en conflit.
+    // Campagnes déjà actives : injecte le cadre Support même si le guide DB est vieux / prospection.
     inbound ? buildRuntimeSupportFrame(cfg) : "",
-    cfg.conversationGuide &&
-    !(inbound && /CADRE SUPPORT CLIENT/i.test(cfg.conversationGuide))
+    cfg.conversationGuide
       ? `TON & APPROCHE (suis à la lettre, c'est le cœur de la campagne) :\n${cfg.conversationGuide}`
       : "",
     cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
     cfg.price
       ? `Prix EXACT à citer si demandé : ${cfg.price}`
-      : `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire un placeholder de prix.`,
+      : `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire [prix].`,
     cfg.closingLink
       ? `Lien à envoyer au prospect (URL réelle — SEULE URL autorisée) : ${cfg.closingLink}`
       : `Lien : AUCUN en config — INTERDIT d'inventer https://… (example.com, faux lien commande, etc.).`,
@@ -742,12 +741,10 @@ function buildActiveCampaignContext(
           `2. Intérêt (« je suis intéressé », « plus d'infos », fautes OK) → remercie + offre CONCRÈTE (prix / produit). INTERDIT « quel type de tâche », « secteur d'activité », qualification froide.`,
           `3. Salutation courte (« salut ») → accueil + 1 question utile produit (taille, quantité) — pas une enquête.`,
           `4. Demande photo → confirme ; le système enverra le média si configuré.`,
-          `5. Objectif « ${goal} » : suis le playbook Support (livraison = ville puis quartier AVANT promesse livreur ; paiement / RDV / lien réel seulement s'il est en config).`,
-          `6. Ack court (ok / okay / « 1 ») : si une question est encore ouverte (quartier manquant…), traite puis pose la prochaine. ` +
-            `Si tu as DÉJÀ dit « le livreur vous recontactera » / tout est confirmé → STOP, ne répète pas.`,
-          `7. Objectif livraison : adresse complète notée → UNE confirmation livreur/boutique puis silence. ` +
-            `INTERDIT de redemander le quartier déjà donné. INTERDIT de resservir le prix à chaque message.`,
-          `8. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides, pitch cold outreach, et jargon technique (price, variables, placeholders).`,
+          `5. Objectif « ${goal} » : suis le playbook Support (livraison = demander le LIEU ; paiement / RDV / lien réel seulement s'il est en config).`,
+          `6. Ack court (ok / okay / « 1 ») : traite la réponse puis pose la prochaine question utile — souvent le lieu de livraison. INTERDIT inventer un lien. INTERDIT clôturer (« Bonne continuation », « C'est noté »).`,
+          `7. Objectif livraison : adresse notée + confirmation livreur/boutique → courte confirmation puis STOP. Pas de boucle « le livreur vous appelle ».`,
+          `8. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides et pitch cold outreach.`,
         ].join("\n")
       : [
           `PARCOURS CONVERSATION (raisonne — même mission, seuls les mots varient) :`,
@@ -1150,11 +1147,6 @@ async function runAutoReply(
             chatId,
             "objectif atteint"
           );
-          try {
-            await setContactAutoReply(userId, chatId, false);
-          } catch {
-            /* best effort */
-          }
         } catch (err) {
           console.error("Erreur conversion:", err);
         }
@@ -1419,11 +1411,6 @@ async function runAutoReply(
           chatId,
           "objectif atteint"
         );
-        try {
-          await setContactAutoReply(userId, chatId, false);
-        } catch {
-          /* best effort */
-        }
       } catch (err) {
         console.error("Erreur conversion RDV:", err);
       }

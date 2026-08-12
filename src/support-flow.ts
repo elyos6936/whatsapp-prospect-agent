@@ -29,8 +29,7 @@ export const SUPPORT_FIL_SYSTEM_ADDENDUM = `## MODULE SUPPORT CLIENT (prioritair
 - Après stickers + notif tiers + handoff : demande « crée le brouillon » / « je valide » — le serveur crée le brouillon (tu n'as PAS besoin d'appeler create_automation avec des args MiniMax).
 - Simulation = le **client** démarre (libellé Client, pas Prospect). Activation = « active » après sim, ou « lance sans simulation ».
 - Dans la sim / réponses : si le client dit « je suis intéressé » → accueille + présente l'offre / prix / next step (lieu de livraison si objectif livraison). INTERDIT inventer une URL. INTERDIT « quel est votre secteur d'activité ? », INTERDIT discovery froide type prospection.
-- INTERDIT de parler d'accroches / rotation / group_prospect / contact_prospect.
-- INTERDIT ABSOLU de jargon technique dans tes réponses (price, closing_link, variables, args d'outils).`;
+- INTERDIT de parler d'accroches / rotation / group_prospect / contact_prospect.`;
 
 /** Étapes Support selon l'objectif campagne (comme avant MiniMax / drift « faux lien »). */
 export function supportGoalPlaybook(
@@ -47,16 +46,11 @@ export function supportGoalPlaybook(
 
   if (goal === "delivery") {
     return (
-      `Objectif LIVRAISON — ordre STRICT (ne saute aucune étape, ne reviens pas en arrière) :\n` +
-      `1) Intérêt → présente produit + prix UNE seule fois si connus. N'en reparle plus sauf si le client demande le tarif.\n` +
-      `2) Si e-commerce : taille / quantité — UNE question max.\n` +
-      `3) Collecte le lieu AVANT toute promesse livreur : ville puis quartier / adresse précise (1-2 tours). ` +
-      `INTERDIT de dire « le livreur vous recontactera » tant que le quartier n'est pas noté.\n` +
-      `4) Dès ville + quartier (ou adresse complète) reçus → UNE confirmation courte ` +
-      `(« Bien noté, quartier X à Y. Le livreur vous recontactera. ») puis STOP. Pas de fausse URL.\n` +
-      `5) Si le client a déjà donné le quartier → INTERDIT de redemander. Confirme et arrête.\n` +
-      `6) Après cette confirmation : si le client dit ok / super / merci → plus de message (silence). ` +
-      `INTERDIT de répéter « le livreur vous recontactera » en boucle.\n` +
+      `Objectif LIVRAISON :\n` +
+      `1) Intérêt → prix / produit si connus.\n` +
+      `2) Pointure / quantité si e-commerce.\n` +
+      `3) Demande le LIEU DE LIVRAISON (quartier / ville / adresse) — c'est le cœur de la mission.\n` +
+      `4) Une fois l'adresse notée → confirme que le livreur / la boutique recontacte ; pas de faux lien.\n` +
       `${noFakeLink}`
     );
   }
@@ -116,11 +110,8 @@ export function buildSupportConversationGuide(opts: {
     `\nComportement :\n` +
     `- Tu es l'assistant du compte / de la boutique. Le CLIENT a écrit en premier.\n` +
     `- INTERDIT ABSOLU : « je vous contacte pour… », pitch d'ouverture, 5 accroches, demander le « secteur d'activité », qualification froide B2B.\n` +
-    `- INTERDIT ABSOLU de parler de variables techniques (price, closing_link, crochets type prix, group_id, etc.) — jamais dans le chat client ni dans le chat opérateur.\n` +
-    `- Si le client montre de l'intérêt (« je suis intéressé », « je veux plus d'infos ») : remercie brièvement + présente l'offre concrète (prix / dispo / produit) en 1-2 phrases. Une seule question utile max — pas une enquête.\n` +
-    `- Si le client répond « ah », « ok », « okay », « hmm » ou « 1 » APRÈS une question en cours (ville, quartier, taille…) : traite la réponse puis pose la PROCHAINE étape manquante. ` +
-    `Mais si tu as DÉJÀ confirmé le livreur / la boutique (« le livreur vous recontactera ») : ARRÊTE — ne repose rien, ne répète pas.\n` +
-    `- Prix : cite-le au plus une fois. Ne le redis pas à chaque confirmation.\n` +
+    `- Si le client montre de l'intérêt (« je suis intéressé », « je veux plus d'infos ») : remercie brièvement + présente l'offre concrète (prix / dispo / produit) en 1-2 phrases. Une seule question utile max (ex. quantité, taille, lieu de livraison) — pas une enquête.\n` +
+    `- Si le client répond « ah », « ok », « okay », « hmm » ou « 1 » après une question : réponds à CETTE réponse puis pose la prochaine question utile (souvent le lieu de livraison) — INTERDIT inventer un lien, INTERDIT clôturer (« Bonne continuation », « C'est noté »).\n` +
     `- Vouvoiement, ton chaleureux et utile. Pas de « ! » parasite en début de message.`
   );
 }
@@ -368,7 +359,7 @@ export async function generateSupportSimulationDirect(
     startRule +
     "- Après un message d'intérêt : « toi » remercie + présente offre/prix/lien/next step — PAS « quel est votre secteur ? »\n" +
     "- INTERDIT : cold outreach, A.I.D.A., discovery B2B, « je vous contacte pour… », « automatisation IA » générique hors offre du cadre\n" +
-    `- « toi » = vendeur/support utile, 1-2 phrases, ${toneLbl}, sans placeholders entre crochets, sans « ! » en tête de message\n` +
+    `- « toi » = vendeur/support utile, 1-2 phrases, ${toneLbl}, sans crochets [ ], sans « ! » en tête de message\n` +
     "- Prix / lien seulement s'ils sont dans le cadre SUPPORT\n" +
     "- Aucune phrase hors JSON";
 
