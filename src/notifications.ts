@@ -721,7 +721,7 @@ function buildActiveCampaignContext(
     cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
     cfg.price
       ? `Prix EXACT à citer si demandé : ${cfg.price}`
-      : `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire [prix].`,
+      : `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire un placeholder de prix.`,
     cfg.closingLink
       ? `Lien à envoyer au prospect (URL réelle — SEULE URL autorisée) : ${cfg.closingLink}`
       : `Lien : AUCUN en config — INTERDIT d'inventer https://… (example.com, faux lien commande, etc.).`,
@@ -747,7 +747,7 @@ function buildActiveCampaignContext(
             `Si tu as DÉJÀ dit « le livreur vous recontactera » / tout est confirmé → STOP, ne répète pas.`,
           `7. Objectif livraison : adresse complète notée → UNE confirmation livreur/boutique puis silence. ` +
             `INTERDIT de redemander le quartier déjà donné. INTERDIT de resservir le prix à chaque message.`,
-          `8. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides, pitch cold outreach, et jargon technique (price, [prix], variables).`,
+          `8. Commence chaque message par une MAJUSCULE. INTERDIT réactions vides, pitch cold outreach, et jargon technique (price, variables, placeholders).`,
         ].join("\n")
       : [
           `PARCOURS CONVERSATION (raisonne — même mission, seuls les mots varient) :`,

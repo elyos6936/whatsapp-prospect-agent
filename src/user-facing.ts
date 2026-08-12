@@ -10,7 +10,8 @@ export function looksLikeTechnicalToolError(raw: string): boolean {
     /\blist_whatsapp_groups\s*\(/.test(m) ||
     /\bpasse[- ]?le dans\s+price\b/.test(m) ||
     (/\[prix\]|\bjamais\s+\[/.test(m) && /\bprice\b/.test(m)) ||
-    (/prix manquant/.test(m) && /\bprice\b/.test(m))
+    (/prix manquant/.test(m) && /\bprice\b/.test(m)) ||
+    /crochets interdit|sans aucun\s*\[/i.test(m)
   );
 }
 
@@ -24,6 +25,12 @@ function humanizeToolConfigError(raw: string): string | null {
     return (
       "Je n'ai pas retrouvé le prix dans la mémoire de cette campagne. " +
       "Indiquez le tarif exact (ex. 15 000 FCFA) et je continue."
+    );
+  }
+  if (/crochets interdit|sans aucun\s*\[|texte avec crochets/i.test(m) || /\[\.\.\.\]|\[…\]/.test(raw)) {
+    return (
+      "Il reste encore un détail incomplet dans la mémoire (prix, lien ou offre). " +
+      "Indiquez la valeur réelle (ex. 15 000 FCFA) et redis « je valide »."
     );
   }
 

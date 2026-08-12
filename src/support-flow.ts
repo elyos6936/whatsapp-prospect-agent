@@ -30,7 +30,7 @@ export const SUPPORT_FIL_SYSTEM_ADDENDUM = `## MODULE SUPPORT CLIENT (prioritair
 - Simulation = le **client** démarre (libellé Client, pas Prospect). Activation = « active » après sim, ou « lance sans simulation ».
 - Dans la sim / réponses : si le client dit « je suis intéressé » → accueille + présente l'offre / prix / next step (lieu de livraison si objectif livraison). INTERDIT inventer une URL. INTERDIT « quel est votre secteur d'activité ? », INTERDIT discovery froide type prospection.
 - INTERDIT de parler d'accroches / rotation / group_prospect / contact_prospect.
-- INTERDIT ABSOLU de jargon technique dans tes réponses (price, [prix], closing_link, variables, args d'outils).`;
+- INTERDIT ABSOLU de jargon technique dans tes réponses (price, closing_link, variables, args d'outils).`;
 
 /** Étapes Support selon l'objectif campagne (comme avant MiniMax / drift « faux lien »). */
 export function supportGoalPlaybook(
@@ -116,7 +116,7 @@ export function buildSupportConversationGuide(opts: {
     `\nComportement :\n` +
     `- Tu es l'assistant du compte / de la boutique. Le CLIENT a écrit en premier.\n` +
     `- INTERDIT ABSOLU : « je vous contacte pour… », pitch d'ouverture, 5 accroches, demander le « secteur d'activité », qualification froide B2B.\n` +
-    `- INTERDIT ABSOLU de parler de variables techniques (price, closing_link, [prix], group_id, etc.) — jamais dans le chat client ni dans le chat opérateur.\n` +
+    `- INTERDIT ABSOLU de parler de variables techniques (price, closing_link, crochets type prix, group_id, etc.) — jamais dans le chat client ni dans le chat opérateur.\n` +
     `- Si le client montre de l'intérêt (« je suis intéressé », « je veux plus d'infos ») : remercie brièvement + présente l'offre concrète (prix / dispo / produit) en 1-2 phrases. Une seule question utile max — pas une enquête.\n` +
     `- Si le client répond « ah », « ok », « okay », « hmm » ou « 1 » APRÈS une question en cours (ville, quartier, taille…) : traite la réponse puis pose la PROCHAINE étape manquante. ` +
     `Mais si tu as DÉJÀ confirmé le livreur / la boutique (« le livreur vous recontactera ») : ARRÊTE — ne repose rien, ne répète pas.\n` +
@@ -368,7 +368,7 @@ export async function generateSupportSimulationDirect(
     startRule +
     "- Après un message d'intérêt : « toi » remercie + présente offre/prix/lien/next step — PAS « quel est votre secteur ? »\n" +
     "- INTERDIT : cold outreach, A.I.D.A., discovery B2B, « je vous contacte pour… », « automatisation IA » générique hors offre du cadre\n" +
-    `- « toi » = vendeur/support utile, 1-2 phrases, ${toneLbl}, sans crochets [ ], sans « ! » en tête de message\n` +
+    `- « toi » = vendeur/support utile, 1-2 phrases, ${toneLbl}, sans placeholders entre crochets, sans « ! » en tête de message\n` +
     "- Prix / lien seulement s'ils sont dans le cadre SUPPORT\n" +
     "- Aucune phrase hors JSON";
 

@@ -4660,7 +4660,7 @@ export async function executeTool(
               )?.[1] ||
               mem.instructions.match(/\b(\d[\d\s.,]{2,12}\s*(?:fcfa|f\b|€|euros?))\b/i)?.[1];
             const cleaned = fromMem?.replace(/\s+/g, " ").trim();
-            if (cleaned && !/\[indiquer/i.test(cleaned)) {
+            if (cleaned && !/\[|indiquer/i.test(cleaned)) {
               config.price = cleaned.slice(0, 80);
             }
           }
@@ -4669,7 +4669,7 @@ export async function executeTool(
               const { getAppSettings } = await import("./db.js");
               const s = await getAppSettings(userId);
               const bp = (s.business_price || "").trim();
-              if (bp) config.price = bp.slice(0, 80);
+              if (bp && !/\[/.test(bp)) config.price = bp.slice(0, 80);
             } catch {
               /* ignore */
             }
@@ -4679,20 +4679,17 @@ export async function executeTool(
               mem.instructions.match(
                 /(?:produit|offre|service)\s*[:=]\s*([^\n]{3,120})/i,
               )?.[1] || null;
-            const cleaned = offerHit?.replace(/[\[\]]/g, "").trim();
-            if (cleaned && !/^décrire|^indiquer/i.test(cleaned)) {
+            const cleaned = offerHit?.replace(/\[[^\]]*\]/g, "").trim();
+            if (cleaned && !/^(décrire|indiquer|à\s+préciser)/i.test(cleaned)) {
               config.productName = cleaned.slice(0, 120);
             }
           }
-          const { bakeConversationGuideFromMemory } = await import("./campaign-sync.js");
-          config.conversationGuide = bakeConversationGuideFromMemory(
-            mem,
-            config.conversationGuide
-          );
-          // keyword_sales : cadre Support prioritaire (la mémoire est souvent écrite pour la prospection).
+
+          // keyword_sales : cadre Support UNIQUEMENT — ne jamais coller le texte mémoire brut
+          // (templates avec [indiquer les prix…] qui faisaient échouer create_automation).
           if (type === "keyword_sales") {
             const { buildSupportConversationGuide } = await import("./support-flow.js");
-            const frame = buildSupportConversationGuide({
+            config.conversationGuide = buildSupportConversationGuide({
               catchAll: Boolean(config.inboundCatchAll),
               triggers: (config.triggerPhrases || config.keywords || []).map(String),
               handoffKeywords: config.handoffKeywords,
@@ -4701,12 +4698,12 @@ export async function executeTool(
               link: config.closingLink,
               closingGoal: config.closingGoal,
             });
-            const existing = (config.conversationGuide || "").trim();
-            config.conversationGuide = existing.includes("CADRE SUPPORT CLIENT")
-              ? existing
-              : existing
-                ? `${frame}\n---\n${existing}`
-                : frame;
+          } else {
+            const { bakeConversationGuideFromMemory } = await import("./campaign-sync.js");
+            config.conversationGuide = bakeConversationGuideFromMemory(
+              mem,
+              config.conversationGuide,
+            );
           }
           const owner = (hints.ownerName || mem.ownerName).trim();
           if (owner) {
@@ -4731,9 +4728,10 @@ export async function executeTool(
       ]);
       if (badFields.length) {
         return JSON.stringify({
-          error:
+          error: userFacingError(
             `Texte avec crochets interdit (${badFields.join(", ")}). ` +
-            `Demande d'abord à l'utilisateur les vraies valeurs (prix en FCFA, lien réel…) et réessaie SANS aucun […].`,
+              `Demande d'abord à l'utilisateur les vraies valeurs (prix en FCFA, lien réel…) et réessaie SANS aucun […].`,
+          ),
         });
       }
 
@@ -5358,8 +5356,10 @@ export async function executeTool(
         ...(merged.abVariants ?? []).map((v) => ({ label: `ab_variants.${v.id}`, value: v.message })),
       ]);
       if (badFields.length) {
-          return JSON.stringify({
-          error: `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
+        return JSON.stringify({
+          error: userFacingError(
+            `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
+          ),
         });
       }
       const isOutboundType =
