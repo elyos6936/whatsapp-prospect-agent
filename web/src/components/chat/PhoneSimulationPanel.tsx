@@ -6,7 +6,7 @@ import {
   useState,
   type MouseEvent as ReactMouseEvent,
 } from 'react';
-import { PanelRightClose, PanelRightOpen, Trash2 } from 'lucide-react';
+import { PanelRightClose, PanelRightOpen, Trash2, X } from 'lucide-react';
 import {
   fetchThreadCampaign,
   postSimulationPreview,
@@ -436,108 +436,183 @@ export function PhoneSimulationPanel({
           ? 'Dis « oui » dans le chat pour lancer la simulation.'
           : 'Testez ici · rien n’est envoyé sur WhatsApp.';
 
-  return (
-    <aside
-      className={cn(
-        'relative flex h-full shrink-0 overflow-hidden border-l border-black/[0.06] bg-bg-100',
-        className,
-      )}
-      style={{ width: collapsed ? RAIL_W : panelWidth }}
-      aria-label="Simulation WhatsApp"
-    >
-      {!collapsed && (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Redimensionner"
-          onMouseDown={onResizeStart}
-          className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-emerald-500/30 active:bg-emerald-500/40"
-        />
-      )}
+  const mockup = (
+    <MobileMockup
+      interactive
+      autoPlay={false}
+      headerTitle={isSupport ? 'Client' : 'Prospect'}
+      headerSubtitle={isSupport ? 'en ligne' : 'simulation'}
+      avatarFallback={isSupport ? 'C' : 'P'}
+      messages={waMessages}
+      draft={draft}
+      onDraftChange={setDraft}
+      onSend={() => void sendAsProspect()}
+      busy={busy || conversationClosed}
+      placeholder={
+        conversationClosed
+          ? 'Fil clôturé — Effacer pour retester'
+          : isSupport
+            ? 'Message du client…'
+            : 'Répondre comme le prospect…'
+      }
+      inputRef={inputRef}
+      scrollRef={scrollRef}
+      emptyHint={
+        isSupport
+          ? 'Tapez un message client pour tester.'
+          : awaitingSim
+            ? 'Dis « oui » dans le chat pour lancer la simulation ici.'
+            : 'Tapez un message comme le prospect pour continuer.'
+      }
+      className="max-md:max-w-[min(100%,320px)] max-md:py-0"
+    />
+  );
 
-      {collapsed ? (
-        <button
-          type="button"
-          onClick={() => setCollapsed(false)}
-          className="flex h-full w-full flex-col items-center justify-center gap-3 text-text-400 transition hover:bg-black/[0.03] hover:text-emerald-700"
-          aria-label="Ouvrir la simulation"
-          title="Ouvrir la simulation"
+  return (
+    <>
+      {/* Mobile : plein écran — barre d’actions sticky (safe-area), hors du mockup */}
+      {!collapsed ? (
+        <div
+          className="fixed inset-0 z-[60] flex flex-col bg-bg-100 md:hidden"
+          style={{
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Simulation WhatsApp"
         >
-          <PanelRightOpen className="h-4 w-4" strokeWidth={1.8} />
-          <span className="text-[10px] font-semibold tracking-[0.14em] [writing-mode:vertical-rl]">
-            SIMU
-          </span>
-        </button>
-      ) : (
-        <div className="flex h-full min-w-0 flex-1 flex-col pl-1.5">
-          <div className="flex shrink-0 items-center gap-2 px-3 pt-3 pb-2">
+          <div className="relative z-20 flex shrink-0 items-center gap-2 border-b border-black/[0.08] bg-bg-100 px-3 py-2.5 shadow-sm">
             <button
               type="button"
               onClick={() => setCollapsed(true)}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-400 transition hover:bg-black/5 hover:text-text-200"
-              aria-label="Réduire"
-              title="Réduire"
+              className="inline-flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-xl bg-black/[0.04] px-3 text-sm font-semibold text-text-200 transition active:bg-black/[0.08]"
+              aria-label="Fermer la simulation"
             >
-              <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
+              <X className="h-5 w-5" strokeWidth={2} />
+              <span>Fermer</span>
             </button>
-                <div className="min-w-0 flex-1">
+            <div className="min-w-0 flex-1 text-center">
               <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700/80">
                 Simulation
               </p>
               <p className="truncate text-[12px] text-text-300">{helpLine}</p>
             </div>
+            <button
+              type="button"
+              onClick={handleClearDiscussion}
+              disabled={!canClear}
+              className={cn(
+                'inline-flex h-11 shrink-0 items-center justify-center gap-1.5 rounded-xl px-3 text-sm font-semibold transition',
+                canClear
+                  ? 'bg-red-50 text-red-600 active:bg-red-100'
+                  : 'cursor-not-allowed bg-zinc-100 text-zinc-300',
+              )}
+              aria-label="Effacer la conversation"
+            >
+              <Trash2 className="h-4 w-4" strokeWidth={2} />
+              Effacer
+            </button>
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col items-center justify-start overflow-y-auto overscroll-contain px-3 py-3">
+            {mockup}
+            {error ? (
+              <p className="mt-3 max-w-sm text-center text-[12px] text-amber-800">{error}</p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Desktop : panneau latéral */}
+      <aside
+        className={cn(
+          'relative hidden h-full shrink-0 overflow-hidden border-l border-black/[0.06] bg-bg-100 md:flex',
+          className,
+        )}
+        style={{ width: collapsed ? RAIL_W : panelWidth }}
+        aria-label="Simulation WhatsApp"
+      >
+        {!collapsed && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Redimensionner"
+            onMouseDown={onResizeStart}
+            className="absolute inset-y-0 left-0 z-20 w-1.5 cursor-col-resize hover:bg-emerald-500/30 active:bg-emerald-500/40"
+          />
+        )}
+
+        {collapsed ? (
           <button
             type="button"
-            onClick={handleClearDiscussion}
-            disabled={!canClear}
-            className={cn(
-                'flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition',
-              canClear
-                  ? 'bg-red-50 text-red-600 hover:bg-red-100'
-                  : 'cursor-not-allowed bg-zinc-100 text-zinc-300',
-            )}
+            onClick={() => setCollapsed(false)}
+            className="flex h-full w-full flex-col items-center justify-center gap-3 text-text-400 transition hover:bg-black/[0.03] hover:text-emerald-700"
+            aria-label="Ouvrir la simulation"
+            title="Ouvrir la simulation"
           >
-              <Trash2 className="h-3 w-3" strokeWidth={2} />
-              Effacer
+            <PanelRightOpen className="h-4 w-4" strokeWidth={1.8} />
+            <span className="text-[10px] font-semibold tracking-[0.14em] [writing-mode:vertical-rl]">
+              SIMU
+            </span>
           </button>
-          </div>
+        ) : (
+          <div className="flex h-full min-w-0 flex-1 flex-col pl-1.5">
+            <div className="flex shrink-0 items-center gap-2 px-3 pt-3 pb-2">
+              <button
+                type="button"
+                onClick={() => setCollapsed(true)}
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-text-400 transition hover:bg-black/5 hover:text-text-200"
+                aria-label="Réduire"
+                title="Réduire"
+              >
+                <PanelRightClose className="h-4 w-4" strokeWidth={1.8} />
+              </button>
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-emerald-700/80">
+                  Simulation
+                </p>
+                <p className="truncate text-[12px] text-text-300">{helpLine}</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleClearDiscussion}
+                disabled={!canClear}
+                className={cn(
+                  'flex shrink-0 items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold transition',
+                  canClear
+                    ? 'bg-red-50 text-red-600 hover:bg-red-100'
+                    : 'cursor-not-allowed bg-zinc-100 text-zinc-300',
+                )}
+              >
+                <Trash2 className="h-3 w-3" strokeWidth={2} />
+                Effacer
+              </button>
+            </div>
 
-          <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-2 pb-3">
-            <MobileMockup
-              interactive
-              autoPlay={false}
-              headerTitle={isSupport ? 'Client' : 'Prospect'}
-              headerSubtitle={isSupport ? 'en ligne' : 'simulation'}
-              avatarFallback={isSupport ? 'C' : 'P'}
-              messages={waMessages}
-              draft={draft}
-              onDraftChange={setDraft}
-              onSend={() => void sendAsProspect()}
-              busy={busy || conversationClosed}
-              placeholder={
-                conversationClosed
-                  ? 'Fil clôturé — Effacer pour retester'
-                  : isSupport
-                    ? 'Message du client…'
-                    : 'Répondre comme le prospect…'
-              }
-              inputRef={inputRef}
-              scrollRef={scrollRef}
-              emptyHint={
-                isSupport
-                  ? 'Tapez un message client pour tester.'
-                  : awaitingSim
-                    ? 'Dis « oui » dans le chat pour lancer la simulation ici.'
-                    : 'Tapez un message comme le prospect pour continuer.'
-              }
-            />
-          </div>
+            <div className="flex min-h-0 flex-1 items-center justify-center overflow-hidden px-2 pb-3">
+              {mockup}
+            </div>
 
-          {error ? (
-            <p className="shrink-0 px-4 pb-3 text-[11px] text-amber-800">{error}</p>
-          ) : null}
-        </div>
-      )}
-    </aside>
+            {error ? (
+              <p className="shrink-0 px-4 pb-3 text-[11px] text-amber-800">{error}</p>
+            ) : null}
+          </div>
+        )}
+      </aside>
+
+      {/* Mobile : bouton flottant pour rouvrir après Fermer */}
+      {collapsed ? (
+        <button
+          type="button"
+          onClick={() => setCollapsed(false)}
+          className="fixed right-3 bottom-[max(1rem,env(safe-area-inset-bottom))] z-40 inline-flex items-center gap-2 rounded-full bg-emerald-700 px-4 py-3 text-sm font-semibold text-white shadow-lg md:hidden"
+          aria-label="Ouvrir la simulation"
+        >
+          <PanelRightOpen className="h-4 w-4" strokeWidth={2} />
+          Simulation
+        </button>
+      ) : null}
+    </>
   );
 }

@@ -293,7 +293,7 @@ export function MobileMockup({
     >
       <motion.div
         initial={false}
-        className="relative flex h-[560px] w-full flex-col overflow-hidden rounded-[40px] bg-neutral-900 p-2.5"
+        className="relative flex h-[min(560px,calc(100dvh-9.5rem))] w-full flex-col overflow-hidden rounded-[40px] bg-neutral-900 p-2.5 md:h-[560px]"
       >
         <div className="absolute top-24 -left-[5px] h-8 w-[2.5px] rounded-l-sm bg-neutral-700" />
         <div className="absolute top-36 -left-[5px] h-10 w-[2.5px] rounded-l-sm bg-neutral-700" />
