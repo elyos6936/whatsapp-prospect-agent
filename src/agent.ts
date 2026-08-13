@@ -527,17 +527,21 @@ async function runGroupSendQuickPath(
   if (typeof found === "string") return found;
   if (intent.sendAtLocal) {
     const raw = await executeTool(userId, threadId, "schedule_whatsapp_message", {
-      recipient: found.id,
+      recipient: found.name,
       message: intent.message,
       send_at_local: intent.sendAtLocal,
     });
-    return replyFromToolJson(raw);
+    return replyFromGroupSendTool(raw, {
+      groupName: found.name,
+      preview: intent.message,
+      sendAtLocal: intent.sendAtLocal,
+    });
   }
   const raw = await executeTool(userId, threadId, "send_whatsapp_message", {
-    recipient: found.id,
+    recipient: found.name,
     message: intent.message,
   });
-  return replyFromToolJson(raw);
+  return replyFromGroupSendTool(raw, { groupName: found.name, preview: intent.message });
 }
 
 function replyFromToolJson(raw: string): string {
@@ -545,15 +549,47 @@ function replyFromToolJson(raw: string): string {
     const parsed = JSON.parse(raw) as {
       success?: boolean;
       message?: string;
+      confirmation?: string;
       error?: string;
       url?: string;
       inviteUrl?: string;
     };
     if (parsed.error) return userFacingError(parsed.error);
+    if (parsed.confirmation?.trim()) return parsed.confirmation.trim();
     const link = parsed.inviteUrl || parsed.url;
     if (link && parsed.message) return parsed.message;
     if (link) return `Lien d'invitation : ${link}`;
     if (parsed.message) return parsed.message;
+  } catch {
+    /* raw */
+  }
+  return userFacingError(raw);
+}
+
+function replyFromGroupSendTool(
+  raw: string,
+  opts: { groupName: string; preview: string; sendAtLocal?: string }
+): string {
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: string;
+      confirmation?: string;
+      message?: string;
+      sendAt?: string;
+      success?: boolean;
+    };
+    if (parsed.error) return userFacingError(parsed.error);
+    if (parsed.confirmation?.trim()) return parsed.confirmation.trim();
+    const when = parsed.sendAt || opts.sendAtLocal;
+    if (when) {
+      return `Message programmé dans « ${opts.groupName} » à ${when} : « ${opts.preview} ».`;
+    }
+    if (parsed.success && parsed.message && parsed.message !== opts.preview) {
+      return parsed.message;
+    }
+    if (parsed.success) {
+      return `Message envoyé dans « ${opts.groupName} » : « ${opts.preview} ».`;
+    }
   } catch {
     /* raw */
   }
