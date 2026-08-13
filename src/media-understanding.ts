@@ -3,7 +3,6 @@
  *
  * Images : vision via le LLM chat (MiniMax).
  * Audio WhatsApp entrant : Whisper sur api.openai.com si OPENAI_API_KEY est définie.
- * La dictée du chat se fait dans le navigateur — pas ici.
  */
 
 import OpenAI, { toFile } from "openai";

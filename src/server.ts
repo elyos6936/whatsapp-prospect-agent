@@ -68,7 +68,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadsDir = path.join(__dirname, "..", "public", "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 
-// bodyLimit relevé pour accepter les uploads base64 (fichiers du chat, audio de dictée vocale).
+// bodyLimit relevé pour accepter les uploads base64 (fichiers du chat).
 const app = Fastify({ logger: true, bodyLimit: 25 * 1024 * 1024 });
 
 const corsOrigins = (process.env.CORS_ORIGINS || "https://www.klanvio.com,https://klanvio.com,http://localhost:3000,http://localhost:5174,http://127.0.0.1:5174,http://127.0.0.1:3000,http://localhost:8888")
@@ -833,14 +833,6 @@ app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async 
     pending: true,
     since_id: userSaved.id,
     created_at: userSaved.created_at,
-  });
-});
-
-app.post("/api/chat/transcribe", async (request, reply) => {
-  requireUserId(request);
-  return reply.status(400).send({
-    error:
-      "La dictée se fait dans le navigateur (Chrome ou Edge), sans modèle. Pas de transcription serveur.",
   });
 });
 
