@@ -1263,6 +1263,8 @@ async function runAutoReply(
         automationId: activeCampaign?.id,
         closingLink: activeCampaign?.config.closingLink,
         closingGoal: activeCampaign?.config.closingGoal,
+        configuredPrice:
+          activeCampaign?.config.price || settings.business_price,
         conversationMode:
           activeCampaign &&
           (activeCampaign.type === "keyword_sales" ||

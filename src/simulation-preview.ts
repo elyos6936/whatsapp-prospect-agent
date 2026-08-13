@@ -371,6 +371,7 @@ export async function replyInSimulationPreview(
       conversationMode: mode,
       closingLink: campaignConfig?.closingLink,
       closingGoal: campaignConfig?.closingGoal,
+      configuredPrice: campaignConfig?.price || settings.business_price,
       forceDeliverPendingLink: affirmingLink,
       toneSources: [
         campaignConfig?.initialMessage,

@@ -1,6 +1,6 @@
 import OpenAI from "openai";
 import { config } from "./config.js";
-import { getAppSettings, getContactChatHistory } from "./db.js";
+import { getAppSettings, getContactChatHistory, saveAgentMessageForAutomation } from "./db.js";
 import { chatIdToDisplay } from "./evolutionapi.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import { createLlmClient, llmProviderLabel, extractAssistantContent, recommendedMaxTokens, llmChatExtras } from "./llm.js";
@@ -16,6 +16,7 @@ import {
 } from "./lead-scoring.js";
 import { shouldSilenceAfterFarewell, isOutboundDiagnosticAsk } from "./stop-policy.js";
 import { resolveReplyTone, toneInstruction, toneLabel } from "./reply-tone.js";
+import { applyWhatsAppReplyGuard } from "./whatsapp-reply-guard.js";
 
 export const WHATSAPP_REPLY_PROMPT = `Tu es un commercial WhatsApp expérimenté (Afrique francophone) qui répond comme un **vrai humain** — jamais comme un bot.
 
@@ -312,9 +313,12 @@ function nowFr(): string {
   return new Date().toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
 }
 
-async function businessContextBlock(userId: number): Promise<string> {
+async function businessContextBlock(
+  userId: number,
+  priceOverride?: string | null
+): Promise<string> {
   const s = await getAppSettings(userId);
-  const price = s.business_price?.trim();
+  const price = String(priceOverride ?? "").trim() || s.business_price?.trim();
   const lines = [
     `Prénom / nom à utiliser : ${s.business_owner_name || "(non configuré — ne pas inventer, ne pas mettre de crochets)"}`,
     `Offre / formation : ${s.business_offer || "(non configuré — ne pas inventer)"}`,
@@ -350,6 +354,8 @@ export async function generateWhatsAppReply(userId: number, input: {
   /** Textes campagne / mémoire pour déduire le ton et whitelister les liens. */
   toneSources?: Array<string | null | undefined>;
   knownLinkSources?: Array<string | null | undefined>;
+  /** Tarif campagne (prioritaire sur le profil) — source unique pour le filet D. */
+  configuredPrice?: string | null;
 }): Promise<string> {
   const client = await getOpenAiClient(userId);
   const display = chatIdToDisplay(input.chatId);
@@ -367,6 +373,11 @@ export async function generateWhatsAppReply(userId: number, input: {
     20,
     input.automationId
   );
+  const settings = await getAppSettings(userId);
+  const configuredPrice =
+    String(input.configuredPrice ?? "").trim() ||
+    settings.business_price?.trim() ||
+    "";
 
   const sentMessages = policyHistory
     .filter((m) => m.direction === "sortant")
@@ -447,7 +458,7 @@ export async function generateWhatsAppReply(userId: number, input: {
           : "";
 
   const userContent = `## Identité & offre (ne jamais inventer hors de ça)
-${await businessContextBlock(userId)}
+${await businessContextBlock(userId, configuredPrice)}
 ${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES\n${input.automationContext}\n` : "\n⚠️ Pas de campagne active — réponse courte et générale.\n"}
 ${hardOverride}${askedBlock}
 ## Contact
@@ -565,6 +576,40 @@ ${input.senderName}: ${input.incomingText}
       input.closingLink,
     ],
   });
+  {
+    const guarded = applyWhatsAppReplyGuard(styled, {
+      incomingText: input.incomingText,
+      configuredPrice,
+      history: policyHistory,
+      closingGoal: input.closingGoal,
+      closingLink: input.closingLink,
+    });
+    if (guarded.invented) {
+      console.warn(`[whatsapp-reply] price-invented chat=${input.chatId}`);
+    }
+    if (guarded.injected) {
+      console.warn(`[whatsapp-reply] price-injected chat=${input.chatId}`);
+    }
+    if (guarded.strippedRepeat) {
+      console.warn(`[whatsapp-reply] price-repeat-stripped chat=${input.chatId}`);
+    }
+    if (guarded.strippedInvented) {
+      console.warn(`[whatsapp-reply] price-invented-stripped chat=${input.chatId}`);
+    }
+    if (guarded.prematureClose) {
+      console.warn(`[whatsapp-reply] premature-verbal-close chat=${input.chatId}`);
+    }
+    if (guarded.notes.length && input.automationId) {
+      const note = guarded.notes.join(" ");
+      await saveAgentMessageForAutomation(
+        userId,
+        input.automationId,
+        "assistant",
+        note
+      ).catch(() => {});
+    }
+    styled = guarded.reply;
+  }
   return styled;
 }
 
