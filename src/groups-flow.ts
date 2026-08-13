@@ -14,18 +14,48 @@ import type { BriefingAssessment } from "./campaign-briefing.js";
 import { executeTool } from "./tools.js";
 
 export const GROUPS_FIL_SYSTEM_ADDENDUM = `## MODULE GROUPES WHATSAPP (prioritaire sur prospection / support)
-- **Admin requis UNIQUEMENT pour écrire** : envoyer, programmer, ajouter/retirer des membres, admins, lien d'invitation, diffusion / « lance la campagne ».
-- **Lire les contacts / membres** : PAS besoin d'être admin. Dès que le groupe est nommé → get_group_members(group_id=nom, limit=N). INTERDIT de refuser ou de demander un groupe admin pour ça.
-- **INTERDIT ABSOLU de demander un « ID de groupe » / @g.us** à l'utilisateur. Toujours le **nom** du groupe. Les outils résolvent le nom tout seuls.
-- **Ajoute / retire un numéro** : dès que tu as le numéro + le nom du groupe → manage_group_participants. Si pas admin → refuse clairement (c'est un écriture).
-- Si le groupe est introuvable pour une LECTURE : propose les noms proches (list_whatsapp_groups SANS admin_only), jamais un ID.
-- **Envoi / programmation / diffusion** : si pas admin → refuse. Ne contourne pas. list_whatsapp_groups(admin_only=true) seulement pour choisir où PUBLIER.
-- **Envoi immédiat** : send_whatsapp_message(recipient=nom du groupe, message=…).
-- **Programmation** : schedule_whatsapp_message (delay_minutes OU send_at_local) vers le groupe.
-- **Campagne multi-jours (optionnelle)** : create_automation type=group_broadcast — admin obligatoire. « je valide » puis « active » (sans sim).
-- INTERDIT : 5 variantes d'accroche, contact_prospect, group_prospect, keyword_sales, save_contact sur @g.us.
-- INTERDIT ABSOLU : simulation téléphone / show_campaign_simulation / « simule » — ça n'existe PAS pour les groupes.
-- Quand une diffusion multi-jours est prête : demande « je valide » / « crée le brouillon » — le serveur crée group_broadcast, puis « active » pour lancer (sans sim).`;
+- Ce fil = **publier / programmer DANS le groupe**. PAS de simulation téléphone. PAS de DM aux membres.
+- « Prospecter le groupe / les membres » → oriente vers **Nouvelle automatisation → Prospection**. N'invente pas un brouillon ici. N'écris JAMAIS « opener de prospection ».
+- **Admin requis UNIQUEMENT pour écrire** : envoyer, programmer, ajouter/retirer des membres, diffusion.
+- **Lire les contacts / membres** : PAS besoin d'être admin → get_group_members. INTERDIT de refuser une lecture.
+- **INTERDIT** de demander un ID @g.us — toujours le **nom**.
+- Sans texte exact à publier : UNE question « Quel **texte** poster dans le groupe ? » — pas J+1, pas « je valide ».
+- Envoi ponctuel : send_whatsapp_message / schedule_whatsapp_message (admin).
+- Diffusion multi-jours : seulement si l'utilisateur a donné le texte + le(s) groupe(s). Puis « je valide » → « active ». PAS de sim.`;
+
+export const GROUPS_PROSPECT_REDIRECT =
+  "Ici on **publie dans le groupe** — pas de messages privés, pas de simulation téléphone.\n\n" +
+  "Pour **prospecter les membres en DM**, ouvre **Nouvelle automatisation → Prospection**.\n\n" +
+  "Pour poster ici : envoie le **texte exact** à publier + le nom du groupe (admin requis pour l'envoi).";
+
+export const GROUPS_NEED_POST_REPLY =
+  "OK — ici on **publie dans tes groupes** (pas de simulation).\n\n" +
+  "Envoie le **texte exact** à poster, et le nom du groupe.\n\n" +
+  "Pour écrire en privé aux membres → **Nouvelle automatisation → Prospection**.";
+
+/** « prospecter mon groupe X » = DM membres, pas un post dans le groupe. */
+export function wantsGroupMemberProspecting(msg: string): boolean {
+  const t = msg.trim();
+  if (!t) return false;
+  if (!/\bprospect/i.test(t)) return false;
+  if (!/\bgroupes?\b/i.test(t) && !/\bmembres?\b/i.test(t)) return false;
+  if (/\b(poste[rz]?|publie[rz]?|envoie[rz]?\s+dans\s+le\s+groupe)\b/i.test(t)) {
+    return false;
+  }
+  return true;
+}
+
+/** Consigne / brief — pas le texto à coller dans WhatsApp. */
+export function isGroupMetaInstruction(t: string): boolean {
+  const s = t.trim();
+  if (s.length < 8) return true;
+  if (/^(oui|non|ok|okay|valide|je\s+valide|d['’]accord)\b/i.test(s)) return true;
+  if (/(?:message|annonce|post|texte)\s*[:\-–]/i.test(s)) return false;
+  if (/[«"][^»"]{12,}[»"]/.test(s)) return false;
+  return /\b(prospecter|prospection|lancer\s+(une\s+)?campagne|je\s+veux\s+(lancer|prospecter|créer|creer)|cr[eé]e[rz]?\s+(une\s+)?(campagne|diffusion|brouillon)|automatisation)\b/i.test(
+    s
+  );
+}
 
 /** Noms de groupes cités par l'utilisateur. */
 export function extractGroupNamesFromHistory(history: AgentMessage[]): string[] {
@@ -81,6 +111,7 @@ export function extractGroupPostMessage(history: AgentMessage[]): string | null 
     if (
       t.length >= 24 &&
       t.length <= 900 &&
+      !isGroupMetaInstruction(t) &&
       !/^(oui|non|ok|valide|je\s+valide|liste|les\s+groupes)/i.test(t) &&
       !/^(\+|00)?\d[\d\s-]{6,}$/.test(t) &&
       !/\b(dans\s+(le\s+|les\s+|mon\s+|mes\s+)?groupes?|groupe\s+[A-Za-zÀ-ÿ])/i.test(t)
@@ -131,6 +162,15 @@ export function buildGroupsBriefingNudge(
 ): string | null {
   if (!assessment.inCampaignFlow) return null;
 
+  if (wantsGroupMemberProspecting(userMessage)) {
+    return (
+      "L'utilisateur veut DM les membres (« prospecter le groupe »). " +
+      "Dis-lui clairement : ce fil = publier DANS le groupe (pas de sim). " +
+      "Pour prospecter en privé → Nouvelle automatisation → Prospection. " +
+      "INTERDIT : J+1, je valide, opener, create_automation."
+    );
+  }
+
   const wantsCampaign = userWantsGroupsCampaign(history, userMessage);
   const post = extractGroupPostMessage(history);
   const groups = extractGroupNamesFromHistory(history);
@@ -139,8 +179,8 @@ export function buildGroupsBriefingNudge(
   if (!wantsCampaign) {
     if (!post) {
       return (
-        "Fil GROUPES : l'utilisateur veut publier. Pose UNE question — « Quel **message** tu veux poster dans le(s) groupe(s) ? » " +
-        "INTERDIT : 5 variantes, accroche prospection, déclencheurs support, simulation téléphone."
+        "Fil GROUPES : pose UNE question — « Quel **texte** tu veux poster dans le(s) groupe(s) ? » " +
+        "INTERDIT : simulation, J+1, 5 variantes, « opener »."
       );
     }
     if (!groups.length) {
@@ -162,8 +202,9 @@ export function buildGroupsBriefingNudge(
 
   if (!post) {
     return (
-      "Diffusion GROUPES multi-jours : pose UNE question — « Quel est le **1er message** à publier dans les groupes ? » " +
-      "INTERDIT : simulation."
+      "Il veut une diffusion mais il n'a pas encore donné le texto. " +
+      "Pose UNE question — « Quel **texte** poster dans le groupe ? » " +
+      "INTERDIT : J+1, je valide, simulation, opener."
     );
   }
   if (!groups.length) {

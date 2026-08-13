@@ -45,7 +45,14 @@ import {
   tryApplySendWindowFromUserMessage,
 } from "./send-window-routing.js";
 import { SUPPORT_FIL_SYSTEM_ADDENDUM } from "./support-flow.js";
-import { GROUPS_FIL_SYSTEM_ADDENDUM, extractGroupNamesFromHistory } from "./groups-flow.js";
+import {
+  GROUPS_FIL_SYSTEM_ADDENDUM,
+  GROUPS_NEED_POST_REPLY,
+  GROUPS_PROSPECT_REDIRECT,
+  extractGroupNamesFromHistory,
+  extractGroupPostMessage,
+  wantsGroupMemberProspecting,
+} from "./groups-flow.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -323,6 +330,7 @@ async function buildBusinessContext(
     } else if (thread?.purpose === "groupes") {
       lines.push(
         `## TYPE DE FIL — GROUPES WHATSAPP (OBLIGATOIRE)\n` +
+          `Ce fil = **publier dans le groupe**. **Pas de simulation téléphone.** « Prospecter les membres » → Nouvelle automatisation → Prospection.\n` +
           `Admin = **écrire** seulement (publier, programmer, gérer les membres, lancer une diffusion).\n` +
           `Lister / extraire des contacts d'un groupe : **pas besoin d'être admin** — \`get_group_members\`.\n` +
           `- **INTERDIT** de demander un ID @g.us — toujours le **nom** du groupe.\n` +
@@ -627,6 +635,19 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const hasSimAlready = recentHistoryHasSimulation(history);
   const turnMode = resolveSimulationTurnMode(history, userMessage);
   const forceSim = turnMode === "force_sim";
+
+  // Fil Groupes : pas de sim, pas de mélange prospection DM / publication
+  if (briefing.isGroupsFlow || thread?.purpose === "groupes") {
+    if (wantsGroupMemberProspecting(userMessage)) {
+      return GROUPS_PROSPECT_REDIRECT;
+    }
+    if (
+      !extractGroupPostMessage(history) &&
+      /\b(campagne|je\s+valide|valide|brouillon|diffusion)\b/i.test(userMessage)
+    ) {
+      return GROUPS_NEED_POST_REPLY;
+    }
+  }
   const silentTweakAfterSim = turnMode === "silent_tweak";
 
   // create / activate : jamais via args MiniMax (déterministe).

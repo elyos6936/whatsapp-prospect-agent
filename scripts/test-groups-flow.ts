@@ -12,7 +12,10 @@ import {
   extractGroupPostMessage,
   extractGroupSequenceSteps,
   buildGroupsBriefingNudge,
+  isGroupMetaInstruction,
+  shouldDeterministicGroupsDraft,
   userWantsGroupsCampaign,
+  wantsGroupMemberProspecting,
 } from "../src/groups-flow.js";
 
 let passed = 0;
@@ -45,6 +48,30 @@ console.log("\n=== Extract message / groupes ===\n");
   assert(
     extractGroupNamesFromHistory(hist).some((g) => /Team MASK/i.test(g)),
     "extrait nom de groupe"
+  );
+  assert(
+    extractGroupPostMessage([msg("user", "Je veux lancer une campagne")]) == null,
+    "« lancer une campagne » n'est pas un post"
+  );
+  assert(
+    extractGroupPostMessage([
+      msg("user", "Je veux prospecter mon groupe le labo du no code"),
+    ]) == null,
+    "« prospecter mon groupe » n'est pas un post"
+  );
+  assert(isGroupMetaInstruction("Je veux lancer une campagne"), "meta campagne");
+  assert(
+    wantsGroupMemberProspecting("Je veux prospecter mon groupe le labo du no code"),
+    "détecte prospection membres"
+  );
+  assert(
+    !shouldDeterministicGroupsDraft("Je valide", [
+      msg("user", "Je veux lancer une campagne"),
+      msg("user", "Je veux prospecter mon groupe le labo du no code"),
+      msg("assistant", "Tu veux des posts J+1 ?"),
+      msg("user", "Non"),
+    ]),
+    "je valide sans texto → pas de brouillon"
   );
 }
 
