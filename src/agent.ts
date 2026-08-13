@@ -90,6 +90,13 @@ import {
   stripDsmlMarkup,
   userSafeAssistantText,
 } from "./dsml-tool-calls.js";
+import {
+  HIGH_STAKES_TOOL_NAMES,
+  highStakesBlockError,
+  highStakesConfirmNudge,
+  isHighStakesTool,
+  resolveAllowedHighStakesTools,
+} from "./high-stakes-intent.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
 const MAX_TOOL_ROUNDS = 12;
@@ -575,6 +582,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     briefing.openerVariantsProposed ||
     briefing.openerSingleValidated;
   if (!allowSimTool) HIDDEN_FROM_MINIMAX.add("show_campaign_simulation");
+  // Vague 1 : outils irréversibles visibles seulement si intention D explicite.
+  const allowedHighStakes = resolveAllowedHighStakesTools({
+    userMessage,
+    recentHistory: history,
+  });
+  for (const name of HIGH_STAKES_TOOL_NAMES) {
+    if (!allowedHighStakes.has(name)) HIDDEN_FROM_MINIMAX.add(name);
+  }
   const toolsForTurn = selectToolsForAgentTurn({
     purpose: thread?.purpose,
     userMessage,
@@ -763,6 +778,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     const nudge = buildBriefingNudge(briefing, history, userMessage);
     if (nudge) messages.push({ role: "system", content: nudge });
   }
+  const hsNudge = highStakesConfirmNudge(userMessage, history, allowedHighStakes);
+  if (hsNudge) messages.push({ role: "system", content: hsNudge });
 
   let rounds = 0;
   let simFixAttempts = 0;
@@ -999,6 +1016,21 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
                 "L'utilisateur a refusé la simulation. INTERDIT de la lancer. " +
                 "Accepte. Pour activer sans sim il doit écrire « lance sans simulation ». " +
                 "Sinon propose de simuler plus tard.",
+            }),
+          });
+          continue;
+        }
+
+        // Vague 1 : irréversibles — même si MiniMax invente l'appel, D bloque.
+        if (
+          isHighStakesTool(toolCall.function.name) &&
+          !allowedHighStakes.has(toolCall.function.name)
+        ) {
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            content: JSON.stringify({
+              error: highStakesBlockError(toolCall.function.name),
             }),
           });
           continue;

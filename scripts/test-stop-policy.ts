@@ -6,9 +6,11 @@ import {
   shouldStopConversation,
   detectNotInterested,
   detectContextualRefusal,
+  detectOutOfScope,
   isOutboundDiagnosticAsk,
   isOutboundConsentAsk,
   shouldSilenceAfterFarewell,
+  getStopFarewellReply,
 } from "../src/stop-policy.js";
 
 let passed = 0;
@@ -112,5 +114,84 @@ assert(
   "non je pense pas n'est PAS bare_no (géré via not_interested)",
 );
 
+console.log("\n=== « C'est combien ? » conversation engagée ===\n");
+{
+  const hist = [
+    { direction: "sortant", body: "Salut, je lance une masterclass graphisme, tu as 2 min ?" },
+    { direction: "entrant", body: "Oui dis-moi" },
+    { direction: "sortant", body: "C'est 4 semaines, live + replay, pour monter tes visuels." },
+  ];
+  const biz = { offer: "Masterclass graphisme", price: "25 000 FCFA", ownerName: "Alex" };
+  const cfg = {
+    productName: "Masterclass graphisme",
+    price: "25 000 FCFA",
+    conversationGuide: "formation design canva",
+    salesScript: "masterclass",
+    initialMessage: "Salut, masterclass graphisme",
+  };
+  const stop = shouldStopConversation("C'est combien ?", biz, cfg, hist);
+  assert(stop === null, `C'est combien ? → continue (got ${stop})`);
+}
+
+console.log("\n=== Eusebe hors-cible (mécanicien / créa) ===\n");
+{
+  const graphisme = {
+    productName: "Graphisme / motion design",
+    conversationGuide: "création de contenu youtube miniatures",
+    salesScript: "design canva",
+    initialMessage: "Salut, je fais du motion",
+  };
+  assert(
+    detectOutOfScope("je suis mécanicien", graphisme),
+    "Eusebe mécanicien + campagne graphisme → hors cible"
+  );
+  const stop = shouldStopConversation("je suis mécanicien", {}, graphisme);
+  assert(stop === "out_of_scope", `Eusebe → out_of_scope (got ${stop})`);
+  const bye = getStopFarewellReply("out_of_scope");
+  assert(/ne vous dérange plus|Bonne continuation/i.test(bye), "clôture + stop technique");
+}
+
+console.log("\n=== Croisé masterclass / graphisme (mission par campagne) ===\n");
+{
+  const masterclass = {
+    productName: "Masterclass YouTube",
+    conversationGuide: "formation contenu youtube",
+    salesScript: "masterclass formation",
+    initialMessage: "Salut, masterclass youtube",
+  };
+  const graphisme = {
+    productName: "Studio graphisme logo",
+    conversationGuide: "création logo design canva",
+    salesScript: "graphisme",
+    initialMessage: "Salut, je fais des logos",
+  };
+  assert(
+    detectOutOfScope("je suis mécanicien", masterclass),
+    "mécanicien hors masterclass (digital/formation)"
+  );
+  assert(
+    detectOutOfScope("je suis mécanicien", graphisme),
+    "mécanicien hors graphisme (design)"
+  );
+  assert(
+    !detectOutOfScope("c'est combien la masterclass ?", graphisme),
+    "question prix ≠ hors-cible (ne change pas de mission)"
+  );
+  assert(
+    !detectOutOfScope("je veux un logo", masterclass),
+    "demande logo sur masterclass ≠ out_of_scope métier (pas de switch auto)"
+  );
+  const engaged = [
+    { direction: "sortant", body: "La masterclass dure 4 semaines, tu veux le programme ?" },
+    { direction: "entrant", body: "Oui" },
+  ];
+  assert(
+    shouldStopConversation("C'est combien ?", { price: "40 000 FCFA" }, masterclass, engaged) ===
+      null,
+    "prix sur fil masterclass → on reste sur CETTE campagne"
+  );
+}
+
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed ? 1 : 0);
+
