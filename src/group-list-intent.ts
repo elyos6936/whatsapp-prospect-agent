@@ -281,6 +281,47 @@ export function resolveMembersIntentFromHistory(
   return null;
 }
 
+/**
+ * Groupe cible du message d'envoi courant — pas l'historique.
+ * « Envoie 'Salut' dans le groupe Le labo du no code à 14h »
+ * « Non envoie dans le groupe 'Le labo du no code' »
+ */
+export function extractGroupNameFromPublishMessage(msg: string): string | null {
+  const t = msg.trim();
+  if (!t) return null;
+
+  const tidy = (raw: string): string | null => {
+    const q = raw
+      .replace(/^[\s:'"«]+/, "")
+      .replace(/[?'"!».]+$/u, "")
+      .replace(/\s+/g, " ")
+      .trim();
+    if (q.length < 2) return null;
+    if (/^(salut|hello|bonjour|coucou|hi|ok|okay)$/i.test(q)) return null;
+    return q;
+  };
+
+  const quoted = t.match(/\bgroupes?\s+[«"']([^»"']{2,80})[»"']/i);
+  if (quoted?.[1]) {
+    const q = tidy(quoted[1]);
+    if (q) return q;
+  }
+
+  const m = t.match(
+    /\bgroupes?\s+(.+?)(?:\s+à\s+\d{1,2}\s*h(?:\d{0,2})?|\s+a\s+\d{1,2}\s*h(?:\d{0,2})?|\s*$)/i
+  );
+  if (m?.[1]) {
+    return tidy(
+      m[1]
+        .replace(/^[«"']+/, "")
+        .replace(/[»"']+$/, "")
+        .replace(/\s+à\s+\d{1,2}.*$/i, "")
+        .trim()
+    );
+  }
+  return null;
+}
+
 /** Publier / lancer une campagne / envoyer dans un groupe — admin requis. */
 export function detectGroupPublishIntent(msg: string): boolean {
   const t = msg.trim();

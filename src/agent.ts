@@ -76,6 +76,7 @@ import {
   detectGroupPublishIntent,
   detectQuickGroupMembersIntent,
   detectQuickListIntent,
+  extractGroupNameFromPublishMessage,
   isGroupActionNotCatalogRequest,
   lastGroupQueryFromHistory,
   resolveMembersIntentFromHistory,
@@ -513,11 +514,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
             },
           ];
     const named =
+      extractGroupNameFromPublishMessage(userMessage) ||
       lastGroupQueryFromHistory(
         histForPublish.at(-1)?.content === userMessage
           ? histForPublish.slice(0, -1)
           : histForPublish
-      )?.query || extractGroupNamesFromHistory(histForPublish).at(-1);
+      )?.query ||
+      extractGroupNamesFromHistory(histForPublish).at(-1);
     if (named) {
       try {
         const found = await findGroupByNameOrId(userId, named);

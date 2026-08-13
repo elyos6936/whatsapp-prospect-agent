@@ -5,6 +5,7 @@
 import {
   detectGroupPublishIntent,
   detectQuickGroupMembersIntent,
+  extractGroupNameFromPublishMessage,
   lastGroupQueryFromHistory,
   looksLikeBareGroupName,
   resolveMembersIntentFromHistory,
@@ -87,10 +88,31 @@ console.log("\n=== detectGroupPublishIntent ===\n");
   assert(detectGroupPublishIntent("lance la campagne"), "lance la campagne");
   assert(detectGroupPublishIntent("envoie dans le groupe"), "envoie dans le groupe");
   assert(
+    detectGroupPublishIntent("Envoie 'Salut' dans le groupe Le labo du no code à 14h"),
+    "envoie + groupe + heure"
+  );
+  assert(
     !detectGroupPublishIntent("okay donne moi 3 contacts du groupe"),
     "extraction contacts ≠ écriture"
   );
   assert(!detectGroupPublishIntent("donne moi 3 contacts du groupe RADAR"), "RADAR extract ≠ écriture");
+}
+
+console.log("\n=== extractGroupNameFromPublishMessage (pas l'historique) ===\n");
+{
+  const a = extractGroupNameFromPublishMessage(
+    "Envoie 'Salut' dans le groupe Le labo du no code à 14h"
+  );
+  assert(
+    a === "Le labo du no code",
+    `envoie Salut → Le labo (got ${a})`
+  );
+  const b = extractGroupNameFromPublishMessage("Non envoie dans le groupe 'Le labo du no code'");
+  assert(b === "Le labo du no code", `correction citée (got ${b})`);
+  assert(
+    extractGroupNameFromPublishMessage("lancer campagne") == null,
+    "lancer campagne sans nom → null (fallback historique)"
+  );
 }
 
 console.log("\n=== shouldDeterministicGroupsDraft ignore contacts ===\n");
