@@ -31,6 +31,7 @@ import {
   ensurePendingLinkInReply,
   alignOutboundVerbalClose,
 } from "./lead-scoring.js";
+import { fulfillOutboundPromises } from "./outbound-promise-guard.js";
 import {
   getObjectiveReachedReply,
   getStopFarewellReply,
@@ -411,6 +412,22 @@ export async function replyInSimulationPreview(
       priorPolicyHistory,
       campaignConfig
     ).reply;
+    {
+      const promised = fulfillOutboundPromises(reply, {
+        closingLink: campaignConfig?.closingLink,
+        hasMedia: !!campaignConfig?.mediaUrl,
+      });
+      if (promised.appendLink) {
+        console.warn("[simulation] promise-link-fulfilled");
+      }
+      if (promised.strippedLinkPromise) {
+        console.warn("[simulation] promise-link-stripped");
+      }
+      if (promised.strippedMediaPromise) {
+        console.warn("[simulation] promise-media-stripped");
+      }
+      reply = promised.reply;
+    }
   } catch {
     reply =
       mode === "inbound"

@@ -55,6 +55,7 @@ import {
   ensurePendingLinkInReply,
   alignOutboundVerbalClose,
 } from "./lead-scoring.js";
+import { fulfillOutboundPromises } from "./outbound-promise-guard.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { createKeywordHandoff, findMatchingHandoffKeyword, maybeCreateHandoff } from "./handoff.js";
@@ -999,6 +1000,7 @@ async function runAutoReply(
     let reply: string;
     /** RDV oral confirmé : on laisse l'IA envoyer le lien, puis conversion + notif tiers. */
     let pendingAppointmentClose = false;
+    let attachFromPromise = false;
 
     if (isStopRequest(text)) {
       reply = getStopConfirmationReply();
@@ -1329,11 +1331,40 @@ async function runAutoReply(
         }
         reply = aligned.reply;
       }
+      {
+        const promised = fulfillOutboundPromises(reply, {
+          closingLink: activeCampaign?.config.closingLink,
+          hasMedia: !!activeCampaign?.config.mediaUrl,
+        });
+        if (promised.appendLink) {
+          console.warn(`[outreach] promise-link-fulfilled chat=${chatId}`);
+        }
+        if (promised.strippedLinkPromise) {
+          console.warn(`[outreach] promise-link-stripped chat=${chatId}`);
+        }
+        if (promised.attachMedia) {
+          console.warn(`[outreach] promise-media-attached chat=${chatId}`);
+        }
+        if (promised.strippedMediaPromise) {
+          console.warn(`[outreach] promise-media-stripped chat=${chatId}`);
+        }
+        if (promised.notes.length && activeCampaign) {
+          await saveAgentMessageForAutomation(
+            userId,
+            activeCampaign.id,
+            "assistant",
+            promised.notes.join(" ") +
+              ` — ${senderName} (${chatIdToDisplay(chatId)}). Campagne « ${activeCampaign.name} ».`
+          ).catch(() => {});
+        }
+        reply = promised.reply;
+        attachFromPromise = promised.attachMedia;
+      }
     }
 
     const attachMedia =
       !!activeCampaign?.config.mediaUrl &&
-      prospectRequestsCampaignMedia(text);
+      (prospectRequestsCampaignMedia(text) || attachFromPromise);
     const mediaUrl = attachMedia
       ? resolvePublicMediaUrl(String(activeCampaign!.config.mediaUrl))
       : null;
