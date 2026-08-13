@@ -78,6 +78,28 @@ console.log("\n=== Objectifs: livreur ===\n");
     { direction: "sortant", body: "Le livreur peut passer demain, ça vous va ?" },
   ];
   assert(!outboundDeliveredAction(histOffer[0].body), "offre livreur ? ≠ livré");
+
+  const histRecontact = [
+    {
+      direction: "sortant",
+      body: "Bien noté, Porto-Novo pour la livraison. Un de nos livreurs va vous recontacter rapidement pour finaliser, merci.",
+    },
+  ];
+  assert(outboundDeliveredAction(histRecontact[0].body), "va vous recontacter = livré");
+  assert(
+    isCampaignObjectiveReached("Okay super", histRecontact, { closingGoal: "delivery" }),
+    "Okay super après recontact → objectif (pas de 2e confirmation)"
+  );
+  assert(
+    !wasVerballyClosed(histRecontact),
+    "recontact opérationnel ≠ adieu — une courte clôture suffit"
+  );
+  assert(
+    outboundDeliveredAction(
+      "Parfait, c'est confirmé pour vous. Le livreur vous recontacte dans la journée à Porto-Novo pour finaliser la livraison, merci."
+    ),
+    "le livreur vous recontacte = livré"
+  );
 }
 
 console.log("\n=== Objectifs: ok après adieu ≠ conversion ===\n");
