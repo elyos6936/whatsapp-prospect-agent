@@ -4,6 +4,7 @@
  */
 import {
   detectGroupPublishIntent,
+  detectGroupSendNowIntent,
   detectQuickGroupMembersIntent,
   extractGroupNameFromPublishMessage,
   lastGroupQueryFromHistory,
@@ -122,6 +123,28 @@ console.log("\n=== detectGroupPublishIntent ===\n");
     !detectGroupPublishIntent("Ajoute +22966082161 dans mon groupe Le Labo du No code"),
     "ajouter un membre ≠ publication"
   );
+}
+
+console.log("\n=== detectGroupSendNowIntent (pas campagne, pas lien) ===\n");
+{
+  const a = detectGroupSendNowIntent('Super. Envoie "Salut Klanvio 1" dans le groupe Automax');
+  assert(a?.message === "Salut Klanvio 1", `message Automax (got ${a?.message})`);
+  assert(/automax/i.test(a?.groupQuery ?? ""), `groupe Automax (got ${a?.groupQuery})`);
+  assert(!a?.sendAtLocal, "envoi immédiat");
+
+  const b = detectGroupSendNowIntent(
+    "Envoie dans mon groupe le Labo du No code , le message 'Bien c'est parti' à 15h11"
+  );
+  assert(
+    /bien c'est parti/i.test(b?.message ?? ""),
+    `message Labo (got ${b?.message})`
+  );
+  assert(/labo du no code/i.test(b?.groupQuery ?? ""), `groupe Labo (got ${b?.groupQuery})`);
+  assert(b?.sendAtLocal === "15:11", `heure 15:11 (got ${b?.sendAtLocal})`);
+
+  const c = detectGroupSendNowIntent("Non envoie juste 'Salut Klanvio 1' dans ce groupe");
+  assert(c?.message === "Salut Klanvio 1", "ce groupe + message");
+  assert(!c?.groupQuery, "ce groupe → nom via historique");
 }
 
 console.log("\n=== extractGroupNameFromPublishMessage (pas l'historique) ===\n");

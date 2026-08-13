@@ -298,11 +298,13 @@ export function extractGroupNameFromPublishMessage(msg: string): string | null {
 
   const tidy = (raw: string): string | null => {
     const q = raw
+      .replace(/\s*,?\s*(?:le\s+)?(?:message|texte|annonce)\b[\s\S]*$/i, "")
       .replace(/^[\s:'"«]+/, "")
       .replace(/[?'"!».]+$/u, "")
       .replace(/\s+/g, " ")
       .trim();
     if (q.length < 2) return null;
+    if (/^(ce|cet|ces|le|la|les|mon|ma|mes)$/i.test(q)) return null;
     if (/^(salut|hello|bonjour|coucou|hi|ok|okay)$/i.test(q)) return null;
     return q;
   };
@@ -326,6 +328,63 @@ export function extractGroupNameFromPublishMessage(msg: string): string | null {
     );
   }
   return null;
+}
+
+export type GroupSendNowIntent = {
+  groupQuery: string;
+  message: string;
+  sendAtLocal?: string;
+};
+
+/** Texte à poster : guillemets, ou « le message '…' ». */
+export function extractSendMessageFromPublish(msg: string): string | null {
+  const t = msg.trim();
+  const labeled = t.match(
+    /\b(?:le\s+)?(?:message|texte|annonce)\s+[''](.+)[''](?:\s+à\s+\d|\s*$)/i
+  );
+  if (labeled?.[1]?.trim()) return labeled[1].trim().slice(0, 900);
+
+  const fancy = t.match(/[«"]([^»"]{1,800})[»"]/);
+  if (fancy?.[1]?.trim()) return fancy[1].trim().slice(0, 900);
+
+  const around = t.match(
+    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+[''](.+)[''](?:\s+dans|\s+à\s+\d|\s*$)/i
+  );
+  if (around?.[1]?.trim()) return around[1].trim().slice(0, 900);
+  return null;
+}
+
+export function extractSendAtLocal(msg: string): string | undefined {
+  const m = msg.match(/à\s+(\d{1,2})\s*h\s*(\d{0,2})\b/i);
+  if (!m) return undefined;
+  const hh = String(Math.min(23, Math.max(0, Number(m[1])))).padStart(2, "0");
+  const mm = m[2] ? String(Math.min(59, Number(m[2]))).padStart(2, "0") : "00";
+  return `${hh}:${mm}`;
+}
+
+/**
+ * Envoi / programmation ponctuels — pas une campagne, pas un lien d'invitation.
+ * « Envoie "Salut" dans le groupe Automax »
+ * « Envoie dans mon groupe le Labo du No code, le message 'Bien c'est parti' à 15h11 »
+ */
+export function detectGroupSendNowIntent(msg: string): GroupSendNowIntent | null {
+  const t = msg.trim();
+  if (!t || t.length > 400) return null;
+  if (!/\b(envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)\b/i.test(t)) {
+    return null;
+  }
+  if (!/\bgroupes?\b/i.test(t)) return null;
+  if (/\b(lien d['’]invitation|code d['’]invitation|invite[- ]?code)\b/i.test(t)) {
+    return null;
+  }
+  if (/\blien\b/i.test(t) && !/\b(message|texte|annonce)\b/i.test(t) && !/[«"']/.test(t)) {
+    return null;
+  }
+  const message = extractSendMessageFromPublish(t);
+  if (!message) return null;
+  const groupQuery = extractGroupNameFromPublishMessage(t) ?? "";
+  const sendAtLocal = extractSendAtLocal(t);
+  return { groupQuery, message, sendAtLocal };
 }
 
 /** Publier / lancer une campagne / envoyer dans un groupe — admin requis. */

@@ -91,6 +91,7 @@ import {
 } from "./campaign-memory.js";
 import {
   detectGroupPublishIntent,
+  detectGroupSendNowIntent,
   detectQuickGroupMembersIntent,
   detectQuickListIntent,
   extractGroupNameFromPublishMessage,
@@ -98,6 +99,7 @@ import {
   lastGroupQueryFromHistory,
   resolveMembersIntentFromHistory,
   wantsExplicitGroupCatalog,
+  type GroupSendNowIntent,
 } from "./group-list-intent.js";
 import {
   compactAgentHistory,
@@ -494,6 +496,50 @@ async function runGroupManageQuickPath(
   return replyFromToolJson(raw);
 }
 
+async function runGroupSendQuickPath(
+  userId: number,
+  threadId: number,
+  intent: GroupSendNowIntent,
+  history: Array<{ role: string; content: string }>
+): Promise<string> {
+  let groupQuery = intent.groupQuery;
+  if (!groupQuery) {
+    const prior = [...history];
+    const last = prior.at(-1);
+    if (last?.role === "user") prior.pop();
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const m = prior[i];
+      if (m.role !== "user") continue;
+      const named = extractGroupNameFromPublishMessage(m.content);
+      if (named) {
+        groupQuery = named;
+        break;
+      }
+    }
+    if (!groupQuery) {
+      groupQuery = lastGroupQueryFromHistory(prior)?.query ?? "";
+    }
+  }
+  if (!groupQuery) {
+    return "Dans quel groupe envoyer ce message ? Donne le nom exact.";
+  }
+  const found = await requireNamedGroupAdmin(userId, groupQuery, "y publier");
+  if (typeof found === "string") return found;
+  if (intent.sendAtLocal) {
+    const raw = await executeTool(userId, threadId, "schedule_whatsapp_message", {
+      recipient: found.id,
+      message: intent.message,
+      send_at_local: intent.sendAtLocal,
+    });
+    return replyFromToolJson(raw);
+  }
+  const raw = await executeTool(userId, threadId, "send_whatsapp_message", {
+    recipient: found.id,
+    message: intent.message,
+  });
+  return replyFromToolJson(raw);
+}
+
 function replyFromToolJson(raw: string): string {
   try {
     const parsed = JSON.parse(raw) as {
@@ -561,6 +607,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   if (manageQuick) {
     try {
       return await runGroupManageQuickPath(userId, threadId, manageQuick);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
+  // Poster / programmer — avant lien d'invitation (un nom « No code » n'est pas un invite-code)
+  const sendQuick = detectGroupSendNowIntent(userMessage);
+  if (sendQuick) {
+    try {
+      return await runGroupSendQuickPath(userId, threadId, sendQuick, recentForMembers);
     } catch (err) {
       return userFacingError(err);
     }

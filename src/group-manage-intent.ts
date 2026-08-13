@@ -107,8 +107,19 @@ export type GroupInviteLinkIntent = {
 export function detectGroupInviteLinkIntent(msg: string): GroupInviteLinkIntent | null {
   const t = msg.trim();
   if (!t || t.length > 200) return null;
-  if (!/\b(lien|code)\b/i.test(t)) return null;
+  const wantsLink =
+    /\blien(\s+d['’]invitation)?\b/i.test(t) ||
+    /\bcode\s+d['’]invitation\b/i.test(t) ||
+    /\binvite[- ]?code\b/i.test(t);
+  if (!wantsLink) return null;
   if (!/\b(invitation|invite|groupe)\b/i.test(t)) return null;
+  // Poster un texto (même si le nom du groupe contient « code ») ≠ lien
+  if (
+    /\b(envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)\b/i.test(t) &&
+    (/[«"']/.test(t) || /\b(message|texte|annonce)\b/i.test(t))
+  ) {
+    return null;
+  }
   if (/\b(envoie|envoyer|poste|publie)\b/i.test(t) && extractPhonesFromText(t).length) {
     return null;
   }

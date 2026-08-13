@@ -114,6 +114,18 @@ console.log("\n=== invite / leave / non-publish ===\n");
     isGroupNonPublishAction("crée un groupe Team MASK avec +22966082161"),
     "create = non-publish"
   );
+  assert(
+    detectGroupInviteLinkIntent(
+      "Envoie dans mon groupe le Labo du No code , le message 'Bien c'est parti' à 15h11"
+    ) == null,
+    "No code + envoie message ≠ lien d'invitation"
+  );
+  assert(
+    !isGroupNonPublishAction(
+      "Envoie dans mon groupe le Labo du No code , le message 'Bien c'est parti' à 15h11"
+    ),
+    "poster un texto ≠ action membres"
+  );
 }
 
 console.log("\n=== nudge ne vole pas l'ajout ===\n");
