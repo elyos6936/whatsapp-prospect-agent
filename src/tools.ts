@@ -104,6 +104,9 @@ import {
   automationBelongsToThread,
   threadHasCampaign,
   getAgentThread,
+  getRecentAgentMessages,
+  saveAgentMessage,
+  saveAgentMessageForAutomation,
   haltAutomationMessaging,
   resumeAutomationMessaging,
   deleteAutomation,
@@ -172,6 +175,15 @@ import {
 } from "./campaign-spacing.js";
 import { detectStickerConsent } from "./sticker-consent.js";
 import { parseThirdPartyNotificationArgs } from "./third-party-notification.js";
+import {
+  criticalConfigDiff,
+  criticalConfigSnapshot,
+  filterCriticalConfigArgs,
+  filterInventedProfileFields,
+  formatCriticalChangeNote,
+  recentUserBlob,
+  userAllowsMemorySwitch,
+} from "./sensitive-config-guard.js";
 import {
   formatVerticalContactList,
   formatVerticalGroupList,
@@ -4098,12 +4110,55 @@ export async function executeTool(
     }
 
     case "save_business_profile": {
-      await saveBusinessProfile(userId, {
-        ownerName: args.owner_name !== undefined ? String(args.owner_name) : undefined,
-        offer: args.offer !== undefined ? String(args.offer) : undefined,
-        price: args.price !== undefined ? String(args.price) : undefined,
-      });
+      const hist = await getRecentAgentMessages(userId, threadId, 12);
+      const blob = recentUserBlob(hist, 2);
+      const before = await getAppSettings(userId);
+      const guarded = filterInventedProfileFields(
+        {
+          ownerName: args.owner_name !== undefined ? String(args.owner_name) : undefined,
+          offer: args.offer !== undefined ? String(args.offer) : undefined,
+          price: args.price !== undefined ? String(args.price) : undefined,
+        },
+        blob
+      );
+      if (
+        guarded.blocked.length &&
+        !guarded.input.ownerName &&
+        guarded.input.offer === undefined &&
+        !guarded.input.price
+      ) {
+        return JSON.stringify({ error: guarded.errors.join(" ") });
+      }
+      await saveBusinessProfile(userId, guarded.input);
       const s = await getAppSettings(userId);
+      const changes: string[] = [];
+      if (
+        guarded.input.ownerName !== undefined &&
+        (before.business_owner_name || "") !== (s.business_owner_name || "")
+      ) {
+        changes.push(`nom : ${before.business_owner_name || "(vide)"} → ${s.business_owner_name || "(vide)"}`);
+      }
+      if (
+        guarded.input.offer !== undefined &&
+        (before.business_offer || "") !== (s.business_offer || "")
+      ) {
+        changes.push(`offre : ${before.business_offer || "(vide)"} → ${s.business_offer || "(vide)"}`);
+      }
+      if (
+        guarded.input.price !== undefined &&
+        (before.business_price || "") !== (s.business_price || "")
+      ) {
+        changes.push(`prix : ${before.business_price || "(vide)"} → ${s.business_price || "(vide)"}`);
+      }
+      if (changes.length) {
+        console.warn(`[config-guard] business-profile user=${userId} ${changes.join(" | ")}`);
+        await saveAgentMessage(
+          userId,
+          threadId,
+          "assistant",
+          `⚠️ Profil business mis à jour.\n${changes.map((c) => `• ${c}`).join("\n")}`
+        ).catch(() => {});
+      }
       return JSON.stringify({
         success: true,
         profile: {
@@ -4111,6 +4166,7 @@ export async function executeTool(
           offer: s.business_offer,
           price: s.business_price,
         },
+        warnings: guarded.errors.length ? guarded.errors : undefined,
         message: "Profil business enregistré. Les prochaines réponses auto l'utiliseront.",
       });
     }
@@ -4181,7 +4237,27 @@ export async function executeTool(
           available: all.map((m) => m.name),
         });
       }
+      const histMem = await getRecentAgentMessages(userId, threadId, 12);
+      const blobMem = recentUserBlob(histMem, 2);
+      if (!userAllowsMemorySwitch(blobMem, mem.name)) {
+        return JSON.stringify({
+          error:
+            `CHANGEMENT MÉMOIRE BLOQUÉ. L'utilisateur n'a nommé ni « mémoire » ni « ${mem.name} » ` +
+            `dans les tours récents. Demande confirmation (« utilise la mémoire ${mem.name} »).`,
+        });
+      }
+      const prevMem = await getLinkedCampaignMemory(userId, threadId);
       await setThreadCampaignMemory(userId, threadId, mem.id);
+      if (prevMem?.id !== mem.id) {
+        const from = prevMem?.name?.trim() || "(aucune)";
+        console.warn(`[config-guard] memory-switch thread=${threadId} ${from} → ${mem.name}`);
+        await saveAgentMessage(
+          userId,
+          threadId,
+          "assistant",
+          `⚠️ Mémoire du fil : « ${from} » → « ${mem.name} ».`
+        ).catch(() => {});
+      }
       return JSON.stringify({
         success: true,
         memory: { id: mem.id, name: mem.name },
@@ -5192,6 +5268,22 @@ export async function executeTool(
       }
 
       const current = detail.automation.config;
+      const histCfg = await getRecentAgentMessages(userId, threadId, 12);
+      const blobCfg = recentUserBlob(histCfg, 2);
+      const guardedCfg = filterCriticalConfigArgs(args, blobCfg);
+      for (const field of guardedCfg.blocked) {
+        delete args[field];
+      }
+      const otherPatch = Object.keys(args).some(
+        (k) =>
+          k !== "automation_id" &&
+          args[k] != null &&
+          args[k] !== ""
+      );
+      if (guardedCfg.blocked.length && !otherPatch) {
+        return JSON.stringify({ error: guardedCfg.errors.join(" ") });
+      }
+      const beforeSnap = criticalConfigSnapshot(current);
       const merged: AutomationConfig = { ...current };
 
       if (args.initial_message) merged.initialMessage = String(args.initial_message);
@@ -5480,6 +5572,12 @@ export async function executeTool(
         quietStart != null && quietEnd != null
           ? quietHoursToActivityWindow({ start: quietStart, end: quietEnd })
           : null;
+      const diffs = criticalConfigDiff(beforeSnap, criticalConfigSnapshot(updated?.config));
+      if (diffs.length) {
+        const note = formatCriticalChangeNote(detail.automation.name, diffs);
+        console.warn(`[config-guard] automation=${id} ${diffs.map((d) => `${d.field}:${d.from}→${d.to}`).join(" ")}`);
+        await saveAgentMessageForAutomation(userId, id, "assistant", note).catch(() => {});
+      }
       return JSON.stringify({
         success: true,
         automationId: id,
@@ -5502,6 +5600,7 @@ export async function executeTool(
         plan: plan
           ? { title: plan.title, automationId: plan.automationId, type: plan.type }
           : undefined,
+        warnings: guardedCfg.errors.length ? guardedCfg.errors : undefined,
         // Pas de planDisplay : évite de re-coller le fence / re-simuler à chaque tweak.
         message:
           `Campagne « ${detail.automation.name} » mise à jour` +
