@@ -885,13 +885,13 @@ try {
     );
   }
   console.log(`   Ouvrez l'app → Connexions → Evolution API + WhatsApp QR\n`);
-  startNotificationPoller(12_000);
-  startScheduler(5000);
-  startAutomationEngine(15000);
+  startNotificationPoller(90_000);
+  startScheduler(15_000);
+  startAutomationEngine(15_000);
   setInterval(() => {
     void processSendQueue(2);
     void processDueSequences();
-  }, 8000);
+  }, 15_000);
   // Watchdog sessions WhatsApp — restaure les close silencieux sans QR
   const { watchWhatsAppConnections } = await import("./whatsapp-connection.js");
   const { listActiveUserIds } = await import("./users.js");

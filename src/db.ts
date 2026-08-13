@@ -597,6 +597,20 @@ export async function whatsAppMessageExists(userId: number, greenApiId: string):
   return rows.length > 0;
 }
 
+/** Un seul aller-retour au lieu de N EXISTS sur le poller. */
+export async function existingWhatsAppMessageIds(
+  userId: number,
+  greenApiIds: string[]
+): Promise<Set<string>> {
+  const ids = [...new Set(greenApiIds.map((id) => String(id || "").trim()).filter(Boolean))];
+  if (!ids.length) return new Set();
+  const rows = await sql<{ green_api_id: string }[]>`
+    SELECT green_api_id FROM messages
+    WHERE user_id = ${userId} AND green_api_id IN ${sql(ids)}
+  `;
+  return new Set(rows.map((r) => String(r.green_api_id)));
+}
+
 export async function getIncomingMessagesSince(userId: number, sinceId = 0, limit = 50): Promise<WhatsAppMessage[]> {
   const rows = await sql<Record<string, unknown>[]>`
     SELECT id, contact_phone, sender_name, direction, body, green_api_id, created_at
@@ -3207,6 +3221,28 @@ export async function addAutomationTargets(
   }
   await recomputeAutomationStats(userId, automationId);
   return added;
+}
+
+/** Plafond journalier : COUNT SQL, pas 1000 lignes cibles. */
+export async function countAutomationTargetsActionedOnLocalDay(
+  userId: number,
+  automationId: number,
+  localDay = formatLocalDateTime(new Date()).slice(0, 10)
+): Promise<number> {
+  const start = parseLocalDateTime(`${localDay} 00:00:00`);
+  const end = new Date(start.getTime());
+  end.setDate(end.getDate() + 1);
+  const rows = await sql<{ n: number }[]>`
+    SELECT COUNT(*)::int AS n
+    FROM automation_targets
+    WHERE user_id = ${userId}
+      AND automation_id = ${automationId}
+      AND status NOT IN ('pending', 'queued')
+      AND last_action_at IS NOT NULL
+      AND last_action_at >= ${start}
+      AND last_action_at < ${end}
+  `;
+  return Number(rows[0]?.n ?? 0);
 }
 
 export async function listAutomationTargets(

@@ -27,6 +27,7 @@ import {
   formatLocalDateTime,
   countAutomationMessagesInRange,
   countUserMessagesInRange,
+  countAutomationTargetsActionedOnLocalDay,
   tryConsumeTrialGroupExtract,
   type Automation,
   type AutomationConfig,
@@ -109,15 +110,7 @@ async function failAutomationNoTargets(
 
 /** Nombre de premiers messages déjà envoyés aujourd'hui pour cette campagne. */
 async function countSentTodayForAutomation(userId: number, automationId: number): Promise<number> {
-  const today = formatLocalDateTime(new Date()).slice(0, 10);
-  const targets = await listAutomationTargets(userId, automationId, { limit: 1000 });
-  return targets.filter(
-    (t) =>
-      t.status !== "pending" &&
-      t.status !== "queued" &&
-      !!t.last_action_at &&
-      t.last_action_at.slice(0, 10) === today
-  ).length;
+  return countAutomationTargetsActionedOnLocalDay(userId, automationId);
 }
 
 async function processGroupProspect(userId: number, auto: Automation): Promise<void> {

@@ -1,8 +1,8 @@
 /**
  * Interprétation des médias entrants WhatsApp.
  *
- * Images : vision Mistral Medium 3.5.
- * Audio : pas d'API Whisper côté Mistral → skip (note vocale ignorée).
+ * Images : vision via le LLM chat (MiniMax).
+ * Audio / dictée : Whisper sur api.openai.com si OPENAI_API_KEY est définie.
  */
 
 import OpenAI, { toFile } from "openai";
@@ -76,6 +76,12 @@ async function resolveOpenAIKey(userId: number): Promise<string | null> {
   return config.envOpenAiKey || null;
 }
 
+/** Clé Whisper réelle (OpenAI), jamais la clé MiniMax du chat. */
+function resolveWhisperKey(): string | null {
+  const key = config.whisperApiKey?.trim();
+  return key || null;
+}
+
 /**
  * Télécharge le média via Evolution API puis l'interprète avec OpenAI.
  *
@@ -91,9 +97,9 @@ export async function describeInboundMedia(
 ): Promise<string | null> {
   // On n'interprète que l'audio et les images (coût / utilité).
   if (media.kind !== "audio" && media.kind !== "image") return null;
-
-  const apiKey = await resolveOpenAIKey(userId);
-  if (!apiKey) return null;
+  if (media.kind === "audio" && !resolveWhisperKey()) return null;
+  const apiKey = media.kind === "image" ? await resolveOpenAIKey(userId) : "";
+  if (media.kind === "image" && !apiKey) return null;
 
   let base64: string;
   let mimetype: string;
@@ -114,7 +120,9 @@ export async function describeInboundMedia(
 
   try {
     if (media.kind === "audio") {
-      const transcript = await transcribeAudio(apiKey, base64, mimetype);
+      const whisperKey = resolveWhisperKey();
+      if (!whisperKey) return null;
+      const transcript = await transcribeAudio(whisperKey, base64, mimetype);
       console.log(`[media] Transcription audio ${messageId}: ${transcript ? `« ${transcript.slice(0, 80)} »` : "(vide)"}`);
       return transcript;
     }
@@ -147,12 +155,16 @@ export async function transcribeChatAudio(
   base64: string,
   mimetype: string,
 ): Promise<string> {
-  const apiKey = await resolveOpenAIKey(userId);
+  void userId;
+  const apiKey = resolveWhisperKey();
   if (!apiKey) {
-    throw new Error("Aucune clé IA configurée pour la transcription.");
+    throw new Error("Transcription serveur indisponible (OPENAI_API_KEY absente).");
   }
   const text = await transcribeAudio(apiKey, base64, mimetype || "audio/webm");
-  return text ?? "";
+  if (!text) {
+    throw new Error("Aucun texte reconnu dans l'enregistrement.");
+  }
+  return text;
 }
 
 // ─── Implémentations LLM ──────────────────────────────────────────────────────
@@ -162,13 +174,7 @@ async function transcribeAudio(
   base64: string,
   mimetype: string,
 ): Promise<string | null> {
-  if (config.llmProvider !== "openai") {
-    console.warn(
-      `[media] Transcription audio indisponible avec ${config.llmProvider} — note vocale ignorée.`,
-    );
-    return null;
-  }
-  const openai = new OpenAI({ apiKey, baseURL: config.llmBaseUrl });
+  const openai = new OpenAI({ apiKey, baseURL: "https://api.openai.com/v1" });
   const clean = baseMimetype(mimetype);
   const ext = mimeToExt(clean) ?? "ogg";
   const buffer = Buffer.from(base64, "base64");

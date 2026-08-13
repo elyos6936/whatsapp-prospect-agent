@@ -8,6 +8,26 @@ import {
 } from '@/lib/chat-attachments';
 import { transcribeChatAudio, uploadChatFiles } from '@/lib/api';
 
+type BrowserSpeechRecognition = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  start: () => void;
+  stop: () => void;
+  abort: () => void;
+  onresult: ((ev: { resultIndex: number; results: ArrayLike<{ isFinal: boolean; 0: { transcript: string } }> }) => void) | null;
+  onerror: ((ev: { error?: string }) => void) | null;
+  onend: (() => void) | null;
+};
+
+function getSpeechRecognitionCtor(): (new () => BrowserSpeechRecognition) | null {
+  const w = window as unknown as {
+    SpeechRecognition?: new () => BrowserSpeechRecognition;
+    webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+  };
+  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+}
+
 type PendingFile = {
   id: string;
   file: File;
@@ -67,6 +87,9 @@ export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatIn
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const speechRef = useRef<BrowserSpeechRecognition | null>(null);
+  const speechBaseRef = useRef('');
+  const speechFinalRef = useRef('');
   const recordingChunksRef = useRef<Blob[]>([]);
   const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const sendingLockRef = useRef(false);
@@ -104,6 +127,11 @@ export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatIn
         if (p.previewUrl) URL.revokeObjectURL(p.previewUrl);
       }
       if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
+      try {
+        speechRef.current?.abort();
+      } catch {
+        /* ignore */
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -139,18 +167,28 @@ export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatIn
   );
 
   const stopRecording = useCallback(() => {
-    if (!isRecording || !mediaRecorderRef.current) return;
-    mediaRecorderRef.current.stop();
+    if (!isRecording) return;
+    if (speechRef.current) {
+      try {
+        speechRef.current.stop();
+      } catch {
+        /* ignore */
+      }
+      speechRef.current = null;
+    }
+    if (mediaRecorderRef.current) {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
+    }
     if (recordingTimerRef.current) {
       clearInterval(recordingTimerRef.current);
       recordingTimerRef.current = null;
     }
     setIsRecording(false);
     setRecordingSeconds(0);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   }, [isRecording]);
 
-  // Dictée vocale : on transcrit l'enregistrement puis on l'insère dans l'input
-  // en texte (l'utilisateur peut relire/corriger avant d'envoyer).
   const transcribeRecording = useCallback(async (blob: Blob) => {
     if (blob.size === 0) return;
     setTranscribing(true);
@@ -167,7 +205,57 @@ export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatIn
     }
   }, []);
 
+  const startBrowserDictation = useCallback(() => {
+    const Ctor = getSpeechRecognitionCtor();
+    if (!Ctor) return false;
+    const recognition = new Ctor();
+    recognition.lang = 'fr-FR';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    speechBaseRef.current = message.trim();
+    speechFinalRef.current = '';
+    speechRef.current = recognition;
+
+    recognition.onresult = (ev) => {
+      let interim = '';
+      for (let i = ev.resultIndex; i < ev.results.length; i++) {
+        const piece = ev.results[i][0]?.transcript ?? '';
+        if (ev.results[i].isFinal) speechFinalRef.current += (speechFinalRef.current ? ' ' : '') + piece.trim();
+        else interim += piece;
+      }
+      const parts = [speechBaseRef.current, speechFinalRef.current, interim.trim()].filter(Boolean);
+      setMessage(parts.join(' '));
+    };
+    recognition.onerror = (ev) => {
+      if (ev.error === 'aborted' || ev.error === 'no-speech') return;
+      console.warn('[dictée]', ev.error);
+    };
+    recognition.onend = () => {
+      speechRef.current = null;
+      setIsRecording(false);
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+    };
+
+    recognition.start();
+    setIsRecording(true);
+    setRecordingSeconds(0);
+    recordingTimerRef.current = setInterval(() => {
+      setRecordingSeconds((s) => {
+        if (s >= 120) {
+          stopRecording();
+          return s;
+        }
+        return s + 1;
+      });
+    }, 1000);
+    return true;
+  }, [message, stopRecording]);
+
   const startRecording = useCallback(async () => {
+    if (startBrowserDictation()) return;
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
@@ -205,7 +293,7 @@ export const KlanvioChatInput = forwardRef<KlanvioChatInputHandle, KlanvioChatIn
     } catch (err) {
       alert('Microphone non disponible : ' + (err instanceof Error ? err.message : 'erreur'));
     }
-  }, [transcribeRecording, stopRecording]);
+  }, [startBrowserDictation, transcribeRecording, stopRecording]);
 
   const handleSend = useCallback(async () => {
     if (isRecording) {

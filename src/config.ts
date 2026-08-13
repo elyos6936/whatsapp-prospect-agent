@@ -297,6 +297,8 @@ export const config = {
   tokensEncryptionKey: process.env.TOKENS_ENCRYPTION_KEY?.trim() || "",
   defaultEvolutionBaseUrl: "http://localhost:8080",
   envOpenAiKey: resolveLlmApiKey(),
+  /** Whisper uniquement (api.openai.com) — distinct de la clé MiniMax du chat. */
+  whisperApiKey: process.env.OPENAI_API_KEY?.trim() || "",
   envEvolutionBaseUrl: (process.env.EVOLUTION_API_BASE_URL?.trim() || "").replace(/\/$/, ""),
   envEvolutionApiKey: process.env.EVOLUTION_API_KEY?.trim() || "",
   /** Compte ops Hostinger — séparé des comptes clients. */

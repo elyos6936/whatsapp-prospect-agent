@@ -21,8 +21,8 @@ import {
   touchIncomingContact,
   findMatchingKeywordAutomations,
   listActiveAutomations,
-  listAutomationTargets,
   findMatchingAutomationTarget,
+  existingWhatsAppMessageIds,
   findGroupReplyRule,
   addAutomationLog,
   updateAutomationStats,
@@ -151,6 +151,7 @@ export async function handleEvolutionWebhook(payload: unknown): Promise<number> 
     console.warn(`⚠️ Webhook Evolution ignoré — instance inconnue « ${instance} »`);
     return 0;
   }
+  pollHealthFor(userId).lastWebhookAt = new Date().toISOString();
 
   const data = body.data;
   const items = Array.isArray(data) ? data : data ? [data] : [];
@@ -520,6 +521,7 @@ export interface WhatsappPollHealth {
   lastPollAt: string | null;
   lastSyncAt: string | null;
   lastIncomingAt: string | null;
+  lastWebhookAt: string | null;
   lastError: string | null;
   webhookBlocked: boolean;
   authorized: boolean;
@@ -529,15 +531,29 @@ export interface WhatsappPollHealth {
 
 function newPollHealth(): WhatsappPollHealth {
   return {
-    lastPollAt: null,
-    lastSyncAt: null,
-    lastIncomingAt: null,
-    lastError: null,
-    webhookBlocked: false,
-    authorized: true,
-    processedTotal: 0,
-    syncTotal: 0,
-  };
+  lastPollAt: null,
+  lastSyncAt: null,
+  lastIncomingAt: null,
+  lastWebhookAt: null,
+  lastError: null,
+  webhookBlocked: false,
+  authorized: true,
+  processedTotal: 0,
+  syncTotal: 0,
+};
+}
+
+/** Webhook vivant récemment → pas besoin de relire tout l'historique Evolution. */
+export const WEBHOOK_FRESH_MS = 120_000;
+
+export function webhookIsFresh(
+  lastWebhookAt: string | null | undefined,
+  nowMs = Date.now(),
+  windowMs = WEBHOOK_FRESH_MS
+): boolean {
+  if (!lastWebhookAt) return false;
+  const t = new Date(lastWebhookAt).getTime();
+  return Number.isFinite(t) && nowMs - t < windowMs;
 }
 
 /** État de santé du poller, isolé par tenant. */
@@ -630,13 +646,6 @@ async function ensureWhatsAppAuthorized(userId: number): Promise<boolean> {
   return ok;
 }
 
-function findAutomationTarget(
-  targets: Array<{ target_id: string; status?: string; ab_variant?: string | null }>,
-  chatId: string
-) {
-  return targets.find((t) => chatIdsMatch(t.target_id, chatId));
-}
-
 async function recordAutomationEngagement(
   userId: number,
   chatId: string,
@@ -654,8 +663,7 @@ async function recordAutomationEngagement(
       );
 
   for (const auto of campaigns) {
-    const targets = await listAutomationTargets(userId, auto.id, { limit: 2000 });
-    const target = findAutomationTarget(targets, chatId);
+    const target = await findMatchingAutomationTarget(userId, auto.id, chatId);
     if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
     if (target) {
       // Ne jamais rétrograder intéressé / stoppé
@@ -836,13 +844,13 @@ async function buildAutomationContext(
   }
 
   if (!activeCampaign) {
-    const followups = (await listActiveAutomations(userId)).filter(
+  const followups = (await listActiveAutomations(userId)).filter(
       (a) =>
         a.type === "group_prospect" ||
         a.type === "contact_prospect" ||
         a.type === "custom_followup"
-    );
-    for (const auto of followups) {
+  );
+  for (const auto of followups) {
       const target = await findMatchingAutomationTarget(userId, auto.id, chatId);
       if ((auto.type === "group_prospect" || auto.type === "contact_prospect") && !target) continue;
       if (auto.config.conversationGuide || auto.config.initialMessage || auto.config.livePlaybook?.turns?.length) {
@@ -866,9 +874,9 @@ async function buildAutomationContext(
         } catch {
           /* ignore */
         }
-        parts.push(
+      parts.push(
           buildActiveCampaignContext(auto, { memoryBlock, playbookBlock })
-        );
+      );
       }
     }
   }
@@ -1432,8 +1440,8 @@ async function runAutoReply(
             { enableAutoReply: false, automationId: activeCampaign.id }
           );
         } else {
-          const sent = await sendWhatsAppMessage(userId, chatId, reply, {
-            enableAutoReply: false,
+    const sent = await sendWhatsAppMessage(userId, chatId, reply, {
+      enableAutoReply: false,
             outboundProfile: "auto_reply",
             automationId: activeCampaign.id,
           });
@@ -1471,8 +1479,8 @@ async function runAutoReply(
         enableAutoReply: false,
         outboundProfile: "auto_reply",
         automationId: activeCampaign?.id ?? null,
-      });
-      console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
+    });
+    console.log(`✅ Réponse → ${senderName} à ${nowFr()} (${sent.idMessage})`);
     }
     if (activeCampaign) {
       await incrementMessagesHandled(userId, activeCampaign.id);
@@ -1671,6 +1679,9 @@ async function reprocessPendingAutoReplies(userId?: number): Promise<number> {
 export { reprocessPendingAutoReplies };
 
 async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
+  if (webhookIsFresh(pollHealthFor(userId).lastWebhookAt)) {
+    return 0;
+  }
   const settings = await getAppSettings(userId);
   if (!settings.evolution_api_key || !settings.evolution_instance_name) return 0;
   if (!(await ensureWhatsAppAuthorized(userId))) return 0;
@@ -1678,6 +1689,10 @@ async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
   let added = 0;
   try {
     const items = await getLastIncomingMessages(userId);
+    const candidateIds = items
+      .map((m) => m.idMessage)
+      .filter((id): id is string => Boolean(id));
+    const already = await existingWhatsAppMessageIds(userId, candidateIds);
     for (const m of items) {
       if (m.typeMessage === "reactionMessage" || m.typeMessage === "deletedMessage") continue;
 
@@ -1686,6 +1701,7 @@ async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
 
       const greenApiId = m.idMessage;
       if (!greenApiId) continue;
+      if (already.has(greenApiId)) continue;
 
       let text = m.textMessage?.trim() || m.extendedTextMessageData?.text?.trim() || "";
 
@@ -1693,11 +1709,9 @@ async function syncIncomingFromHistoryForUser(userId: number): Promise<number> {
       if (!text) {
         const kind = typeMessageToKind(m.typeMessage);
         if (kind) {
-          // Vérification avant appel OpenAI pour éviter les doublons coûteux.
-          const alreadyStored = await whatsAppMessageExists(userId, greenApiId);
-          text = alreadyStored
-            ? placeholderForKind(kind)
-            : (await describeInboundMedia(userId, greenApiId, { kind })) ?? placeholderForKind(kind);
+          text =
+            (await describeInboundMedia(userId, greenApiId, { kind })) ??
+            placeholderForKind(kind);
         } else {
           text = placeholderForType(m.typeMessage) ?? "";
         }
@@ -1735,7 +1749,7 @@ export async function syncIncomingFromHistory(): Promise<number> {
   let added = 0;
   for (const userId of userIds) {
     try {
-      added += await syncIncomingFromHistoryForUser(userId);
+    added += await syncIncomingFromHistoryForUser(userId);
     } catch (err) {
       console.error(`❌ Sync historique user ${userId}:`, err instanceof Error ? err.message : err);
     }
@@ -1750,13 +1764,12 @@ export async function pollOneNotification(): Promise<number> {
 
 let polling = false;
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
-let syncTick = 0;
 
-export function startNotificationPoller(intervalMs = 3000): void {
+export function startNotificationPoller(intervalMs = 90_000): void {
   if (intervalHandle) return;
 
-  console.log(`🔔 Sync messages entrants Evolution API (toutes les ${intervalMs / 1000}s)`);
-  console.log(`📥 Webhook : POST /api/evolution/webhook (recommandé en production)`);
+  console.log(`🔔 Filet sync Evolution (toutes les ${intervalMs / 1000}s si webhook silencieux)`);
+  console.log(`📥 Webhook : POST /api/evolution/webhook (chemin principal)`);
   console.log(`📦 Conversations prospects → PostgreSQL, pas le chat agent (multi-tenant)`);
 
   void syncIncomingFromHistory();
@@ -1766,14 +1779,7 @@ export function startNotificationPoller(intervalMs = 3000): void {
     if (polling) return;
     polling = true;
     try {
-      for (let i = 0; i < 4; i++) {
-        const n = await pollOneNotification();
-        if (n === 0) break;
-      }
-      syncTick += 1;
-      if (syncTick % 2 === 0) {
-        await syncIncomingFromHistory();
-      }
+      await pollOneNotification();
     } catch (err) {
       console.error("Erreur sync Evolution API:", err);
     } finally {
