@@ -12,7 +12,7 @@ import {
   type AgentMessage,
   type AppSettings,
 } from "./db.js";
-import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers } from "./evolutionapi.js";
+import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers, checkUserIsGroupAdmin } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import {
@@ -45,7 +45,7 @@ import {
   tryApplySendWindowFromUserMessage,
 } from "./send-window-routing.js";
 import { SUPPORT_FIL_SYSTEM_ADDENDUM } from "./support-flow.js";
-import { GROUPS_FIL_SYSTEM_ADDENDUM } from "./groups-flow.js";
+import { GROUPS_FIL_SYSTEM_ADDENDUM, extractGroupNamesFromHistory } from "./groups-flow.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
@@ -73,9 +73,12 @@ import {
   getLinkedCampaignMemory,
 } from "./campaign-memory.js";
 import {
+  detectGroupPublishIntent,
   detectQuickGroupMembersIntent,
   detectQuickListIntent,
   isGroupActionNotCatalogRequest,
+  lastGroupQueryFromHistory,
+  resolveMembersIntentFromHistory,
   wantsExplicitGroupCatalog,
 } from "./group-list-intent.js";
 import {
@@ -319,16 +322,17 @@ async function buildBusinessContext(
     } else if (thread?.purpose === "groupes") {
       lines.push(
         `## TYPE DE FIL — GROUPES WHATSAPP (OBLIGATOIRE)\n` +
-          `Ce fil gère les **groupes** où le compte est **administrateur** (publier, programmer, membres).\n` +
+          `Admin = **écrire** seulement (publier, programmer, gérer les membres, lancer une diffusion).\n` +
+          `Lister / extraire des contacts d'un groupe : **pas besoin d'être admin** — \`get_group_members\`.\n` +
           `- **INTERDIT** de demander un ID @g.us — toujours le **nom** du groupe.\n` +
-          `- Ajouter/retirer : \`manage_group_participants(group_id=nom, action, participants)\` dès que nom + numéro sont connus.\n` +
+          `- Ajouter/retirer : \`manage_group_participants(group_id=nom, action, participants)\` dès que nom + numéro sont connus (admin requis).\n` +
           `- Si le nom manque → UNE question « Dans quel groupe ? » (pas « donne l'ID »).\n` +
           `- Envoi immédiat : \`send_whatsapp_message\` (recipient = nom du groupe). **Ne passe PAS** par save_contact / prospects / get_group_members.\n` +
           `- Programmation : \`schedule_whatsapp_message\` (delay_minutes OU send_at_local) vers le groupe — même si plusieurs horaires, appelle l'outil plusieurs fois.\n` +
           `- INTERDIT d'appeler get_group_members quand l'utilisateur demande d'envoyer/programmer un message dans le groupe.\n` +
-          `- Campagne multi-jours (optionnelle) : create_automation type=\`group_broadcast\` — demande **« je valide »** (serveur crée le brouillon).\n` +
-          `- list_whatsapp_groups avec admin_only=true — pour lister ou lever une ambiguïté de nom.\n` +
-          `- Si l'outil renvoie une erreur « pas administrateur » → refuse clairement, ne contourne pas.\n` +
+          `- Campagne multi-jours (optionnelle) : create_automation type=\`group_broadcast\` — **refuse si pas admin**. Demande **« je valide »** (serveur crée le brouillon).\n` +
+          `- list_whatsapp_groups : admin_only=true **seulement** pour choisir où publier. Pour retrouver un groupe à lire : SANS admin_only.\n` +
+          `- Erreur « pas administrateur » sur un ENVOI → refuse. Sur une LECTURE de membres → réessaie get_group_members, ne demande pas un autre groupe admin.\n` +
           `- INTERDIT : contact_prospect, group_prospect (DM membres), keyword_sales / inbound, save_contact sur un @g.us.\n` +
           `- INTERDIT : 5 variantes d'accroche, A.I.D.A. cold, questions stickers/handoff support.\n` +
           `- Stats = messages envoyés vs restants (une cible = un groupe).\n` +
@@ -454,9 +458,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     );
   }
 
-  // Chemin rapide : extraction membres d'un groupe nommé
-  const membersQuick = detectQuickGroupMembersIntent(userMessage);
+  // Chemin rapide : extraction membres d'un groupe nommé (admin non requis)
+  const recentForMembers = await getRecentAgentMessages(userId, threadId, 10).catch(() => []);
+  const membersQuick = resolveMembersIntentFromHistory(userMessage, recentForMembers);
   if (membersQuick) {
+    if (!membersQuick.groupQuery) {
+      return (
+        "Dans quel groupe veux-tu extraire les contacts ? Donne le nom exact " +
+        "(copier-coller depuis WhatsApp). Pas besoin d'être administrateur pour ça."
+      );
+    }
     try {
       const found = await findGroupByNameOrId(userId, membersQuick.groupQuery);
       if (!found) {
@@ -483,6 +494,43 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       });
     } catch (err) {
       return userFacingError(err);
+    }
+  }
+
+  // Publier / lancer une campagne : admin obligatoire (lecture déjà gérée au-dessus)
+  if (detectGroupPublishIntent(userMessage)) {
+    const histForPublish =
+      recentForMembers.at(-1)?.role === "user" &&
+      recentForMembers.at(-1)?.content === userMessage
+        ? recentForMembers
+        : [
+            ...recentForMembers,
+            {
+              id: 0,
+              role: "user" as const,
+              content: userMessage,
+              created_at: new Date().toISOString(),
+            },
+          ];
+    const named =
+      lastGroupQueryFromHistory(
+        histForPublish.at(-1)?.content === userMessage
+          ? histForPublish.slice(0, -1)
+          : histForPublish
+      )?.query || extractGroupNamesFromHistory(histForPublish).at(-1);
+    if (named) {
+      try {
+        const found = await findGroupByNameOrId(userId, named);
+        if (found && !(await checkUserIsGroupAdmin(userId, found.id))) {
+          return (
+            `Tu n'es pas administrateur de « ${found.name} ». ` +
+            `Je peux extraire les contacts (lecture), mais je ne peux pas y publier ni lancer une campagne. ` +
+            `Donne un groupe où tu es admin pour l'envoi.`
+          );
+        }
+      } catch (err) {
+        return userFacingError(err);
+      }
     }
   }
 

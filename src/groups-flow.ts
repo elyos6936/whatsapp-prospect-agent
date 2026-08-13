@@ -14,17 +14,17 @@ import type { BriefingAssessment } from "./campaign-briefing.js";
 import { executeTool } from "./tools.js";
 
 export const GROUPS_FIL_SYSTEM_ADDENDUM = `## MODULE GROUPES WHATSAPP (prioritaire sur prospection / support)
-- Tu gères les groupes où le compte est **administrateur** : publier, programmer, ajouter/retirer des membres, admins, lien d'invitation.
+- **Admin requis UNIQUEMENT pour écrire** : envoyer, programmer, ajouter/retirer des membres, admins, lien d'invitation, diffusion / « lance la campagne ».
+- **Lire les contacts / membres** : PAS besoin d'être admin. Dès que le groupe est nommé → get_group_members(group_id=nom, limit=N). INTERDIT de refuser ou de demander un groupe admin pour ça.
 - **INTERDIT ABSOLU de demander un « ID de groupe » / @g.us** à l'utilisateur. Toujours le **nom** du groupe. Les outils résolvent le nom tout seuls.
-- **Ajoute / retire un numéro** : dès que tu as le numéro + le nom du groupe → appelle **immédiatement** manage_group_participants(group_id=« nom du groupe », action=add|remove, participants=[…]). Ne demande PAS l'ID. Si le nom manque → UNE question : « Dans quel groupe ? ».
-- Si le groupe est introuvable : propose les **noms proches** renvoyés par l'outil (ou list_whatsapp_groups admin_only=true), jamais un ID technique.
-- Si pas admin → dis-le clairement ; propose le lien d'invitation (group_invite get_code) si pertinent.
+- **Ajoute / retire un numéro** : dès que tu as le numéro + le nom du groupe → manage_group_participants. Si pas admin → refuse clairement (c'est un écriture).
+- Si le groupe est introuvable pour une LECTURE : propose les noms proches (list_whatsapp_groups SANS admin_only), jamais un ID.
+- **Envoi / programmation / diffusion** : si pas admin → refuse. Ne contourne pas. list_whatsapp_groups(admin_only=true) seulement pour choisir où PUBLIER.
 - **Envoi immédiat** : send_whatsapp_message(recipient=nom du groupe, message=…).
 - **Programmation** : schedule_whatsapp_message (delay_minutes OU send_at_local) vers le groupe.
-- **Campagne multi-jours (optionnelle)** : create_automation type=group_broadcast avec initial_message + group_ids + sequence_steps éventuels.
+- **Campagne multi-jours (optionnelle)** : create_automation type=group_broadcast — admin obligatoire. « je valide » puis « active » (sans sim).
 - INTERDIT : 5 variantes d'accroche, contact_prospect, group_prospect, keyword_sales, save_contact sur @g.us.
 - INTERDIT ABSOLU : simulation téléphone / show_campaign_simulation / « simule » — ça n'existe PAS pour les groupes.
-- list_whatsapp_groups(admin_only=true) pour lister ou lever une ambiguïté de nom.
 - Quand une diffusion multi-jours est prête : demande « je valide » / « crée le brouillon » — le serveur crée group_broadcast, puis « active » pour lancer (sans sim).`;
 
 /** Noms de groupes cités par l'utilisateur. */
@@ -146,8 +146,9 @@ export function buildGroupsBriefingNudge(
     if (!groups.length) {
       return (
         "Tu as le message. Pose UNE question — « Dans **quel(s) groupe(s)** (où tu es admin) ? » " +
-        "Tu peux proposer list_whatsapp_groups(admin_only=true). " +
-        "Ensuite : send_whatsapp_message ou schedule_whatsapp_message — pas de create_automation sauf s'il demande une série multi-jours. " +
+        "Tu peux proposer list_whatsapp_groups (sans admin_only). " +
+        "Ensuite : send_whatsapp_message ou schedule_whatsapp_message — admin requis pour l'envoi. " +
+        "Pas de create_automation sauf s'il demande une série multi-jours. " +
         "INTERDIT : simulation."
       );
     }
@@ -189,6 +190,7 @@ export function shouldDeterministicGroupsDraft(
 ): boolean {
   const t = userMessage.trim();
   if (!t || t.length > 140) return false;
+  if (/\b(contacts?|membres?|participants?)\b/i.test(t)) return false;
   if (!userWantsGroupsCampaign(history, userMessage) && !extractGroupPostMessage(history)) {
     return false;
   }

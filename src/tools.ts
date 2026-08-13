@@ -223,8 +223,9 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
       name: "list_whatsapp_groups",
       description:
         "Liste les groupes WhatsApp (noms + IDs @g.us). " +
-        "Pour diffusion groupes (fil Groupes) : passe admin_only=true — uniquement les groupes où le compte est admin. " +
-        "Sinon : UNIQUEMENT si l'utilisateur demande explicitement la liste (« liste mes groupes »).",
+        "admin_only=true UNIQUEMENT pour choisir où PUBLIER / lancer une diffusion. " +
+        "Pour retrouver un groupe afin d'en LIRE les membres : SANS admin_only. " +
+        "Catalogue complet : seulement si l'utilisateur demande « liste mes groupes ».",
       parameters: {
         type: "object",
         properties: {
@@ -272,9 +273,10 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
     function: {
       name: "get_group_members",
       description:
-        "Liste UNIQUEMENT les membres d'un groupe WhatsApp (ID @g.us ou nom). " +
-        "Ne sert PAS à envoyer ni programmer un message dans le groupe — pour ça : send_whatsapp_message / schedule_whatsapp_message. " +
-        "Si l'utilisateur demande N membres seulement (ex. « deux membres »), passe limit=N.",
+        "Liste UNIQUEMENT les membres / contacts d'un groupe WhatsApp (ID @g.us ou nom). " +
+        "Pas besoin d'être administrateur — membre du groupe suffit. " +
+        "Ne sert PAS à envoyer ni programmer un message dans le groupe — pour ça : send_whatsapp_message / schedule_whatsapp_message (admin requis). " +
+        "Si l'utilisateur demande N membres seulement (ex. « 3 contacts »), passe limit=N.",
       parameters: {
         type: "object",
         properties: {

@@ -849,6 +849,16 @@ export async function listAdminWhatsAppGroups(
   return out;
 }
 
+/** True si le compte connecté est admin du groupe (pas de throw). */
+export async function checkUserIsGroupAdmin(userId: number, groupId: string): Promise<boolean> {
+  try {
+    await assertUserIsGroupAdmin(userId, groupId);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** Vérifie que le compte connecté est admin du groupe (sinon throw). */
 export async function assertUserIsGroupAdmin(userId: number, groupId: string): Promise<void> {
   const ownerId = await getConnectedOwnerId(userId);

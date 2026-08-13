@@ -22,6 +22,7 @@ const FR_NUM: Record<string, number> = {
 };
 
 export type QuickGroupMembersIntent = {
+  /** Vide = le nom est dans un tour précédent. */
   groupQuery: string;
   limit?: number;
 };
@@ -189,7 +190,122 @@ export function detectQuickGroupMembersIntent(msg: string): QuickGroupMembersInt
       }
     }
   }
+  // « 3 contacts du groupe » sans nom — le nom est dans l'historique.
+  return { groupQuery: "", limit };
+}
+
+/** Un message qui n'est qu'un nom de groupe (suite après « groupe introuvable »). */
+export function looksLikeBareGroupName(msg: string): boolean {
+  const t = msg.trim();
+  if (t.length < 2 || t.length > 80) return false;
+  if (/\n/.test(t) || /\?/.test(t)) return false;
+  if (/^(oui|ouais|non|nan|ok|okay|d['’]accord|dac|valide|je\s+valide)\b/i.test(t)) {
+    return false;
+  }
+  if (
+    /\b(donne|liste|lister|montre|membres?|participants?|contacts?|envoie|envoyer|poste|publie|campagne|brouillon|active|lance|lancer|ajoute|retire)\b/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
+  if (/^[\d+\s.\-()]{6,}$/.test(t)) return false;
+  return /[A-Za-zÀ-ÿ]/.test(t);
+}
+
+function historyWithoutCurrent(
+  history: Array<{ role: string; content: string }>,
+  userMessage: string
+): Array<{ role: string; content: string }> {
+  const last = history.at(-1);
+  if (last?.role === "user" && last.content === userMessage) {
+    return history.slice(0, -1);
+  }
+  return history;
+}
+
+/** Dernier nom de groupe cité (intent nommé, ou nom seul après une demande membres). */
+export function lastGroupQueryFromHistory(
+  history: Array<{ role: string; content: string }>
+): { query: string; limit?: number } | null {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== "user") continue;
+    const intent = detectQuickGroupMembersIntent(m.content);
+    if (intent?.groupQuery) return { query: intent.groupQuery, limit: intent.limit };
+    if (looksLikeBareGroupName(m.content)) {
+      const before = history.slice(0, i);
+      const prior = [...before]
+        .reverse()
+        .map((x) => (x.role === "user" ? detectQuickGroupMembersIntent(x.content) : null))
+        .find((x) => x);
+      if (prior) {
+        return { query: m.content.trim(), limit: prior.limit };
+      }
+    }
+  }
   return null;
+}
+
+/**
+ * Relie « 3 contacts du groupe » / un nom seul au groupe déjà cité dans le fil.
+ * Préfère le nom le plus récent (correction « RADAR » → « GIT3 … »).
+ */
+export function resolveMembersIntentFromHistory(
+  userMessage: string,
+  history: Array<{ role: string; content: string }>
+): QuickGroupMembersIntent | null {
+  const prior = historyWithoutCurrent(history, userMessage);
+  const current = detectQuickGroupMembersIntent(userMessage);
+  if (current?.groupQuery) return current;
+
+  const hadMembersAsk =
+    Boolean(current) ||
+    prior.some((m) => m.role === "user" && Boolean(detectQuickGroupMembersIntent(m.content)));
+  if (!hadMembersAsk) return null;
+
+  if (looksLikeBareGroupName(userMessage)) {
+    const last = lastGroupQueryFromHistory(prior);
+    return {
+      groupQuery: userMessage.trim(),
+      limit: current?.limit ?? last?.limit,
+    };
+  }
+
+  if (current && !current.groupQuery) {
+    const last = lastGroupQueryFromHistory(prior);
+    if (last) return { groupQuery: last.query, limit: current.limit ?? last.limit };
+    return { groupQuery: "", limit: current.limit };
+  }
+
+  return null;
+}
+
+/** Publier / lancer une campagne / envoyer dans un groupe — admin requis. */
+export function detectGroupPublishIntent(msg: string): boolean {
+  const t = msg.trim();
+  if (!t || t.length > 240) return false;
+  const members = detectQuickGroupMembersIntent(t);
+  if (
+    members &&
+    !/\b(lance|lancer|envoie|envoyer|poste|publie|campagne|diffusion|active|activer)\b/i.test(t)
+  ) {
+    return false;
+  }
+  if (
+    /\b(lance[rz]?\s+(la\s+)?campagne|active[rz]?\s+(la\s+)?campagne|lance[rz]?\s+(la\s+)?diffusion)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(envoie[rz]?|poste[rz]?|publie[rz]?|programme[rz]?)\b/i.test(t) &&
+    /\b(groupe|campagne|diffusion)\b/i.test(t)
+  ) {
+    return true;
+  }
+  return false;
 }
 
 /** Intentions simples : listes sans boucle LLM. */
