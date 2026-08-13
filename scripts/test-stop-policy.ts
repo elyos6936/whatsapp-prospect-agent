@@ -7,6 +7,8 @@ import {
   detectNotInterested,
   detectContextualRefusal,
   detectOutOfScope,
+  detectUnknownQuestion,
+  detectRepeatedUnknownQuestion,
   isOutboundDiagnosticAsk,
   isOutboundConsentAsk,
   shouldSilenceAfterFarewell,
@@ -189,6 +191,34 @@ console.log("\n=== Croisé masterclass / graphisme (mission par campagne) ===\n"
     shouldStopConversation("C'est combien ?", { price: "40 000 FCFA" }, masterclass, engaged) ===
       null,
     "prix sur fil masterclass → on reste sur CETTE campagne"
+  );
+}
+
+console.log("\n=== unknown_question : alerte sans coupure ===\n");
+{
+  const biz = { offer: "Offre", price: "", ownerName: "Alex" };
+  const cfg = { productName: "Offre", conversationGuide: "pas de tarif" };
+  assert(detectUnknownQuestion("C'est combien ?", biz, cfg), "prix absent → unknown");
+  assert(
+    detectRepeatedUnknownQuestion("C'est combien ?", [], biz, cfg) === null,
+    "1re unknown → pas d'alerte"
+  );
+  const hist = [{ direction: "entrant", body: "C'est combien ?" }];
+  const rep = detectRepeatedUnknownQuestion("Vous facturez combien ?", hist, biz, cfg);
+  assert(rep?.alert === true && rep.topic === "price" && rep.count === 2, "2e unknown prix → alerte");
+  assert(
+    shouldStopConversation("Vous facturez combien ?", biz, cfg, hist) === null,
+    "unknown (question) → pas de coupure"
+  );
+  const withPrice = { offer: "Offre", price: "25 000 FCFA", ownerName: "Alex" };
+  assert(
+    detectRepeatedUnknownQuestion(
+      "C'est combien ?",
+      [{ direction: "entrant", body: "C'est combien ?" }],
+      withPrice,
+      { price: "25 000 FCFA" }
+    ) === null,
+    "prix en config → pas unknown, pas d'alerte"
   );
 }
 

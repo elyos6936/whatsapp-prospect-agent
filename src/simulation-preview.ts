@@ -29,6 +29,7 @@ import {
   wasVerballyClosed,
   isAffirmingPendingSendOffer,
   ensurePendingLinkInReply,
+  alignOutboundVerbalClose,
 } from "./lead-scoring.js";
 import {
   getObjectiveReachedReply,
@@ -403,6 +404,12 @@ export async function replyInSimulationPreview(
         ],
       });
     }
+    reply = alignOutboundVerbalClose(
+      reply,
+      prospectMessage,
+      priorPolicyHistory,
+      campaignConfig
+    ).reply;
   } catch {
     reply =
       mode === "inbound"

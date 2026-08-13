@@ -53,9 +53,28 @@ function stripUrls(text: string, urls: string[]): string {
     .trim();
 }
 
+/** Reste qui ne fait qu'annoncer un lien retiré (CTA orphelin). */
+function isOrphanedLinkCta(text: string): boolean {
+  const t = text.toLowerCase();
+  if (!/\b(lien|url|clique[rz]?|finalis\w*|command[ezr]\w*|payer|paiement)\b/i.test(t)) {
+    return false;
+  }
+  // Info concrète (prix, produit, lieu) → on garde le reste, on n'écrase pas.
+  if (
+    /\b(\d[\d\s.]{1,}\s*(fcfa|f\b|€|euros?)|quartier|ville|livr|taille|couleur|dispo)/i.test(
+      t
+    )
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /** Reste-t-il une phrase exploitable après retrait de l'URL ? */
 function hasUsableSentence(text: string): boolean {
-  return text.length >= 15 && /[a-zàâäéèêëïîôùûüç]/i.test(text);
+  if (text.length < 15 || !/[a-zàâäéèêëïîôùûüç]/i.test(text)) return false;
+  if (isOrphanedLinkCta(text)) return false;
+  return true;
 }
 
 /**

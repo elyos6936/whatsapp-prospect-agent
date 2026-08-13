@@ -53,6 +53,7 @@ import {
   wasVerballyClosed,
   isAppointmentSlotConfirmed,
   ensurePendingLinkInReply,
+  alignOutboundVerbalClose,
 } from "./lead-scoring.js";
 import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
@@ -73,7 +74,7 @@ import {
 } from "./whatsapp-reply.js";
 import { enqueueAutoReply } from "./auto-reply-queue.js";
 import { ANTI_BAN, clampPresenceMs } from "./anti-ban.js";
-import { shouldStopConversation, stopReasonLabel, getStopFarewellReply, getObjectiveReachedReply, shouldSilenceAfterFarewell } from "./stop-policy.js";
+import { shouldStopConversation, stopReasonLabel, getStopFarewellReply, getObjectiveReachedReply, shouldSilenceAfterFarewell, detectRepeatedUnknownQuestion } from "./stop-policy.js";
 import type { Automation, AutomationConfig } from "./db.js";
 import { buildSupportConversationGuide } from "./support-flow.js";
 
@@ -1050,6 +1051,32 @@ async function runAutoReply(
       const actionableStop =
         stopReason && stopReason !== "unknown_question" ? stopReason : null;
 
+      const unknownRepeat = detectRepeatedUnknownQuestion(
+        text,
+        history,
+        {
+          offer: settings.business_offer,
+          price: settings.business_price,
+          ownerName: settings.business_owner_name,
+        },
+        activeCampaign?.config
+      );
+      if (unknownRepeat?.alert && activeCampaign) {
+        console.warn(
+          `[outreach] unknown-question-repeat topic=${unknownRepeat.topic} n=${unknownRepeat.count} chat=${chatId}`
+        );
+        if (unknownRepeat.count === 2) {
+          await saveAgentMessageForAutomation(
+            userId,
+            activeCampaign.id,
+            "assistant",
+            `⚠️ Question sans réponse en config (${unknownRepeat.topic}) — 2 fois de suite ` +
+              `(${senderName}, ${chatIdToDisplay(chatId)}). Campagne « ${activeCampaign.name} ». ` +
+              `L'IA continue — pas d'arrêt.`
+          );
+        }
+      }
+
       if (actionableStop && activeCampaign) {
         await stopAutomationTargetForContact(
           userId,
@@ -1280,6 +1307,25 @@ async function runAutoReply(
             ...(activeCampaign?.config.abVariants?.map((v) => v.message) ?? []),
           ],
         });
+      }
+      {
+        const aligned = alignOutboundVerbalClose(
+          reply,
+          text,
+          history,
+          activeCampaign?.config
+        );
+        if (aligned.premature && activeCampaign) {
+          console.warn(`[outreach] premature-verbal-close chat=${chatId}`);
+          await saveAgentMessageForAutomation(
+            userId,
+            activeCampaign.id,
+            "assistant",
+            `⚠️ Clôture orale sans objectif D — ${senderName} (${chatIdToDisplay(chatId)}). ` +
+              `Campagne « ${activeCampaign.name} ». Message recadré, campagne non arrêtée.`
+          );
+        }
+        reply = aligned.reply;
       }
     }
 

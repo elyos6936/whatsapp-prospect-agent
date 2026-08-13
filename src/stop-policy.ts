@@ -251,31 +251,77 @@ export function detectOutOfScope(
   return OUT_OF_SCOPE_TRADE_CLAIM.test(t);
 }
 
-export function detectUnknownQuestion(
+export type UnknownQuestionTopic = "price" | "delivery" | "product";
+
+export function classifyUnknownQuestionTopic(
   text: string,
   business: { offer?: string | null; price?: string | null; ownerName?: string | null },
   campaignConfig?: AutomationConfig
-): boolean {
+): UnknownQuestionTopic | null {
   const t = text.toLowerCase();
 
   if (PRICE_QUESTION.test(t)) {
     const hasPrice = Boolean(business.price?.trim() || campaignConfig?.price?.trim());
-    if (!hasPrice) return true;
+    if (!hasPrice) return "price";
   }
 
   if (DELIVERY_QUESTION.test(t)) {
     const goal = campaignConfig?.closingGoal;
     const guide = campaignConfig?.conversationGuide ?? "";
     if (goal !== "delivery" && !/livraison|adresse|expedition/i.test(guide)) {
-      return true;
+      return "delivery";
     }
   }
 
   if (PRODUCT_QUESTION.test(t) && !business.offer?.trim() && !campaignConfig?.productName?.trim()) {
-    return true;
+    return "product";
   }
 
-  return false;
+  return null;
+}
+
+export function detectUnknownQuestion(
+  text: string,
+  business: { offer?: string | null; price?: string | null; ownerName?: string | null },
+  campaignConfig?: AutomationConfig
+): boolean {
+  return classifyUnknownQuestionTopic(text, business, campaignConfig) != null;
+}
+
+const UNKNOWN_REPEAT_THRESHOLD = 2;
+
+/**
+ * Même thème de question inconnue N fois de suite (entrant).
+ * N'arrête pas la conversation — signal opérateur uniquement.
+ */
+export function detectRepeatedUnknownQuestion(
+  text: string,
+  history: Array<{ direction: string; body: string }> | undefined,
+  business: { offer?: string | null; price?: string | null; ownerName?: string | null },
+  campaignConfig?: AutomationConfig
+): { alert: boolean; topic: UnknownQuestionTopic; count: number } | null {
+  const topic = classifyUnknownQuestionTopic(text, business, campaignConfig);
+  if (!topic) return null;
+
+  const inbound = [
+    ...(history ?? [])
+      .filter((m) => m.direction === "entrant")
+      .map((m) => m.body),
+    text,
+  ];
+  // Évite de compter deux fois le message courant s'il est déjà dans l'historique.
+  if (inbound.length >= 2 && inbound[inbound.length - 2] === text) {
+    inbound.pop();
+  }
+
+  let count = 0;
+  for (let i = inbound.length - 1; i >= 0; i--) {
+    const t = classifyUnknownQuestionTopic(inbound[i], business, campaignConfig);
+    if (t !== topic) break;
+    count++;
+  }
+  if (count < UNKNOWN_REPEAT_THRESHOLD) return null;
+  return { alert: true, topic, count };
 }
 
 function countHostileInbound(history: Array<{ direction: string; body: string }>): number {

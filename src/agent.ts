@@ -97,6 +97,13 @@ import {
   isHighStakesTool,
   resolveAllowedHighStakesTools,
 } from "./high-stakes-intent.js";
+import {
+  ROUTER_STALL_CLARIFY,
+  alreadyAskedRouterStallClarify,
+  countRouterStallToolErrors,
+  detectCrossTurnRouterStall,
+  shouldStopAfterRouterBlocks,
+} from "./agent-stall.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
 const MAX_TOOL_ROUNDS = 12;
@@ -766,6 +773,17 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   // Simulation LLM fallback déjà tentée via runDeterministicSimulation plus haut.
   // Ne plus pousser FORCE_SIMULATION_NUDGE (le LLM inventait le footer sans fence).
 
+  if (
+    detectCrossTurnRouterStall({
+      history,
+      userMessage,
+      inCampaignFlow: briefing.inCampaignFlow,
+    })
+  ) {
+    console.warn(`[agent] router-stall thread=${threadId} reason=repeated-ask`);
+    return ROUTER_STALL_CLARIFY;
+  }
+
   if (turnMode === "decline_sim") {
     messages.push({ role: "system", content: DECLINE_SIMULATION_NUDGE });
   } else if (silentTweakAfterSim) {
@@ -872,6 +890,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
 
     if (assistantMsg.tool_calls?.length) {
       messages.push(toAssistantHistoryMessage(assistantMsg, toolProvider));
+      const toolMsgStart = messages.length;
 
       for (const toolCall of assistantMsg.tool_calls) {
         if (toolCall.type !== "function") continue;
@@ -1355,6 +1374,17 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           tool_call_id: toolCall.id,
           content: slimToolResultForLlm(toolCall.function.name, result),
         });
+      }
+
+      const blockedThisRound = countRouterStallToolErrors(messages.slice(toolMsgStart));
+      if (
+        shouldStopAfterRouterBlocks(blockedThisRound) &&
+        !alreadyAskedRouterStallClarify(history)
+      ) {
+        console.warn(
+          `[agent] router-stall thread=${threadId} reason=blocked-tools n=${blockedThisRound}`
+        );
+        return ROUTER_STALL_CLARIFY;
       }
 
       continue;

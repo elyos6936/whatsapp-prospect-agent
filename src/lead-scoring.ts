@@ -250,10 +250,59 @@ export function isCampaignObjectiveReached(
 export function wasVerballyClosed(
   history: { direction: string; body: string }[]
 ): boolean {
-  return history
+  const recentOut = history
     .filter((m) => m.direction === "sortant")
-    .slice(-4)
-    .some((m) => VERBAL_CLOSE_DONE.test(m.body));
+    .slice(-6);
+  // Clôture orale définitive seulement s'il y a aussi une action D livrée.
+  if (!recentOut.some((m) => outboundDeliveredAction(m.body))) return false;
+  return recentOut.slice(-4).some((m) => VERBAL_CLOSE_DONE.test(m.body));
+}
+
+const CONTINUE_AFTER_PREMATURE_CLOSE =
+  "Je reste disponible pour la suite — dites-moi simplement ce qu'il vous faut.";
+
+function stripPrematureFarewell(text: string): string {
+  const stripped = text
+    .replace(
+      /(?:^|[.!?]\s+)(?:bonne continuation|bonne journ[eé]e|passez une excellente)[^.!?]*[.!?]?\s*/gi,
+      " "
+    )
+    .replace(
+      /\bje (ne )?(vous |te )?(d[eé]range|contacte|ecri) plus[^.!?]*[.!?]?\s*/gi,
+      " "
+    )
+    .replace(/\bc['’]est not[eé] de mon c[oô]t[eé][^.!?]*[.!?]?\s*/gi, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  if (stripped.length >= 12 && !VERBAL_CLOSE_DONE.test(stripped)) return stripped;
+  if (stripped.length >= 12) {
+    const withoutClose = stripped.replace(VERBAL_CLOSE_DONE, "").replace(/\s{2,}/g, " ").trim();
+    if (withoutClose.length >= 12) return withoutClose;
+  }
+  return CONTINUE_AFTER_PREMATURE_CLOSE;
+}
+
+/**
+ * Filet : un adieu LLM n'est définitif que si une action D est déjà livrée
+ * (ce message ou l'historique). Sinon on recadre le texte, on n'arrête pas.
+ */
+export function alignOutboundVerbalClose(
+  reply: string,
+  inboundText: string,
+  history: { direction: string; body: string }[],
+  config?: Pick<AutomationConfig, "closingGoal" | "closingLink"> | null
+): { reply: string; premature: boolean } {
+  const t = String(reply ?? "").trim();
+  if (!t || !VERBAL_CLOSE_DONE.test(t)) return { reply: t, premature: false };
+  if (outboundDeliveredAction(t)) return { reply: t, premature: false };
+  const recentOut = history.filter((m) => m.direction === "sortant").slice(-6);
+  if (recentOut.some((m) => outboundDeliveredAction(m.body))) {
+    return { reply: t, premature: false };
+  }
+  if (isCampaignObjectiveReached(inboundText, history, config)) {
+    return { reply: t, premature: false };
+  }
+  return { reply: stripPrematureFarewell(t), premature: true };
 }
 
 /**

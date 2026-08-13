@@ -9,6 +9,7 @@ import {
   isAffirmingPendingSendOffer,
   outboundDeliveredAction,
   ensurePendingLinkInReply,
+  alignOutboundVerbalClose,
 } from "../src/lead-scoring.js";
 import {
   phoneKeyFromWhatsAppId,
@@ -184,6 +185,42 @@ console.log("\n=== Google Contacts: numéros Bénin 22901… ===\n");
   assert(toE164Display(key!) === "+22966082161", "e164 canon");
   assert(phonesMatchStrict("22966082161", "2290166082161"), "match avec/sans 01");
   assert(phonesMatchStrict("+22966082161", "+229 01 66 08 21 61"), "match formaté");
+}
+
+console.log("\n=== Clôture orale alignée sur preuve D ===\n");
+{
+  assert(
+    !wasVerballyClosed([
+      { direction: "sortant", body: "Compris, je ne vous dérange plus. Bonne continuation !" },
+    ]),
+    "adieu sans action livrée ≠ clôture définitive"
+  );
+  const deliveredAndClosed = [
+    {
+      direction: "sortant",
+      body: "Voici le lien : https://pay.example.com/ok — c'est noté de mon côté. Bonne continuation !",
+    },
+  ];
+  assert(outboundDeliveredAction(deliveredAndClosed[0].body), "URL = action livrée");
+  assert(wasVerballyClosed(deliveredAndClosed), "adieu + URL → clôture orale D");
+
+  const premature = alignOutboundVerbalClose(
+    "Parfait, je ne vous dérange plus. Bonne continuation !",
+    "ok",
+    [{ direction: "sortant", body: "Les baskets sont à 40 000 FCFA." }],
+    { closingGoal: "delivery" }
+  );
+  assert(premature.premature, "adieu sans livraison → prématuré");
+  assert(!/bonne continuation/i.test(premature.reply), "adieu retiré du texte");
+  assert(!wasVerballyClosed([{ direction: "sortant", body: premature.reply }]), "texte recadré ≠ closed");
+
+  const okClose = alignOutboundVerbalClose(
+    "Je transmets au livreur, il vous appelle. Bonne continuation !",
+    "voici mon quartier",
+    [],
+    { closingGoal: "delivery" }
+  );
+  assert(!okClose.premature, "handoff livreur dans le message → clôture OK");
 }
 
 console.log("\n=== Anti faux liens (Support) ===\n");
