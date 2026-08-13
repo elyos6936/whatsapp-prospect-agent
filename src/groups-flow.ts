@@ -11,17 +11,18 @@
  */
 import type { AgentMessage } from "./db.js";
 import type { BriefingAssessment } from "./campaign-briefing.js";
+import { isGroupNonPublishAction } from "./group-manage-intent.js";
 import { executeTool } from "./tools.js";
 
 export const GROUPS_FIL_SYSTEM_ADDENDUM = `## MODULE GROUPES WHATSAPP (prioritaire sur prospection / support)
-- Ce fil = **publier / programmer DANS le groupe**. PAS de simulation téléphone. PAS de DM aux membres.
-- « Prospecter le groupe / les membres » → oriente vers **Nouvelle automatisation → Prospection**. N'invente pas un brouillon ici. N'écris JAMAIS « opener de prospection ».
-- **Admin requis UNIQUEMENT pour écrire** : envoyer, programmer, ajouter/retirer des membres, diffusion.
-- **Lire les contacts / membres** : PAS besoin d'être admin → get_group_members. INTERDIT de refuser une lecture.
-- **INTERDIT** de demander un ID @g.us — toujours le **nom**.
-- Sans texte exact à publier : UNE question « Quel **texte** poster dans le groupe ? » — pas J+1, pas « je valide ».
-- Envoi ponctuel : send_whatsapp_message / schedule_whatsapp_message (admin).
-- Diffusion multi-jours : seulement si l'utilisateur a donné le texte + le(s) groupe(s). Puis « je valide » → « active ». PAS de sim.`;
+- **Ajouter / retirer / admin** : dès que nom du groupe + numéro → manage_group_participants. INTERDIT de demander un texte à poster.
+- **Créer un groupe** : create_whatsapp_group (nom + au moins 1 numéro).
+- **Lien d'invitation** : group_invite(get_code). **Envoyer le lien à un numéro** : group_invite(send). **Rejoindre** : group_invite(accept). **Quitter** : leave_group.
+- **Lire membres** : get_group_members (pas besoin d'être admin).
+- « Prospecter le groupe / les membres » → **Nouvelle automatisation → Prospection**. Pas de DM ici. Pas de simulation.
+- **Publier** : seulement si l'utilisateur veut envoyer/poster un texto. Alors demande le texte. Admin requis pour l'envoi.
+- Diffusion multi-jours : texte + groupes d'abord, puis « je valide » → « active ». PAS de sim.
+- **INTERDIT** de demander un ID @g.us.`;
 
 export const GROUPS_PROSPECT_REDIRECT =
   "Ici on **publie dans le groupe** — pas de messages privés, pas de simulation téléphone.\n\n" +
@@ -162,6 +163,14 @@ export function buildGroupsBriefingNudge(
 ): string | null {
   if (!assessment.inCampaignFlow) return null;
 
+  if (isGroupNonPublishAction(userMessage)) {
+    return (
+      "Action membres / invitation / quitter — PAS une publication. " +
+      "Exécute manage_group_participants / group_invite / leave_group. " +
+      "INTERDIT : « quel texte poster », J+1, je valide, simulation, opener."
+    );
+  }
+
   if (wantsGroupMemberProspecting(userMessage)) {
     return (
       "L'utilisateur veut DM les membres (« prospecter le groupe »). " +
@@ -231,6 +240,7 @@ export function shouldDeterministicGroupsDraft(
 ): boolean {
   const t = userMessage.trim();
   if (!t || t.length > 140) return false;
+  if (isGroupNonPublishAction(t)) return false;
   if (/\b(contacts?|membres?|participants?)\b/i.test(t)) return false;
   if (!userWantsGroupsCampaign(history, userMessage) && !extractGroupPostMessage(history)) {
     return false;

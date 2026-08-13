@@ -204,6 +204,14 @@ export function isExplicitGroupAdminAction(text: string): boolean {
     return true;
   }
   if (/\b(invite[rz]?|inviter)\b.{0,40}\b(groupe|dans le groupe)\b/i.test(t)) return true;
+  if (
+    !/\bje\s+suis\s+admin\b/i.test(t) &&
+    /\b(promou[a-z]*|fais|faire|mets?|rends?|nomme)\b.{0,48}\badmin\b/i.test(t) &&
+    /\b(groupe|membre|participant)\b/i.test(t)
+  ) {
+    return true;
+  }
+  if (/(?:https?:\/\/)?chat\.whatsapp\.com\/[A-Za-z0-9_-]{8,}/i.test(t)) return true;
   return false;
 }
 

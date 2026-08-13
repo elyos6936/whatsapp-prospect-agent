@@ -73,6 +73,13 @@ console.log("\n=== Extract message / groupes ===\n");
     ]),
     "je valide sans texto → pas de brouillon"
   );
+  assert(
+    !shouldDeterministicGroupsDraft(
+      "Ajoute +22966082161 dans mon groupe Le Labo du No code",
+      [msg("user", "Message : Promo demain"), msg("user", "dans le groupe Team MASK")]
+    ),
+    "ajouter un membre ≠ brouillon diffusion"
+  );
 }
 
 console.log("\n=== Sequence steps ===\n");

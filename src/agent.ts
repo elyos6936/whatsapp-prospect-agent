@@ -14,6 +14,16 @@ import {
 } from "./db.js";
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers, checkUserIsGroupAdmin } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
+import {
+  detectCreateGroupIntent,
+  detectGroupInviteSendIntent,
+  detectJoinGroupInviteIntent,
+  detectLeaveGroupIntent,
+  isGroupNonPublishAction,
+  resolveInviteLinkFromHistory,
+  resolveManageIntentFromHistory,
+  type GroupManageIntent,
+} from "./group-manage-intent.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
 import {
   createLlmClient,
@@ -330,11 +340,11 @@ async function buildBusinessContext(
     } else if (thread?.purpose === "groupes") {
       lines.push(
         `## TYPE DE FIL — GROUPES WHATSAPP (OBLIGATOIRE)\n` +
-          `Ce fil = **publier dans le groupe**. **Pas de simulation téléphone.** « Prospecter les membres » → Nouvelle automatisation → Prospection.\n` +
+          `Ajouter/retirer un numéro = \`manage_group_participants\` (pas un post). Publier = texte exact. **Pas de simulation.** « Prospecter les membres » → Prospection.\n` +
           `Admin = **écrire** seulement (publier, programmer, gérer les membres, lancer une diffusion).\n` +
           `Lister / extraire des contacts d'un groupe : **pas besoin d'être admin** — \`get_group_members\`.\n` +
           `- **INTERDIT** de demander un ID @g.us — toujours le **nom** du groupe.\n` +
-          `- Ajouter/retirer : \`manage_group_participants(group_id=nom, action, participants)\` dès que nom + numéro sont connus (admin requis).\n` +
+          `- Ajouter/retirer : \`manage_group_participants(group_id=nom, action, participants)\` dès que nom + numéro sont connus (admin requis). INTERDIT de demander un texto à poster.\n` +
           `- Si le nom manque → UNE question « Dans quel groupe ? » (pas « donne l'ID »).\n` +
           `- Envoi immédiat : \`send_whatsapp_message\` (recipient = nom du groupe). **Ne passe PAS** par save_contact / prospects / get_group_members.\n` +
           `- Programmation : \`schedule_whatsapp_message\` (delay_minutes OU send_at_local) vers le groupe — même si plusieurs horaires, appelle l'outil plusieurs fois.\n` +
@@ -448,6 +458,83 @@ async function buildBusinessContext(
   return lines.join("\n\n");
 }
 
+const MANAGE_ACTION_LABEL: Record<GroupManageIntent["action"], string> = {
+  add: "ajouter",
+  remove: "retirer",
+  promote: "promouvoir admin",
+  demote: "rétrograder",
+};
+
+async function runGroupManageQuickPath(
+  userId: number,
+  threadId: number,
+  intent: GroupManageIntent
+): Promise<string> {
+  if (!intent.phones.length) {
+    return (
+      `Quel **numéro** ${MANAGE_ACTION_LABEL[intent.action]}` +
+      (intent.groupQuery ? ` dans « ${intent.groupQuery} »` : "") +
+      ` ?`
+    );
+  }
+  if (!intent.groupQuery) {
+    return `Dans quel groupe ${MANAGE_ACTION_LABEL[intent.action]} ${intent.phones.join(", ")} ?`;
+  }
+  const found = await requireNamedGroupAdmin(
+    userId,
+    intent.groupQuery,
+    `${MANAGE_ACTION_LABEL[intent.action]} un membre`
+  );
+  if (typeof found === "string") return found;
+  const raw = await executeTool(userId, threadId, "manage_group_participants", {
+    group_id: found.id,
+    action: intent.action,
+    participants: intent.phones,
+  });
+  return replyFromToolJson(raw);
+}
+
+function replyFromToolJson(raw: string): string {
+  try {
+    const parsed = JSON.parse(raw) as {
+      success?: boolean;
+      message?: string;
+      error?: string;
+      url?: string;
+      inviteUrl?: string;
+    };
+    if (parsed.error) return userFacingError(parsed.error);
+    const link = parsed.inviteUrl || parsed.url;
+    if (link && parsed.message) return parsed.message;
+    if (link) return `Lien d'invitation : ${link}`;
+    if (parsed.message) return parsed.message;
+  } catch {
+    /* raw */
+  }
+  return userFacingError(raw);
+}
+
+async function requireNamedGroupAdmin(
+  userId: number,
+  groupQuery: string,
+  actionLabel: string
+): Promise<{ id: string; name: string } | string> {
+  const found = await findGroupByNameOrId(userId, groupQuery);
+  if (!found) {
+    return (
+      `Groupe introuvable : « ${groupQuery} ».\n\n` +
+      `Vérifiez le nom exact (copier-coller depuis WhatsApp) ou demandez « liste mes groupes ».`
+    );
+  }
+  if (!(await checkUserIsGroupAdmin(userId, found.id))) {
+    return (
+      `Tu n'es pas administrateur de « ${found.name} » — il faut l'être pour ${actionLabel}. ` +
+      `Si tu l'es vraiment, redis-le (je réessaie) ou donne un groupe où tu es admin.`
+    );
+  }
+  return found;
+}
+
 function toOpenAiMessages(history: AgentMessage[]): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   return history.map((m) => ({
     role: m.role,
@@ -467,8 +554,113 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     );
   }
 
-  // Chemin rapide : extraction membres d'un groupe nommé (admin non requis)
   const recentForMembers = await getRecentAgentMessages(userId, threadId, 10).catch(() => []);
+
+  // Ajouter / retirer / admin — avant tout brief « quel texte poster »
+  const manageQuick = resolveManageIntentFromHistory(userMessage, recentForMembers);
+  if (manageQuick) {
+    try {
+      return await runGroupManageQuickPath(userId, threadId, manageQuick);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
+  const inviteSendQuick = detectGroupInviteSendIntent(userMessage);
+  if (inviteSendQuick) {
+    if (!inviteSendQuick.groupQuery) {
+      return `Pour quel groupe envoyer l'invitation à ${inviteSendQuick.phones.join(", ")} ?`;
+    }
+    try {
+      const found = await requireNamedGroupAdmin(
+        userId,
+        inviteSendQuick.groupQuery,
+        "envoyer une invitation"
+      );
+      if (typeof found === "string") return found;
+      const raw = await executeTool(userId, threadId, "group_invite", {
+        action: "send",
+        group_id: found.id,
+        numbers: inviteSendQuick.phones,
+      });
+      return replyFromToolJson(raw);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
+  const inviteQuick = resolveInviteLinkFromHistory(userMessage, recentForMembers);
+  if (inviteQuick) {
+    if (!inviteQuick.groupQuery) {
+      return "De quel groupe veux-tu le lien d'invitation ? Donne le nom exact.";
+    }
+    try {
+      const found = await requireNamedGroupAdmin(
+        userId,
+        inviteQuick.groupQuery,
+        inviteQuick.action === "revoke_code"
+          ? "révoquer le lien d'invitation"
+          : "obtenir le lien d'invitation"
+      );
+      if (typeof found === "string") return found;
+      const raw = await executeTool(userId, threadId, "group_invite", {
+        action: inviteQuick.action,
+        group_id: found.id,
+      });
+      return replyFromToolJson(raw);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
+  const joinQuick = detectJoinGroupInviteIntent(userMessage);
+  if (joinQuick) {
+    try {
+      const raw = await executeTool(userId, threadId, "group_invite", {
+        action: "accept",
+        invite_code: joinQuick.inviteCode,
+      });
+      return replyFromToolJson(raw);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
+  const createQuick = detectCreateGroupIntent(userMessage);
+  if (createQuick) {
+    if (!createQuick.subject) {
+      return "Quel **nom** pour le nouveau groupe ?";
+    }
+    if (!createQuick.phones.length) {
+      return `WhatsApp exige au moins 1 participant. Quel **numéro** ajouter dans « ${createQuick.subject} » ?`;
+    }
+    try {
+      const raw = await executeTool(userId, threadId, "create_whatsapp_group", {
+        subject: createQuick.subject,
+        participants: createQuick.phones,
+      });
+      return replyFromToolJson(raw);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
+  const leaveQuick = detectLeaveGroupIntent(userMessage);
+  if (leaveQuick) {
+    if (!leaveQuick.groupQuery) {
+      return "Quel groupe veux-tu quitter ? Donne le nom exact.";
+    }
+    try {
+      const raw = await executeTool(userId, threadId, "leave_group", {
+        group_id: leaveQuick.groupQuery,
+      });
+      return replyFromToolJson(raw);
+    } catch (err) {
+      return userFacingError(err);
+    }
+  }
+
+  // Chemin rapide : extraction membres d'un groupe nommé (admin non requis)
   const membersQuick = resolveMembersIntentFromHistory(userMessage, recentForMembers);
   if (membersQuick) {
     if (!membersQuick.groupQuery) {
@@ -642,6 +834,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       return GROUPS_PROSPECT_REDIRECT;
     }
     if (
+      !isGroupNonPublishAction(userMessage) &&
       !extractGroupPostMessage(history) &&
       /\b(campagne|je\s+valide|valide|brouillon|diffusion)\b/i.test(userMessage)
     ) {

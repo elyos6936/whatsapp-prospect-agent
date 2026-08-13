@@ -47,8 +47,30 @@ console.log("\n=== detectQuickGroupMembersIntent ===\n");
 console.log("\n=== looksLikeBareGroupName ===\n");
 {
   assert(looksLikeBareGroupName("GIT3 Information 25-26"), "GIT3 est un nom");
+  assert(looksLikeBareGroupName("Le labo du no code"), "Le labo est un nom");
   assert(!looksLikeBareGroupName("okay donne moi 3 contacts du groupe"), "pas un nom");
   assert(!looksLikeBareGroupName("okay"), "okay n'est pas un nom");
+  assert(!looksLikeBareGroupName("je suis admin bro"), "confirmation admin ≠ nom");
+  assert(
+    !looksLikeBareGroupName("je suis admin du groupe en question"),
+    "phrase admin ≠ nom"
+  );
+}
+
+console.log("\n=== confirmation admin ne déclenche pas l'extract ===\n");
+{
+  const hist = [
+    msg("user", "donne moi 3 contacts du groupe le Labo du no code"),
+    msg("assistant", "Tu n'es pas admin…"),
+  ];
+  assert(
+    resolveMembersIntentFromHistory("je suis admin bro", hist) == null,
+    "« je suis admin bro » → pas un extract"
+  );
+  assert(
+    resolveMembersIntentFromHistory("je suis admin du groupe en question", hist) == null,
+    "« je suis admin du groupe en question » → pas un extract"
+  );
 }
 
 console.log("\n=== resolveMembersIntentFromHistory (captures) ===\n");
@@ -96,6 +118,10 @@ console.log("\n=== detectGroupPublishIntent ===\n");
     "extraction contacts ≠ écriture"
   );
   assert(!detectGroupPublishIntent("donne moi 3 contacts du groupe RADAR"), "RADAR extract ≠ écriture");
+  assert(
+    !detectGroupPublishIntent("Ajoute +22966082161 dans mon groupe Le Labo du No code"),
+    "ajouter un membre ≠ publication"
+  );
 }
 
 console.log("\n=== extractGroupNameFromPublishMessage (pas l'historique) ===\n");

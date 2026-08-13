@@ -199,11 +199,17 @@ export function looksLikeBareGroupName(msg: string): boolean {
   const t = msg.trim();
   if (t.length < 2 || t.length > 80) return false;
   if (/\n/.test(t) || /\?/.test(t)) return false;
-  if (/^(oui|ouais|non|nan|ok|okay|d['’]accord|dac|valide|je\s+valide)\b/i.test(t)) {
+  // Phrase / confirmation — laisser l'IA, ne pas chercher un groupe à ce nom
+  if (
+    /^(oui|ouais|non|nan|ok|okay|d['’]accord|dac|valide|je\s+valide|je\s+suis|j['’]ai|j['’]y\s+suis|c['’]est|bro)\b/i.test(
+      t
+    )
+  ) {
     return false;
   }
+  if (/\b(je|tu|il|elle|on|nous|vous|ils|elles)\s+\w+/i.test(t)) return false;
   if (
-    /\b(donne|liste|lister|montre|membres?|participants?|contacts?|envoie|envoyer|poste|publie|campagne|brouillon|active|lance|lancer|ajoute|retire)\b/i.test(
+    /\b(donne|liste|lister|montre|membres?|participants?|contacts?|envoie|envoyer|poste|publie|campagne|brouillon|active|lance|lancer|ajoute|retire|admin|suis|peux|veux|question)\b/i.test(
       t
     )
   ) {
@@ -330,6 +336,14 @@ export function detectGroupPublishIntent(msg: string): boolean {
   if (
     members &&
     !/\b(lance|lancer|envoie|envoyer|poste|publie|campagne|diffusion|active|activer)\b/i.test(t)
+  ) {
+    return false;
+  }
+  if (
+    /\b(ajoute[rz]?|ajouter|retire[rz]?|retirer|enl[eè]ve[rz]?|invite[rz]?|quitte[rz]?)\b/i.test(
+      t
+    ) &&
+    !/\b(poste[rz]?|publie[rz]?|campagne|diffusion)\b/i.test(t)
   ) {
     return false;
   }
