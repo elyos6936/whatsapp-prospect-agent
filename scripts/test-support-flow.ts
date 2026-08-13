@@ -10,6 +10,9 @@ import {
 import {
   extractSupportTriggerPhrases,
   extractSupportHandoffKeywords,
+  extractSupportThirdParty,
+  extractPhoneFromUserText,
+  looksLikeThirdPartyPhoneReply,
   buildSupportBriefingNudge,
   buildSupportConversationGuide,
 } from "../src/support-flow.js";
@@ -104,6 +107,67 @@ console.log("\n=== Prospection nudge inchangé (pas support) ===\n");
   } else {
     assert(true, "prospection pas encore ready (ok)");
   }
+}
+
+console.log("\n=== Notif tiers / livreur ===\n");
+{
+  assert(extractPhoneFromUserText("le prix c'est 15 000 FCFA") == null, "prix ≠ numéro");
+  assert(extractPhoneFromUserText("préviens +229 97 00 00 00")?.includes("229") === true, "extrait +229");
+  assert(looksLikeThirdPartyPhoneReply("+22997000000"), "reply = numéro");
+  assert(!looksLikeThirdPartyPhoneReply("je valide"), "je valide ≠ numéro");
+
+  const yesPhone = extractSupportThirdParty(
+    [
+      msg("assistant", "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur) ?"),
+      msg("user", "oui, mon livreur c'est +229 97 11 22 33"),
+      msg("assistant", "Y a-t-il des mots pour lesquels je dois arrêter et te passer la main ?"),
+      msg("user", "non"),
+    ],
+    "je valide"
+  );
+  assert(yesPhone.accepted, "oui → accepté");
+  assert(/229/.test(yesPhone.phone || ""), "numéro conservé malgré je valide / handoff non");
+  assert(yesPhone.role === "livreur", "rôle livreur");
+
+  const declined = extractSupportThirdParty(
+    [
+      msg("assistant", "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur) ?"),
+      msg("user", "non"),
+    ],
+    "je valide"
+  );
+  assert(declined.declined, "non → refusé");
+  assert(!declined.accepted, "non ≠ accepté");
+
+  const yesNoPhone = extractSupportThirdParty(
+    [
+      msg("assistant", "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur) ?"),
+      msg("user", "oui"),
+    ],
+    "je valide"
+  );
+  assert(yesNoPhone.accepted && !yesNoPhone.phone, "oui sans numéro → accepté, phone vide");
+
+  const laterPhone = extractSupportThirdParty(
+    [
+      msg("assistant", "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur) ?"),
+      msg("user", "oui"),
+      msg("assistant", "Mots-clés pour passer la main à un humain ?"),
+      msg("user", "non"),
+    ],
+    "+22996158855"
+  );
+  assert(laterPhone.accepted && /22996158855/.test(laterPhone.phone || ""), "numéro collé après oui");
+
+  const briefPhone = extractSupportThirdParty(
+    [
+      msg("user", "préviens mon livreur au +22955556666 à chaque commande"),
+      msg("assistant", "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur) ?"),
+      msg("user", "oui"),
+    ],
+    "je valide"
+  );
+  assert(/22955556666/.test(briefPhone.phone || ""), "numéro déjà dans le brief + oui");
 }
 
 console.log("\n=== Handoff keywords ===\n");

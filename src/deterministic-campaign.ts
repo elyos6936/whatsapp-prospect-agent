@@ -30,6 +30,8 @@ import {
   extractSupportHandoffKeywords,
   extractSupportTriggerPhrases,
   extractSupportProductHint,
+  extractSupportThirdParty,
+  looksLikeThirdPartyPhoneReply,
   buildSupportConversationGuide,
   generateSupportSimulationDirect,
 } from "./support-flow.js";
@@ -363,6 +365,19 @@ export async function runDeterministicSupportDraftAndSim(opts: {
   }
 
   const handoffKeywords = extractSupportHandoffKeywords(history);
+  const thirdParty = extractSupportThirdParty(history, userMessage);
+  if (thirdParty.asked && !thirdParty.declined && !thirdParty.accepted) {
+    return (
+      "Tu veux qu'on prévienne un tiers (livreur, associé…) à chaque conversion ? " +
+      "Réponds **oui** (avec son numéro WhatsApp) ou **non**, puis redis « je valide »."
+    );
+  }
+  if (thirdParty.accepted && !thirdParty.phone) {
+    return (
+      "Pour prévenir le livreur / le tiers à chaque conversion, il me faut son **numéro WhatsApp**. " +
+      "Envoie-le (ex. +229…), puis redis « je valide »."
+    );
+  }
   const link = extractHttpLink(history);
   let price = extractPriceHint(history);
   if (!price) {
@@ -419,6 +434,15 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     ...(productHint ? { product_name: productHint } : {}),
     ...(link ? { closing_link: link } : {}),
     ...(price ? { price } : {}),
+    ...(thirdParty.declined
+      ? { third_party_notification_enabled: false }
+      : thirdParty.accepted && thirdParty.phone
+        ? {
+            third_party_notification_enabled: true,
+            third_party_phone: thirdParty.phone,
+            ...(thirdParty.role ? { third_party_role: thirdParty.role } : {}),
+          }
+        : {}),
     ...(existingAutomationId ? { automation_id: existingAutomationId } : {}),
   };
 
@@ -745,6 +769,7 @@ export function shouldDeterministicSupportDraft(
   ) {
     return true;
   }
+  if (looksLikeThirdPartyPhoneReply(t)) return true;
   return /\b(cr[eé]e|cr[eé]er|brouillon|valide|lance\s+le\s+brouillon)\b/i.test(t);
 }
 

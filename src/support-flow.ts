@@ -238,6 +238,106 @@ export function extractSupportHandoffKeywords(history: AgentMessage[]): string[]
   return found.slice(0, 12);
 }
 
+const SUPPORT_THIRD_PARTY_ASK_RE =
+  /\b(pr[eé]venir|notifier|pr[eé]vienne|notifie).{0,80}\b(tiers|quelqu.?un d.?autre|livreur|associ[eé]|commercial)\b|\b(tiers|livreur|associ[eé]|commercial).{0,80}\b(pr[eé]venir|notifier|automatiquement)\b|\bthird.party\b/i;
+
+const SUPPORT_HANDOFF_ASK_RE =
+  /\b(passer\s+la\s+main|handoff|mots?\s*cl[eé]|humain)\b/i;
+
+export type SupportThirdPartyExtract = {
+  asked: boolean;
+  declined: boolean;
+  accepted: boolean;
+  phone: string | null;
+  role: string | null;
+};
+
+/** Numéro WhatsApp dans un texte user — ignore les montants (FCFA / €). */
+export function extractPhoneFromUserText(text: string): string | null {
+  const cleaned = String(text ?? "").replace(
+    /\b\d[\d\s.,]{0,12}\s*(?:fcfa|f\b|€|euros?)\b/gi,
+    " "
+  );
+  const matches = cleaned.match(/(?:\+|00)?(?:229)?[\s.\-]*(?:01[\s.\-]*)?\d(?:[\s.\-]*\d){6,13}/g) ?? [];
+  for (const raw of matches) {
+    const digits = raw.replace(/\D/g, "");
+    if (digits.length < 8 || digits.length > 15) continue;
+    if (/^0+$/.test(digits)) continue;
+    return raw.replace(/\s+/g, " ").trim();
+  }
+  return null;
+}
+
+export function looksLikeThirdPartyPhoneReply(text: string): boolean {
+  const t = String(text ?? "").trim();
+  if (!t || /\b(fcfa|euros?)\b/i.test(t)) return false;
+  return Boolean(extractPhoneFromUserText(t));
+}
+
+/**
+ * Notif tiers (livreur) après la question Support — pas le brief e-commerce avant.
+ * « non » à la question handoff qui suit ne désactive pas le tiers.
+ */
+export function extractSupportThirdParty(
+  history: AgentMessage[],
+  userMessage = ""
+): SupportThirdPartyExtract {
+  const msgs: AgentMessage[] = userMessage.trim()
+    ? [
+        ...history,
+        {
+          id: 0,
+          role: "user",
+          content: userMessage,
+          created_at: "",
+        },
+      ]
+    : history;
+
+  let asked = false;
+  const afterAsk: string[] = [];
+  for (const m of msgs) {
+    if (m.role === "assistant" && SUPPORT_THIRD_PARTY_ASK_RE.test(m.content)) {
+      asked = true;
+      afterAsk.length = 0;
+      continue;
+    }
+    if (asked && m.role === "assistant" && SUPPORT_HANDOFF_ASK_RE.test(m.content)) {
+      break;
+    }
+    if (asked && m.role === "user") afterAsk.push(m.content);
+  }
+
+  const first = (afterAsk[0] ?? "").trim();
+  const afterBlob = afterAsk.join("\n");
+  const phoneAfterAsk = extractPhoneFromUserText(afterBlob);
+  const declined =
+    asked &&
+    /^(non|nan|pas\s+besoin|aucun|nope|niet)\b/i.test(first) &&
+    !phoneAfterAsk;
+
+  let phone = phoneAfterAsk;
+  const accepted =
+    !declined &&
+    (/\b(oui|ouais|yes|ok|okay|d['’]accord|vas[- ]y|go)\b/i.test(afterBlob) ||
+      Boolean(phoneAfterAsk));
+
+  if (accepted && !phone) {
+    for (const m of msgs) {
+      if (m.role !== "user") continue;
+      phone = extractPhoneFromUserText(m.content);
+      if (phone) break;
+    }
+  }
+
+  let role: string | null = null;
+  const roleHit = /\b(livreur|commercial|associ[eé]|assistant|tiers)\b/i.exec(afterBlob);
+  if (roleHit?.[1]) role = roleHit[1].toLowerCase();
+  if (accepted && !role) role = "livreur";
+
+  return { asked, declined, accepted, phone, role };
+}
+
 /**
  * Nudges Support uniquement — jamais d'opener / 5 variantes.
  */
