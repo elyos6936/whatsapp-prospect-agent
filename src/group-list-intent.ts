@@ -2,6 +2,14 @@
  * Détection d'intentions listes groupes / membres.
  * Isolé pour tests unitaires (pluriel FR, guillemets, limites numériques).
  */
+import {
+  detectCreateGroupIntent,
+  detectGroupInviteLinkIntent,
+  detectGroupInviteSendIntent,
+  detectGroupManageIntent,
+  detectJoinGroupInviteIntent,
+  detectLeaveGroupIntent,
+} from "./group-manage-intent.js";
 
 const FR_NUM: Record<string, number> = {
   un: 1,
@@ -194,11 +202,42 @@ export function detectQuickGroupMembersIntent(msg: string): QuickGroupMembersInt
   return { groupQuery: "", limit };
 }
 
+/** Réponse horaire / lancement — jamais un nom de groupe. */
+export function looksLikeWhenReply(msg: string): boolean {
+  const t = msg.trim();
+  if (!t) return false;
+  if (
+    /^(maintenant|tout\s+de\s+suite|imm[eé]diatement|asap|plus\s+tard|aujourd['’]hui|demain|apr[eè]s[- ]demain|ce\s+soir|ce\s+matin|cet\s+apr[eè]s[- ]?midi|hier|matin|soir|apr[eè]s[- ]?midi)\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  if (/^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/i.test(t)) return true;
+  if (/^\d{1,2}\s*h(\d{0,2})?\b/i.test(t)) return true;
+  return false;
+}
+
+/** L'assistant vient de demander un nom de groupe (extract / introuvable). */
+export function lastAssistantAskedForGroupName(
+  history: Array<{ role: string; content: string }>
+): boolean {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== "assistant") continue;
+    return /groupe introuvable|dans quel groupe|de quel groupe|quel groupe veux-tu|nom exact \(copier-coller|copier-coller depuis whatsapp/i.test(
+      m.content
+    );
+  }
+  return false;
+}
+
 /** Un message qui n'est qu'un nom de groupe (suite après « groupe introuvable »). */
 export function looksLikeBareGroupName(msg: string): boolean {
   const t = msg.trim();
   if (t.length < 2 || t.length > 80) return false;
   if (/\n/.test(t) || /\?/.test(t)) return false;
+  if (looksLikeWhenReply(t)) return false;
   // Phrase / confirmation — laisser l'IA, ne pas chercher un groupe à ce nom
   if (
     /^(oui|ouais|non|nan|ok|okay|d['’]accord|dac|valide|je\s+valide|je\s+suis|j['’]ai|j['’]y\s+suis|c['’]est|bro)\b/i.test(
@@ -271,6 +310,7 @@ export function resolveMembersIntentFromHistory(
   if (!hadMembersAsk) return null;
 
   if (looksLikeBareGroupName(userMessage)) {
+    if (!lastAssistantAskedForGroupName(prior)) return null;
     const last = lastGroupQueryFromHistory(prior);
     return {
       groupQuery: userMessage.trim(),
@@ -445,4 +485,44 @@ export function detectQuickListIntent(msg: string): QuickListIntent | null {
     return { kind: "contacts", limit };
   }
   return null;
+}
+
+/**
+ * Action groupe dans CE message — pas un follow-up historique.
+ * « lance la campagne » sans « groupe » n'en est pas une (Support / Prospection).
+ */
+export function isExplicitGroupOperation(msg: string): boolean {
+  if (detectGroupManageIntent(msg)) return true;
+  if (detectGroupSendNowIntent(msg)) return true;
+  if (detectGroupInviteSendIntent(msg)) return true;
+  if (detectGroupInviteLinkIntent(msg)) return true;
+  if (detectJoinGroupInviteIntent(msg)) return true;
+  if (detectCreateGroupIntent(msg)) return true;
+  if (detectLeaveGroupIntent(msg)) return true;
+  if (detectQuickGroupMembersIntent(msg)) return true;
+  if (detectQuickListIntent(msg)) return true;
+  if (
+    detectGroupPublishIntent(msg) &&
+    /\bgroupe/i.test(msg) &&
+    /\b(envoie|envoyer|poste|publie|programme)/i.test(msg)
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Chemins rapides groupes : fil Groupes, ou verbe explicite, ou nom seul
+ * seulement si l'agent vient de demander le groupe — jamais sur Support.
+ */
+export function allowGroupQuickPaths(opts: {
+  purpose: string | null | undefined;
+  userMessage: string;
+  history: Array<{ role: string; content: string }>;
+}): boolean {
+  if (opts.purpose === "groupes") return true;
+  if (isExplicitGroupOperation(opts.userMessage)) return true;
+  if (opts.purpose === "support") return false;
+  const prior = historyWithoutCurrent(opts.history, opts.userMessage);
+  return lastAssistantAskedForGroupName(prior) && looksLikeBareGroupName(opts.userMessage);
 }

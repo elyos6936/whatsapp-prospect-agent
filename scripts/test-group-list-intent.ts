@@ -7,8 +7,12 @@ import {
   detectGroupSendNowIntent,
   detectQuickGroupMembersIntent,
   extractGroupNameFromPublishMessage,
+  allowGroupQuickPaths,
+  isExplicitGroupOperation,
+  lastAssistantAskedForGroupName,
   lastGroupQueryFromHistory,
   looksLikeBareGroupName,
+  looksLikeWhenReply,
   resolveMembersIntentFromHistory,
 } from "../src/group-list-intent.js";
 import { shouldDeterministicGroupsDraft } from "../src/groups-flow.js";
@@ -56,6 +60,12 @@ console.log("\n=== looksLikeBareGroupName ===\n");
     !looksLikeBareGroupName("je suis admin du groupe en question"),
     "phrase admin ≠ nom"
   );
+  assert(!looksLikeBareGroupName("maintenant"), "maintenant ≠ nom de groupe");
+  assert(!looksLikeBareGroupName("demain matin"), "demain matin ≠ nom");
+  assert(!looksLikeBareGroupName("lundi 9h"), "lundi 9h ≠ nom");
+  assert(!looksLikeBareGroupName("tout de suite"), "tout de suite ≠ nom");
+  assert(looksLikeWhenReply("maintenant"), "maintenant = horaire");
+  assert(looksLikeWhenReply("demain matin"), "demain matin = horaire");
 }
 
 console.log("\n=== confirmation admin ne déclenche pas l'extract ===\n");
@@ -103,6 +113,32 @@ console.log("\n=== resolveMembersIntentFromHistory (captures) ===\n");
 
   const last = lastGroupQueryFromHistory(hist.slice(0, -1));
   assert(last?.query === "GIT3 Information 25-26", "dernier nom = GIT3 (correction)");
+}
+
+console.log("\n=== maintenant après extract ≠ extract membres ===\n");
+{
+  const hist = [
+    msg("user", "donne moi 3 contacts du groupe GIT3 Information 25-26"),
+    msg("assistant", "Voici 3 contacts du groupe GIT3…"),
+    msg("assistant", "Parfait 👌 Tu veux que je lance la prospection à quel moment exactement ? (maintenant, demain matin, lundi 9h...)"),
+  ];
+  assert(
+    resolveMembersIntentFromHistory("maintenant", hist) == null,
+    "« maintenant » après question horaire → pas un extract"
+  );
+  assert(
+    !lastAssistantAskedForGroupName(hist),
+    "dernière question = horaire, pas un nom de groupe"
+  );
+  const afterMissing = [
+    msg("user", "donne moi 3 contacts du groupe RADAR"),
+    msg("assistant", "Groupe introuvable : « RADAR ».\n\nVérifiez le nom exact (copier-coller depuis WhatsApp)."),
+  ];
+  assert(
+    resolveMembersIntentFromHistory("GIT3 Information 25-26", afterMissing)?.groupQuery ===
+      "GIT3 Information 25-26",
+    "nom seul après introuvable → GIT3"
+  );
 }
 
 console.log("\n=== detectGroupPublishIntent ===\n");
@@ -161,6 +197,104 @@ console.log("\n=== extractGroupNameFromPublishMessage (pas l'historique) ===\n")
   assert(
     extractGroupNameFromPublishMessage("lancer campagne") == null,
     "lancer campagne sans nom → null (fallback historique)"
+  );
+}
+
+console.log("\n=== allowGroupQuickPaths (Support isolé) ===\n");
+{
+  const hist = [
+    msg("user", "donne moi 3 contacts du groupe GIT3 Information 25-26"),
+    msg("assistant", "Voici 3 contacts…"),
+    msg("assistant", "Parfait 👌 Tu veux que je lance à quel moment ? (maintenant, demain matin…)"),
+  ];
+  assert(
+    !allowGroupQuickPaths({ purpose: "support", userMessage: "maintenant", history: hist }),
+    "Support + maintenant → pas de chemin groupe"
+  );
+  assert(
+    !allowGroupQuickPaths({ purpose: "support", userMessage: "+22997000000", history: hist }),
+    "Support + numéro livreur → pas de chemin groupe"
+  );
+  assert(
+    !allowGroupQuickPaths({ purpose: "support", userMessage: "je valide", history: hist }),
+    "Support + je valide → pas de chemin groupe"
+  );
+  assert(
+    !allowGroupQuickPaths({ purpose: "support", userMessage: "lance la campagne", history: hist }),
+    "Support + lance la campagne → pas d'admin check groupe"
+  );
+  assert(
+    !isExplicitGroupOperation("lance la campagne"),
+    "lance la campagne sans « groupe » ≠ op groupe"
+  );
+  assert(
+    allowGroupQuickPaths({
+      purpose: "support",
+      userMessage: "Ajoute +22966082161 dans mon groupe Le Labo du No code",
+      history: hist,
+    }),
+    "Support + ajoute membre explicite → OK"
+  );
+  assert(
+    allowGroupQuickPaths({ purpose: "prospection", userMessage: "maintenant", history: hist }) ===
+      false,
+    "Prospection + maintenant → pas de chemin groupe"
+  );
+  assert(
+    allowGroupQuickPaths({ purpose: "groupes", userMessage: "maintenant", history: hist }),
+    "fil Groupes : chemins ouverts (horaire géré à part)"
+  );
+  assert(
+    allowGroupQuickPaths({
+      purpose: "groupes",
+      userMessage: 'Envoie "Salut" dans le groupe Automax',
+      history: [],
+    }),
+    "Groupes + envoie message → OK"
+  );
+  assert(
+    allowGroupQuickPaths({
+      purpose: "groupes",
+      userMessage: "Ajoute +22966082161 dans mon groupe Le Labo du No code",
+      history: [],
+    }),
+    "Groupes + ajoute membre → OK"
+  );
+  assert(
+    allowGroupQuickPaths({
+      purpose: "groupes",
+      userMessage: "donne moi 3 contacts du groupe GIT3",
+      history: [],
+    }),
+    "Groupes + extract membres → OK"
+  );
+  assert(
+    isExplicitGroupOperation('Envoie "Salut" dans le groupe Automax'),
+    "envoie + groupe = op explicite"
+  );
+  assert(
+    isExplicitGroupOperation("donne moi 3 contacts du groupe GIT3"),
+    "extract nommé = op explicite"
+  );
+  const afterMissing = [
+    msg("user", "donne moi 3 contacts du groupe RADAR"),
+    msg("assistant", "Groupe introuvable : « RADAR ».\n\nVérifiez le nom exact (copier-coller depuis WhatsApp)."),
+  ];
+  assert(
+    allowGroupQuickPaths({
+      purpose: "prospection",
+      userMessage: "GIT3 Information 25-26",
+      history: afterMissing,
+    }),
+    "Prospection + nom après introuvable → extract OK"
+  );
+  assert(
+    !allowGroupQuickPaths({
+      purpose: "support",
+      userMessage: "GIT3 Information 25-26",
+      history: afterMissing,
+    }),
+    "Support + nom nu → pas d'extract historique"
   );
 }
 

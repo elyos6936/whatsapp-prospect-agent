@@ -6,6 +6,7 @@
 import type OpenAI from "openai";
 import type { AgentMessage, AutomationConfig } from "./db.js";
 import { TOOL_DEFINITIONS } from "./tools.js";
+import { isExplicitGroupOperation } from "./group-list-intent.js";
 
 const MAX_MSG_CHARS = 1_800;
 /**
@@ -326,7 +327,11 @@ export function selectToolsForAgentTurn(opts: {
 
   if (
     opts.purpose === "groupes" ||
-    /\b(groupe|admin|participant|invitation|quitter le groupe|crée(r)? un groupe)\b/i.test(blob)
+    (opts.purpose !== "support" &&
+      /\b(groupe|admin|participant|invitation|quitter le groupe|crée(r)? un groupe)\b/i.test(
+        blob
+      )) ||
+    (opts.purpose === "support" && isExplicitGroupOperation(opts.userMessage))
   ) {
     for (const n of GROUP_ADMIN_TOOL_NAMES) needed.add(n);
   }

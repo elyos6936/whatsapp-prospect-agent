@@ -16,6 +16,7 @@ import {
   buildSupportBriefingNudge,
   buildSupportConversationGuide,
 } from "../src/support-flow.js";
+import { allowGroupQuickPaths } from "../src/group-list-intent.js";
 import { ensureLeadingCapital } from "../src/outbound-sanitize.js";
 
 let passed = 0;
@@ -194,6 +195,27 @@ console.log("\n=== Guide Support isolé de la prospection ===\n");
   assert(/15000/i.test(guide), "prix dans le guide");
   assert(!/5 variantes|A\.I\.D\.A|accroche sortante/i.test(guide.replace(/INTERDIT[^\n]*/g, "")), "pas d'opener prospection à faire");
   assert(/type de tâche|secteur/i.test(guide), "interdit type de tâche ou secteur");
+}
+
+console.log("\n=== Support isolé des chemins groupes ===\n");
+{
+  const hist = [
+    msg("user", "donne moi 3 contacts du groupe GIT3"),
+    msg("assistant", "Voici les contacts…"),
+    msg("assistant", "Je lance le support à quel moment ? (maintenant, demain matin…)"),
+  ];
+  assert(
+    !allowGroupQuickPaths({ purpose: "support", userMessage: "maintenant", history: hist }),
+    "maintenant ≠ groupe introuvable"
+  );
+  assert(
+    !allowGroupQuickPaths({ purpose: "support", userMessage: "+22996158855", history: hist }),
+    "numéro livreur ≠ invite / add membre"
+  );
+  assert(
+    !allowGroupQuickPaths({ purpose: "support", userMessage: "lance la campagne", history: hist }),
+    "lance la campagne support ≠ admin groupe"
+  );
 }
 
 console.log("\n=== Majuscule en tête ===\n");

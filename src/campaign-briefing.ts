@@ -10,7 +10,6 @@ import {
   extractGroupNamesFromHistory,
   extractGroupPostMessage,
 } from "./groups-flow.js";
-import { extractUserDictatedOpener } from "./opener-intent.js";
 
 const CAMPAIGN_INTENT_RE =
   /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|g[eè]re[rz]?\s+tout|tous\s+(mes\s+)?messages|compte\s+whatsapp|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
@@ -195,7 +194,7 @@ export function extractOpenerVariantsFromHistory(
   for (let i = history.length - 1; i >= 0 && i >= history.length - 24; i--) {
     const m = history[i];
     if (m?.role !== "assistant") continue;
-    if (!hasNumberedOpenerList(m.content)) {
+    if (!hasNumberedOpenerList(m.content) && !OPENER_VARIANTS_PROPOSED_RE.test(m.content)) {
       continue;
     }
     const variants: Array<{ id: string; message: string }> = [];
@@ -275,16 +274,9 @@ export function hasUserProvidedOpenerDirection(
   }
 
   // Opener collé volontairement (sans attendre la question magique)
-  if (looksLikeOpenerDraft(userMessage) || extractUserDictatedOpener(userMessage)) {
-    return true;
-  }
+  if (looksLikeOpenerDraft(userMessage)) return true;
   for (const m of history.slice(-16)) {
-    if (
-      m.role === "user" &&
-      (looksLikeOpenerDraft(m.content) || extractUserDictatedOpener(m.content))
-    ) {
-      return true;
-    }
+    if (m.role === "user" && looksLikeOpenerDraft(m.content)) return true;
   }
 
   const askIdx = lastAssistantMatchIndex(history, OPENER_DIRECTION_ASK_RE);
@@ -303,7 +295,7 @@ export function hasUserProvidedOpenerDirection(
 
 /** Les 5 variantes ont déjà été listées dans le fil. */
 export function hasProposedOpenerVariants(history: AgentMessage[]): boolean {
-  // Une mention « puis les 5 variantes » dans la question d'angle ≠ proposition réelle.
+  // « puis les 5 variantes » dans la question d'angle ≠ proposition réelle.
   return history
     .slice(-24)
     .some((m) => m.role === "assistant" && hasNumberedOpenerList(m.content));
@@ -354,16 +346,9 @@ export function hasUserValidatedSingleOpener(
   }
 
   // Pas encore de proposition agent : un long brouillon user = accroche fournie/validée.
-  if (looksLikeOpenerDraft(userMessage) || extractUserDictatedOpener(userMessage)) {
-    return true;
-  }
+  if (looksLikeOpenerDraft(userMessage)) return true;
   for (const m of history.slice(-16)) {
-    if (
-      m.role === "user" &&
-      (looksLikeOpenerDraft(m.content) || extractUserDictatedOpener(m.content))
-    ) {
-      return true;
-    }
+    if (m.role === "user" && looksLikeOpenerDraft(m.content)) return true;
   }
   return false;
 }

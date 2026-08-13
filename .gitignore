@@ -16,3 +16,6 @@ remotion/public/*.mp4
 
 # Local Vercel folder
 .vercel
+
+# Scratch / copies locales (jamais commiter)
+tmp/

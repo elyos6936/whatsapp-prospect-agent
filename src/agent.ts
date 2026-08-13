@@ -66,18 +66,11 @@ import {
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
-  hasAgentAskedOpenerDirection,
   hasNumberedOpenerList,
-  hasProposedOpenerVariants,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
   isShortCampaignValidation,
 } from "./campaign-briefing.js";
-import {
-  extractUserDictatedOpener,
-  extractUserDictatedOpenerFromHistory,
-  formatOpenerVariantsReply,
-} from "./opener-intent.js";
 import {
   hasSimulationThread,
   isActivationNegation,
@@ -104,6 +97,8 @@ import {
   extractGroupNameFromPublishMessage,
   isGroupActionNotCatalogRequest,
   lastGroupQueryFromHistory,
+  looksLikeWhenReply,
+  allowGroupQuickPaths,
   resolveMembersIntentFromHistory,
   wantsExplicitGroupCatalog,
   type GroupSendNowIntent,
@@ -643,8 +638,18 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     );
   }
 
-  const recentForMembers = await getRecentAgentMessages(userId, threadId, 10).catch(() => []);
+  const [recentForMembers, threadEarly] = await Promise.all([
+    getRecentAgentMessages(userId, threadId, 10).catch(() => []),
+    getAgentThread(userId, threadId),
+  ]);
 
+  const runGroupQuick = allowGroupQuickPaths({
+    purpose: threadEarly?.purpose,
+    userMessage,
+    history: recentForMembers,
+  });
+
+  if (runGroupQuick) {
   // Ajouter / retirer / admin — avant tout brief « quel texte poster »
   const manageQuick = resolveManageIntentFromHistory(userMessage, recentForMembers);
   if (manageQuick) {
@@ -759,8 +764,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  // Chemin rapide : extraction membres d'un groupe nommé (admin non requis)
-  const membersQuick = resolveMembersIntentFromHistory(userMessage, recentForMembers);
+  // Chemin rapide : extraction membres d'un groupe nommé (admin non requis).
+  // « maintenant » / « demain » = horaire de lancement, jamais un nom de groupe.
+  const membersQuick = looksLikeWhenReply(userMessage)
+    ? null
+    : resolveMembersIntentFromHistory(userMessage, recentForMembers);
   if (membersQuick) {
     if (!membersQuick.groupQuery) {
       return (
@@ -863,6 +871,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       return userFacingError(err);
     }
   }
+  }
 
   // Garde-fou serveur : sans mémoire liée, pas de brief / proposition LLM
   const linkedMemoryEarly = await getLinkedCampaignMemory(userId, threadId).catch(() => null);
@@ -871,11 +880,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
 
   const client = await getChatLlmClient(userId);
-  const [settings, historyRaw, thread] = await Promise.all([
+  const [settings, historyRaw] = await Promise.all([
     getAppSettings(userId),
     getRecentAgentMessages(userId, threadId, CHAT_HISTORY_LIMIT),
-    getAgentThread(userId, threadId),
   ]);
+  const thread = threadEarly;
   const history = compactAgentHistory(historyRaw);
 
   const businessContext = await buildBusinessContext(userId, settings, connection, threadId);
@@ -1047,25 +1056,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       if (drafted) return sanitizeUserVisibleReply(drafted);
     } catch (err) {
       console.warn("[agent] groups draft failed:", err);
-    }
-  }
-
-  // Accroche dictée (« juste un 'Bonjour…' ») → 5 variantes, sans MiniMax ni brouillon.
-  if (
-    !briefing.isInboundClosing &&
-    !briefing.isGroupsFlow &&
-    briefing.inCampaignFlow &&
-    (briefing.readyForDraft || hasAgentAskedOpenerDirection(history)) &&
-    !hasProposedOpenerVariants(history)
-  ) {
-    const base =
-      extractUserDictatedOpener(userMessage) ||
-      (briefing.openerSingleValidated
-        ? extractUserDictatedOpenerFromHistory(history, userMessage)
-        : null);
-    if (base) {
-      const listed = formatOpenerVariantsReply(base);
-      if (listed) return sanitizeUserVisibleReply(listed);
     }
   }
 
