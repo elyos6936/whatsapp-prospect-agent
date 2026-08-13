@@ -39,7 +39,6 @@ import {
   type ContactStatus,
 } from "./db.js";
 import { chatWithAgent } from "./agent.js";
-import { transcribeChatAudio } from "./media-understanding.js";
 import { chatIdToDisplay, diagnoseEvolutionApi, testEvolutionConnection } from "./evolutionapi.js";
 import { startNotificationPoller, getWhatsappPollHealth, handleEvolutionWebhook, reprocessPendingAutoReplies } from "./notifications.js";
 import { startScheduler } from "./scheduler.js";
@@ -837,16 +836,12 @@ app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async 
   });
 });
 
-app.post<{ Body: { data?: string; mimetype?: string } }>("/api/chat/transcribe", async (request, reply) => {
-  const userId = requireUserId(request);
-  const { data, mimetype } = request.body ?? {};
-  if (!data) return reply.status(400).send({ error: "Audio requis." });
-  try {
-    const text = await transcribeChatAudio(userId, data, mimetype || "audio/webm");
-    return { text };
-  } catch (err) {
-    return reply.status(500).send({ error: err instanceof Error ? err.message : "Transcription échouée." });
-  }
+app.post("/api/chat/transcribe", async (request, reply) => {
+  requireUserId(request);
+  return reply.status(400).send({
+    error:
+      "La dictée se fait dans le navigateur (Chrome ou Edge), sans modèle. Pas de transcription serveur.",
+  });
 });
 
 app.post<{ Body: { name?: string; type?: string; data?: string } }>("/api/upload", async (request, reply) => {

@@ -2,7 +2,8 @@
  * Interprétation des médias entrants WhatsApp.
  *
  * Images : vision via le LLM chat (MiniMax).
- * Audio / dictée : Whisper sur api.openai.com si OPENAI_API_KEY est définie.
+ * Audio WhatsApp entrant : Whisper sur api.openai.com si OPENAI_API_KEY est définie.
+ * La dictée du chat se fait dans le navigateur — pas ici.
  */
 
 import OpenAI, { toFile } from "openai";
@@ -143,28 +144,6 @@ export async function describeInboundMedia(
 /** Retire les paramètres d'un mimetype (« audio/ogg; codecs=opus » → « audio/ogg »). */
 function baseMimetype(mimetype: string): string {
   return mimetype.split(";")[0].trim().toLowerCase();
-}
-
-/**
- * Transcrit un audio (base64) fourni par l'utilisateur depuis l'interface web
- * (dictée vocale de l'input de chat). Retourne le texte, ou lève une erreur
- * explicite si aucune clé OpenAI n'est configurée.
- */
-export async function transcribeChatAudio(
-  userId: number,
-  base64: string,
-  mimetype: string,
-): Promise<string> {
-  void userId;
-  const apiKey = resolveWhisperKey();
-  if (!apiKey) {
-    throw new Error("Transcription serveur indisponible (OPENAI_API_KEY absente).");
-  }
-  const text = await transcribeAudio(apiKey, base64, mimetype || "audio/webm");
-  if (!text) {
-    throw new Error("Aucun texte reconnu dans l'enregistrement.");
-  }
-  return text;
 }
 
 // ─── Implémentations LLM ──────────────────────────────────────────────────────
