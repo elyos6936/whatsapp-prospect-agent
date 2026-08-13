@@ -66,11 +66,18 @@ import {
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
+  hasAgentAskedOpenerDirection,
   hasNumberedOpenerList,
+  hasProposedOpenerVariants,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
   isShortCampaignValidation,
 } from "./campaign-briefing.js";
+import {
+  extractUserDictatedOpener,
+  extractUserDictatedOpenerFromHistory,
+  formatOpenerVariantsReply,
+} from "./opener-intent.js";
 import {
   hasSimulationThread,
   isActivationNegation,
@@ -1040,6 +1047,25 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       if (drafted) return sanitizeUserVisibleReply(drafted);
     } catch (err) {
       console.warn("[agent] groups draft failed:", err);
+    }
+  }
+
+  // Accroche dictée (« juste un 'Bonjour…' ») → 5 variantes, sans MiniMax ni brouillon.
+  if (
+    !briefing.isInboundClosing &&
+    !briefing.isGroupsFlow &&
+    briefing.inCampaignFlow &&
+    (briefing.readyForDraft || hasAgentAskedOpenerDirection(history)) &&
+    !hasProposedOpenerVariants(history)
+  ) {
+    const base =
+      extractUserDictatedOpener(userMessage) ||
+      (briefing.openerSingleValidated
+        ? extractUserDictatedOpenerFromHistory(history, userMessage)
+        : null);
+    if (base) {
+      const listed = formatOpenerVariantsReply(base);
+      if (listed) return sanitizeUserVisibleReply(listed);
     }
   }
 

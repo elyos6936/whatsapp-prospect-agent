@@ -27,6 +27,10 @@ import {
 } from "./campaign-briefing.js";
 import { proposeShortAttentionOpener } from "./opener-frame.js";
 import {
+  extractUserDictatedOpenerFromHistory,
+  generateOpenerVariants,
+} from "./opener-intent.js";
+import {
   extractSupportHandoffKeywords,
   extractSupportTriggerPhrases,
   extractSupportProductHint,
@@ -194,13 +198,22 @@ export async function runDeterministicDraftAndSim(opts: {
     });
   }
 
-  const variants = extractOpenerVariantsFromHistory(history);
+  let variants = extractOpenerVariantsFromHistory(history);
+  if (!variants || variants.length !== 5) {
+    const base = extractUserDictatedOpenerFromHistory(history, userMessage);
+    if (base) {
+      const generated = generateOpenerVariants(base);
+      if (generated.length === 5) {
+        variants = generated.map((message, i) => ({ id: `v${i + 1}`, message }));
+      }
+    }
+  }
   if (!variants || variants.length !== 5) {
     console.warn("[deterministic] extractOpenerVariantsFromHistory → null/insuffisant");
     return (
-      "Je n'ai pas pu relire les **5 accroches** dans le fil. " +
-      "Renvoie-les en liste numérotée **1.** à **5.** (une phrase chacune), " +
-      "puis redis « je valide »."
+      "Je n'ai pas encore les **5 accroches** dans le fil. " +
+      "Donne le premier message que tu veux (ex. « Juste un 'Bonjour comment ça va ?' »), " +
+      "je te propose les 5 variantes, puis dis « je valide »."
     );
   }
 
