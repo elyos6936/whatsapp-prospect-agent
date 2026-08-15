@@ -247,6 +247,7 @@ export function parseMemoryHints(instructions: string): {
   coversGoal: boolean;
   coversWindow: boolean;
   coversLink: boolean;
+  coversTarget: boolean;
 } {
   const text = instructions.trim();
   const lower = text.toLowerCase();
@@ -305,6 +306,10 @@ export function parseMemoryHints(instructions: string): {
   const coversLink =
     /https?:\/\/\S+/i.test(text) ||
     (/lien\s+(utile|à\s+envoyer|de\s+réserv)/i.test(text) && !/\[URL\]/i.test(text));
+  const coversTarget =
+    /\b(cible|audience|clients?|prospects?|membres?|groupe|freelances?|entrepreneurs?|qui\s+contacter)\b/i.test(
+      text
+    ) && !/\[cible|\[audience/i.test(text);
 
   return {
     ownerName,
@@ -319,6 +324,7 @@ export function parseMemoryHints(instructions: string): {
     coversGoal,
     coversWindow,
     coversLink,
+    coversTarget,
   };
 }
 

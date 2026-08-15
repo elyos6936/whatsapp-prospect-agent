@@ -70,6 +70,9 @@ import {
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
   isShortCampaignValidation,
+  nextCanonicalBriefingQuestion,
+  isBriefingSideTalk,
+  BRIEFING_Q_SUPPORT_VALIDATE,
 } from "./campaign-briefing.js";
 import {
   hasSimulationThread,
@@ -1168,6 +1171,24 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   } else if (!recentHistoryHasSimulation(history)) {
     const nudge = buildBriefingNudge(briefing, history, userMessage);
     if (nudge) messages.push({ role: "system", content: nudge });
+  }
+
+  const slotQuestion = nextCanonicalBriefingQuestion(briefing, history, userMessage);
+  const skipSlot =
+    !slotQuestion ||
+    hasSimAlready ||
+    (Boolean(thread?.automation_id) && slotQuestion === BRIEFING_Q_SUPPORT_VALIDATE);
+  if (slotQuestion && !skipSlot) {
+    if (!isBriefingSideTalk(userMessage)) {
+      const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
+      return sanitizeUserVisibleReply(greet ? `Salut ! ${slotQuestion}` : slotQuestion);
+    }
+    messages.push({
+      role: "system",
+      content:
+        `Réponds en 1–3 phrases à sa préoccupation (sans poser d'autre question). ` +
+        `Puis pose EXACTEMENT, mot pour mot :\n${slotQuestion}`,
+    });
   }
   const hsNudge = highStakesConfirmNudge(userMessage, history, allowedHighStakes);
   if (hsNudge) messages.push({ role: "system", content: hsNudge });

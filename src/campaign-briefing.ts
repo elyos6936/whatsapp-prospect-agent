@@ -4,7 +4,7 @@
  */
 import type { AgentMessage } from "./db.js";
 import { parseMemoryHints, type CampaignMemory } from "./campaign-memory.js";
-import { buildSupportBriefingNudge } from "./support-flow.js";
+import { buildSupportBriefingNudge, extractSupportThirdParty } from "./support-flow.js";
 import {
   buildGroupsBriefingNudge,
   extractGroupNamesFromHistory,
@@ -19,8 +19,22 @@ const INBOUND_CATCH_ALL_RE =
   /\b(tous\s+(mes\s+)?messages|g[eè]re[rz]?\s+tout(\s+(mon\s+)?(compte|whatsapp|les\s+messages))?|compte\s+(whatsapp\s+)?entier|toute\s+la\s+bo[iî]te|toutes?\s+les?\s+(conversations|demandes|discussions)|r[eé]pond(?:re)?\s+[aà]\s+(tout|tous)|sans\s+(mot[- ]?cl[eé]|d[eé]clencheur)|pas\s+de\s+(mot[- ]?cl[eé]|d[eé]clencheur)|inbound_catch_all)\b/i;
 
 export function wantsInboundCatchAll(history: AgentMessage[], userMessage: string): boolean {
-  const blob = conversationBlob(history, userMessage);
-  return INBOUND_CATCH_ALL_RE.test(blob);
+  const users = [
+    ...history.filter((m) => m.role === "user").map((m) => m.content),
+    userMessage,
+  ];
+  for (let i = users.length - 1; i >= 0; i--) {
+    const t = users[i] ?? "";
+    if (
+      /\b(juste|seulement|uniquement)\s+(ceux|celles|si)|ceux\s+qui\s+(disent|diront)|phrase[s]?\s+d[eé]clench/i.test(
+        t
+      )
+    ) {
+      return false;
+    }
+    if (INBOUND_CATCH_ALL_RE.test(t)) return true;
+  }
+  return false;
 }
 
 const SIMULATION_ACCEPT_RE =
@@ -407,6 +421,30 @@ function conversationBlob(history: AgentMessage[], userMessage: string): string 
   return [...recent.map((m) => m.content), userMessage].join("\n");
 }
 
+/** Uniquement ce que l'utilisateur a dit — jamais les questions inventées par l'assistant. */
+function userConversationBlob(history: AgentMessage[], userMessage: string): string {
+  return [
+    ...history.filter((m) => m.role === "user").map((m) => m.content),
+    userMessage,
+  ].join("\n");
+}
+
+function userAnsweredAfterAsk(
+  history: AgentMessage[],
+  userMessage: string,
+  askRe: RegExp
+): boolean {
+  const askIdx = lastAssistantMatchIndex(history, askRe);
+  if (askIdx < 0) {
+    return isSubstantiveUserReply(userMessage) && askRe.test(userMessage);
+  }
+  for (let i = askIdx + 1; i < history.length; i++) {
+    const m = history[i];
+    if (m?.role === "user" && isSubstantiveUserReply(m.content)) return true;
+  }
+  return isSubstantiveUserReply(userMessage);
+}
+
 function countBriefingQuestions(
   history: AgentMessage[],
   purpose?: "prospection" | "support" | "groupes" | null
@@ -509,6 +547,7 @@ export function assessCampaignBriefing(
   }
 
   const blob = conversationBlob(history, userMessage);
+  const userBlob = userConversationBlob(history, userMessage);
 
   const missing: string[] = [];
   const inbound = isInboundClosingFlow(history, userMessage, purpose);
@@ -526,82 +565,91 @@ export function assessCampaignBriefing(
   const memoryCoversPrice = Boolean(memHints?.coversPrice);
   const memoryCoversGoal = Boolean(memHints?.coversGoal);
   const memoryCoversLink = Boolean(memHints?.coversLink);
-  const memoryIsRich = memText.length >= 120;
+  const memoryCoversTarget = Boolean(memHints?.coversTarget);
 
   const hasOffer =
     memoryCoversOffer ||
-    (/\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence|support|messages)\b/i.test(
-      blob
+    (/\b(offre|produit|service|formation|coaching|je\s+(vends|propose|offre)|automatisation|saas|agence|cr[eè]me|baskets?)\b/i.test(
+      userBlob
     ) &&
-      blob.length > 60);
+      userBlob.length > 20);
   if (!hasOffer) missing.push("offre / produit ou service précis");
 
   const hasTarget =
-    /\b(cible|prospect|audience|client[e]?s?|groupe|membres|contact|qui\s+(je|on)\s+|s'adresse|qui\s+[eé]crit|d[eé]clencheur|tous\s+(mes\s+)?messages|compte)\b/i.test(
-      blob
+    memoryCoversTarget ||
+    /\b(cible|prospect|audience|client[e]?s?|groupe|membres|contact|qui\s+(je|on)\s+|s'adresse|qui\s+[eé]crit|d[eé]clencheur|tous\s+(mes\s+)?messages|compte|ceux\s+qui)\b/i.test(
+      userBlob
     );
-  if (!hasTarget) {
-    missing.push(inbound ? "cible (qui écrit / contexte entrant)" : "cible (qui contacter / qui écrit)");
+  if (!inbound && !hasTarget) {
+    missing.push("cible (qui contacter / qui écrit)");
   }
 
   if (inbound && !catchAll) {
     const hasTrigger =
-      /d[eé]clencheur|mot[- ]?cl[eé]|phrase\s+exacte|«[^»]{3,}»|"[^"]{3,}"/i.test(blob);
+      /d[eé]clencheur|mot[- ]?cl[eé]|phrase\s+exacte|ceux\s+qui\s+(disent|diront)|«[^»]{3,}»|"[^"]{3,}"/i.test(
+        userBlob
+      );
     if (!hasTrigger) missing.push("phrase(s) déclencheur exacte(s) — ou confirmer « tous les messages »");
   }
 
   const wantsRdv =
-    /\b(rendez[- ]?vous|rdv|booking|r[eé]serv|calendly|cal\.com|prise\s+de\s+rdv)\b/i.test(blob);
+    /\b(rendez[- ]?vous|rdv|booking|r[eé]serv|calendly|cal\.com|prise\s+de\s+rdv)\b/i.test(userBlob);
+  const wantsDelivery =
+    /\b(livraison|adresse\s+de\s+livraison|paiement\s+[àa]\s+la\s+livraison|pointure)\b/i.test(
+      userBlob
+    );
   const wantsPay =
-    /\b(paiement|payer|wave|orange\s*money|moov|lien\s+de\s+paiement|checkout)\b/i.test(blob);
-  const wantsLink = /\b(envoyer\s+un\s+lien|lien\s+vers|url)\b/i.test(blob) || wantsPay;
+    /\b(paiement|payer|wave|orange\s*money|moov|lien\s+de\s+paiement|checkout)\b/i.test(userBlob) &&
+    !wantsDelivery;
+  const wantsLink = /\b(envoyer\s+un\s+lien|lien\s+vers|url)\b/i.test(userBlob) || wantsPay;
 
-  const hasHttpLink = memoryCoversLink || /https?:\/\/\S+/i.test(blob);
+  const hasHttpLink = memoryCoversLink || /https?:\/\/\S+/i.test(userBlob);
   if (wantsRdv && !hasHttpLink) {
     missing.push("lien de réservation RDV (URL réelle Calendly / Google / autre)");
-  } else if (wantsLink && !hasHttpLink && !wantsRdv) {
+  } else if (wantsLink && !hasHttpLink && !wantsRdv && !wantsDelivery) {
     missing.push("URL concrète à envoyer au prospect");
   }
 
   const hasPrice =
-    memoryCoversPrice || /\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)|\bprix\b.{0,40}\d/i.test(blob);
+    memoryCoversPrice || /\b\d[\d\s.,]{2,}\s*(fcfa|f\b|€|euros?)|\bprix\b.{0,40}\d/i.test(userBlob);
   const isSale =
-    /\b(vendre|vente|acheter|prix|tarif|fcfa|commander|paiement)\b/i.test(blob) && !wantsRdv;
+    (/\b(vendre|vente|acheter|prix|tarif|fcfa|commander|paiement)\b/i.test(userBlob) ||
+      memoryCoversPrice) &&
+    !wantsRdv;
   if (isSale && !hasPrice) missing.push("prix exact (chiffre en FCFA)");
 
   const hasGoal =
     memoryCoversGoal ||
+    wantsDelivery ||
     /\b(objectif|rdv|rendez[- ]?vous|vente|paiement|livraison|inscription|d[eé]mo|closing|support)\b/i.test(
-      blob
+      userBlob
     );
   if (!hasGoal) missing.push("objectif final concret (RDV, vente, lien, livraison…)");
 
   if (!inbound) {
-    // Fenêtre d'envoi : couverte par la mémoire → seulement le lancement
     const hasLaunch =
-      /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|lancer\s+(à|a)|d[eé]marr)\b/i.test(
-      blob
-    );
+      /\b(\d{1,2}\s*h|\d{1,2}:\d{2}|matin|soir|apr[eè]s-midi|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|demain|aujourd.?hui|maintenant|imm[eé]diat|lancer\s+(à|a|maintenant)|d[eé]marr|lance\s+maintenant)\b/i.test(
+        userBlob
+      );
     if (memoryCoversWindow) {
       if (!hasLaunch) {
         missing.push("jour/heure de lancement de la campagne");
       }
     } else {
-  const hasSchedule =
-        hasLaunch ||
-        /\b(cr[eé]neau|horaire|fen[eê]tre)\b/i.test(blob);
-  if (!hasSchedule) {
-    missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+      const hasSchedule =
+        hasLaunch || /\b(cr[eé]neau|horaire|fen[eê]tre)\b/i.test(userBlob);
+      if (!hasSchedule) {
+        missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
       }
     }
   }
 
-  // Identité — skip si mémoire
   if (!memoryCoversIdentity) {
+    const IDENTITY_ASK_RE =
+      /\bcomment.{0,80}pr[eé]sent|\bqui [eê]tes[- ]vous\b|\bpr[eé]nom\b|\bowner_name\b|\bbusiness_owner\b/i;
     const hasIdentity =
-      /\b(se pr[eé]sent|pr[eé]sentation|comment (je |tu |on )?me pr[eé]sente|comment (je |tu |on )?dois me pr[eé]sent|qui (je |tu )?suis|mon pr[eé]nom|mon nom|appelle[- ]moi|je m.?appelle|pr[eé]sente[- ]toi|pr[eé]sente[- ]moi|face aux prospects|aux prospects.*(pr[eé]nom|nom)|owner_name|business_owner)\b/i.test(
-        blob
-      );
+      /\b(je m.?appelle|je suis|pr[eé]sente[- ]moi|appelle[- ]moi)\b/i.test(userBlob) ||
+      userAnsweredAfterAsk(history, userMessage, IDENTITY_ASK_RE);
     if (!hasIdentity) {
       missing.push(
         inbound
@@ -611,13 +659,7 @@ export function assessCampaignBriefing(
     }
   }
 
-  // Au moins N questions + aucun élément critique manquant
-  // Mémoire riche → bien moins de questions (infos déjà dans les instructions).
-  const minQuestions = memoryIsRich
-    ? 2
-    : memoryCoversIdentity && memoryCoversWindow
-      ? 3
-      : 6;
+  // Prêt = les slots requis sont remplis (mémoire ou réponses user). Plus de quota « 6 questions ».
   const criticalMissing = missing.filter(
     (m) =>
       m.includes("lien de réservation") ||
@@ -631,7 +673,7 @@ export function assessCampaignBriefing(
       m.includes("lancement") ||
       m.includes("présentation")
   );
-  const readyForDraft = questionsAsked >= minQuestions && criticalMissing.length === 0;
+  const readyForDraft = criticalMissing.length === 0;
   const stickersQuestionAsked =
     memory != null || hasStickersQuestionAsked(history);
   const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
@@ -809,32 +851,159 @@ export function buildBriefingNudge(
   const q = assessment.questionsAsked;
   if (next.includes("offre")) {
     return (
-      `Briefing campagne (${q}/6 question(s)) : offre pas encore confirmée par l'utilisateur. ` +
+      `Briefing campagne : l'offre n'est pas dans la mémoire ni dans le fil. ` +
       `Pose UNE question OUVERTE (« Qu'est-ce que tu proposes concrètement ? »). ` +
       `N'affirme JAMAIS l'offre du profil business — elle peut être obsolète.`
     );
   }
   if (next.includes("présentation")) {
     return (
-      `Briefing campagne (${q}/6 question(s)) : identité face aux prospects manquante. ` +
+      `Briefing campagne : identité absente de la mémoire. ` +
       `Pose UNE seule question : comment tu dois te présenter si un prospect demande « qui êtes-vous ? » ` +
       `(prénom/nom + formule courte). Enregistre via save_business_profile. INTERDIT d'inventer un nom.`
     );
   }
   return (
-    `## Briefing campagne EN COURS (obligatoire)\n` +
-    `Questions déjà posées ≈ ${q}/6 minimum. Éléments encore manquants : ${
+    `## Briefing campagne — checklist (ne pas inventer d'autres questions)\n` +
+    `Éléments encore manquants : ${
       assessment.missing.length ? assessment.missing.join(" ; ") : "à creuser"
     }.\n` +
-    `Prochaine étape : pose **UNE seule** question précise sur « ${next} », puis ARRÊTE-TOI et attends.\n` +
-    `INTERDIT : create_automation, activate_automation, show_campaign_simulation, rédiger le message final, ou sauter des questions.\n` +
-    `Même si l'utilisateur dit « c'est un test », « plus tard », « comme tu veux », « fais simple » → insiste pour une réponse concrète exploitable. Un test = vrais paramètres.\n` +
-    `Si objectif = rendez-vous → tu DOIS obtenir le **lien de réservation** (URL) avant tout brouillon.\n` +
-    `N'oublie pas le **planning** : fenêtre horaire d'envoi + jour/heure de lancement (une question à la fois).\n` +
-    `N'oublie pas l'**identité** : comment se présenter aux prospects si on demande « qui êtes-vous ? » (prénom/nom réel, save_business_profile) — INTERDIT d'inventer.\n` +
-    `Avant activation : demande aussi si l'utilisateur veut des **stickers** dans les conversations (oui/non).\n` +
-    `Valable pour TOUS produits / services / support client.`
+    `Prochaine étape : pose **UNIQUEMENT** la question sur « ${next} », puis ARRÊTE-TOI.\n` +
+    `INTERDIT : questions créatives hors checklist (pointure, lien de paiement, secteur…), ` +
+    `create_automation, activate_automation, show_campaign_simulation.\n` +
+    `Ce qui est déjà dans la MÉMOIRE ne se redemande pas.`
   );
+}
+
+const LAUNCH_ANSWER_RE =
+  /^(maintenant|tout\s+de\s+suite|imm[eé]diatement|demain|aujourd['’]hui|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}\s*h)/i;
+
+/** Aparté / modif — MiniMax peut répondre, puis on reprend la checklist. */
+export function isBriefingSideTalk(userMessage: string): boolean {
+  const t = userMessage.trim();
+  if (!t) return false;
+  if (isShortCampaignValidation(t)) return false;
+  if (LAUNCH_ANSWER_RE.test(t)) return false;
+  if (/^(oui|ouais|non|nan|ok|okay|d['’]accord|dac|valide|je\s+valide)\b/i.test(t)) {
+    return false;
+  }
+  if (/^[\d+\s.\-()]{8,}$/.test(t)) return false;
+  if (/[«"][^»"]{2,}[»"]/.test(t)) return false;
+  if (/\b(cr[eé]e(?:r)?\s+le\s+brouillon|je\s+valide|simule|active|lance)\b/i.test(t)) {
+    return false;
+  }
+  if (/\?/.test(t)) return true;
+  if (
+    /\b(pourquoi|c['’]est\s+quoi|comment\s+[çc]a\s+marche|attends|enl[eè]ve|modifie|change\s+(le|la|l['’]))\b/i.test(
+      t
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+export const BRIEFING_Q_SCOPE =
+  "Tu veux des **phrases déclencheurs** exactes (ex. « je suis intéressé »), ou que je gère **tous les messages privés** du compte ?";
+export const BRIEFING_Q_THIRD_PARTY =
+  "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial) sur WhatsApp ? (oui/non)";
+export const BRIEFING_Q_THIRD_PHONE =
+  "À quel **numéro WhatsApp** prévenir ce tiers (ex. +229…) et quel rôle (livreur, associé…) ?";
+export const BRIEFING_Q_HANDOFF =
+  "Y a-t-il des mots ou phrases pour lesquels je dois arrêter et te passer la main (ex. remboursement, plainte) ? Liste-les ou dis **non**.";
+export const BRIEFING_Q_LAUNCH =
+  "Tu veux que je lance la prospection à quel moment exactement ? (maintenant, demain matin, lundi 9h…)";
+export const BRIEFING_Q_OPENER =
+  "Comment tu veux aborder le premier contact ? (ton direct, question ouverte, mystère, formel…) — donne-moi une idée ou une phrase type.";
+export const BRIEFING_Q_SUPPORT_VALIDATE =
+  "J'ai tout pour le Support. Dis **« je valide »** pour créer le brouillon — la simulation s'affiche ensuite sur le téléphone.";
+
+/**
+ * Prochaine question uniforme (neuro-symbolique). Null = laisser MiniMax (opener / aparté / prêt).
+ */
+export function nextCanonicalBriefingQuestion(
+  assessment: BriefingAssessment,
+  history: AgentMessage[],
+  userMessage: string
+): string | null {
+  if (!assessment.inCampaignFlow) return null;
+  if (assessment.isGroupsFlow) return null;
+
+  if (assessment.isInboundClosing) {
+    const next = assessment.missing[0];
+    if (next?.includes("déclencheur") || next?.includes("tous les messages")) {
+      return BRIEFING_Q_SCOPE;
+    }
+    if (next?.includes("offre")) {
+      return "Quel produit / service dois-je défendre dans les réponses clients ?";
+    }
+    if (next?.includes("présentation")) {
+      return "Comment te présenter si un client demande « qui êtes-vous ? » (prénom + formule courte).";
+    }
+    if (next?.includes("objectif")) {
+      return "Quel objectif quand le client est prêt (livraison / paiement / RDV / lien) ?";
+    }
+    if (next?.includes("prix")) {
+      return "Quel est le prix exact (chiffre + FCFA) ?";
+    }
+    if (next?.includes("URL") || next?.includes("lien de réservation")) {
+      return "Colle le **lien** à envoyer (URL complète Calendly / paiement / page).";
+    }
+    if (!assessment.readyForDraft) {
+      return `Il me manque encore : ${next ?? "un détail concret"}.`;
+    }
+    if (!assessment.stickersQuestionAsked) {
+      return "Tu veux des stickers dans les réponses aux clients ? (oui/non)";
+    }
+    if (!assessment.thirdPartyQuestionAsked) {
+      return BRIEFING_Q_THIRD_PARTY;
+    }
+    const tp = extractSupportThirdParty(history, userMessage);
+    if (tp.asked && !tp.declined && tp.accepted && !tp.phone) {
+      return BRIEFING_Q_THIRD_PHONE;
+    }
+    if (!assessment.handoffKeywordsQuestionAsked) {
+      return BRIEFING_Q_HANDOFF;
+    }
+    if (/\b(je\s+valide|cr[eé]e(?:r)?\s+le\s+brouillon)\b/i.test(userMessage)) {
+      return null;
+    }
+    return BRIEFING_Q_SUPPORT_VALIDATE;
+  }
+
+  const next = assessment.missing[0];
+  if (next?.includes("offre")) return "Qu'est-ce que tu proposes concrètement (produit / service) ?";
+  if (next?.includes("cible")) {
+    return "Qui veux-tu contacter concrètement ? (numéro, liste de contacts, ou nom exact du groupe WhatsApp)";
+  }
+  if (next?.includes("objectif")) {
+    return "Quel est l'objectif final de cette campagne (RDV, vente, lien, simple échange…) ?";
+  }
+  if (next?.includes("prix")) return "Quel est le prix exact (chiffre + FCFA) ?";
+  if (next?.includes("lien de réservation") || next?.includes("URL")) {
+    return "Colle le **lien** à envoyer aux prospects (URL complète).";
+  }
+  if (next?.includes("horaires") || next?.includes("lancement")) return BRIEFING_Q_LAUNCH;
+  if (next?.includes("présentation")) {
+    return "Comment te présenter si un prospect demande « qui êtes-vous ? » (prénom/nom + formule courte).";
+  }
+  if (!assessment.readyForDraft && next) {
+    return `Il me manque encore : ${next}.`;
+  }
+
+  if (!assessment.readyForDraft) return null;
+
+  if (!assessment.stickersQuestionAsked) {
+    return "Tu veux que j'ajoute des stickers dans les conversations avec les prospects ? (oui/non)";
+  }
+  if (!assessment.openerDirectionCollected && !hasAgentAskedOpenerDirection(history)) {
+    return BRIEFING_Q_OPENER;
+  }
+  if (!assessment.openerDirectionCollected) return null;
+  if (!assessment.openerSingleProposed) return null;
+  if (!assessment.openerSingleValidated) return null;
+  if (!assessment.openerVariantsProposed) return null;
+  return null;
 }
 
 /** Texte qui évoque un RDV sans lien HTTP. */

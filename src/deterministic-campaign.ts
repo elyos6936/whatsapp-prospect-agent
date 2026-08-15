@@ -126,6 +126,7 @@ function conversationBlob(history: AgentMessage[]): string {
 
 function extractHttpLink(history: AgentMessage[]): string | null {
   for (let i = history.length - 1; i >= 0; i--) {
+    if (history[i]?.role !== "user") continue;
     const hit = history[i]?.content.match(/https?:\/\/\S+/i);
     if (hit?.[0]) return hit[0].replace(/[),.;]+$/, "");
   }
@@ -403,14 +404,20 @@ export async function runDeterministicSupportDraftAndSim(opts: {
     }
   }
   const productHint = extractSupportProductHint(history);
-  const historyBlob = history.map((m) => m.content).join("\n");
-  const closingGoal: "payment" | "delivery" | "link" | "appointment" = link
-    ? "link"
-    : /rdv|rendez[- ]?vous|calendly/i.test(historyBlob)
-      ? "appointment"
-      : /paiement|payer|orange money|moov|mtn/i.test(historyBlob)
-        ? "payment"
-        : "delivery";
+  const userBlob = [...history.filter((m) => m.role === "user").map((m) => m.content), userMessage].join(
+    "\n"
+  );
+  const closingGoal: "payment" | "delivery" | "link" | "appointment" = /livraison|adresse|pointure|paiement\s+[àa]\s+la\s+livraison/i.test(
+    userBlob
+  )
+    ? "delivery"
+    : link
+      ? "link"
+      : /rdv|rendez[- ]?vous|calendly/i.test(userBlob)
+        ? "appointment"
+        : /paiement|payer|orange money|moov|mtn/i.test(userBlob)
+          ? "payment"
+          : "delivery";
   const supportGuide = buildSupportConversationGuide({
     catchAll,
     triggers,
