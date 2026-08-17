@@ -118,6 +118,18 @@ console.log("\n=== phantom UI ===\n");
     !looksLikePhantomCampaignUi("Clique sur le bouton Mémoire en haut du chat."),
     "memory button is real UI",
   );
+  assert(
+    looksLikePhantomCampaignUi(
+      "Désolé je ne peux effectuer l'instruction. Tu peux me proposer les accroches, créer le brouillon, simuler la campagne.",
+    ),
+    "stall paraphrase",
+  );
+  assert(
+    looksLikePhantomCampaignUi(
+      "Je ne comprends pas, votre mémoire ne contient pas l'opener, cette campagne risque de ne pas se lancer.",
+    ),
+    "memory missing opener",
+  );
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

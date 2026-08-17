@@ -9,6 +9,10 @@ export const ROUTER_STALL_CLARIFY =
 
 const ROUTER_STALL_MARK = "Je n'ai pas bien accroché l'action";
 
+/** MiniMax paraphrase souvent le filet — il faut aussi reconnaître ces formes. */
+const ROUTER_STALL_PARAPHRASE_RE =
+  /n['’]ai pas bien accroch[eé] l['’]action|ne (peux|peut) (effectuer l['’]instruction|charger l['’]action)|proposer les accroches.{0,100}(brouillon|simuler)|m[eé]moire ne contient pas l['’]opener/i;
+
 const ROUTER_TOOL_ERROR_RE =
   /INTERDIT de cr[eé]er le brouillon|Trop t[oô]t pour la simulation|Briefing incomplet|Brouillon non cr[eé][eé]|Action g[eé]r[eé]e c[oô]t[eé] serveur|Pas de simulation sur le fil Groupes|Simulation indisponible|Pas encore de brouillon/i;
 
@@ -40,7 +44,11 @@ export function lastQuestionFingerprint(text: string): string {
 export function alreadyAskedRouterStallClarify(history: AgentMessage[]): boolean {
   return history
     .slice(-8)
-    .some((m) => m.role === "assistant" && m.content.includes(ROUTER_STALL_MARK));
+    .some(
+      (m) =>
+        m.role === "assistant" &&
+        (m.content.includes(ROUTER_STALL_MARK) || ROUTER_STALL_PARAPHRASE_RE.test(m.content)),
+    );
 }
 
 export function isRouterStallToolError(payload: string): boolean {
@@ -70,6 +78,17 @@ export function detectCrossTurnRouterStall(opts: {
 }): boolean {
   if (!opts.inCampaignFlow) return false;
   if (alreadyAskedRouterStallClarify(opts.history)) return false;
+
+  const latest = String(opts.userMessage ?? "").trim();
+  // Réponse de brief / « oui c'est bon » = l'utilisateur avance, ce n'est pas un stall.
+  if (latest.length > 80) return false;
+  if (
+    /^(oui|ouais|ok|okay|d['’]accord|dac|je\s+valide|c['’]est\s+bon|valide)\b/i.test(
+      latest,
+    )
+  ) {
+    return false;
+  }
 
   const users = [
     ...opts.history.filter((m) => m.role === "user").slice(-1),

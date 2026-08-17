@@ -90,6 +90,42 @@ console.log("\n=== Cross-turn stall ===\n");
   );
 }
 
+{
+  const ask = "Comment tu veux aborder le premier contact ?";
+  const history = [
+    am("user", "prospecte les membres du groupe"),
+    am("assistant", ask),
+    am("user", "vas-y propose"),
+    am("assistant", ask),
+  ];
+  assert(
+    !detectCrossTurnRouterStall({
+      history,
+      userMessage:
+        "en fait on est une agence de prospection via WhatsApp et on a besoin d'accrocher les gens pour notre propre service d'automatisation",
+      inCampaignFlow: true,
+    }),
+    "long brief → pas un stall"
+  );
+  assert(
+    !detectCrossTurnRouterStall({
+      history,
+      userMessage: "oui, c'est bon",
+      inCampaignFlow: true,
+    }),
+    "oui c'est bon → pas un stall"
+  );
+  assert(
+    alreadyAskedRouterStallClarify([
+      am(
+        "assistant",
+        "Désolé je ne peux effectuer l'instruction. Tu peux me proposer les accroches, créer le brouillon, simuler.",
+      ),
+    ]),
+    "paraphrase MiniMax = déjà stall"
+  );
+}
+
 console.log("\n=== Intra-tour outils bloqués ===\n");
 assert(
   isRouterStallToolError(JSON.stringify({ error: "Trop tôt pour la simulation." })),

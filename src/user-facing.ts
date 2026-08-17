@@ -69,15 +69,22 @@ function humanizeToolConfigError(raw: string): string | null {
   );
 }
 
-/** MiniMax invente un bouton UI qui n'existe pas. */
+/** MiniMax invente un bouton / un échec au lieu d'exécuter le brouillon. */
 export function looksLikePhantomCampaignUi(text: string): boolean {
   const t = text.toLowerCase();
   if (/clique[zr]?\s+(sur\s+)?(le\s+|ce\s+|un\s+)?bouton/.test(t) && !/m[eé]moire/.test(t)) {
     return true;
   }
-  return /une erreur est survenue lors de la cr[eé]ation (de )?votre campagne/i.test(
-    text,
-  );
+  if (/une erreur est survenue lors de la cr[eé]ation (de )?votre campagne/i.test(text)) {
+    return true;
+  }
+  if (/n['’]ai pas bien accroch[eé] l['’]action/i.test(t)) return true;
+  if (/ne (peux|peut) (effectuer l['’]instruction|charger l['’]action)/i.test(t)) return true;
+  if (/m[eé]moire ne contient pas l['’]opener/i.test(t)) return true;
+  if (/proposer les accroches.{0,120}(brouillon|simuler)/i.test(t)) return true;
+  if (/pr[eé]pare le message/.test(t) && /campagne de test/.test(t)) return true;
+  if (/\d+\s+accroches?\s+sont pr[eê]tes/.test(t) && /clique/.test(t)) return true;
+  return false;
 }
 
 /** Dernière passe avant affichage chat — bloque les fuites techniques restantes. */

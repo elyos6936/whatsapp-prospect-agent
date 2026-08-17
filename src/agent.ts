@@ -1182,7 +1182,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     hasSimAlready ||
     (Boolean(thread?.automation_id) && slotQuestion === BRIEFING_Q_SUPPORT_VALIDATE);
   if (slotQuestion && !skipSlot) {
-    if (!isBriefingSideTalk(userMessage)) {
+    if (!isBriefingSideTalk(userMessage) || alreadyAskedRouterStallClarify(history)) {
       const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
       return sanitizeUserVisibleReply(greet ? `Salut ! ${slotQuestion}` : slotQuestion);
     }
@@ -1781,6 +1781,30 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         console.warn(
           `[agent] router-stall thread=${threadId} reason=blocked-tools n=${blockedThisRound}`
         );
+        if (
+          !briefing.isInboundClosing &&
+          !briefing.isGroupsFlow &&
+          (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4
+        ) {
+          try {
+            const drafted = await runDeterministicDraftAndSim({
+              userId,
+              threadId,
+              client: await getSimLlmClient(userId),
+              businessContext,
+              history,
+              userMessage,
+              purpose: thread?.purpose,
+              threadTitle: thread?.title,
+              existingAutomationId: thread?.automation_id ?? null,
+            });
+            if (drafted) return sanitizeUserVisibleReply(drafted);
+          } catch (err) {
+            console.warn("[agent] stall-block override draft/sim:", err);
+          }
+        }
+        const slot = nextCanonicalBriefingQuestion(briefing, history, userMessage);
+        if (slot) return sanitizeUserVisibleReply(slot);
         return ROUTER_STALL_CLARIFY;
       }
 
@@ -1923,8 +1947,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       continue;
     }
 
+    const validatedOpenersReady =
+      !briefing.isInboundClosing &&
+      !briefing.isGroupsFlow &&
+      !hasSimAlready &&
+      isShortCampaignValidation(userMessage) &&
+      (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4;
+
     if (
-      looksLikePhantomCampaignUi(text) &&
+      (looksLikePhantomCampaignUi(text) || validatedOpenersReady) &&
       !briefing.isInboundClosing &&
       !briefing.isGroupsFlow &&
       !hasSimAlready
