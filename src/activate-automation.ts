@@ -18,7 +18,7 @@ import {
 import { requireEvolutionConnected } from "./evolutionapi.js";
 import { ANTI_BAN, defaultRelanceConfig } from "./anti-ban.js";
 import { recommendOutboundGaps } from "./campaign-spacing.js";
-import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
+import { hasTemplatePlaceholders, stripProspectNamePlaceholders } from "./outbound-sanitize.js";
 import { needsAppointmentLink } from "./campaign-briefing.js";
 
 export type ActivateAutomationResult =
@@ -104,6 +104,23 @@ export async function activateAutomationCore(
   const priorStatus = auto.status;
   const priorConfig = { ...auto.config };
   void options.allowWithoutSimulation;
+
+  if (auto.config.initialMessage) {
+    const strippedOpener = stripProspectNamePlaceholders(auto.config.initialMessage);
+    const strippedVariants = (auto.config.abVariants ?? []).map((v) => ({
+      ...v,
+      message: stripProspectNamePlaceholders(v.message),
+    }));
+    const openerChanged = strippedOpener !== auto.config.initialMessage;
+    const variantsChanged = strippedVariants.some(
+      (v, i) => v.message !== (auto.config.abVariants?.[i]?.message ?? "")
+    );
+    if (openerChanged || variantsChanged) {
+      auto.config.initialMessage = strippedOpener;
+      if (strippedVariants.length) auto.config.abVariants = strippedVariants;
+      await updateAutomationConfig(userId, id, auto.config).catch(() => {});
+    }
+  }
 
   if (
     (auto.type === "keyword_sales" || auto.config.mode === "inbound_closing") &&

@@ -66,6 +66,7 @@ import {
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
+  extractOpenerVariantsFromHistory,
   hasNumberedOpenerList,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
@@ -85,6 +86,7 @@ import {
   formatVerticalContactList,
   formatVerticalGroupList,
   formatVerticalMemberList,
+  looksLikePhantomCampaignUi,
   sanitizeUserVisibleReply,
   userFacingError,
 } from "./user-facing.js";
@@ -1067,7 +1069,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   if (
     !briefing.isInboundClosing &&
     !briefing.isGroupsFlow &&
-    briefing.openerVariantsProposed &&
+    (briefing.openerVariantsProposed ||
+      (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4) &&
     isShortCampaignValidation(userMessage) &&
     !hasSimAlready &&
     !shouldDeterministicActivate(history, userMessage)
@@ -1918,6 +1921,30 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
           "Réécris ton message en UNE accroche unique + question de validation.",
       });
       continue;
+    }
+
+    if (
+      looksLikePhantomCampaignUi(text) &&
+      !briefing.isInboundClosing &&
+      !briefing.isGroupsFlow &&
+      !hasSimAlready
+    ) {
+      try {
+        const drafted = await runDeterministicDraftAndSim({
+          userId,
+          threadId,
+          client: await getSimLlmClient(userId),
+          businessContext,
+          history,
+          userMessage,
+          purpose: thread?.purpose,
+          threadTitle: thread?.title,
+          existingAutomationId: thread?.automation_id ?? null,
+        });
+        if (drafted) return sanitizeUserVisibleReply(drafted);
+      } catch (err) {
+        console.warn("[agent] phantom-ui override draft/sim:", err);
+      }
     }
 
     return sanitizeUserVisibleReply(text);

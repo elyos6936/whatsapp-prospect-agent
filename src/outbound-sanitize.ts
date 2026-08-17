@@ -10,6 +10,20 @@ export function hasTemplatePlaceholders(text: string): boolean {
   return TEMPLATE_PLACEHOLDER_RE.test(text);
 }
 
+/** `[nom]` / `[prénom]` collés par l'utilisateur = prénom WhatsApp, pas un texte à envoyer. */
+const PROSPECT_NAME_PLACEHOLDER_RE =
+  /\[\s*(?:nom|pr[eé]noms?|name|first\s*name|pr[eé]nom du prospect)\s*\]/gi;
+
+export function stripProspectNamePlaceholders(text: string): string {
+  const t = text
+    .replace(PROSPECT_NAME_PLACEHOLDER_RE, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,;:.!?…])/g, "$1")
+    .replace(/^(salut|bonjour|coucou|hello|hey)\s+(vu|avec)\b/i, "$1, $2")
+    .trim();
+  return t;
+}
+
 /**
  * Si du texte entre crochets est détecté, on refuse d'envoyer tel quel
  * et on remplace par une phrase sûre (sans inventer de prix/lien).

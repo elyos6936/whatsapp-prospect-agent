@@ -109,5 +109,13 @@ export function sanitizeAssistantText(text: string): string {
     out = out.replace(/([^\n\d])\s+(\d{1,3}\.\s+)/g, '$1  \n$2');
   }
 
+  if (
+    /clique[zr]?\s+(sur\s+)?(le\s+|ce\s+|un\s+)?bouton/i.test(out) &&
+    !/m[eé]moire/i.test(out)
+  ) {
+    out =
+      "Il n'y a pas de bouton à cliquer ici. Réponds « je valide » pour enregistrer le brouillon et voir la simulation sur le téléphone.";
+  }
+
   return out.trim();
 }

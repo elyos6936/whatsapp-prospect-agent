@@ -97,20 +97,40 @@ export function extractProspectContactsFromHistory(history: AgentMessage[]): str
   return found;
 }
 
-/** Nom de groupe mentionné (ex. « prospecter le groupe Automax »). */
+function extractGroupNameFromText(text: string): string | null {
+  const quoted =
+    /\b(?:groupe|group)\s+(?:WhatsApp\s+)?["«»''\u2018\u2019\u201c\u201d]\s*([^"«»''\u2018\u2019\u201c\u201d]{2,60}?)\s*["«»''\u2018\u2019\u201c\u201d]/i.exec(
+      text
+    );
+  if (quoted?.[1]?.trim()) return quoted[1].trim();
+  const hit =
+    /\b(?:groupe|group)\s+[«"]?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ0-9 .'-]{1,60})/i.exec(text) ||
+    /\bprospect(?:er|e)?\s+(?:le\s+)?groupe\s+[«"]?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ0-9 .'-]{1,60})/i.exec(
+      text
+    );
+  if (hit?.[1]) {
+    const name = hit[1]
+      .replace(/[»"'`\u2018\u2019\u201c\u201d].*$/, "")
+      .replace(/\s+(?:pour|et|avec|maintenant|afin)\b[\s\S]*$/i, "")
+      .trim();
+    if (name.length >= 2) return name;
+  }
+  return null;
+}
+
+/** Nom de groupe mentionné (ex. « prospecter le groupe Automax » / groupe 'Extension'). */
 export function extractProspectGroupQueryFromHistory(history: AgentMessage[]): string | null {
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     if (m?.role !== "user") continue;
-    const hit =
-      /\b(?:groupe|group)\s+[«"]?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ0-9 .'-]{1,60})/i.exec(m.content) ||
-      /\bprospect(?:er|e)?\s+(?:le\s+)?groupe\s+[«"]?([A-Za-zÀ-ÿ0-9][\wÀ-ÿ0-9 .'-]{1,60})/i.exec(
-        m.content
-      );
-    if (hit?.[1]) {
-      const name = hit[1].replace(/[»"].*$/, "").trim();
-      if (name.length >= 2) return name;
-    }
+    const name = extractGroupNameFromText(m.content);
+    if (name) return name;
+  }
+  for (let i = history.length - 1; i >= 0 && i >= history.length - 16; i--) {
+    const m = history[i];
+    if (m?.role !== "assistant") continue;
+    const name = extractGroupNameFromText(m.content);
+    if (name) return name;
   }
   return null;
 }
@@ -305,32 +325,34 @@ export async function runDeterministicDraftAndSim(opts: {
     .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${m.content}`)
     .join("\n\n");
 
-  const sim = await generateCampaignSimulationDirect(client, {
-    businessContext,
-    recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
-    approvedOpener,
-    campaignBrief,
-    memoryInstructions,
-    memoryName,
-  });
-
   const openerNote = shortOpenerNote(variants);
+  const draftOk = `Parfait — les 5 accroches sont enregistrées en brouillon.${openerNote}`;
 
-  if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
-    try {
-      const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
-      await persistLivePlaybookForThread(userId, threadId, sim.turns);
-    } catch (err) {
-      console.warn("[deterministic] persist playbook:", err);
+  try {
+    const sim = await generateCampaignSimulationDirect(client, {
+      businessContext,
+      recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
+      approvedOpener,
+      campaignBrief,
+      memoryInstructions,
+      memoryName,
+    });
+
+    if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
+      try {
+        const { persistLivePlaybookForThread } = await import("./campaign-sync.js");
+        await persistLivePlaybookForThread(userId, threadId, sim.turns);
+      } catch (err) {
+        console.warn("[deterministic] persist playbook:", err);
+      }
+      return `${draftOk}\n\n${sim.display.trim()}`;
     }
-    return (
-      `Parfait — les 5 accroches sont enregistrées en brouillon.${openerNote}\n\n` +
-      sim.display.trim()
-    );
+  } catch (err) {
+    console.warn("[deterministic] sim after draft:", err);
   }
 
   return (
-    `Parfait — les 5 accroches sont enregistrées en brouillon.${openerNote} ` +
+    `${draftOk} ` +
     "Dis « simule » pour l'aperçu sur le téléphone à droite, ou « active » pour lancer " +
     "(ou « lance sans simulation » pour activer sans aperçu)."
   );

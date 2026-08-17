@@ -185,20 +185,100 @@ export function looksLikeOpenerDraft(text: string): boolean {
   return /[.!?…]|[a-zàâäéèêëïîôùûüç]{12,}/i.test(t);
 }
 
-/** Liste numérotée 1–5 dans un message assistant (≥4 items). */
-export function hasNumberedOpenerList(content: string): boolean {
-  let count = 0;
+/** Marqueur de liste (1. / 1) / 1\. / **1.** / A. / Variante 1 :). */
+const OPENER_LIST_MARK = String.raw`(?:\*\*|__)?\s*(?:\\)?[.)：:\-]\s*`;
+const OPENER_LABEL_MARK =
+  String.raw`(?:variante|option|accroche)\s*(?:n[°o]?\s*)?`;
+
+function countOpenerListMarks(content: string): number {
+  let numbered = 0;
   for (let n = 1; n <= 5; n++) {
     if (
       new RegExp(
-        `(?:^|\\n)\\s*(?:\\*\\*|__)?${n}(?:\\*\\*|__)?\\s*[.)：:\\-]\\s*\\S`,
-        "m"
+        `(?:^|\\n)\\s*(?:\\*\\*|__)?(?:${OPENER_LABEL_MARK})?${n}${OPENER_LIST_MARK}\\S`,
+        "im"
       ).test(content)
     ) {
-      count++;
+      numbered++;
     }
   }
-  return count >= 4;
+  if (numbered >= 4) return numbered;
+  let lettered = 0;
+  for (const letter of ["A", "B", "C", "D", "E"]) {
+    if (
+      new RegExp(
+        `(?:^|\\n)\\s*(?:\\*\\*|__)?(?:${OPENER_LABEL_MARK})?${letter}${OPENER_LIST_MARK}\\S`,
+        "im"
+      ).test(content)
+    ) {
+      lettered++;
+    }
+  }
+  return Math.max(numbered, lettered);
+}
+
+/** Liste 1–5 ou A–E dans un message assistant (≥4 items). */
+export function hasNumberedOpenerList(content: string): boolean {
+  return countOpenerListMarks(content) >= 4;
+}
+
+function cleanExtractedOpener(raw: string | undefined): string | null {
+  let text = raw
+    ?.replace(/^["«“"'\s]+|["»”"'\s]+$/g, "")
+    .replace(/\*\*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!text || text.length < 8) return null;
+  // Liste de membres (nom + téléphone) ≠ accroches
+  if (/(?:\+|00)\d[\d\s.\-]{7,}\d/.test(text) || /\b\d{10,15}\b/.test(text)) {
+    return null;
+  }
+  return text.slice(0, 1200);
+}
+
+function extractOpenerItemsFromText(
+  content: string
+): Array<{ id: string; message: string }> {
+  const fromNumbers: Array<{ id: string; message: string }> = [];
+  for (let n = 1; n <= 5; n++) {
+    const re = new RegExp(
+      `(?:^|\\n)\\s*(?:\\*\\*|__)?(?:${OPENER_LABEL_MARK})?${n}${OPENER_LIST_MARK}([\\s\\S]*?)(?=(?:\\n\\s*(?:\\*\\*|__)?(?:${OPENER_LABEL_MARK})?[1-5A-E]${OPENER_LIST_MARK})|\\n\\n|$)`,
+      "im"
+    );
+    const text = cleanExtractedOpener(content.match(re)?.[1]);
+    if (!text) continue;
+    fromNumbers.push({ id: `v${n}`, message: text });
+  }
+  if (fromNumbers.length >= 4) return fromNumbers.slice(0, 5);
+
+  const fromLetters: Array<{ id: string; message: string }> = [];
+  for (const letter of ["A", "B", "C", "D", "E"] as const) {
+    const re = new RegExp(
+      `(?:^|\\n)\\s*(?:\\*\\*|__)?(?:${OPENER_LABEL_MARK})?${letter}${OPENER_LIST_MARK}([\\s\\S]*?)(?=(?:\\n\\s*(?:\\*\\*|__)?(?:${OPENER_LABEL_MARK})?[A-E]${OPENER_LIST_MARK})|\\n\\n|$)`,
+      "im"
+    );
+    const text = cleanExtractedOpener(content.match(re)?.[1]);
+    if (!text) continue;
+    fromLetters.push({
+      id: `v${fromLetters.length + 1}`,
+      message: text,
+    });
+  }
+  return fromLetters.slice(0, 5);
+}
+
+function padOpenerVariants(
+  variants: Array<{ id: string; message: string }>
+): Array<{ id: string; message: string }> | null {
+  if (variants.length < 4) return null;
+  while (variants.length < 5) {
+    const last = variants[variants.length - 1]!;
+    variants.push({
+      id: `v${variants.length + 1}`,
+      message: last.message,
+    });
+  }
+  return variants.slice(0, 5);
 }
 
 /** Extrait les 5 textes d'accroche depuis le dernier message assistant qui les liste. */
@@ -211,32 +291,8 @@ export function extractOpenerVariantsFromHistory(
     if (!hasNumberedOpenerList(m.content) && !OPENER_VARIANTS_PROPOSED_RE.test(m.content)) {
       continue;
     }
-    const variants: Array<{ id: string; message: string }> = [];
-    for (let n = 1; n <= 5; n++) {
-      const re = new RegExp(
-        `(?:^|\\n)\\s*(?:\\*\\*|__)?${n}(?:\\*\\*|__)?\\s*[.)：:\\-]\\s*([\\s\\S]*?)(?=(?:\\n\\s*(?:\\*\\*|__)?[1-5](?:\\*\\*|__)?\\s*[.)：:\\-])|\\n\\n|$)`,
-        "m"
-      );
-      const hit = m.content.match(re);
-      let text = hit?.[1]
-        ?.replace(/^["«"\s]+|["»"\s]+$/g, "")
-        .replace(/\*\*/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (!text || text.length < 8) continue;
-      // Accroche longue acceptée (choix 7-C) — pas de troncature agressive
-      variants.push({ id: `v${n}`, message: text.slice(0, 1200) });
-    }
-    if (variants.length >= 4) {
-      while (variants.length < 5) {
-        const last = variants[variants.length - 1]!;
-        variants.push({
-          id: `v${variants.length + 1}`,
-          message: last.message,
-        });
-      }
-      return variants.slice(0, 5);
-    }
+    const padded = padOpenerVariants(extractOpenerItemsFromText(m.content));
+    if (padded) return padded;
   }
   return null;
 }

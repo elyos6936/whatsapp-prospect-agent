@@ -125,7 +125,11 @@ import {
   outboundVariantsOutOfFrame,
   validateOutboundAbVariants,
 } from "./opener-frame.js";
-import { findPlaceholderFields, hasTemplatePlaceholders } from "./outbound-sanitize.js";
+import {
+  findPlaceholderFields,
+  hasTemplatePlaceholders,
+  stripProspectNamePlaceholders,
+} from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
 import {
   buildAutomationVisualPlan,
@@ -4817,14 +4821,22 @@ export async function executeTool(
         /* ignore */
       }
 
-      // Interdit de stocker des crochets dans les textes de campagne (ils finiraient chez les prospects).
+      if (config.initialMessage) {
+        config.initialMessage = stripProspectNamePlaceholders(config.initialMessage);
+      }
+      if (config.abVariants?.length) {
+        config.abVariants = config.abVariants.map((v) => ({
+          ...v,
+          message: stripProspectNamePlaceholders(v.message),
+        }));
+      }
+
+      // Interdit de stocker des crochets dans les textes WhatsApp (pas le guide mémoire).
       const badFields = findPlaceholderFields([
         { label: "initial_message", value: config.initialMessage },
-        { label: "conversation_guide", value: config.conversationGuide },
         { label: "product_name", value: config.productName },
         { label: "price", value: config.price },
         { label: "closing_link", value: config.closingLink },
-        { label: "sales_script", value: config.salesScript },
         ...(config.relance?.messages ?? []).map((m, i) => ({ label: `relance_messages[${i}]`, value: m })),
         ...(config.abVariants ?? []).map((v) => ({ label: `ab_variants.${v.id}`, value: v.message })),
         ...(config.sequenceSteps ?? []).map((s, i) => ({ label: `sequence_steps[${i}]`, value: s.message })),
@@ -5154,11 +5166,17 @@ export async function executeTool(
           const msg = err instanceof Error ? err.message : String(err);
           return JSON.stringify({ error: msg });
         }
-        const groupId = await resolveGroupId(userId, String(args.group_id));
-        const groups = await listWhatsAppGroups(userId);
-        const matched = groups.find((g) => g.id === groupId);
-        config.groupId = groupId;
-        config.groupName = matched?.name ?? String(args.group_id);
+        try {
+          const groupId = await resolveGroupId(userId, String(args.group_id));
+          const groups = await listWhatsAppGroups(userId);
+          const matched = groups.find((g) => g.id === groupId);
+          config.groupId = groupId;
+          config.groupName = matched?.name ?? String(args.group_id);
+        } catch (err) {
+          return JSON.stringify({
+            error: userFacingError(err instanceof Error ? err : String(err)),
+          });
+        }
       }
 
       if (type === "group_broadcast") {
@@ -5460,13 +5478,21 @@ export async function executeTool(
           : { enabled: false, delaysDays: [] };
       }
 
+      if (merged.initialMessage) {
+        merged.initialMessage = stripProspectNamePlaceholders(merged.initialMessage);
+      }
+      if (merged.abVariants?.length) {
+        merged.abVariants = merged.abVariants.map((v) => ({
+          ...v,
+          message: stripProspectNamePlaceholders(v.message),
+        }));
+      }
+
       const badFields = findPlaceholderFields([
         { label: "initial_message", value: merged.initialMessage },
-        { label: "conversation_guide", value: merged.conversationGuide },
         { label: "product_name", value: merged.productName },
         { label: "price", value: merged.price },
         { label: "closing_link", value: merged.closingLink },
-        { label: "sales_script", value: merged.salesScript },
         ...(merged.relance?.messages ?? []).map((m, i) => ({ label: `relance_messages[${i}]`, value: m })),
         ...(merged.abVariants ?? []).map((v) => ({ label: `ab_variants.${v.id}`, value: v.message })),
       ]);

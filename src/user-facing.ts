@@ -69,12 +69,29 @@ function humanizeToolConfigError(raw: string): string | null {
   );
 }
 
+/** MiniMax invente un bouton UI qui n'existe pas. */
+export function looksLikePhantomCampaignUi(text: string): boolean {
+  const t = text.toLowerCase();
+  if (/clique[zr]?\s+(sur\s+)?(le\s+|ce\s+|un\s+)?bouton/.test(t) && !/m[eé]moire/.test(t)) {
+    return true;
+  }
+  return /une erreur est survenue lors de la cr[eé]ation (de )?votre campagne/i.test(
+    text,
+  );
+}
+
 /** Dernière passe avant affichage chat — bloque les fuites techniques restantes. */
 export function sanitizeUserVisibleReply(text: string | null | undefined): string {
   const t = String(text ?? "").trim();
   if (!t) return t;
   const human = humanizeToolConfigError(t);
   if (human) return human;
+  if (looksLikePhantomCampaignUi(t)) {
+    return (
+      "Il n'y a pas de bouton à cliquer ici. " +
+      "Réponds « je valide » pour enregistrer le brouillon et voir la simulation sur le téléphone."
+    );
+  }
   return t;
 }
 
