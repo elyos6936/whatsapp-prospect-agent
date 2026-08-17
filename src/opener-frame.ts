@@ -106,6 +106,17 @@ export function formatAttentionOpenerWarning(
   );
 }
 
+export function openerRiskGatePayload(label: string, text: string): Record<string, unknown> {
+  return {
+    error: formatAttentionOpenerWarning(label, text),
+    needs_opener_risk_acceptance: true,
+    needsUserConfirmation: true,
+    warning: formatAttentionOpenerWarning(label, text),
+    hint:
+      "Préviens l'utilisateur des risques. S'il confirme → keep_opener_as_is ou opener_risk_accepted=true.",
+  };
+}
+
 export function formatAttentionOpenerError(label: string, text: string): string {
   const hard = attentionOpenerHardIssues(text);
   if (hard.length) {
@@ -133,7 +144,8 @@ export function formatAttentionOpenerError(label: string, text: string): string 
  * `outboundVariantsOutOfFrame` + `formatAttentionOpenerWarning`.
  */
 export function validateOutboundAbVariants(
-  variants: Array<{ id?: string; message?: string }> | null | undefined
+  variants: Array<{ id?: string; message?: string }> | null | undefined,
+  _opts?: { fromUserValidatedChat?: boolean; riskAccepted?: boolean }
 ): string | null {
   const cleaned = (variants ?? [])
     .map((v, i) => ({

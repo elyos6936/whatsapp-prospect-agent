@@ -805,11 +805,11 @@ export function buildBriefingNudge(
         (delegated
           ? "L'utilisateur t'a délégué l'accroche (« propose » / « comme tu veux »). "
           : "L'utilisateur a indiqué son angle pour le 1er message. ") +
-        "Propose maintenant **UNE seule accroche** A.I.D.A. Attention (1-2 phrases, ≤200 car., ton d'adressage de la mémoire — tutoiement OU vouvoiement, SANS prix/lien/pitch, sans prénom du prospect)" +
+        "Propose maintenant **UNE seule accroche** A.I.D.A. Attention (format recommandé : 1-2 phrases, ton d'adressage de la mémoire, SANS prix/lien/pitch)" +
         (delegated
           ? " — inventée à partir de la **mémoire / offre**"
           : ", alignée sur **SA** direction") +
-        ". Présente-la clairement (ex. « Voici l'accroche que je propose : « … » ») et demande s'il valide. " +
+        ". S'il colle un texte avec prix/lien/pitch → préviens des risques, ne bloque pas. " +
         "**INTERDIT** de lister 5 variantes dans ce message. Attends sa validation / correction."
       );
     }

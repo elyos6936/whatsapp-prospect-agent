@@ -18,6 +18,7 @@ import {
   parseMemoryHints,
   type CampaignMemory,
 } from "./campaign-memory.js";
+import { looksLikePhoneDump } from "./simulation-sanitize.js";
 
 export type LivePlaybookTurn = {
   speaker: "toi" | "prospect";
@@ -116,6 +117,7 @@ export function formatLivePlaybookForWhatsApp(
     `- Si le prospect sort du cadre : recadre en 1 phrase vers l'objectif campagne.`,
   ];
   for (const turn of playbook.turns.slice(0, 7)) {
+    if (looksLikePhoneDump(turn.text)) continue;
     if (turn.speaker === "toi") {
       lines.push(`- Toi (exemple) : « ${turn.text} »`);
     } else {
@@ -215,7 +217,8 @@ export async function persistLivePlaybookForThread(
 ): Promise<Automation | null> {
   const thread = await getAgentThread(userId, threadId);
   const automationId = thread?.automation_id;
-  if (!automationId || turns.length < 2) return null;
+  const safeTurns = turns.filter((t) => !looksLikePhoneDump(t.text)).slice(0, 7);
+  if (!automationId || safeTurns.length < 2) return null;
 
   const auto = await getAutomation(userId, automationId);
   if (!auto) return null;
@@ -223,13 +226,13 @@ export async function persistLivePlaybookForThread(
   const mem = await getLinkedCampaignMemory(userId, threadId);
   const now = new Date().toISOString();
   const prev = auto.config.livePlaybook;
-  const firstToi = turns.find((t) => t.speaker === "toi")?.text?.trim() || "";
+  const firstToi = safeTurns.find((t) => t.speaker === "toi")?.text?.trim() || "";
   const syncOpener = opts.syncOpener !== false;
 
   const playbook: LivePlaybook = {
     updatedAt: now,
     validatedAt: opts.markValidated ? now : prev?.validatedAt,
-    turns: turns.slice(0, 7),
+    turns: safeTurns,
     openerSnapshot:
       (syncOpener && firstToi
         ? firstToi
@@ -250,7 +253,7 @@ export async function persistLivePlaybookForThread(
     `=== CADRE PLAYBOOK (ne pas dériver) ===\n` +
     `Les réponses WhatsApp aux prospects DOIVENT rester dans la trajectoire validée en simulation :\n` +
     `même ton, mêmes angles, mêmes CTAs, même pacing AIDA.\n` +
-    `INTERDIT : inventer une autre offre, un autre prix, un autre pitch ou un style fade hors trajectoire.\n` +
+    `INTERDIT : inventer une autre offre, coller une liste de numéros, un style fade hors trajectoire.\n` +
     `En cas de doute : coller au playbook + à la mémoire, pas improviser.`;
 
   const existingGuide = (auto.config.conversationGuide || "").trim();

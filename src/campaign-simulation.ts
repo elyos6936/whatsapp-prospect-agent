@@ -13,6 +13,11 @@ import {
   resolveLlmRoleProvider,
 } from "./llm.js";
 import { resolveReplyTone, toneLabel } from "./reply-tone.js";
+import {
+  sanitizeSimInput,
+  turnsContainPhoneDump,
+  turnLooksVagueAfterYes,
+} from "./simulation-sanitize.js";
 
 export type SimulationTurn = {
   speaker: "toi" | "prospect";
@@ -138,8 +143,11 @@ export async function generateCampaignSimulationDirect(
     recentTranscript: string;
     /** Accroche validée — le 1er tour « toi » doit coller à ce texte (légère reformulation OK). */
     approvedOpener?: string | null;
-    /** Guide / mémoire / prix / lien — même inputs que le live. */
+    /** Guide / prix / lien config (secondaire). */
     campaignBrief?: string | null;
+    /** Instructions mémoire brutes — process à exécuter, non tronquées. */
+    memoryInstructions?: string | null;
+    memoryName?: string | null;
   }
 ): Promise<{ display: string; turns: SimulationTurn[] } | null> {
   const tone = resolveReplyTone({
@@ -148,35 +156,91 @@ export async function generateCampaignSimulationDirect(
   });
   const toneLbl = toneLabel(tone);
   const openerRule = opts.approvedOpener?.trim()
-    ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 280)} » — micro-variation de mots OK, PAS de nouvel angle, PAS de prix/lien/pitch\n`
-    : `- Le 1er message « toi » = accroche A.I.D.A. Attention SEULEMENT (1-2 phrases, PAS de prix, PAS de lien, PAS de pitch complet, ${toneLbl}, sans prénom du prospect)\n`;
+    ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 400)} » — micro-variation OK, PAS de nouvel angle.\n`
+    : `- Le 1er message « toi » = accroche courte (format Attention recommandé, ${toneLbl}, sans prénom du prospect).\n`;
 
+  const memoryBody = (opts.memoryInstructions ?? "").trim();
+  const memorySection = memoryBody
+    ? `\n## MÉMOIRE CAMPAGNE (SCRIPT PRIORITAIRE — « ${opts.memoryName || "Mémoire"} »)\n${memoryBody}\n`
+    : "";
   const brief = opts.campaignBrief?.trim()
-    ? `\n## Cadre campagne (OBLIGATOIRE — même cadre que les réponses live)\n${opts.campaignBrief.trim().slice(0, 2800)}\n`
+    ? `\n## Cadre config (secondaire si conflit → mémoire gagne)\n${opts.campaignBrief.trim().slice(0, 1800)}\n`
     : "";
 
   const system =
     "Tu rédiges une simulation WhatsApp courte pour valider une campagne Klanvio.\n" +
-    "Cette simulation SERA la trajectoire suivie ensuite avec les VRAIS prospects — sois fidèle au cadre.\n" +
-    "Réponds UNIQUEMENT avec un JSON valide de la forme :\n" +
+    "Cette simulation SERA la trajectoire suivie avec les VRAIS prospects.\n" +
+    "Réponds UNIQUEMENT avec un JSON valide :\n" +
     '{"turns":[{"speaker":"toi","text":"..."},{"speaker":"prospect","name":"Prospect","text":"..."},{"speaker":"toi","text":"..."}]}\n' +
-    "Règles strictes :\n" +
-    "- Exactement 6 ou 7 turns (JAMAIS plus)\n" +
+    "\n## PROCESS MÉMOIRE (prioritaire sur A.I.D.A. générique)\n" +
+    "La mémoire = l'ordre des étapes de CETTE campagne (variable d'une offre à l'autre).\n" +
+    "- Chaque « oui » du prospect = avancer d'UNE étape précise (ex. présenter l'offre, puis inscription, puis lien).\n" +
+    "- DIRECT et précis. Varie les formulations, pas le process.\n" +
+    "- INTERDIT : « comment préférez-vous finaliser », tourner en rond, dump de numéros.\n" +
+    "- INTERDIT ABSOLU de recoller une liste de contacts / téléphones. Ça n'est JAMAIS un message prospect.\n" +
+    "- A.I.D.A. = secours seulement si la mémoire est silencieuse sur une étape.\n" +
+    "\n## Format\n" +
+    "- Exactement 6 ou 7 turns\n" +
     "- Alternance toi / prospect (commencer par toi)\n" +
     openerRule +
-    "- Les tours suivants : même pacing / mission (Interest → Desire → Action) ; interdiction des réactions vides (« Ah super », « Super. ») ; " +
-    `identité = prénom + pourquoi (pas titre LinkedIn) ; sur oui/ok → question ou détail nouveau ; ${toneLbl} partout ; pas le prénom du prospect à tout va\n` +
-    "- Textes réels, naturels, sans crochets [ ]\n" +
-    "- Inclure prix / lien seulement APRÈS que le prospect a engagé, s'ils sont dans le contexte\n" +
-    "- Respecte le guide / mémoire / offre du cadre campagne\n" +
+    `- Les tours suivants : même pacing / mission ; ${toneLbl} ; pas le prénom du prospect à tout va\n` +
+    "- Textes réels, 1-2 phrases, sans crochets [ ], sans liste de numéros\n" +
     "- Aucune phrase hors JSON";
 
   const user =
-    `## Contexte business\n${opts.businessContext.slice(0, 3500)}\n` +
+    memorySection +
     brief +
-    `\n## Fil récent (agence)\n${opts.recentTranscript.slice(0, 4000)}\n\n` +
-    `Génère maintenant la simulation JSON (6 ou 7 turns max).`;
+    `## Contexte business (secondaire)\n${sanitizeSimInput(opts.businessContext, 1800)}\n` +
+    `\n## Fil agence (contexte seulement — NE PAS recopier listes / numéros)\n${sanitizeSimInput(opts.recentTranscript, 2000)}\n\n` +
+    `Génère la simulation JSON (6 ou 7 turns). Exécute le process mémoire. Zéro numéro de téléphone dans les tours « toi ».`;
 
+  const turns = await runSimCompletion(client, system, user, 0.4);
+  if (!turns) return null;
+
+  const needsRepair =
+    turnsContainPhoneDump(turns) ||
+    turns.some(
+      (t, i) =>
+        t.speaker === "toi" &&
+        i > 0 &&
+        turns[i - 1]?.speaker === "prospect" &&
+        /^(oui|ouais|ok)\b/i.test(turns[i - 1]!.text.trim()) &&
+        turnLooksVagueAfterYes(t.text)
+    );
+
+  let finalTurns = turns;
+  if (needsRepair) {
+    console.warn("[simulation] sanitizing / repairing dump or vague-after-yes");
+    const repaired = await runSimCompletion(
+      client,
+      system,
+      user +
+        "\n\nCORRECTION : la simulation précédente collait une liste ou une phrase vague. " +
+        "Régénère SANS aucun numéro de téléphone, en exécutant la prochaine étape MÉMOIRE après chaque oui.",
+      0.25
+    );
+    if (repaired && !turnsContainPhoneDump(repaired)) {
+      finalTurns = repaired;
+    } else {
+      finalTurns = turns.filter((t) => !turnsContainPhoneDump([t]));
+      if (finalTurns.length < 3) return null;
+    }
+  }
+
+  try {
+    return { display: formatCampaignSimulationDisplay(finalTurns), turns: finalTurns };
+  } catch (err) {
+    console.warn("[simulation] format failed:", err);
+    return null;
+  }
+}
+
+async function runSimCompletion(
+  client: OpenAI,
+  system: string,
+  user: string,
+  temperature: number
+): Promise<SimulationTurn[] | null> {
   const simRole = config.toolLlmConfigured ? "tools" : "chat";
   const simProvider = resolveLlmRoleProvider(simRole);
   const simModel = resolveLlmRoleModel(simRole);
@@ -186,10 +250,10 @@ export async function generateCampaignSimulationDirect(
       { role: "system", content: system },
       { role: "user", content: user },
     ],
-    max_tokens: recommendedMaxTokensForProvider(simProvider, simModel, 900, {
+    max_tokens: recommendedMaxTokensForProvider(simProvider, simModel, 1100, {
       thinkingEnabled: false,
     }),
-    temperature: 0.7,
+    temperature,
     ...llmExtrasForProvider(simProvider, simModel, { enableThinking: false }),
   };
 
@@ -203,13 +267,6 @@ export async function generateCampaignSimulationDirect(
   const turns = parseTurnsFromModelText(content);
   if (!turns) {
     console.warn("[simulation] parse failed, raw:", content.slice(0, 400));
-    return null;
   }
-
-  try {
-    return { display: formatCampaignSimulationDisplay(turns), turns };
-  } catch (err) {
-    console.warn("[simulation] format failed:", err);
-    return null;
-  }
+  return turns;
 }

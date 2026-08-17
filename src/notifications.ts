@@ -699,6 +699,7 @@ function buildActiveCampaignContext(
   extras?: { memoryBlock?: string; playbookBlock?: string }
 ): string {
   const cfg = auto.config;
+  const hasMemory = Boolean(extras?.memoryBlock?.trim());
   const inbound =
     auto.type === "keyword_sales" || cfg.mode === "inbound_closing";
   const goalLabels: Record<string, string> = {
@@ -724,20 +725,27 @@ function buildActiveCampaignContext(
       : "",
     // Campagnes déjà actives : injecte le cadre Support même si le guide DB est vieux / prospection.
     inbound ? buildRuntimeSupportFrame(cfg) : "",
-    cfg.conversationGuide
+    hasMemory
+      ? "Offre / prix / liens / ton : voir bloc MÉMOIRE CAMPAGNE ci-dessous (seule source — ignore le profil Réglages)."
+      : "",
+    !hasMemory && cfg.conversationGuide
       ? `TON & APPROCHE (suis à la lettre, c'est le cœur de la campagne) :\n${cfg.conversationGuide}`
       : "",
-    cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
-    cfg.price
+    !hasMemory && cfg.productName ? `Produit / offre : ${cfg.productName}` : "",
+    !hasMemory && cfg.price
       ? `Prix EXACT à citer si demandé : ${cfg.price}`
-      : `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire [prix].`,
-    cfg.closingLink
+      : !hasMemory
+        ? `Prix : NON RENSEIGNÉ — si on te demande le prix, dis que tu confirmes juste après. JAMAIS écrire [prix].`
+        : "",
+    !hasMemory && cfg.closingLink
       ? `Lien à envoyer au prospect (URL réelle — SEULE URL autorisée) : ${cfg.closingLink}`
-      : `Lien : AUCUN en config — INTERDIT d'inventer https://… (example.com, faux lien commande, etc.).`,
+      : !hasMemory
+        ? `Lien : AUCUN en config — INTERDIT d'inventer https://… (example.com, faux lien commande, etc.).`
+        : "",
     cfg.mediaUrl
       ? `Photo / média produit à envoyer si le client demande une photo/image : ${cfg.mediaUrl}`
       : "",
-    cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
+    !hasMemory && cfg.salesScript ? `Argumentaire : ${cfg.salesScript}` : "",
     cfg.handoffKeywords?.length
       ? `Mots-clés handoff humain (si le prospect les écrit, l'IA s'arrête) : ${cfg.handoffKeywords.join(", ")}`
       : "",

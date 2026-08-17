@@ -329,6 +329,36 @@ async function businessContextBlock(
   return lines.join("\n");
 }
 
+function automationContextHasCampaignMemory(automationContext?: string | null): boolean {
+  return /=== MÉMOIRE CAMPAGNE/i.test(automationContext?.trim() ?? "");
+}
+
+function automationContextHasActiveCampaign(automationContext?: string | null): boolean {
+  return /=== CAMPAGNE ACTIVE/i.test(automationContext?.trim() ?? "");
+}
+
+/** Profil Réglages ≠ mémoire campagne : ne l'injecte pas quand une campagne/mémoire est active. */
+async function buildWhatsAppSourceBlock(
+  userId: number,
+  automationContext?: string,
+  priceOverride?: string | null
+): Promise<string> {
+  if (automationContextHasCampaignMemory(automationContext)) {
+    return [
+      "Source UNIQUE = bloc MÉMOIRE CAMPAGNE + consignes CAMPAGNE ci-dessous.",
+      "INTERDIT d'utiliser le profil business (Réglages / onboarding) — il peut être obsolète ou différent.",
+      "INTERDIT d'inventer nom, offre, prix ou lien absents de la mémoire / campagne.",
+    ].join("\n");
+  }
+  if (automationContextHasActiveCampaign(automationContext)) {
+    return [
+      "Source = consignes CAMPAGNE ci-dessous uniquement (pas le profil Réglages).",
+      "INTERDIT d'inventer hors campagne.",
+    ].join("\n");
+  }
+  return businessContextBlock(userId, priceOverride);
+}
+
 export async function generateWhatsAppReply(userId: number, input: {
   chatId: string;
   senderName: string;
@@ -457,8 +487,8 @@ export async function generateWhatsAppReply(userId: number, input: {
             `Si ack / quantité (« ok », « 1 ») : enchaîne la prochaine question utile (souvent le LIEU DE LIVRAISON) — jamais un faux lien.\n`
           : "";
 
-  const userContent = `## Identité & offre (ne jamais inventer hors de ça)
-${await businessContextBlock(userId, configuredPrice)}
+  const userContent = `## Identité & offre
+${await buildWhatsAppSourceBlock(userId, input.automationContext, configuredPrice)}
 ${input.automationContext ? `\n## CAMPAGNE — OBJECTIF & CONSIGNES\n${input.automationContext}\n` : "\n⚠️ Pas de campagne active — réponse courte et générale.\n"}
 ${hardOverride}${askedBlock}
 ## Contact

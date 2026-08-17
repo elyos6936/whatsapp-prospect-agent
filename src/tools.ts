@@ -121,6 +121,7 @@ import { getContactPresence } from "./notifications.js";
 import {
   formatAttentionOpenerWarning,
   isValidAttentionOpener,
+  openerRiskGatePayload,
   outboundVariantsOutOfFrame,
   validateOutboundAbVariants,
 } from "./opener-frame.js";
@@ -1671,7 +1672,12 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
           initial_message: {
             type: "string",
             description:
-              "Premier message sortant = A.I.D.A. Attention (1-2 phrases, ≤200 car., ton d'adressage de la mémoire, SANS prénom du prospect). RECOMMANDÉ (pas imposé) : sans prix, sans lien, sans pitch complet — si l'utilisateur veut autre chose, avertis-le des risques puis respecte son choix (keep_opener_as_is). = accroche validée / référence simu ; les 5 ab_variants tournent à l'envoi. Pour group_broadcast : 1er post dans le(s) groupe(s).",
+              "Premier message sortant = A.I.D.A. Attention recommandé. Si l'utilisateur impose prix/lien/pitch : avertis, puis keep_opener_as_is ou opener_risk_accepted=true. Les 5 ab_variants tournent à l'envoi.",
+          },
+          opener_risk_accepted: {
+            type: "boolean",
+            description:
+              "Alias de keep_opener_as_is : l'utilisateur a confirmé garder un 1er message hors Attention.",
           },
           max_members: { type: "number", description: "Limite de membres pour group_prospect (défaut 30)" },
           max_per_day: {
@@ -1908,7 +1914,16 @@ export const TOOL_DEFINITIONS: OpenAI.Chat.Completions.ChatCompletionTool[] = [
         type: "object",
         properties: {
           automation_id: { type: "number" },
-          initial_message: { type: "string" },
+          initial_message: {
+            type: "string",
+            description:
+              "1er message. Format Attention recommandé ; hors cadre → opener_risk_accepted=true après consentement.",
+          },
+          opener_risk_accepted: {
+            type: "boolean",
+            description:
+              "true si l'utilisateur a confirmé garder un 1er message hors Attention.",
+          },
           conversation_guide: { type: "string" },
           trigger_phrases: { type: "array", items: { type: "string" } },
           inbound_catch_all: {
@@ -4260,10 +4275,20 @@ export async function executeTool(
           `⚠️ Mémoire du fil : « ${from} » → « ${mem.name} ».`
         ).catch(() => {});
       }
+      let syncNote = "";
+      try {
+        const { syncThreadAutomationFromMemory } = await import("./campaign-sync.js");
+        const r = await syncThreadAutomationFromMemory(userId, threadId);
+        if (r.synced && r.automationId != null) {
+          syncNote = ` Campagne #${r.automationId} synchronisée avec la mémoire.`;
+        }
+      } catch (err) {
+        console.warn("[set_campaign_memory] sync:", err);
+      }
       return JSON.stringify({
         success: true,
         memory: { id: mem.id, name: mem.name },
-        message: `Mémoire « ${mem.name} » active sur ce fil. Ne repose plus présentation / stickers / fenêtre / ton.`,
+        message: `Mémoire « ${mem.name} » active sur ce fil.${syncNote} Ne repose plus présentation / stickers / fenêtre / ton.`,
       });
     }
 
@@ -4857,7 +4882,9 @@ export async function executeTool(
       }
       // Hors cadre A.I.D.A. : on avertit et on demande l'accord, on n'impose pas.
       const openerFrameConfirmed =
-        Boolean(args.keep_opener_as_is) || Boolean(args.ab_variants_from_chat);
+        Boolean(args.keep_opener_as_is) ||
+        Boolean(args.opener_risk_accepted) ||
+        Boolean(args.ab_variants_from_chat);
       if (
         type !== "group_broadcast" &&
         type !== "keyword_sales" &&
@@ -4865,27 +4892,21 @@ export async function executeTool(
         !openerFrameConfirmed &&
         !isValidAttentionOpener(config.initialMessage)
       ) {
-        return JSON.stringify({
-          needsUserConfirmation: true,
-          warning: formatAttentionOpenerWarning("initial_message", config.initialMessage),
-        });
+        return JSON.stringify(
+          openerRiskGatePayload("initial_message", config.initialMessage)
+        );
       }
       const abVariantsParsed = parseAbVariantsArg(args.ab_variants);
       const abVariantsExplicit = Boolean(abVariantsParsed);
-      // Pré-contrôle si ab_variants est fourni (évite un merge inutile)
       if (isOutbound && abVariantsExplicit) {
         const early = validateOutboundAbVariants(abVariantsParsed!);
         if (early) return JSON.stringify({ error: early });
         if (!openerFrameConfirmed) {
           const offFrame = outboundVariantsOutOfFrame(abVariantsParsed!);
           if (offFrame) {
-            return JSON.stringify({
-              needsUserConfirmation: true,
-              warning: formatAttentionOpenerWarning(
-                `ab_variants.${offFrame.id}`,
-                offFrame.message
-              ),
-            });
+            return JSON.stringify(
+              openerRiskGatePayload(`ab_variants.${offFrame.id}`, offFrame.message)
+            );
           }
         }
       }
@@ -5464,15 +5485,17 @@ export async function executeTool(
         isOutboundType &&
         merged.initialMessage &&
         !args.keep_opener_as_is &&
+        !args.opener_risk_accepted &&
         !isValidAttentionOpener(merged.initialMessage)
       ) {
-        return JSON.stringify({
-          needsUserConfirmation: true,
-          warning: formatAttentionOpenerWarning("initial_message", merged.initialMessage),
-        });
+        return JSON.stringify(
+          openerRiskGatePayload("initial_message", merged.initialMessage)
+        );
       }
       if (parseAbVariantsArg(args.ab_variants)) {
-        const abErr = validateOutboundAbVariants(merged.abVariants);
+        const abErr = validateOutboundAbVariants(merged.abVariants, {
+          riskAccepted: Boolean(args.opener_risk_accepted),
+        });
         if (abErr) return JSON.stringify({ error: abErr });
         if (!args.keep_opener_as_is) {
           const offFrame = outboundVariantsOutOfFrame(merged.abVariants);

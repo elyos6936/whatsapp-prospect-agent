@@ -272,23 +272,29 @@ export async function runDeterministicDraftAndSim(opts: {
   const freshThread = await getAgentThread(userId, threadId);
   let approvedOpener = variants[0]!.message;
   let campaignBrief: string | null = null;
+  let memoryInstructions: string | null = null;
+  let memoryName: string | null = null;
   if (freshThread?.automation_id) {
     const auto = await getAutomation(userId, freshThread.automation_id);
     approvedOpener = auto?.config.initialMessage?.trim() || approvedOpener;
     if (auto) {
       const bits = [
-        auto.config.conversationGuide ? `Guide :\n${auto.config.conversationGuide}` : "",
         auto.config.productName ? `Produit : ${auto.config.productName}` : "",
         auto.config.price ? `Prix : ${auto.config.price}` : "",
         auto.config.closingLink ? `Lien : ${auto.config.closingLink}` : "",
       ].filter(Boolean);
       try {
-        const { formatCampaignMemoryForWhatsApp, getLinkedMemoryForAutomation } =
-          await import("./campaign-sync.js");
+        const { getLinkedMemoryForAutomation } = await import("./campaign-sync.js");
         const mem = await getLinkedMemoryForAutomation(userId, auto.id);
-        if (mem) bits.push(formatCampaignMemoryForWhatsApp(mem));
+        memoryInstructions = mem?.instructions?.trim() || null;
+        memoryName = mem?.name ?? null;
+        if (!memoryInstructions && auto.config.conversationGuide) {
+          bits.unshift(`Guide :\n${auto.config.conversationGuide}`);
+        }
       } catch {
-        /* ignore */
+        if (auto.config.conversationGuide) {
+          bits.unshift(`Guide :\n${auto.config.conversationGuide}`);
+        }
       }
       campaignBrief = bits.join("\n\n") || null;
     }
@@ -304,6 +310,8 @@ export async function runDeterministicDraftAndSim(opts: {
     recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
     approvedOpener,
     campaignBrief,
+    memoryInstructions,
+    memoryName,
   });
 
   const openerNote = shortOpenerNote(variants);
@@ -514,6 +522,8 @@ export async function runDeterministicSimulation(opts: {
 
   let approvedOpener: string | null = null;
   let campaignBrief: string | null = null;
+  let memoryInstructions: string | null = null;
+  let memoryName: string | null = null;
   let isSupportCampaign = false;
   let supportTriggers: string[] = [];
   let supportCatchAll = false;
@@ -539,19 +549,26 @@ export async function runDeterministicSimulation(opts: {
       .filter(Boolean);
     if (auto) {
       const bits = [
-        auto.config.conversationGuide ? `Guide :\n${auto.config.conversationGuide}` : "",
         auto.config.productName ? `Produit : ${auto.config.productName}` : "",
         auto.config.price ? `Prix : ${auto.config.price}` : "",
         auto.config.closingLink ? `Lien : ${auto.config.closingLink}` : "",
         auto.config.salesScript ? `Script : ${auto.config.salesScript}` : "",
       ].filter(Boolean);
       try {
-        const { formatCampaignMemoryForWhatsApp, getLinkedMemoryForAutomation } =
-          await import("./campaign-sync.js");
+        const { getLinkedMemoryForAutomation } = await import("./campaign-sync.js");
         const mem = await getLinkedMemoryForAutomation(userId, auto.id);
-        if (mem) bits.push(formatCampaignMemoryForWhatsApp(mem));
+        memoryInstructions = mem?.instructions?.trim() || null;
+        memoryName = mem?.name ?? null;
+        if (!memoryInstructions && auto.config.conversationGuide) {
+          bits.unshift(`Guide :\n${auto.config.conversationGuide}`);
+        }
+        if (isSupportCampaign && auto.config.conversationGuide) {
+          bits.unshift(`Guide :\n${auto.config.conversationGuide}`);
+        }
       } catch {
-        /* ignore */
+        if (auto.config.conversationGuide) {
+          bits.unshift(`Guide :\n${auto.config.conversationGuide}`);
+        }
       }
       campaignBrief = bits.join("\n\n") || null;
     }
@@ -627,6 +644,8 @@ export async function runDeterministicSimulation(opts: {
     recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
     approvedOpener,
     campaignBrief,
+    memoryInstructions,
+    memoryName,
   });
   if (!sim?.display?.trim()) return null;
 

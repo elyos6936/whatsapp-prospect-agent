@@ -566,9 +566,26 @@ export async function saveWhatsAppMessage(userId: number, input: {
     input.direction === "sortant" ? (input.countsTowardQuota !== false ? 1 : 0) : 1;
   const automationIdRaw =
     input.automationId != null ? Number(input.automationId) : NaN;
-  const automationId = Number.isFinite(automationIdRaw)
+  let automationId = Number.isFinite(automationIdRaw)
     ? Math.floor(automationIdRaw)
     : null;
+  if (automationId != null) {
+    const exists = await sql`
+      SELECT 1 FROM automations WHERE user_id = ${userId} AND id = ${automationId} LIMIT 1
+    `;
+    if (exists.length === 0) {
+      console.warn(
+        `[messages] automation_id=${automationId} introuvable pour user=${userId} — insert sans tag`
+      );
+      await sql`
+        UPDATE contacts
+        SET conversation_campaign_id = NULL, updated_at = NOW()
+        WHERE user_id = ${userId}
+          AND conversation_campaign_id = ${automationId}
+      `.catch(() => {});
+      automationId = null;
+    }
+  }
   const rows = await sql<Record<string, unknown>[]>`
     INSERT INTO messages (user_id, contact_phone, sender_name, direction, body, green_api_id, counts_toward_quota, automation_id)
     VALUES (
@@ -3687,6 +3704,15 @@ export async function deleteAutomation(userId: number, id: number): Promise<bool
     DELETE FROM send_queue
     WHERE user_id = ${userId} AND automation_id = ${id} AND status = 'pending'
   `;
+  await sql`
+    UPDATE messages SET automation_id = NULL
+    WHERE user_id = ${userId} AND automation_id = ${id}
+  `;
+  await sql`
+    UPDATE contacts SET conversation_campaign_id = NULL, updated_at = NOW()
+    WHERE user_id = ${userId} AND conversation_campaign_id = ${id}
+  `;
+  await sql`DELETE FROM contact_automation_state WHERE user_id = ${userId} AND automation_id = ${id}`;
   await sql`DELETE FROM automations WHERE user_id = ${userId} AND id = ${id}`;
   return true;
 }
