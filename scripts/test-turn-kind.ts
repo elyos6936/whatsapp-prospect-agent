@@ -7,6 +7,7 @@ import { isExplicitSendNow, allowsManualSend } from "../src/high-stakes-intent.j
 import {
   buildScenarioPauseNudge,
   classifyBriefingTurn,
+  isParallelGroupExtract,
   isParallelOneShotSend,
 } from "../src/turn-kind.js";
 
@@ -118,6 +119,25 @@ console.log("\n=== Florent #246–#250 : continue/oui/bonjour restent rail ===\n
     const k = classifyBriefingTurn({ userMessage: msg, inCampaignFlow: true });
     assert(k.kind === "advance_rail", `« ${msg} » reste sur le rail (slot launch OK)`);
   }
+}
+
+console.log("\n=== Screenshot GIT3 : extrait contacts = parallel group_extract ===\n");
+{
+  const msg = "extrait moi les contacts de GIT3 ouvert";
+  assert(isParallelGroupExtract(msg), "GIT3: isParallelGroupExtract");
+  const k = classifyBriefingTurn({ userMessage: msg, inCampaignFlow: true });
+  assert(k.kind === "parallel_action", "GIT3: kind=parallel_action");
+  assert(k.parallelAction === "group_extract", "GIT3: parallelAction=group_extract");
+  assert(k.pauseScenario === true, "GIT3: pauseScenario");
+  const rail = classifyBriefingTurn({
+    userMessage: "Les membres du groupe Automax",
+    inCampaignFlow: true,
+  });
+  assert(rail.kind === "advance_rail", "« Les membres du groupe Automax » reste rail");
+  assert(
+    !isParallelGroupExtract("Les membres du groupe Automax"),
+    "sans verbe extract ≠ parallèle"
+  );
 }
 
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);

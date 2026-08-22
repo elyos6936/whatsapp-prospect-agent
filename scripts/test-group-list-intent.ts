@@ -47,6 +47,9 @@ console.log("\n=== detectQuickGroupMembersIntent ===\n");
 
   const c = detectQuickGroupMembersIntent("GIT3 Information 25-26");
   assert(c == null, "nom seul n'est pas un intent membres");
+
+  const git3 = detectQuickGroupMembersIntent("extrait moi les contacts de GIT3 ouvert");
+  assert(git3?.groupQuery === "GIT3", `GIT3 extrait (got ${git3?.groupQuery})`);
 }
 
 console.log("\n=== looksLikeBareGroupName ===\n");

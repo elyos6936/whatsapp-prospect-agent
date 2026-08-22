@@ -9,11 +9,12 @@
  */
 import type { AgentMessage } from "./db.js";
 import { isBriefingSideTalk } from "./campaign-briefing.js";
+import { detectQuickGroupMembersIntent } from "./group-list-intent.js";
 import { isExplicitSendNow } from "./high-stakes-intent.js";
 
 export type BriefingTurnKind = "advance_rail" | "digression" | "parallel_action";
 
-export type ParallelActionType = "one_shot_send";
+export type ParallelActionType = "one_shot_send" | "group_extract";
 
 export type BriefingTurnClassification = {
   kind: BriefingTurnKind;
@@ -21,6 +22,10 @@ export type BriefingTurnClassification = {
   pauseScenario: boolean;
   parallelAction: ParallelActionType | null;
 };
+
+/** Verbe d'extraction / listing — évite de classer « Les membres du groupe X » (réponse rail). */
+const GROUP_EXTRACT_ACTION_RE =
+  /\b(extrait|extraits|extraire|extraction|extract|liste|lister|donne(?:[- ]?moi)?|donner|montre|afficher|r[eé]cup[eè]re(?:r)?)\b/i;
 
 const SEND_VERB_RE =
   /\b(envoie[rz]?|envois|envoies|envoyer|écris|ecris|écrire|ecrire|transmets|transmettre|message\s+à)\b/i;
@@ -65,7 +70,7 @@ export function buildScenarioPauseNudge(opts: {
   if (opts.kind === "parallel_action") {
     return (
       `## Scénario en pause — action parallèle\n` +
-      `L'utilisateur demande une action autonome (souvent un envoi WhatsApp one-shot), ` +
+      `L'utilisateur demande une action autonome (envoi one-shot, extraction de contacts d'un groupe, etc.), ` +
       `pas la prochaine étape du briefing. Exécute SA demande si les outils le permettent ` +
       `(Vague 1 : envoi seulement si intention explicite). ${resume}`
     );
@@ -99,9 +104,29 @@ export function classifyBriefingTurn(opts: {
     };
   }
 
+  if (isParallelGroupExtract(msg)) {
+    return {
+      kind: "parallel_action",
+      pauseScenario: true,
+      parallelAction: "group_extract",
+    };
+  }
+
   if (isBriefingSideTalk(msg)) {
     return { kind: "digression", pauseScenario: true, parallelAction: null };
   }
 
   return { kind: "advance_rail", pauseScenario: false, parallelAction: null };
+}
+
+/**
+ * Extraction contacts/membres d'un groupe : action parallèle autonome.
+ * Exige un verbe d'extraction pour ne pas confondre avec une réponse rail
+ * du type « Les membres du groupe Automax ».
+ */
+export function isParallelGroupExtract(userMessage: string): boolean {
+  const t = userMessage.trim();
+  if (!t || t.length > 240) return false;
+  if (!GROUP_EXTRACT_ACTION_RE.test(t)) return false;
+  return detectQuickGroupMembersIntent(t) != null;
 }

@@ -132,6 +132,11 @@ function cleanGroupQuery(raw: string): string | null {
     .trim();
   // Retirer un éventuel préfixe « groupe(s) » résiduel
   q = q.replace(/^(?:le|la|les|ce|cet|ces|mon|ma|mes)\s+/i, "").trim();
+  q = q.replace(/^(?:le|la|les|ce|cet|ces|mon|ma|mes)?\s*groupes?\s+/i, "").trim();
+  // « GIT3 ouvert » → chercher « GIT3 » (ouvert = état, pas le nom)
+  if (/\s+\S+/.test(q)) {
+    q = q.replace(/\s+ouverts?\s*$/i, "").trim();
+  }
   if (q.length < 2) return null;
   return q;
 }
@@ -148,12 +153,17 @@ export function detectQuickGroupMembersIntent(msg: string): QuickGroupMembersInt
   const hasGroupWord = /\bgroupes?\b/i.test(t);
   const hasMemberWord = /\b(membres?|participants?)\b/i.test(t);
   const hasContactWord = /\bcontacts?\b/i.test(t);
+  // Conjugué FR : « extrait », « extraire », « extraction » (pas seulement extraire?)
+  const hasExtractVerb =
+    /\b(extrait|extraits|extraire|extraction|extract)\b/i.test(t);
+  const hasDeTarget = /\b(?:du|de|dans)\s+\S{2,}/i.test(t);
 
-  // « contacts » seul = carnet sauf si « groupe » est présent
+  // « contacts » seul = carnet ; « extrait … contacts de X » OK même sans le mot « groupe »
   const wantsMembers =
-    (hasMemberWord && (hasGroupWord || /\b(?:du|de|dans)\s+\S+/i.test(t))) ||
+    (hasMemberWord && (hasGroupWord || hasDeTarget)) ||
     (hasContactWord && hasGroupWord) ||
-    (/\bextraire?\b/i.test(t) && (hasMemberWord || hasContactWord));
+    (hasContactWord && hasExtractVerb && hasDeTarget) ||
+    (hasExtractVerb && (hasMemberWord || hasContactWord));
 
   if (!wantsMembers) return null;
 
@@ -180,7 +190,8 @@ export function detectQuickGroupMembersIntent(msg: string): QuickGroupMembersInt
   const patterns = [
     // « deux membres de Team MASK » / « membres du groupe X » / « contacts de ce groupes X »
     /\b(?:membres?|participants?|contacts?)\s+(?:du|de|dans)\s+(?:ce|cet|ces|le|la|les|mon|ma)?\s*groupes?\s+(.+?)\s*$/i,
-    /\b(?:membres?|participants?)\s+(?:du|de|dans)\s+(.+?)\s*$/i,
+    // « extrait moi les contacts de GIT3 ouvert » (sans le mot « groupe »)
+    /\b(?:membres?|participants?|contacts?)\s+(?:du|de|dans)\s+(.+?)\s*$/i,
     /\b(?:du|de|dans)\s+(?:ce|cet|ces|le|la|les|mon|ma)?\s*groupes?\s+(.+?)\s*$/i,
     /\b(?:du|de|dans le|dans)\s+groupes?\s+(.+?)\s*$/i,
     /\bgroupes?\s+(.+?)\s*$/i,
@@ -193,7 +204,8 @@ export function detectQuickGroupMembersIntent(msg: string): QuickGroupMembersInt
       // « membres de groupe Team MASK » → strip leading groupe
       raw = raw.replace(/^(?:le|la|les|ce|cet|ces|mon|ma|mes)?\s*groupes?\s+/i, "");
       const q = cleanGroupQuery(raw);
-      if (q && !/^(?:ce|cet|ces|le|la|les|mon|ma|mes)$/i.test(q)) {
+      // « contacts du groupe » (sans nom) → query vide, pas groupQuery="groupe"
+      if (q && !/^(?:ce|cet|ces|le|la|les|mon|ma|mes|groupes?|groups?)$/i.test(q)) {
         return { groupQuery: q, limit };
       }
     }
