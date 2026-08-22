@@ -134,6 +134,10 @@ import {
   detectCrossTurnRouterStall,
   shouldStopAfterRouterBlocks,
 } from "./agent-stall.js";
+import {
+  buildScenarioPauseNudge,
+  classifyBriefingTurn,
+} from "./turn-kind.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
 const MAX_TOOL_ROUNDS = 12;
@@ -1171,7 +1175,23 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     messages.push({ role: "system", content: CONFIRM_ACTIVATE_NOW_NUDGE });
   } else if (turnMode === "activation_nudge") {
     messages.push({ role: "system", content: ACTIVATION_AFTER_SIMULATION_NUDGE });
-  } else if (!recentHistoryHasSimulation(history)) {
+  }
+
+  const turnKind = classifyBriefingTurn({
+    userMessage,
+    history,
+    inCampaignFlow: briefing.inCampaignFlow,
+  });
+
+  // Vague 4 : digression / action parallèle → pas de nudge checklist qui recolle le rail
+  if (
+    !turnKind.pauseScenario &&
+    turnMode !== "decline_sim" &&
+    !silentTweakAfterSim &&
+    turnMode !== "activation_confirm" &&
+    turnMode !== "activation_nudge" &&
+    !recentHistoryHasSimulation(history)
+  ) {
     const nudge = buildBriefingNudge(briefing, history, userMessage);
     if (nudge) messages.push({ role: "system", content: nudge });
   }
@@ -1181,8 +1201,21 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     !slotQuestion ||
     hasSimAlready ||
     (Boolean(thread?.automation_id) && slotQuestion === BRIEFING_Q_SUPPORT_VALIDATE);
-  if (slotQuestion && !skipSlot) {
-    if (!isBriefingSideTalk(userMessage) || alreadyAskedRouterStallClarify(history)) {
+  // Après clarif stall déjà posée : forcer le rail (fix remote) plutôt que re-pauser.
+  const forceRailAfterStallClarify = alreadyAskedRouterStallClarify(history);
+
+  if (turnKind.pauseScenario && !forceRailAfterStallClarify) {
+    // Digression ou envoi one-shot : MiniMax traite la demande ; slot repris au tour suivant.
+    messages.push({
+      role: "system",
+      content: buildScenarioPauseNudge({
+        kind: turnKind.kind === "parallel_action" ? "parallel_action" : "digression",
+        slotQuestion: skipSlot ? null : slotQuestion,
+      }),
+    });
+  } else if (slotQuestion && !skipSlot) {
+    // Rail nominal : hard-return (inchangé + sortie stall si clarif déjà demandée)
+    if (!isBriefingSideTalk(userMessage) || forceRailAfterStallClarify) {
       const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
       return sanitizeUserVisibleReply(greet ? `Salut ! ${slotQuestion}` : slotQuestion);
     }

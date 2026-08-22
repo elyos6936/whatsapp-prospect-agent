@@ -934,7 +934,12 @@ export function buildBriefingNudge(
 const LAUNCH_ANSWER_RE =
   /^(maintenant|tout\s+de\s+suite|imm[eé]diatement|demain|aujourd['’]hui|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}\s*h)/i;
 
-/** Aparté / modif — MiniMax peut répondre, puis on reprend la checklist. */
+/**
+ * Aparté / modif — MiniMax peut répondre.
+ * Vague 4 : les guillemets ne disqualifient plus l'aparté (un envoi « … » est
+ * classé en action parallèle en amont). Reprise du slot = tour suivant, pas
+ * re-colle forcée ici (voir turn-kind.ts + agent.ts).
+ */
 export function isBriefingSideTalk(userMessage: string): boolean {
   const t = userMessage.trim();
   if (!t) return false;
@@ -944,13 +949,18 @@ export function isBriefingSideTalk(userMessage: string): boolean {
     return false;
   }
   if (/^[\d+\s.\-()]{8,}$/.test(t)) return false;
-  if (/[«"][^»"]{2,}[»"]/.test(t)) return false;
   if (/\b(cr[eé]e(?:r)?\s+le\s+brouillon|je\s+valide|simule|active|lance)\b/i.test(t)) {
     return false;
   }
+  // Liste numérotée d'accroches = réponse rail, pas digression
+  if (/(?:^|\n)\s*1\s*[.)]\s*\S/.test(t) && /(?:^|\n)\s*2\s*[.)]\s*\S/.test(t)) {
+    return false;
+  }
+  // Accroche collée seule (message = une citation) = réponse rail, même avec « ? » dedans
+  if (/^[«"'][\s\S]{8,}[»"']\s*$/u.test(t)) return false;
   if (/\?/.test(t)) return true;
   if (
-    /\b(pourquoi|c['’]est\s+quoi|comment\s+[çc]a\s+marche|attends|enl[eè]ve|modifie|change\s+(le|la|l['’]))\b/i.test(
+    /\b(pourquoi|c['’]est\s+quoi|c['’]est\s+combien|ça\s+veut\s+dire|ca\s+veut\s+dire|comment\s+[çc]a\s+marche|comment\s+ça\s+fonctionne|explique|j['’]ai\s+une\s+question|une\s+question|attends|enl[eè]ve|modifie|change\s+(le|la|l['’])|d['’]abord|avant\s+de|autre\s+chose|hors\s+sujet|je\s+comprends\s+pas|j['’]ai\s+pas\s+compris)\b/i.test(
       t
     )
   ) {
