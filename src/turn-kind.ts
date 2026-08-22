@@ -34,8 +34,9 @@ const GROUP_EXTRACT_ACTION_RE =
 const GROUP_ACTION_VERB_RE =
   /\b(extrait|extraire|liste|lister|envoie|envoyer|poste|publie|programme|ajoute|retire|crée|creer|quitte|quitter|invite|rejoins|rejoindre|lien)\b/i;
 
+/** Verbe OU nom d'envoi (ex. menu « Envoi d'un message direct… »). */
 const SEND_VERB_RE =
-  /\b(envoie[rz]?|envois|envoies|envoyer|écris|ecris|écrire|ecrire|transmets|transmettre|message\s+à)\b/i;
+  /\b(envoie[rz]?|envois|envoies|envoi|envoyer|écris|ecris|écrire|ecrire|transmets|transmettre|message\s+à|message\s+direct)\b/i;
 
 const SEND_RECIPIENT_RE =
   /\+\d{8,15}\b|\b(?:à|a|au|pour)\s+\+?\d{8,15}\b|\b(?:à|a)\s+(?:lui|elle|leur)\b/i;
@@ -51,7 +52,7 @@ const EXPLICIT_RESUME_RE =
 
 /** Digressions élargies (turn-kind only — ne touche pas campaign-briefing gates). */
 const EXTRA_DIGRESSION_RE =
-  /\b(merci|plus\s+tard|stats?|statistiques?|roi|chiffres?|rapport|pause|arr[eê]te|arr[eê]ter|stop|laisse\s+tomber|je\s+reviens|autre\s+chose|hors\s+sujet|aide[- ]?moi|comment\s+faire|c['’]est\s+combien|combien\s+(?:ça|ca)\s+co[uû]te)\b/i;
+  /\b(merci|plus\s+tard|stats?|statistiques?|roi|chiffres?|rapport|pause|arr[eê]te|arr[eê]ter|stop|laisse\s+tomber|je\s+reviens|autre\s+chose|hors\s+sujet|aide[- ]?moi|comment\s+faire|c['’]est\s+combien|combien\s+(?:ça|ca)\s+co[uû]te|ce\s+n['’]est\s+pas|pas\s+(une\s+)?prospection|pas\s+(de\s+)?campagne|hors\s+prospection)\b/i;
 
 /**
  * Envoi one-shot autonome : verbe + destinataire + contenu (ou Vague 1 explicite).

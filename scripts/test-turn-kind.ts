@@ -175,5 +175,18 @@ console.log("\n=== Vague 4.2 : offre libre / accroches restent rail ===\n");
   );
 }
 
+console.log("\n=== Hotfix screenshot : Envoi (nom) + négation prospection ===\n");
+{
+  const menuSend = `Envoi d'un message direct "Cc" à +22968227403`;
+  assert(isParallelOneShotSend(menuSend), "menu Envoi… = one-shot");
+  const k1 = classifyBriefingTurn({ userMessage: menuSend, inCampaignFlow: true });
+  assert(k1.kind === "parallel_action" && k1.pauseScenario, "menu Envoi → pause parallèle");
+
+  const notProspect = "Ce n'est pas une prospection";
+  assert(!looksLikeRailAdvance(notProspect), "négation ≠ rail");
+  const k2 = classifyBriefingTurn({ userMessage: notProspect, inCampaignFlow: true });
+  assert(k2.kind === "digression" && k2.pauseScenario, "négation → digression pause");
+}
+
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);
