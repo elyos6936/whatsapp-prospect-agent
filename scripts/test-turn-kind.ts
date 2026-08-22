@@ -1,5 +1,5 @@
 /**
- * Vague 4 — classification tour (digression / parallèle / rail).
+ * Vague 4.2 — pause-first (rail seulement si looksLikeRailAdvance).
  * Run: npx tsx scripts/test-turn-kind.ts
  */
 import { isBriefingSideTalk, BRIEFING_Q_LAUNCH } from "../src/campaign-briefing.js";
@@ -9,6 +9,7 @@ import {
   classifyBriefingTurn,
   isParallelGroupExtract,
   isParallelOneShotSend,
+  looksLikeRailAdvance,
 } from "../src/turn-kind.js";
 
 let passed = 0;
@@ -137,6 +138,40 @@ console.log("\n=== Screenshot GIT3 : extrait contacts = parallel group_extract =
   assert(
     !isParallelGroupExtract("Les membres du groupe Automax"),
     "sans verbe extract ≠ parallèle"
+  );
+}
+
+console.log("\n=== Vague 4.2 pause-first : digressions / apartés ===\n");
+{
+  for (const msg of [
+    "merci",
+    "plus tard",
+    "montre les stats",
+    "liste mes groupes",
+    "c'est combien",
+    "ROI de la campagne",
+    "pause",
+  ]) {
+    const k = classifyBriefingTurn({ userMessage: msg, inCampaignFlow: true });
+    assert(k.pauseScenario === true, `pause: « ${msg} »`);
+    assert(k.kind !== "advance_rail", `≠ rail: « ${msg} »`);
+    assert(!looksLikeRailAdvance(msg), `!looksLikeRailAdvance: « ${msg} »`);
+  }
+}
+
+console.log("\n=== Vague 4.2 : offre libre / accroches restent rail ===\n");
+{
+  const offer = "je vends du coaching business pour freelances";
+  assert(looksLikeRailAdvance(offer), "offre libre = rail advance");
+  const k = classifyBriefingTurn({ userMessage: offer, inCampaignFlow: true });
+  assert(k.kind === "advance_rail" && !k.pauseScenario, "offre libre → hard-return OK");
+
+  const openers =
+    "1. Salut tu as 2 min ?\n2. Hey petit message\n3. Coucou\n4. Hello\n5. Salut";
+  assert(looksLikeRailAdvance(openers), "liste 1–5 = rail advance");
+  assert(
+    classifyBriefingTurn({ userMessage: openers, inCampaignFlow: true }).kind === "advance_rail",
+    "liste 1–5 → advance_rail"
   );
 }
 

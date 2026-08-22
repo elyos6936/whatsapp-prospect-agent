@@ -72,7 +72,6 @@ import {
   buildThreadCampaignBlockNudge,
   isShortCampaignValidation,
   nextCanonicalBriefingQuestion,
-  isBriefingSideTalk,
   BRIEFING_Q_SUPPORT_VALIDATE,
 } from "./campaign-briefing.js";
 import {
@@ -1214,17 +1213,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       }),
     });
   } else if (slotQuestion && !skipSlot) {
-    // Rail nominal : hard-return (inchangé + sortie stall si clarif déjà demandée)
-    if (!isBriefingSideTalk(userMessage) || forceRailAfterStallClarify) {
-      const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
-      return sanitizeUserVisibleReply(greet ? `Salut ! ${slotQuestion}` : slotQuestion);
-    }
-    messages.push({
-      role: "system",
-      content:
-        `Réponds en 1–3 phrases à sa préoccupation (sans poser d'autre question). ` +
-        `Puis pose EXACTEMENT, mot pour mot :\n${slotQuestion}`,
-    });
+    // Rail nominal : hard-return uniquement si turn-kind n'a pas mis en pause
+    // (forceRailAfterStallClarify force déjà cette branche). Pas de double critère
+    // isBriefingSideTalk — la digression est entièrement gérée via pauseScenario.
+    const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
+    return sanitizeUserVisibleReply(greet ? `Salut ! ${slotQuestion}` : slotQuestion);
   }
   const hsNudge = highStakesConfirmNudge(userMessage, history, allowedHighStakes);
   if (hsNudge) messages.push({ role: "system", content: hsNudge });
