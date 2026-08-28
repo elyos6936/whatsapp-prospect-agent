@@ -127,7 +127,9 @@ export async function describeInboundMedia(
       return transcript;
     }
     if (media.kind === "image") {
-      const desc = await describeImage(apiKey, base64, mimetype);
+      const imageKey = apiKey;
+      if (!imageKey) return null;
+      const desc = await describeImage(imageKey, base64, mimetype);
       console.log(`[media] Description image ${messageId}: ${desc ? `« ${desc.slice(0, 80)} »` : "(vide)"}`);
       return desc;
     }

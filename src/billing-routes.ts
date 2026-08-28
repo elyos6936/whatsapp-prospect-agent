@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { requireUserId } from "./auth.js";
+import { config } from "./config.js";
 import { getUserById } from "./users.js";
 import {
   createMoneyFusionCheckout,
@@ -95,6 +96,22 @@ export async function registerBillingRoutes(app: FastifyInstance): Promise<void>
   );
 
   app.post("/api/billing/moneyfusion/webhook", async (request, reply) => {
+    const headerRaw =
+      request.headers["x-moneyfusion-secret"] ?? request.headers["x-webhook-secret"];
+    const header = String(Array.isArray(headerRaw) ? headerRaw[0] : headerRaw ?? "").trim();
+    const querySecret = String(
+      (request.query as { secret?: string } | undefined)?.secret ?? "",
+    ).trim();
+    const expected = config.moneyFusionWebhookSecret;
+    if (expected) {
+      const token = header || querySecret;
+      if (token !== expected) {
+        return reply.status(401).send({ error: "Webhook MoneyFusion non autorisé." });
+      }
+    } else if (process.env.NODE_ENV === "production") {
+      return reply.status(503).send({ error: "Webhook MoneyFusion non configuré." });
+    }
+
     const payload = request.body && typeof request.body === "object"
       ? (request.body as Record<string, unknown>)
       : {};

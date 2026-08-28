@@ -627,6 +627,14 @@ export async function deleteCampaignMemory(userId: number, id: number): Promise<
   return true;
 }
 
+export async function linkDefaultMemoryToThread(userId: number, threadId: number): Promise<void> {
+  const existing = await getThreadCampaignMemoryId(userId, threadId);
+  if (existing != null) return;
+  const defaultMem = await getDefaultCampaignMemory(userId);
+  if (!defaultMem) return;
+  await setThreadCampaignMemory(userId, threadId, defaultMem.id);
+}
+
 export async function setThreadCampaignMemory(
   userId: number,
   threadId: number,

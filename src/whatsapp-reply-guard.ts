@@ -250,8 +250,13 @@ export function applyWhatsAppReplyGuard(
     opts.incomingText,
     opts.history ?? [],
     {
-      closingGoal: opts.closingGoal ?? null,
-      closingLink: opts.closingLink ?? null,
+      closingGoal: (opts.closingGoal ?? undefined) as
+        | "delivery"
+        | "payment"
+        | "appointment"
+        | "link"
+        | undefined,
+      closingLink: opts.closingLink ?? undefined,
     }
   );
   const notes = [...priced.notes];

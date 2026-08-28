@@ -42,7 +42,7 @@ const SEND_RECIPIENT_RE =
   /\+\d{8,15}\b|\b(?:à|a|au|pour)\s+\+?\d{8,15}\b|\b(?:à|a)\s+(?:lui|elle|leur)\b/i;
 
 const SEND_CONTENT_RE =
-  /[«"'][^»"']{1,500}[»"']|:\s*\S{2,}|[-–—]\s*\S{2,}|\bmessage\s*:\s*\S{2,}/i;
+  /[«"'][^»"']{1,500}[»"']|:\s*\S{2,}|[-–—]\s*\S{2,}|\bmessage\s*:\s*\S{2,}|\bmessage\s+direct\b[^+]{0,40}\b(?:à|a)\s+\S{2,}/i;
 
 const LAUNCH_ANSWER_RE =
   /^(maintenant|tout\s+de\s+suite|imm[eé]diatement|demain|aujourd['’]hui|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}\s*h)/i;
@@ -52,7 +52,7 @@ const EXPLICIT_RESUME_RE =
 
 /** Digressions élargies (turn-kind only — ne touche pas campaign-briefing gates). */
 const EXTRA_DIGRESSION_RE =
-  /\b(merci|plus\s+tard|stats?|statistiques?|roi|chiffres?|rapport|pause|arr[eê]te|arr[eê]ter|stop|laisse\s+tomber|je\s+reviens|autre\s+chose|hors\s+sujet|aide[- ]?moi|comment\s+faire|c['’]est\s+combien|combien\s+(?:ça|ca)\s+co[uû]te|ce\s+n['’]est\s+pas|pas\s+(une\s+)?prospection|pas\s+(de\s+)?campagne|hors\s+prospection)\b/i;
+  /\b(merci|plus\s+tard|stats?|statistiques?|roi|chiffres?|rapport|pause|arr[eê]te|arr[eê]ter|stop|laisse\s+tomber|je\s+reviens|autre\s+chose|hors\s+sujet|aide[- ]?moi|comment\s+faire|c['’]est\s+combien|combien\s+(?:ça|ca)\s+co[uû]te|ce\s+n['’]est\s+pas|pas\s+(une\s+)?prospection|pas\s+(de\s+)?campagne|hors\s+prospection|je\s+ne\s+veux\s+pas|pas\s+(encore|maintenant)|\brelance\b)\b/i;
 
 /**
  * Envoi one-shot autonome : verbe + destinataire + contenu (ou Vague 1 explicite).
@@ -61,7 +61,10 @@ export function isParallelOneShotSend(userMessage: string): boolean {
   const t = userMessage.trim();
   if (!t || t.length > 500) return false;
   if (!SEND_VERB_RE.test(t)) return false;
-  if (SEND_RECIPIENT_RE.test(t) && SEND_CONTENT_RE.test(t)) return true;
+  if (SEND_RECIPIENT_RE.test(t)) {
+    if (SEND_CONTENT_RE.test(t)) return true;
+    if (/\bmessage\s+direct\b/i.test(t)) return true;
+  }
   return isExplicitSendNow(t);
 }
 
@@ -107,6 +110,7 @@ function isSoftGreeting(msg: string): boolean {
 export function isLocalDigression(userMessage: string): boolean {
   const t = userMessage.trim();
   if (!t) return false;
+  if (looksLikeSlotConfirmation(t)) return false;
   if (isBriefingSideTalk(t)) return true;
   if (isShortCampaignValidation(t)) return false;
   if (LAUNCH_ANSWER_RE.test(t)) return false;
@@ -114,6 +118,13 @@ export function isLocalDigression(userMessage: string): boolean {
   if (isSoftGreeting(t)) return false;
   if (EXTRA_DIGRESSION_RE.test(t)) return true;
   return false;
+}
+
+function looksLikeSlotConfirmation(msg: string): boolean {
+  return (
+    /\b(fcfa|xof|€|\d[\d\s.,]{2,}\s*(?:fcfa|xof|€|francs?))\b/i.test(msg) ||
+    /\b(demain|aujourd['’]hui|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|\d{1,2}\s*h|\d{1,2}:\d{2})\b/i.test(msg)
+  );
 }
 
 /**
@@ -142,8 +153,8 @@ export function looksLikeRailAdvance(userMessage: string): boolean {
     return true;
   }
 
-  // Questions à l'agent → digression (les accroches 1–5 / guillemets sont déjà acceptées)
-  if (/\?/.test(t)) return false;
+  // Questions à l'agent → digression sauf confirmation de slot (prix/heure + ?)
+  if (/\?/.test(t)) return looksLikeSlotConfirmation(t);
 
   // Remplissage de slot libre : substantiel, pas action parallèle, pas digression
   if (

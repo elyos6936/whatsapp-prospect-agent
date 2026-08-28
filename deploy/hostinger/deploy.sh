@@ -16,10 +16,16 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "🚀 Déploiement Klanvio → $SSH:$APP_DIR"
 
-# Build panneau ops (artefacts → public/ops)
+# Build panneaux ops + support (artefacts → public/ops, public/support)
 echo "📦 Build admin /ops…"
 (
   cd "$ROOT_DIR/admin"
+  npm install
+  npm run build
+)
+echo "📦 Build support /support…"
+(
+  cd "$ROOT_DIR/support"
   npm install
   npm run build
 )

@@ -100,17 +100,21 @@ node -v || (curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && apt-get
 cat > /opt/klanvio/.env <<'EOF'
 PORT=3001
 NODE_ENV=production
-DATABASE_URL=postgresql://postgres.omquaouhfifynvrpqilv:jxVrk6pk1trYgp5W@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
-SUPABASE_URL=https://omquaouhfifynvrpqilv.supabase.co
+DATABASE_URL=postgresql://postgres.[PROJECT_REF]:[MOT_DE_PASSE]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
+SUPABASE_URL=https://[PROJECT_REF].supabase.co
 EVOLUTION_API_BASE_URL=https://evolution-api-kxse.srv1820011.hstgr.cloud
-EVOLUTION_API_KEY=RvYzeDK63Gl3fBKJ7bVovn5kJbp8AMpO
+EVOLUTION_API_KEY=[VOTRE_CLE_EVOLUTION]
 EVOLUTION_INSTANCE_NAME=automax-prospection
+MONEYFUSION_WEBHOOK_SECRET=[SECRET_WEBHOOK_MONEYFUSION]
+JWT_SECRET=[openssl rand -hex 32]
+ADMIN_EMAIL=[OPS_EMAIL]
+ADMIN_PASSWORD=[OPS_MOT_DE_PASSE]
 CORS_ORIGINS=https://www.klanvio.com,https://klanvio.com
-PUBLIC_API_URL=https://klanvio-api.srv1820011.hstgr.cloud
+PUBLIC_URL=https://api.klanvio.com
 EOF
 ```
 
-> La clé OpenAI est déjà stockée dans la base Supabase (migrée). Si l'agent ne répond pas, ajoutez `OPENAI_API_KEY=sk-...` dans ce `.env`.
+> Copiez le modèle complet depuis [`deploy/hostinger/env.example`](hostinger/env.example). **Ne commitez jamais** de mots de passe ou clés API dans ce dépôt. Si des secrets ont déjà fuité, **rotatez-les** (Supabase, Evolution, JWT) avant tout redeploy.
 
 5. Installer les dépendances et démarrer avec PM2 :
 

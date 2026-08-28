@@ -7,6 +7,7 @@
     "dev": "tsx watch src/server.ts",
     "start": "tsx src/server.ts",
     "build": "tsc --noEmit",
+    "test:guards": "npx tsx scripts/test-turn-kind.ts && npx tsx scripts/test-group-list-intent.ts && npx tsx scripts/test-simulation-gate.ts && npx tsx scripts/test-stop-policy.ts",
     "build:ops": "npm --prefix admin install && npm --prefix admin run build",
     "build:support": "npm --prefix support install && npm --prefix support run build",
     "setup": "npm install",

@@ -26,6 +26,7 @@ export function Shell() {
           <NavLink to="/users">Comptes</NavLink>
 
           <p className="nav-group">Contrôle</p>
+          <NavLink to="/health">Santé</NavLink>
           <NavLink to="/audit">Journal</NavLink>
         </nav>
 

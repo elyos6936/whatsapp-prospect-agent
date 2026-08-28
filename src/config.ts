@@ -328,7 +328,32 @@ export const config = {
       "https://pay.moneyfusion.net/paiementNotif")
       .replace("://www.pay.moneyfusion.net", "://pay.moneyfusion.net")
       .replace(/\/$/, ""),
+  /** Secret partagé pour authentifier le webhook MoneyFusion. */
+  moneyFusionWebhookSecret: process.env.MONEYFUSION_WEBHOOK_SECRET?.trim() || "",
 } as const;
+
+/** Validations au démarrage (prod). */
+export function validateProductionConfig(): void {
+  const isProd = process.env.NODE_ENV === "production";
+  if (!config.databaseUrl) {
+    console.error("\n❌ DATABASE_URL requis.\n");
+    process.exit(1);
+  }
+  if (!config.jwtSecret) {
+    console.error("\n❌ JWT_SECRET requis.\n");
+    process.exit(1);
+  }
+  if (isProd) {
+    if (!config.envEvolutionApiKey) {
+      console.warn("⚠️ EVOLUTION_API_KEY absent — webhook Evolution refusera les requêtes non authentifiées.");
+    }
+    if (!config.moneyFusionWebhookSecret && config.moneyFusionApiUrl) {
+      console.warn("⚠️ MONEYFUSION_WEBHOOK_SECRET absent alors que MONEYFUSION_API_URL est défini.");
+    }
+  }
+}
+
+validateProductionConfig();
 
 /**
  * Exceptions de nommage d'instance Evolution par utilisateur.

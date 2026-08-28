@@ -16,6 +16,7 @@ import {
 import { chatIdsMatch } from "./evolutionapi.js";
 import { isAwaitingProspectReply } from "./outbound-safety.js";
 import { listActiveUserIds } from "./users.js";
+import { recordWorkerTick } from "./observability.js";
 
 function defaultNurtureSteps(guide?: string): SequenceStep[] {
   const soft =
@@ -167,6 +168,7 @@ export async function processDueSequences(): Promise<number> {
       console.error(`Séquences user ${userId} échouées:`, err);
     }
   }
+  recordWorkerTick("sequences", { processed: queued });
   return queued;
 }
 

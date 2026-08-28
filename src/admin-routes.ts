@@ -28,6 +28,13 @@ import {
 import { pauseAllActiveAutomations, setAutoReplyEnabled } from "./db.js";
 import type { SubscriptionStatus } from "./outreach-level.js";
 import { ensureUserOutreachSchema } from "./users.js";
+import {
+  getSendQueueHealthStats,
+  listRecentAgentChatJobs,
+} from "./agent-chat-jobs.js";
+import { getWorkerHeartbeats } from "./observability.js";
+import { getWhatsappPollHealth } from "./notifications.js";
+import { sql } from "./pg.js";
 
 /** Rate-limit login : max 8 tentatives / 15 min / IP. */
 const loginAttempts = new Map<string, { count: number; resetAt: number }>();
@@ -496,5 +503,50 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       });
       return { ok: true, ...result };
     }
+  );
+
+  app.get("/api/admin/health/workers", { preHandler: requireAdmin }, async () => {
+    const [sendQueue, recentFailed, recentLost] = await Promise.all([
+      getSendQueueHealthStats(),
+      listRecentAgentChatJobs({ status: "failed", limit: 20 }),
+      listRecentAgentChatJobs({ status: "lost", limit: 20 }),
+    ]);
+    return {
+      ok: true,
+      workers: getWorkerHeartbeats(),
+      whatsappPoll: getWhatsappPollHealth(),
+      sendQueue,
+      recentChatJobs: {
+        failed: recentFailed,
+        lost: recentLost,
+      },
+    };
+  });
+
+  app.get<{ Querystring: { userId?: string } }>(
+    "/api/admin/health/platform",
+    { preHandler: requireAdmin },
+    async (request) => {
+      const userIdRaw = request.query.userId?.trim();
+      const userId = userIdRaw ? Number(userIdRaw) : undefined;
+      let dbOk = false;
+      try {
+        await sql`SELECT 1`;
+        dbOk = true;
+      } catch {
+        dbOk = false;
+      }
+      const jobs = await listRecentAgentChatJobs({
+        limit: 30,
+        userId: Number.isFinite(userId) ? userId : undefined,
+      });
+      return {
+        ok: dbOk,
+        dbOk,
+        workers: getWorkerHeartbeats(),
+        sendQueue: await getSendQueueHealthStats(),
+        chatJobs: jobs,
+      };
+    },
   );
 }

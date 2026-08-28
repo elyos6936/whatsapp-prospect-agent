@@ -333,7 +333,11 @@ export async function createAgentThread(
     VALUES (${userId}, ${cleanTitle}, ${cleanDesc}, ${cleanPurpose})
     RETURNING id, user_id, title, description, purpose, automation_id, created_at, updated_at
   `;
-  return mapAgentThread(rows[0]);
+  const thread = mapAgentThread(rows[0]!);
+  void import("./campaign-memory.js")
+    .then((m) => m.linkDefaultMemoryToThread(userId, thread.id))
+    .catch(() => {});
+  return thread;
 }
 
 export async function ensureDefaultAgentThread(userId: number): Promise<AgentThread> {

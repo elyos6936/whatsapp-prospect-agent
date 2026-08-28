@@ -188,5 +188,21 @@ console.log("\n=== Hotfix screenshot : Envoi (nom) + négation prospection ===\n
   assert(k2.kind === "digression" && k2.pauseScenario, "négation → digression pause");
 }
 
+console.log("\n=== Hotfix 4.2.2 : menu sans guillemets + refus + slot ? ===\n");
+{
+  const menuBare = `Envoi d'un message direct Cc à +22968227403`;
+  assert(isParallelOneShotSend(menuBare), "menu sans guillemets = one-shot");
+
+  const refuse = "je ne veux pas lancer tout de suite";
+  assert(!looksLikeRailAdvance(refuse), "refus lancement ≠ rail");
+  assert(
+    classifyBriefingTurn({ userMessage: refuse, inCampaignFlow: true }).pauseScenario,
+    "refus → pause",
+  );
+
+  const priceQ = "5000 FCFA, c'est bon ?";
+  assert(looksLikeRailAdvance(priceQ), "prix + ? = rail");
+}
+
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);

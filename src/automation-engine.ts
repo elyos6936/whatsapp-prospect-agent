@@ -54,6 +54,7 @@ import {
   funnelFromTargetStats,
   type WeeklyReportPayload,
 } from "./mail/weekly-report.js";
+import { recordWorkerTick } from "./observability.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -603,6 +604,7 @@ async function processTick(): Promise<void> {
         console.error(`🤖 Moteur automatisations user ${userId} échoué:`, err);
       }
     }
+    recordWorkerTick("automation_engine", { processed: userIds.length });
   } finally {
     running = false;
   }

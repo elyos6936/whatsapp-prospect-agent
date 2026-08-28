@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { llmProviderLabel } from "./llm.js";
+import { logEvent } from "./observability.js";
 
 const DEFAULT_MAX_RETRIES = 4;
 const MAX_BACKOFF_MS = 60_000;
@@ -73,7 +74,24 @@ export async function callOpenAiWithRetry<T>(
     } catch (err) {
       const status = err instanceof OpenAI.APIError ? err.status : undefined;
       const retryable = status === 429 || status === 500 || status === 503;
-      if (isQuotaError(err) || !retryable || attempt > maxRetries) {
+      if (isQuotaError(err)) {
+        logEvent({
+          level: "error",
+          component: "llm",
+          event: "llm.quota_exhausted",
+          meta: { provider: PROVIDER(), status: 429 },
+        });
+        throw err;
+      }
+      if (!retryable || attempt > maxRetries) {
+        if (status === 429) {
+          logEvent({
+            level: "warn",
+            component: "llm",
+            event: "llm.rate_limit",
+            meta: { provider: PROVIDER(), status: 429, attempt },
+          });
+        }
         throw err;
       }
       const backoff = Math.min(1000 * 2 ** (attempt - 1), MAX_BACKOFF_MS);

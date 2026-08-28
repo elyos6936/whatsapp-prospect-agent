@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AuthProvider, useAuth } from "./auth";
 import { AuditPage } from "./AuditPage";
+import { HealthPage } from "./HealthPage";
 import { LoginPage } from "./LoginPage";
 import { OverviewPage } from "./OverviewPage";
 import { Shell } from "./Shell";
@@ -35,6 +36,7 @@ export function App() {
           <Route path="users/:id/subscription" element={<UserSubscriptionActionsPage />} />
           <Route path="users/:id/account-management" element={<UserAccountManagementPage />} />
           <Route path="audit" element={<AuditPage />} />
+          <Route path="health" element={<HealthPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -348,6 +348,9 @@ export async function fetchTallyResponses(
   }
 
   const data = page.data;
+  if (!data) {
+    throw new TallyAuthError(`Tally submissions HTTP ${page.status}`, "http");
+  }
 
   const questionMeta = new Map<string, { title: string; type: string }>();
   for (const q of data.questions ?? []) {

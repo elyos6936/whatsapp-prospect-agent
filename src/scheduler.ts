@@ -5,6 +5,7 @@ import {
 } from "./db.js";
 import { chatIdToDisplay, sendWhatsAppMessage } from "./evolutionapi.js";
 import { listActiveUserIds } from "./users.js";
+import { recordWorkerTick } from "./observability.js";
 
 let intervalHandle: ReturnType<typeof setInterval> | null = null;
 let running = false;
@@ -32,13 +33,16 @@ async function processDue(): Promise<void> {
 
   try {
     const userIds = await listActiveUserIds();
+    let processed = 0;
     for (const userId of userIds) {
       try {
         await processDueForUser(userId);
+        processed += 1;
       } catch (err) {
         console.error(`⏰ Scheduler user ${userId} échoué:`, err);
       }
     }
+    recordWorkerTick("scheduler", { processed });
   } finally {
     running = false;
   }

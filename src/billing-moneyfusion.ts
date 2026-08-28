@@ -188,7 +188,11 @@ export async function createMoneyFusionCheckout(input: {
 }): Promise<{ checkoutUrl: string; token: string }> {
   await ensureBillingSchema();
   const price = PLAN_PRICE_EUR[input.planId][input.billingPeriod];
-  const webhookUrl = `${config.publicUrl}/api/billing/moneyfusion/webhook`;
+  const webhookBase = `${config.publicUrl}/api/billing/moneyfusion/webhook`;
+  const webhookSecret = config.moneyFusionWebhookSecret;
+  const webhookUrl = webhookSecret
+    ? `${webhookBase}?secret=${encodeURIComponent(webhookSecret)}`
+    : webhookBase;
   const returnUrl = `${config.appUrl}/?settings=billing&provider=moneyfusion`;
   const orderRef = `${input.user.id}-${Date.now()}-${randomUUID().slice(0, 8)}`;
   const customerName = input.user.name?.trim() || input.user.email;

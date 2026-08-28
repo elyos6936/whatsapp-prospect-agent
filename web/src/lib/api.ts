@@ -214,6 +214,8 @@ export async function sendChatMessage(message: string, threadId: number): Promis
   const start = await request<{
     pending?: boolean;
     since_id?: number;
+    request_id?: string;
+    job_id?: number;
     id?: number;
     reply?: string;
     created_at?: string;
@@ -253,7 +255,7 @@ export async function sendChatMessage(message: string, threadId: number): Promis
             ? 'Je n’ai pas pu terminer. Réessayez — je suis prêt.'
             : assistant.content,
           created_at: assistant.created_at,
-          error: false,
+          error: isTechError,
         };
       }
     } catch {
@@ -261,14 +263,38 @@ export async function sendChatMessage(message: string, threadId: number): Promis
     }
   }
 
-  // Pas d'exception technique : message agent amical (le serveur peut encore finir)
+  // Timeout poll : réponse agent non reçue dans le délai
+  void logClientEvent({
+    event: 'chat.poll_timeout',
+    threadId,
+    since,
+    requestId: start.request_id,
+  }).catch(() => {});
+
   return {
     id: Date.now(),
     reply:
-      'Je suis encore en train de récupérer les informations (groupe / contacts). Réessayez dans un instant — la liste apparaîtra dès qu’elle est prête.',
+      'Je n’ai pas reçu de réponse à temps. Réessayez dans un instant — si le problème persiste, vérifiez votre connexion.',
     created_at: new Date().toISOString(),
-    error: false,
+    error: true,
   };
+}
+
+export async function logClientEvent(payload: {
+  event: string;
+  threadId?: number;
+  since?: number;
+  requestId?: string;
+  meta?: Record<string, unknown>;
+}): Promise<void> {
+  try {
+    await request('/api/client-events', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  } catch {
+    /* best effort */
+  }
 }
 
 export async function clearHistory(threadId: number): Promise<void> {

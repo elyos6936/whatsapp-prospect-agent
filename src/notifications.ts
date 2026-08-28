@@ -46,6 +46,7 @@ import {
 } from "./db.js";
 import { computeInboundReplySendAtIso, INBOUND_REPLY_AB_VARIANT } from "./inbound-reply-batch.js";
 import { userIdFromInstanceName, listActiveUserIds } from "./users.js";
+import { recordWorkerTick } from "./observability.js";
 import {
   scoreIncomingMessage,
   recordAutomationConversion,
@@ -1767,7 +1768,16 @@ export async function syncIncomingFromHistory(): Promise<number> {
 
 export async function pollOneNotification(): Promise<number> {
   pollerLiveness.lastPollAt = new Date().toISOString();
-  return syncIncomingFromHistory();
+  try {
+    const n = await syncIncomingFromHistory();
+    recordWorkerTick("notification_poller", { processed: n });
+    return n;
+  } catch (err) {
+    recordWorkerTick("notification_poller", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    throw err;
+  }
 }
 
 let polling = false;

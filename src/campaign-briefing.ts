@@ -4,6 +4,10 @@
  */
 import type { AgentMessage } from "./db.js";
 import { parseMemoryHints, type CampaignMemory } from "./campaign-memory.js";
+import {
+  applyPersistedBriefingState,
+  type ThreadBriefingState,
+} from "./thread-briefing-state.js";
 import { buildSupportBriefingNudge, extractSupportThirdParty } from "./support-flow.js";
 import {
   buildGroupsBriefingNudge,
@@ -169,7 +173,7 @@ export function isShortCampaignValidation(text: string): boolean {
 
 function isSubstantiveUserReply(text: string): boolean {
   const t = text.trim();
-  if (t.length < 12) return false;
+  if (t.length < 6) return false;
   if (/^(oui|non|ok|ouais|non merci|peu importe|d'accord|vas[- ]y|nickel|parfait)$/i.test(t)) return false;
   return true;
 }
@@ -264,6 +268,19 @@ function extractOpenerItemsFromText(
       message: text,
     });
   }
+  if (fromLetters.length >= 4) return fromLetters.slice(0, 5);
+
+  const bulletLines = content
+    .split(/\n/)
+    .map((l) => l.replace(/^[\s•\-–*]+/, "").trim())
+    .filter((l) => l.length >= 8);
+  if (bulletLines.length >= 4) {
+    return bulletLines.slice(0, 5).map((message, i) => ({
+      id: `v${i + 1}`,
+      message: message.slice(0, 1200),
+    }));
+  }
+
   return fromLetters.slice(0, 5);
 }
 
@@ -539,7 +556,8 @@ export function assessCampaignBriefing(
   history: AgentMessage[],
   userMessage: string,
   purpose?: "prospection" | "support" | "groupes" | null,
-  memory?: CampaignMemory | null
+  memory?: CampaignMemory | null,
+  persisted?: ThreadBriefingState | null,
 ): BriefingAssessment {
   const purposeForced =
     purpose === "prospection" || purpose === "support" || purpose === "groupes";
@@ -602,7 +620,6 @@ export function assessCampaignBriefing(
     };
   }
 
-  const blob = conversationBlob(history, userMessage);
   const userBlob = userConversationBlob(history, userMessage);
 
   const missing: string[] = [];
@@ -729,9 +746,11 @@ export function assessCampaignBriefing(
       m.includes("lancement") ||
       m.includes("présentation")
   );
-  const readyForDraft = criticalMissing.length === 0;
+  const readyForDraft = applyPersistedBriefingState(criticalMissing, persisted).length === 0;
   const stickersQuestionAsked =
-    memory != null || hasStickersQuestionAsked(history);
+    Boolean(persisted?.stickersAnswered) ||
+    /\b(stickers?|autocollants?)\s*:\s*(oui|non)/i.test(memText) ||
+    hasStickersQuestionAsked(history);
   const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
   const handoffKeywordsQuestionAsked = hasHandoffKeywordsQuestionAsked(history);
   const openerVariantsProposed = inbound ? true : hasProposedOpenerVariants(history);
@@ -754,7 +773,7 @@ export function assessCampaignBriefing(
   return {
     inCampaignFlow: true,
     questionsAsked,
-    missing,
+    missing: applyPersistedBriefingState(missing, persisted),
     readyForDraft,
     isInboundClosing: inbound,
     isGroupsFlow: false,
@@ -904,7 +923,6 @@ export function buildBriefingNudge(
   }
 
   const next = assessment.missing[0] ?? "un détail concret encore flou";
-  const q = assessment.questionsAsked;
   if (next.includes("offre")) {
     return (
       `Briefing campagne : l'offre n'est pas dans la mémoire ni dans le fil. ` +

@@ -244,7 +244,7 @@ export default function AuthenticatedApp() {
             : raw.replace(/^❌\s*/, '');
         appendLocal({
           id: `agent-soft-${Date.now()}`,
-          kind: 'assistant',
+          kind: 'error',
           content: friendly,
           created_at: new Date().toISOString(),
           label: 'Agent',

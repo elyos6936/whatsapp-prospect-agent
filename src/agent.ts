@@ -93,6 +93,15 @@ import {
   formatMemoryForAgent,
   getLinkedCampaignMemory,
 } from "./campaign-memory.js";
+import { logEvent } from "./observability.js";
+import {
+  detectBriefingSlotsFromMessage,
+  getThreadBriefingState,
+  mergeThreadBriefingState,
+  userMessageSatisfiesSlot,
+  markThreadSimulationShown,
+  threadHasSimulationShown,
+} from "./thread-briefing-state.js";
 import {
   detectGroupPublishIntent,
   detectGroupSendNowIntent,
@@ -634,6 +643,31 @@ function toOpenAiMessages(history: AgentMessage[]): OpenAI.Chat.Completions.Chat
   }));
 }
 
+export type AgentPathInfo = { path: string; slot?: string | null };
+let lastAgentPath: AgentPathInfo = { path: "llm" };
+
+export function resetLastAgentPath(): void {
+  lastAgentPath = { path: "llm" };
+}
+
+export function getLastAgentPath(): AgentPathInfo {
+  return lastAgentPath;
+}
+
+function setAgentPath(path: string, slot?: string | null): void {
+  lastAgentPath = { path, slot: slot ?? null };
+  logEvent({ component: "agent", event: "agent.path", path, slot: slot ?? undefined });
+}
+
+function logDeterministicFail(reason: string, meta?: Record<string, unknown>): void {
+  logEvent({
+    level: "warn",
+    component: "agent",
+    event: "agent.deterministic.fail",
+    meta: { reason, ...meta },
+  });
+}
+
 export async function chatWithAgent(userId: number, userMessage: string, threadId: number): Promise<string> {
   const connection = await testEvolutionConnection(userId);
   if (!connection.connected) {
@@ -934,13 +968,26 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
 
   const activeMemory = linkedMemory;
+  const persistedBriefing = await getThreadBriefingState(userId, threadId).catch(() => ({}));
+  const userBlobForPersist = [
+    ...historyRaw.filter((m) => m.role === "user").map((m) => m.content),
+    userMessage,
+  ].join("\n");
   const briefing = assessCampaignBriefing(
-    history,
+    historyRaw,
     userMessage,
     thread?.purpose ?? null,
-    activeMemory
+    activeMemory,
+    persistedBriefing,
   );
-  const hasSimAlready = recentHistoryHasSimulation(history);
+  void mergeThreadBriefingState(
+    userId,
+    threadId,
+    detectBriefingSlotsFromMessage(userMessage, userBlobForPersist),
+  ).catch(() => {});
+  const hasSimAlready =
+    (await threadHasSimulationShown(userId, threadId).catch(() => false)) ||
+    recentHistoryHasSimulation(history);
   const turnMode = resolveSimulationTurnMode(history, userMessage);
   const forceSim = turnMode === "force_sim";
 
@@ -1090,10 +1137,24 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         threadTitle: thread?.title,
         existingAutomationId: thread?.automation_id ?? null,
       });
-      if (drafted) return sanitizeUserVisibleReply(drafted);
+      if (drafted) {
+        setAgentPath("deterministic", "draft_sim");
+        if (/```klanvio-sim\b/i.test(drafted)) {
+          void markThreadSimulationShown(userId, threadId).catch(() => {});
+        }
+        return sanitizeUserVisibleReply(drafted);
+      }
+      logDeterministicFail("draft_sim_empty");
     } catch (err) {
+      logDeterministicFail("draft_sim_throw", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       console.warn("[agent] fast path variants→draft/sim:", err);
     }
+    setAgentPath("deterministic", "draft_sim_failed");
+    return sanitizeUserVisibleReply(
+      "Je n'ai pas pu créer le brouillon automatiquement. Assure-toi d'avoir **5 accroches** listées (1. … 5. ou puces), puis redis **« je valide »**.",
+    );
   }
 
   // Activation : « lancer » / « active » / oui après vraie question d'activation
@@ -1108,8 +1169,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         history,
         userMessage,
       });
-      if (activated) return sanitizeUserVisibleReply(activated);
+      if (activated) {
+        setAgentPath("deterministic", "activate");
+        return sanitizeUserVisibleReply(activated);
+      }
     } catch (err) {
+      logDeterministicFail("activate_throw", {
+        error: err instanceof Error ? err.message : String(err),
+      });
       console.warn("[agent] deterministic activate failed:", err);
     }
   }
@@ -1201,7 +1268,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     hasSimAlready ||
     (Boolean(thread?.automation_id) && slotQuestion === BRIEFING_Q_SUPPORT_VALIDATE);
   // Après clarif stall déjà posée : forcer le rail (fix remote) plutôt que re-pauser.
-  const forceRailAfterStallClarify = alreadyAskedRouterStallClarify(history);
+  const forceRailAfterStallClarify =
+    alreadyAskedRouterStallClarify(history) && turnKind.kind === "advance_rail";
 
   if (turnKind.pauseScenario && !forceRailAfterStallClarify) {
     // Digression ou envoi one-shot : MiniMax traite la demande ; slot repris au tour suivant.
@@ -1213,11 +1281,20 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       }),
     });
   } else if (slotQuestion && !skipSlot) {
-    // Rail nominal : hard-return uniquement si turn-kind n'a pas mis en pause
-    // (forceRailAfterStallClarify force déjà cette branche). Pas de double critère
-    // isBriefingSideTalk — la digression est entièrement gérée via pauseScenario.
-    const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
-    return sanitizeUserVisibleReply(greet ? `Salut ! ${slotQuestion}` : slotQuestion);
+    if (userMessageSatisfiesSlot(slotQuestion, userMessage)) {
+      await mergeThreadBriefingState(
+        userId,
+        threadId,
+        detectBriefingSlotsFromMessage(userMessage, userBlobForPersist),
+      ).catch(() => {});
+      setAgentPath("llm", "slot_accepted");
+    } else {
+      const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
+      setAgentPath("hard-return", slotQuestion);
+      return sanitizeUserVisibleReply(greet ? `Salut ! ${slotQuestion}` : slotQuestion);
+    }
+  } else {
+    setAgentPath("llm");
   }
   const hsNudge = highStakesConfirmNudge(userMessage, history, allowedHighStakes);
   if (hsNudge) messages.push({ role: "system", content: hsNudge });
@@ -1246,7 +1323,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         messages,
           tools: toolsForTurn,
         tool_choice: "auto",
-          temperature: toolProvider === "minimax" ? 1 : 0.7,
+          temperature: toolProvider === "minimax" ? 0.4 : 0.7,
           max_tokens: recommendedMaxTokensForProvider(
             toolProvider,
             toolModel,

@@ -38,11 +38,12 @@ import {
   CONTACT_STATUSES,
   type ContactStatus,
 } from "./db.js";
-import { chatWithAgent } from "./agent.js";
+import { chatWithAgent, getLastAgentPath, resetLastAgentPath } from "./agent.js";
 import { chatIdToDisplay, diagnoseEvolutionApi, testEvolutionConnection } from "./evolutionapi.js";
 import { startNotificationPoller, getWhatsappPollHealth, handleEvolutionWebhook, reprocessPendingAutoReplies } from "./notifications.js";
 import { startScheduler } from "./scheduler.js";
 import { registerAuth, requireUserId } from "./auth.js";
+import { requireAdmin } from "./admin-auth.js";
 import { registerAuthRoutes } from "./auth-routes.js";
 import { registerAdminRoutes } from "./admin-routes.js";
 import { registerEvolutionRoutes } from "./evolution-routes.js";
@@ -62,6 +63,25 @@ import {
 import { startAutomationEngine } from "./automation-engine.js";
 import { processSendQueue } from "./send-queue.js";
 import { processDueSequences } from "./sequences.js";
+import {
+  createAgentChatJob,
+  finishAgentChatJob,
+  hasPendingAgentChatJob,
+  markLostAgentChatJobs,
+} from "./agent-chat-jobs.js";
+import {
+  generateRequestId,
+  logEvent,
+  recordWorkerTick,
+  runWithRequestContext,
+} from "./observability.js";
+import { sql } from "./pg.js";
+
+declare module "fastify" {
+  interface FastifyRequest {
+    requestId?: string;
+  }
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -105,8 +125,17 @@ await app.register(fastifyCors, {
     cb(null, false);
   },
   methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Request-Id"],
   credentials: true,
+});
+
+app.addHook("onRequest", async (request, reply) => {
+  const incoming = request.headers["x-request-id"];
+  request.requestId =
+    typeof incoming === "string" && incoming.trim()
+      ? incoming.trim()
+      : generateRequestId();
+  reply.header("X-Request-Id", request.requestId);
 });
 
 await app.register(fastifyStatic, {
@@ -181,6 +210,31 @@ app.get("/api/health", async () => {
     model: config.openaiModel,
     whatsappPoll: getWhatsappPollHealth(),
   };
+});
+
+app.get("/api/health/ready", { preHandler: requireAdmin }, async (_request, reply) => {
+  const checks: Record<string, boolean | string | null> = {
+    database: false,
+    jwtSecret: Boolean(config.jwtSecret),
+    pollerRecent: false,
+    pollerLastAt: getWhatsappPollHealth().lastPollAt ?? null,
+  };
+  try {
+    await sql`SELECT 1`;
+    checks.database = true;
+  } catch (err) {
+    checks.databaseError = err instanceof Error ? err.message : String(err);
+  }
+  const lastPoll = getWhatsappPollHealth().lastPollAt;
+  if (lastPoll) {
+    const ageMs = Date.now() - new Date(lastPoll).getTime();
+    checks.pollerRecent = Number.isFinite(ageMs) && ageMs < 5 * 60_000;
+  }
+  const ready = checks.database === true && checks.jwtSecret === true;
+  if (!ready) {
+    return reply.status(503).send({ ok: false, ready: false, checks });
+  }
+  return { ok: true, ready: true, checks };
 });
 
 app.get("/api/settings", async (request) => {
@@ -295,7 +349,23 @@ app.get("/api/evolution/webhook-info", async (request) => {
   };
 });
 
-app.post("/api/evolution/webhook", async (request) => {
+function verifyEvolutionWebhookAuth(request: { headers: Record<string, string | string[] | undefined> }): boolean {
+  const expected = config.envEvolutionApiKey;
+  if (!expected) return process.env.NODE_ENV !== "production";
+  const raw =
+    request.headers.apikey ??
+    request.headers["x-api-key"] ??
+    request.headers.authorization;
+  const token = String(Array.isArray(raw) ? raw[0] : raw ?? "")
+    .replace(/^Bearer\s+/i, "")
+    .trim();
+  return token.length > 0 && token === expected;
+}
+
+app.post("/api/evolution/webhook", async (request, reply) => {
+  if (!verifyEvolutionWebhookAuth(request)) {
+    return reply.status(401).send({ error: "Webhook Evolution non autorisé." });
+  }
   const processed = await handleEvolutionWebhook(request.body);
   return { ok: true, processed };
 });
@@ -786,6 +856,7 @@ app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async 
   const userId = requireUserId(request);
   const message = request.body?.message?.trim();
   const threadId = Number(request.body?.thread_id);
+  const requestId = request.requestId ?? generateRequestId();
   if (!message) {
     return reply.status(400).send({ error: "Le champ « message » est requis." });
   }
@@ -797,44 +868,117 @@ app.post<{ Body: { message?: string; thread_id?: number } }>("/api/chat", async 
     return reply.status(404).send({ error: "Fil introuvable." });
   }
 
-  const jobKey = `${userId}:${threadId}`;
-  const g = globalThis as { __klanvioChatJobs?: Set<string> };
-  if (!g.__klanvioChatJobs) g.__klanvioChatJobs = new Set();
-  const jobs = g.__klanvioChatJobs;
-  if (jobs.has(jobKey)) {
+  if (await hasPendingAgentChatJob(userId, threadId)) {
     return reply.status(429).send({
       error: "Une réponse est déjà en cours sur ce fil. Attendez quelques secondes puis réessayez.",
     });
   }
-  jobs.add(jobKey);
 
   let userSaved: { id: number; created_at: string };
+  let jobId: number;
   try {
     userSaved = await saveAgentMessage(userId, threadId, "user", message);
+    const job = await createAgentChatJob({ userId, threadId, requestId });
+    jobId = job.id;
   } catch (err) {
-    jobs.delete(jobKey);
+    logEvent({
+      level: "error",
+      component: "chat",
+      event: "chat.job.create_failed",
+      requestId,
+      userId,
+      threadId,
+      error: err instanceof Error ? err.message : String(err),
+    });
     throw err;
   }
 
-  // Réponse HTTP immédiate : évite « Failed to fetch » (timeout proxy) pendant les appels longs.
-  void (async () => {
+  void runWithRequestContext({ requestId, userId, threadId, jobId }, async () => {
+    const started = Date.now();
+    logEvent({
+      component: "chat",
+      event: "chat.job.started",
+      requestId,
+      userId,
+      threadId,
+      jobId,
+      meta: { msgLen: message.length },
+    });
+    resetLastAgentPath();
     try {
       const assistantReply = await chatWithAgent(userId, message, threadId);
       await saveAgentMessage(userId, threadId, "assistant", assistantReply);
+      const pathInfo = getLastAgentPath();
+      await finishAgentChatJob(jobId, {
+        status: "completed",
+        path: pathInfo.path,
+        slot: pathInfo.slot ?? null,
+        durationMs: Date.now() - started,
+      });
+      logEvent({
+        component: "chat",
+        event: "chat.job.completed",
+        requestId,
+        userId,
+        threadId,
+        jobId,
+        path: pathInfo.path,
+        slot: pathInfo.slot ?? undefined,
+        durationMs: Date.now() - started,
+        meta: { replyLen: assistantReply.length },
+      });
     } catch (err) {
       const { userFacingError } = await import("./user-facing.js");
-      await saveAgentMessage(userId, threadId, "assistant", userFacingError(err));
-    } finally {
-      jobs.delete(jobKey);
+      const msg = userFacingError(err);
+      await saveAgentMessage(userId, threadId, "assistant", msg);
+      const pathInfo = getLastAgentPath();
+      await finishAgentChatJob(jobId, {
+        status: "failed",
+        path: pathInfo.path,
+        slot: pathInfo.slot ?? null,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - started,
+      });
+      logEvent({
+        level: "error",
+        component: "chat",
+        event: "chat.job.failed",
+        requestId,
+        userId,
+        threadId,
+        jobId,
+        path: pathInfo.path,
+        error: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - started,
+      });
     }
-  })();
+  });
 
   return reply.status(202).send({
     pending: true,
     since_id: userSaved.id,
+    request_id: requestId,
+    job_id: jobId,
     created_at: userSaved.created_at,
   });
 });
+
+app.post<{ Body: { event?: string; threadId?: number; since?: number; requestId?: string; meta?: Record<string, unknown> } }>(
+  "/api/client-events",
+  async (request) => {
+    const userId = requireUserId(request);
+    const body = request.body ?? {};
+    logEvent({
+      component: "frontend",
+      event: String(body.event ?? "client.event"),
+      requestId: body.requestId ?? request.requestId,
+      userId,
+      threadId: body.threadId,
+      meta: body.meta,
+    });
+    return { ok: true };
+  },
+);
 
 app.post<{ Body: { name?: string; type?: string; data?: string } }>("/api/upload", async (request, reply) => {
   const { name, data } = request.body ?? {};
@@ -879,11 +1023,29 @@ try {
     void processSendQueue(2);
     void processDueSequences();
   }, 15_000);
+  setInterval(() => {
+    void markLostAgentChatJobs(10).then((n) => {
+      if (n > 0) {
+        logEvent({
+          level: "warn",
+          component: "chat",
+          event: "chat.job.lost",
+          meta: { count: n },
+        });
+      }
+    });
+  }, 5 * 60_000);
   // Watchdog sessions WhatsApp — restaure les close silencieux sans QR
   const { watchWhatsAppConnections } = await import("./whatsapp-connection.js");
   const { listActiveUserIds } = await import("./users.js");
   setInterval(() => {
-    void watchWhatsAppConnections(listActiveUserIds).catch(() => {});
+    void watchWhatsAppConnections(listActiveUserIds)
+      .then(() => recordWorkerTick("whatsapp_watchdog"))
+      .catch((err) =>
+        recordWorkerTick("whatsapp_watchdog", {
+          error: err instanceof Error ? err.message : String(err),
+        }),
+      );
   }, 60_000);
   void watchWhatsAppConnections(listActiveUserIds).catch(() => {});
 

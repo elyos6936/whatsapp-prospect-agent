@@ -22,6 +22,7 @@ import { chatIdToDisplay, sendWhatsAppMedia, sendWhatsAppMessage } from "./evolu
 import { shouldBlockOutboundWhileAwaitingReply } from "./outbound-safety.js";
 import { INBOUND_REPLY_AB_VARIANT } from "./inbound-reply-batch.js";
 import { listActiveUserIds } from "./users.js";
+import { recordWorkerTick } from "./observability.js";
 import {
   isWithinQuietHours,
   resolveOutboundQuietHours,
@@ -434,6 +435,7 @@ export async function processSendQueue(limit = 2): Promise<number> {
     queueRunning = false;
   }
 
+  recordWorkerTick("send_queue", { processed: sent });
   return sent;
 }
 
