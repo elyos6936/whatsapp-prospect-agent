@@ -785,10 +785,16 @@ export function assessCampaignBriefing(
       m.includes("présentation")
   );
   const readyForDraft = applyPersistedBriefingState(criticalMissing, persisted).length === 0;
+  // Mémoire liée = préférence stickers déjà tranchée (colonne + consignes) — ne pas reposer la question
+  const memoryCoversStickers =
+    memory != null ||
+    /pas\s+de\s+stickers?|stickers?\s+autoris|\b(stickers?|autocollants?)\s*[:=]\s*(oui|non)/i.test(
+      memText,
+    );
   // GAP-010 : « asked » = réellement répondu (oui/non), pas seulement question collée en hard-return
   const stickersQuestionAsked =
     Boolean(persisted?.stickersAnswered) ||
-    /\b(stickers?|autocollants?)\s*:\s*(oui|non)/i.test(memText) ||
+    memoryCoversStickers ||
     answeredYesNoAfterAsk(history, userMessage, STICKERS_ASK_RE);
   const thirdPartyQuestionAsked = answeredYesNoAfterAsk(
     history,

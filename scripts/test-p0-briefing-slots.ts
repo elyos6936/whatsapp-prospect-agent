@@ -101,5 +101,43 @@ console.log("\n=== GAP-018 Support : oui après stickers compte ===\n");
   assert(a.stickersQuestionAsked, "support stickers answered");
 }
 
+console.log("\n=== Mémoire liée : ne repose PAS les stickers ===\n");
+{
+  const memory = {
+    id: 1,
+    userId: 1,
+    name: "Test Enregistrement 1",
+    instructions: "- Pas de stickers dans les conversations.\n- Ton pro.",
+    ownerName: "Florent",
+    introFormula: "",
+    tone: "pro" as const,
+    toneNote: "",
+    formality: "vous" as const,
+    stickersEnabled: false,
+    emojiLevel: "none" as const,
+    sendWindowStart: 9,
+    sendWindowEnd: 18,
+    isDefault: false,
+    createdAt: "",
+    updatedAt: "",
+  };
+  const hist = [
+    msg("user", "Je veux prospecter formation 50k FCFA groupe Automax demain 9h RDV https://cal.com/x"),
+    msg("assistant", "Comment te présenter ?"),
+    msg("user", "Paul coach"),
+    msg(
+      "assistant",
+      "Ta mémoire indique pas de stickers. Est-ce que tu valides cette accroche comme premier message ?",
+    ),
+  ];
+  const a = assessCampaignBriefing(hist, "oui", "prospection", memory);
+  assert(a.stickersQuestionAsked, "mémoire → stickers déjà tranché");
+  const next = nextCanonicalBriefingQuestion(a, hist, "oui");
+  assert(
+    next == null || !/stickers/i.test(next),
+    `ne pas hard-return stickers (got ${next?.slice(0, 70)})`,
+  );
+}
+
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);
 process.exit(failed > 0 ? 1 : 0);
