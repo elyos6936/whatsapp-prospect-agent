@@ -768,6 +768,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       history: recentForMembers,
     });
 
+  // Déclaré hors du bloc groupes — utilisé plus bas même si runGroupQuick === false
+  let publishAdminSoftNudge: string | null = null;
+
   if (runGroupQuick) {
   // Ajouter / retirer / admin — avant tout brief « quel texte poster »
   const manageQuick = resolveManageIntentFromHistory(userMessage, recentForMembers);
@@ -935,7 +938,6 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  let publishAdminSoftNudge: string | null = null;
   // Publier / lancer une campagne : admin obligatoire (lecture déjà gérée au-dessus)
   if (detectGroupPublishIntent(userMessage)) {
     const histForPublish =
