@@ -40,12 +40,15 @@ export function detectToneFromText(text: string | null | undefined): ReplyTone |
 /**
  * Ton à appliquer, par ordre de priorité :
  * 1. messages déjà envoyés dans le fil (ne jamais changer de ton en cours de route) ;
- * 2. textes campagne fournis par l'appelant (accroche validée, playbook, guide) ;
- * 3. vouvoiement.
+ * 2. formalité mémoire explicite (tu/vous) — prime sur une accroche divergente ;
+ * 3. textes campagne fournis par l'appelant (accroche validée, playbook, guide) ;
+ * 4. vouvoiement.
  */
 export function resolveReplyTone(opts: {
   sentMessages?: Array<string | null | undefined>;
   campaignTexts?: Array<string | null | undefined>;
+  /** Formalité colonne / hints mémoire — source de vérité avant l'accroche. */
+  memoryFormality?: ReplyTone | null;
 }): ReplyTone {
   const sent = (opts.sentMessages ?? [])
     .map((m) => String(m ?? "").trim())
@@ -54,11 +57,28 @@ export function resolveReplyTone(opts: {
   const fromSent = detectToneFromText(sent);
   if (fromSent) return fromSent;
 
+  if (opts.memoryFormality === "tu" || opts.memoryFormality === "vous") {
+    return opts.memoryFormality;
+  }
+
   for (const text of opts.campaignTexts ?? []) {
     const found = detectToneFromText(text);
     if (found) return found;
   }
   return "vous";
+}
+
+/**
+ * true si l'accroche utilise clairement l'autre formalité que la mémoire.
+ * (Pas de conflit si l'accroche n'emploie aucun pronom d'adresse.)
+ */
+export function openerConflictsWithFormality(
+  opener: string | null | undefined,
+  memoryFormality: ReplyTone | null | undefined,
+): boolean {
+  if (memoryFormality !== "tu" && memoryFormality !== "vous") return false;
+  const detected = detectToneFromText(opener);
+  return detected != null && detected !== memoryFormality;
 }
 
 /** Étiquette courte pour les prompts (« tutoiement » / « vouvoiement »). */

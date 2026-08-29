@@ -148,11 +148,14 @@ export async function generateCampaignSimulationDirect(
     /** Instructions mémoire brutes — process à exécuter, non tronquées. */
     memoryInstructions?: string | null;
     memoryName?: string | null;
+    /** Formalité mémoire (tu/vous). */
+    memoryFormality?: "tu" | "vous" | null;
   }
 ): Promise<{ display: string; turns: SimulationTurn[] } | null> {
   const tone = resolveReplyTone({
     sentMessages: [opts.approvedOpener],
-    campaignTexts: [opts.campaignBrief, opts.businessContext],
+    memoryFormality: opts.memoryFormality,
+    campaignTexts: [opts.campaignBrief, opts.businessContext, opts.memoryInstructions],
   });
   const toneLbl = toneLabel(tone);
   const openerRule = opts.approvedOpener?.trim()

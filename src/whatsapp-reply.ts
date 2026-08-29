@@ -384,6 +384,8 @@ export async function generateWhatsAppReply(userId: number, input: {
   /** Textes campagne / mémoire pour déduire le ton et whitelister les liens. */
   toneSources?: Array<string | null | undefined>;
   knownLinkSources?: Array<string | null | undefined>;
+  /** Formalité mémoire (tu/vous) — prime sur l'accroche si aucun message déjà envoyé. */
+  memoryFormality?: "tu" | "vous" | null;
   /** Tarif campagne (prioritaire sur le profil) — source unique pour le filet D. */
   configuredPrice?: string | null;
 }): Promise<string> {
@@ -414,6 +416,7 @@ export async function generateWhatsAppReply(userId: number, input: {
     .map((m) => m.body);
   const tone = resolveReplyTone({
     sentMessages,
+    memoryFormality: input.memoryFormality,
     campaignTexts: [
       ...(input.toneSources ?? []),
       input.automationContext,

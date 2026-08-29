@@ -61,6 +61,7 @@ import { recordAbReply } from "./ab-testing.js";
 import { refreshContactMemory, getMemoryContextBlock } from "./contact-memory.js";
 import { createKeywordHandoff, findMatchingHandoffKeyword, maybeCreateHandoff } from "./handoff.js";
 import { passesReplyGate, findActiveOutboundCampaign } from "./campaign-gating.js";
+import { resolveReplyTone, toneLabel } from "./reply-tone.js";
 import {
   detectInboundMedia,
   describeInboundMedia,
@@ -697,7 +698,11 @@ function buildRuntimeSupportFrame(cfg: AutomationConfig): string {
 
 function buildActiveCampaignContext(
   auto: Automation,
-  extras?: { memoryBlock?: string; playbookBlock?: string }
+  extras?: {
+    memoryBlock?: string;
+    playbookBlock?: string;
+    formality?: "tu" | "vous" | null;
+  }
 ): string {
   const cfg = auto.config;
   const hasMemory = Boolean(extras?.memoryBlock?.trim());
@@ -713,11 +718,26 @@ function buildActiveCampaignContext(
     ? goalLabels[cfg.closingGoal] ?? cfg.closingGoal
     : "engager le prospect vers une action concrète";
 
+  const tone = resolveReplyTone({
+    memoryFormality: extras?.formality,
+    campaignTexts: [
+      cfg.initialMessage,
+      cfg.conversationGuide,
+      cfg.livePlaybook?.openerSnapshot,
+      extras?.memoryBlock,
+    ],
+  });
+  const toneRule =
+    tone === "tu"
+      ? "TU (jamais vous/votre/vos)"
+      : "VOUS (jamais tu/ton/ta/te)";
+
   const lines = [
     `=== CAMPAGNE ACTIVE : « ${auto.name} » ===`,
     `Type : ${auto.type}`,
     `Mode : ${inbound ? "ENTRANT (le client écrit en premier — support / closing)" : "SORTANT (tu as initié)"}`,
     `Objectif de la campagne : ${goal}`,
+    `Formalité : ${toneLabel(tone)}`,
     !inbound && cfg.initialMessage
       ? `Premier message déjà envoyé au prospect : « ${cfg.initialMessage} »`
       : "",
@@ -778,7 +798,7 @@ function buildActiveCampaignContext(
           `9. N'utilise PAS le prénom du prospect à tout va.`,
           `10. Mémoire + playbook = même source que la simulation — ne dérive pas.`,
         ].join("\n"),
-    `RÈGLES : 1-2 phrases naturelles (court ≠ sec), ton WhatsApp, VOUS (jamais tu/ton/ta/te). Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. Ne répète jamais une question déjà posée. AUCUN texte entre crochets [ ].`,
+    `RÈGLES : 1-2 phrases naturelles (court ≠ sec), ton WhatsApp, ${toneRule}. Ne re-pitche pas en boucle. Ne te re-présente pas si déjà fait. Ne répète jamais une question déjà posée. AUCUN texte entre crochets [ ].`,
   ].filter((l) => l !== undefined && l !== "");
   return lines.join("\n");
 }
@@ -799,9 +819,14 @@ async function buildAutomationContext(
     } = await import("./campaign-sync.js");
 
     let memoryBlock = "";
+    let memFormality: "tu" | "vous" | null = null;
     try {
       const mem = await getLinkedMemoryForAutomation(userId, activeCampaign.id);
-      if (mem) memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+      if (mem) {
+        memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+        memFormality =
+          mem.formality === "tu" || mem.formality === "vous" ? mem.formality : null;
+      }
     } catch {
       /* ignore */
     }
@@ -816,7 +841,11 @@ async function buildAutomationContext(
     }
 
     parts.push(
-      buildActiveCampaignContext(activeCampaign, { memoryBlock, playbookBlock })
+      buildActiveCampaignContext(activeCampaign, {
+        memoryBlock,
+        playbookBlock,
+        formality: memFormality,
+      })
     );
   }
 
@@ -865,6 +894,7 @@ async function buildAutomationContext(
       if (auto.config.conversationGuide || auto.config.initialMessage || auto.config.livePlaybook?.turns?.length) {
         let memoryBlock = "";
         let playbookBlock = "";
+        let memFormality: "tu" | "vous" | null = null;
         try {
           const {
             formatCampaignMemoryForWhatsApp,
@@ -872,7 +902,11 @@ async function buildAutomationContext(
             getLinkedMemoryForAutomation,
           } = await import("./campaign-sync.js");
           const mem = await getLinkedMemoryForAutomation(userId, auto.id);
-          if (mem) memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+          if (mem) {
+            memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+            memFormality =
+              mem.formality === "tu" || mem.formality === "vous" ? mem.formality : null;
+          }
           if (auto.config.livePlaybook?.turns?.length) {
             playbookBlock = formatLivePlaybookForWhatsApp(auto.config.livePlaybook, {
               inbound:
@@ -884,7 +918,11 @@ async function buildAutomationContext(
           /* ignore */
         }
       parts.push(
-          buildActiveCampaignContext(auto, { memoryBlock, playbookBlock })
+          buildActiveCampaignContext(auto, {
+            memoryBlock,
+            playbookBlock,
+            formality: memFormality,
+          })
       );
       }
     }
@@ -1273,6 +1311,19 @@ async function runAutoReply(
         return;
       }
 
+      let memoryFormality: "tu" | "vous" | null = null;
+      if (activeCampaign) {
+        try {
+          const { getLinkedMemoryForAutomation } = await import("./campaign-sync.js");
+          const mem = await getLinkedMemoryForAutomation(userId, activeCampaign.id);
+          if (mem?.formality === "tu" || mem?.formality === "vous") {
+            memoryFormality = mem.formality;
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+
       reply = await generateWhatsAppReply(userId, {
         chatId,
         senderName,
@@ -1290,6 +1341,7 @@ async function runAutoReply(
             activeCampaign.config.mode === "inbound_closing")
             ? "inbound"
             : "outbound",
+        memoryFormality,
         toneSources: [
           activeCampaign?.config.initialMessage,
           activeCampaign?.config.conversationGuide,

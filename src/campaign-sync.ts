@@ -16,6 +16,9 @@ import {
   memoryToneLabel,
   memoryToQuietHours,
   parseMemoryHints,
+  extractUsefulLinkFromText,
+  extractPriceFromMemoryInstructions,
+  ensureFormalityInGuide,
   type CampaignMemory,
 } from "./campaign-memory.js";
 import { looksLikePhoneDump } from "./simulation-sanitize.js";
@@ -146,7 +149,8 @@ export async function syncAutomationConfigFromMemory(
 
   const hints = parseMemoryHints(mem.instructions);
   const quiet = memoryToQuietHours(mem);
-  const nextGuide = bakeConversationGuideFromMemory(mem, auto.config.conversationGuide);
+  let nextGuide = bakeConversationGuideFromMemory(mem, auto.config.conversationGuide);
+  nextGuide = ensureFormalityInGuide(nextGuide, mem.formality || hints.formality);
 
   const next: AutomationConfig = {
     ...auto.config,
@@ -156,6 +160,16 @@ export async function syncAutomationConfigFromMemory(
         ? true
         : hints.stickersEnabled || mem.stickersEnabled,
   };
+
+  // Seed prix / lien si absents (mémoire = source de vérité)
+  if (!next.closingLink?.trim()) {
+    const fromMem = extractUsefulLinkFromText(mem.instructions);
+    if (fromMem) next.closingLink = fromMem;
+  }
+  if (!next.price?.trim()) {
+    const fromMem = extractPriceFromMemoryInstructions(mem.instructions);
+    if (fromMem) next.price = fromMem;
+  }
 
   // Ne pas écraser des quiet hours déjà customisées sauf si absentes
   if (auto.config.quietHoursStart == null && auto.config.quietHoursEnd == null) {

@@ -233,6 +233,64 @@ export function extractUsefulLinkFromText(text: string): string | null {
   return null;
 }
 
+/**
+ * Prix / tarif depuis les instructions mémoire (montants FCFA ou « Gratuit »).
+ * Ignore les placeholders « [indiquer les prix…] ».
+ */
+export function extractPriceFromMemoryInstructions(instructions: string): string | null {
+  const text = instructions || "";
+  if (!text.trim()) return null;
+
+  const labeledFree = text.match(
+    /(?:prix|tarif|montant)\s*[:=]?\s*([^\n.]{0,50}?(?:gratuit\w*|sans\s+frais|offert\w*))/i,
+  )?.[1];
+  if (labeledFree) {
+    const cleaned = labeledFree.replace(/\s+/g, " ").trim();
+    if (cleaned && !/\[/.test(cleaned)) return cleaned.slice(0, 80);
+  }
+  if (
+    /(?:prix|tarif).{0,40}gratuit|(?:formation|masterclass|offre|atelier|session)\s+gratuit/i.test(
+      text,
+    )
+  ) {
+    return "Gratuit";
+  }
+
+  const fromMem =
+    text.match(
+      /(?:prix|tarif|montant)\s*[:=]?\s*([^\n.]{0,40}?\b\d[\d\s.,]{1,12}\s*(?:fcfa|f\b|€|euros?)?)/i,
+    )?.[1] ||
+    text.match(/\b(\d[\d\s.,]{2,12}\s*(?:fcfa|f\b|€|euros?))\b/i)?.[1];
+  const cleaned = fromMem?.replace(/\s+/g, " ").trim();
+  if (cleaned && !/\[|indiquer/i.test(cleaned)) return cleaned.slice(0, 80);
+  return null;
+}
+
+/** Ligne de formalité canonique (seed guide / sync). */
+export function memoryFormalityLine(formality: CampaignMemoryFormality): string {
+  return formality === "tu"
+    ? "- Je tutoie les interlocuteurs."
+    : "- Je vouvoie les interlocuteurs.";
+}
+
+/**
+ * Garantit que le conversationGuide déclare la formalité mémoire
+ * (évite un opener « vous » alors que la mémoire tutoie).
+ */
+export function ensureFormalityInGuide(
+  guide: string | null | undefined,
+  formality: CampaignMemoryFormality,
+): string {
+  const g = String(guide ?? "").trim();
+  const line = memoryFormalityLine(formality);
+  const declaresTu = /je\s+tutoie|tutoiement/i.test(g);
+  const declaresVous = /je\s+vouvoie|vouvoiement/i.test(g);
+  const ok =
+    formality === "tu" ? declaresTu && !declaresVous : declaresVous && !declaresTu;
+  if (ok) return g;
+  return g ? `${line}\n${g}` : line;
+}
+
 /** Indices dérivés du texte libre (seed create_automation / briefing). */
 export function parseMemoryHints(instructions: string): {
   ownerName: string;

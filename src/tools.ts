@@ -204,8 +204,11 @@ import {
   memoryToneLabel,
   parseMemoryHints,
   extractUsefulLinkFromText,
+  extractPriceFromMemoryInstructions,
+  ensureFormalityInGuide,
   setThreadCampaignMemory,
 } from "./campaign-memory.js";
+import { openerConflictsWithFormality } from "./reply-tone.js";
 import {
   activityWindowToQuietHours,
   quietHoursToActivityWindow,
@@ -4768,15 +4771,8 @@ export async function executeTool(
           }
           // Prix : mémoire liée + profil business (évite « Prix manquant… passe-le dans price »)
           if (!config.price?.trim()) {
-            const fromMem =
-              mem.instructions.match(
-                /(?:prix|tarif|montant)\s*[:=]?\s*([^\n.]{0,40}?\b\d[\d\s.,]{1,12}\s*(?:fcfa|f\b|€|euros?)?)/i,
-              )?.[1] ||
-              mem.instructions.match(/\b(\d[\d\s.,]{2,12}\s*(?:fcfa|f\b|€|euros?))\b/i)?.[1];
-            const cleaned = fromMem?.replace(/\s+/g, " ").trim();
-            if (cleaned && !/\[|indiquer/i.test(cleaned)) {
-              config.price = cleaned.slice(0, 80);
-            }
+            const fromMem = extractPriceFromMemoryInstructions(mem.instructions);
+            if (fromMem) config.price = fromMem;
           }
           if (!config.price?.trim()) {
             try {
@@ -4819,6 +4815,11 @@ export async function executeTool(
               config.conversationGuide,
             );
           }
+          // Formalité mémoire → guide (tu/vous) même si le LLM a rédigé autrement
+          config.conversationGuide = ensureFormalityInGuide(
+            config.conversationGuide,
+            mem.formality || hints.formality,
+          );
           const owner = (hints.ownerName || mem.ownerName).trim();
           if (owner) {
             await saveBusinessProfile(userId, { ownerName: owner }).catch(() => {});
@@ -4836,6 +4837,29 @@ export async function executeTool(
           ...v,
           message: stripProspectNamePlaceholders(v.message),
         }));
+      }
+
+      // Accroche vs formalité mémoire (tu/vous) — refuse avant brouillon
+      if (isOutbound && linkedMem) {
+        const expected =
+          linkedMem.formality === "tu" || linkedMem.formality === "vous"
+            ? linkedMem.formality
+            : parseMemoryHints(linkedMem.instructions).formality;
+        const openerTexts = [
+          config.initialMessage,
+          ...(config.abVariants ?? []).map((v) => v.message),
+        ].filter((t): t is string => Boolean(t?.trim()));
+        for (const text of openerTexts) {
+          if (openerConflictsWithFormality(text, expected)) {
+            return JSON.stringify({
+              error: userFacingError(
+                expected === "tu"
+                  ? "L'accroche vouvoie alors que la mémoire impose le tutoiement. Reformule en « tu » puis réessaie."
+                  : "L'accroche tutoie alors que la mémoire impose le vouvoiement. Reformule en « vous » puis réessaie.",
+              ),
+            });
+          }
+        }
       }
 
       // Interdit de stocker des crochets dans les textes WhatsApp (pas le guide mémoire).
@@ -5514,6 +5538,32 @@ export async function executeTool(
         detail.automation.type === "contact_prospect" ||
         detail.automation.type === "group_prospect" ||
         merged.mode === "outbound_prospect";
+      if (isOutboundType && (args.initial_message || args.ab_variants)) {
+        const memUp = await getLinkedCampaignMemory(userId, threadId).catch(() => null);
+        if (memUp) {
+          const expected =
+            memUp.formality === "tu" || memUp.formality === "vous"
+              ? memUp.formality
+              : parseMemoryHints(memUp.instructions).formality;
+          const openerTexts = [
+            args.initial_message ? merged.initialMessage : null,
+            ...(args.ab_variants
+              ? (merged.abVariants ?? []).map((v) => v.message)
+              : []),
+          ].filter((t): t is string => Boolean(t?.trim()));
+          for (const text of openerTexts) {
+            if (openerConflictsWithFormality(text, expected)) {
+              return JSON.stringify({
+                error: userFacingError(
+                  expected === "tu"
+                    ? "L'accroche vouvoie alors que la mémoire impose le tutoiement. Reformule en « tu » puis réessaie."
+                    : "L'accroche tutoie alors que la mémoire impose le vouvoiement. Reformule en « vous » puis réessaie.",
+                ),
+              });
+            }
+          }
+        }
+      }
       if (
         isOutboundType &&
         merged.initialMessage &&

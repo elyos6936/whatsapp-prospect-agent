@@ -218,6 +218,7 @@ export async function replyInSimulationPreview(
   let automationContext = "";
   let campaignConfig: AutomationConfig | undefined;
   let settings: AppSettings | null = null;
+  let memoryFormality: "tu" | "vous" | null = null;
 
   if (threadId != null) {
     const thread = await getAgentThread(userId, threadId);
@@ -229,7 +230,12 @@ export async function replyInSimulationPreview(
         let memoryBlock = "";
         try {
           const mem = await getLinkedMemoryForAutomation(userId, automationId);
-          if (mem) memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+          if (mem) {
+            memoryBlock = formatCampaignMemoryForWhatsApp(mem);
+            if (mem.formality === "tu" || mem.formality === "vous") {
+              memoryFormality = mem.formality;
+            }
+          }
         } catch {
           /* ignore */
         }
@@ -374,6 +380,7 @@ export async function replyInSimulationPreview(
       closingGoal: campaignConfig?.closingGoal,
       configuredPrice: campaignConfig?.price || settings.business_price,
       forceDeliverPendingLink: affirmingLink,
+      memoryFormality,
       toneSources: [
         campaignConfig?.initialMessage,
         campaignConfig?.conversationGuide,
