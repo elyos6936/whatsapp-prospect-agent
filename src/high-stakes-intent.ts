@@ -215,6 +215,48 @@ export function isExplicitGroupAdminAction(text: string): boolean {
   return false;
 }
 
+/** Confirmation courte après question assistant (GAP-023). */
+export function isShortHighStakesConfirm(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 48) return false;
+  if (isSendNegation(t)) return false;
+  return /^(oui|ouais|ok|okay|vas[- ]?y|go|d['’]accord|dac|je\s+confirme|confirme)([!.\s:]*)$/i.test(
+    t,
+  );
+}
+
+type HighStakesConfirmKind = "status" | "delete" | "block" | "auto_reply" | "group_admin";
+
+function recentAssistantAskedHighStakesConfirm(
+  history: AgentMessage[],
+  kind: HighStakesConfirmKind,
+): boolean {
+  const last = [...history].reverse().find((m) => m.role === "assistant");
+  if (!last?.content) return false;
+  const c = last.content;
+  if (!/[?？]/.test(c) && !/\b(confirm|oui\s*\/\s*non|je\s+(le\s+)?fais)\b/i.test(c)) {
+    return false;
+  }
+  switch (kind) {
+    case "status":
+      // Ne pas confondre avec « activer la campagne ? » (activation ≠ set_automation_status)
+      return /\b(pause|pauser|reprend|reprendre|relance|mets?\s+.{0,40}en\s+pause|remets?\s+en\s+(route|marche))\b/i.test(
+        c,
+      );
+    case "delete":
+      return /suppress|supprim|effac/i.test(c);
+    case "block":
+      return /\b(bloqu|blacklist)\b/i.test(c);
+    case "auto_reply":
+      return /\b(auto[- ]?reply|r[eé]ponses?\s+(automatiques?|auto))\b/i.test(c);
+    case "group_admin":
+      return /\b(groupe|admin|invite|quitt|participant|membre)\b/i.test(c) &&
+        /\b(ajout|retir|promou|quitt|cr[eé]e|invite|confirm)\b/i.test(c);
+    default:
+      return false;
+  }
+}
+
 export function resolveAllowedHighStakesTools(opts: {
   userMessage: string;
   recentHistory: AgentMessage[];
@@ -224,19 +266,39 @@ export function resolveAllowedHighStakesTools(opts: {
   if (allowsManualSend(recentHistory, userMessage)) {
     for (const n of HIGH_STAKES_SEND_TOOLS) allowed.add(n);
   }
-  if (isExplicitStatusChange(userMessage)) {
+  if (
+    isExplicitStatusChange(userMessage) ||
+    (isShortHighStakesConfirm(userMessage) &&
+      recentAssistantAskedHighStakesConfirm(recentHistory, "status"))
+  ) {
     for (const n of HIGH_STAKES_STATUS_TOOLS) allowed.add(n);
   }
-  if (isExplicitDeleteAutomation(userMessage)) {
+  if (
+    isExplicitDeleteAutomation(userMessage) ||
+    (isShortHighStakesConfirm(userMessage) &&
+      recentAssistantAskedHighStakesConfirm(recentHistory, "delete"))
+  ) {
     for (const n of HIGH_STAKES_DELETE_TOOLS) allowed.add(n);
   }
-  if (isExplicitBlockContact(userMessage)) {
+  if (
+    isExplicitBlockContact(userMessage) ||
+    (isShortHighStakesConfirm(userMessage) &&
+      recentAssistantAskedHighStakesConfirm(recentHistory, "block"))
+  ) {
     for (const n of HIGH_STAKES_BLOCK_TOOLS) allowed.add(n);
   }
-  if (isExplicitAutoReplyToggle(userMessage)) {
+  if (
+    isExplicitAutoReplyToggle(userMessage) ||
+    (isShortHighStakesConfirm(userMessage) &&
+      recentAssistantAskedHighStakesConfirm(recentHistory, "auto_reply"))
+  ) {
     for (const n of HIGH_STAKES_AUTO_REPLY_TOOLS) allowed.add(n);
   }
-  if (isExplicitGroupAdminAction(userMessage)) {
+  if (
+    isExplicitGroupAdminAction(userMessage) ||
+    (isShortHighStakesConfirm(userMessage) &&
+      recentAssistantAskedHighStakesConfirm(recentHistory, "group_admin"))
+  ) {
     for (const n of HIGH_STAKES_GROUP_ADMIN_TOOLS) allowed.add(n);
   }
   return allowed;

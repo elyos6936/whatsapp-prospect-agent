@@ -15,12 +15,12 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers, checkUserIsGroupAdmin } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import {
-  detectCreateGroupIntent,
-  detectGroupInviteSendIntent,
   detectJoinGroupInviteIntent,
-  detectLeaveGroupIntent,
   isGroupNonPublishAction,
+  resolveCreateGroupIntentFromHistory,
   resolveInviteLinkFromHistory,
+  resolveInviteSendFromHistory,
+  resolveLeaveGroupIntentFromHistory,
   resolveManageIntentFromHistory,
   type GroupManageIntent,
 } from "./group-manage-intent.js";
@@ -54,7 +54,7 @@ import {
   shouldRouteSendWindowChange,
   tryApplySendWindowFromUserMessage,
 } from "./send-window-routing.js";
-import { SUPPORT_FIL_SYSTEM_ADDENDUM } from "./support-flow.js";
+import { SUPPORT_FIL_SYSTEM_ADDENDUM, looksLikeThirdPartyPhoneReply } from "./support-flow.js";
 import {
   GROUPS_FIL_SYSTEM_ADDENDUM,
   GROUPS_NEED_POST_REPLY,
@@ -77,6 +77,8 @@ import {
 import {
   hasSimulationThread,
   isActivationNegation,
+  allowsActivateWithoutSimulation,
+  recentAssistantAskedActivationConfirm,
   recentHistoryHasSimulation,
   resolveSimulationTurnMode,
   shouldBlockDuplicateSimulation,
@@ -96,6 +98,7 @@ import {
 import { logEvent } from "./observability.js";
 import {
   detectBriefingSlotsFromMessage,
+  briefingStatePatchForSatisfiedSlot,
   getThreadBriefingState,
   mergeThreadBriefingState,
   userMessageSatisfiesSlot,
@@ -104,14 +107,14 @@ import {
 } from "./thread-briefing-state.js";
 import {
   detectGroupPublishIntent,
-  detectGroupSendNowIntent,
   detectQuickGroupMembersIntent,
   detectQuickListIntent,
   extractGroupNameFromPublishMessage,
+  isExplicitGroupOperation,
   isGroupActionNotCatalogRequest,
   lastGroupQueryFromHistory,
-  looksLikeWhenReply,
   allowGroupQuickPaths,
+  resolveGroupSendIntentFromHistory,
   resolveMembersIntentFromHistory,
   wantsExplicitGroupCatalog,
   type GroupSendNowIntent,
@@ -130,6 +133,7 @@ import {
 } from "./dsml-tool-calls.js";
 import {
   HIGH_STAKES_TOOL_NAMES,
+  allowsManualSend,
   highStakesBlockError,
   highStakesConfirmNudge,
   isHighStakesTool,
@@ -157,6 +161,49 @@ const MEMORY_REQUIRED_REPLY =
   "👉 Clique sur le bouton **Mémoire** (à côté du micro ou en haut du chat), " +
   "choisis ou crée une mémoire avec tes instructions, puis renvoie ton message.\n\n" +
   "Sans mémoire liée à ce fil, je ne peux ni briefer ni lancer de campagne.";
+
+const WA_DISCONNECT_REPLY =
+  "⚠️ **WhatsApp n'est pas connecté.**\n\n" +
+  "Je ne peux effectuer **aucune action WhatsApp** tant que votre numéro n'est pas relié à Klanvio.\n\n" +
+  "👉 Allez dans **Réglages → Connexion WhatsApp**, scannez le QR code avec votre téléphone " +
+  "(WhatsApp → Appareils connectés), puis revenez me parler.";
+
+/** GAP-025 : actions qui exigent Evolution connecté. */
+export function messageNeedsWhatsAppConnection(userMessage: string): boolean {
+  const t = userMessage.trim();
+  if (!t) return false;
+  if (isExplicitGroupOperation(t)) return true;
+  if (detectGroupPublishIntent(t)) return true;
+  if (detectQuickListIntent(t)) return true;
+  if (detectQuickGroupMembersIntent(t)) return true;
+  return /\b(envoie[rz]?|envoyer|écris|ecris|écrire|ecrire|liste\s+mes\s+groupes|membres|contacts|simule|simulation|active[rz]?|lance[rz]?|prospect|whatsapp|qr\s*code|connecte)\b/i.test(
+    t,
+  );
+}
+
+/** GAP-026 : messages légers sans mémoire liée. */
+export function messageNeedsCampaignMemory(userMessage: string): boolean {
+  const t = userMessage.trim();
+  if (!t) return true;
+  if (
+    /^(salut|hello|bonjour|bonsoir|hey|coucou|hi|merci|ok|okay|d['’]accord|aide|help)\b/i.test(t)
+  ) {
+    return false;
+  }
+  if (/\?/.test(t) && t.length <= 140 && !/\b(campagne|brouillon|simule|prospect|accroche)\b/i.test(t)) {
+    return false;
+  }
+  if (
+    /\b(campagne|brouillon|simule|simulation|prospect|accroche|je\s+valide|active|activer|lance|lancer|offre|cible|prix|stickers?|tiers|handoff)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  // Message substantiel mid-fil → mémoire requise
+  return t.length >= 24;
+}
+
 const CHAT_MAX_TOKENS = 1100;
 
 /**
@@ -166,6 +213,34 @@ const CHAT_MAX_TOKENS = 1100;
 function isDanglingAnnouncement(text: string): boolean {
   const t = text.replace(/\s+$/u, "");
   return /[:：]$/u.test(t);
+}
+
+/** GAP-015 : dernier assistant a proposé / demandé validation des accroches. */
+function lastAssistantLooksLikeVariantGate(history: AgentMessage[]): boolean {
+  const last = [...history].reverse().find((m) => m.role === "assistant");
+  if (!last?.content) return false;
+  const c = last.content;
+  if ((extractOpenerVariantsFromHistory([last])?.length ?? 0) >= 4) return true;
+  if (/(?:^|\n)\s*1\s*[.)]/.test(c) && /(?:^|\n)\s*5\s*[.)]/.test(c)) return true;
+  return /tu valides|valider\s+(ces|les)|je\s+valide|l['’]ensemble|ces\s+(5\s+)?accroches|les\s+5\s+accroches/i.test(
+    c,
+  );
+}
+
+/** GAP-015 : « oui » / « ok » seuls ne déclenchent le brouillon que juste après les variantes. */
+function isBareShortValidation(text: string): boolean {
+  return /^(oui|ouais|ok|okay|d['’]accord|dac|parfait|vas[- ]?y|go|nickel)([!.\s:]*)$/i.test(
+    text.trim(),
+  );
+}
+
+/** GAP-019 : numéro seul → brouillon Support seulement si l'assistant a demandé le numéro tiers. */
+function lastAssistantAskedThirdPartyPhone(history: AgentMessage[]): boolean {
+  const last = [...history].reverse().find((m) => m.role === "assistant");
+  if (!last?.content) return false;
+  return /num[eé]ro|t[eé]l[eé]phone|\+229|tiers|livreur|contacter|pr[eé]venir/i.test(
+    last.content,
+  );
 }
 
 /** L'utilisateur a explicitement demandé la liste du carnet WhatsApp. */
@@ -670,26 +745,28 @@ function logDeterministicFail(reason: string, meta?: Record<string, unknown>): v
 
 export async function chatWithAgent(userId: number, userMessage: string, threadId: number): Promise<string> {
   const connection = await testEvolutionConnection(userId);
-  if (!connection.connected) {
-    return (
-      "⚠️ **WhatsApp n'est pas connecté.**\n\n" +
-      "Je ne peux effectuer **aucune action** tant que votre numéro WhatsApp n'est pas relié à Klanvio.\n\n" +
-      "👉 Allez dans **Réglages → Connexion WhatsApp**, scannez le QR code avec votre téléphone " +
-      "(WhatsApp → Appareils connectés), puis revenez me parler.\n\n" +
-      `État actuel : ${connection.message || connection.state}`
-    );
-  }
+  const waDisconnected = !connection.connected;
 
   const [recentForMembers, threadEarly] = await Promise.all([
     getRecentAgentMessages(userId, threadId, 10).catch(() => []),
     getAgentThread(userId, threadId),
   ]);
 
-  const runGroupQuick = allowGroupQuickPaths({
-    purpose: threadEarly?.purpose,
-    userMessage,
-    history: recentForMembers,
-  });
+  // GAP-025 : hard-stop seulement si l'action exige WhatsApp ; sinon soft Q&A
+  if (waDisconnected && messageNeedsWhatsAppConnection(userMessage)) {
+    return (
+      WA_DISCONNECT_REPLY +
+      `\n\nÉtat actuel : ${connection.message || connection.state}`
+    );
+  }
+
+  const runGroupQuick =
+    !waDisconnected &&
+    allowGroupQuickPaths({
+      purpose: threadEarly?.purpose,
+      userMessage,
+      history: recentForMembers,
+    });
 
   if (runGroupQuick) {
   // Ajouter / retirer / admin — avant tout brief « quel texte poster »
@@ -703,8 +780,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
 
   // Poster / programmer — avant lien d'invitation (un nom « No code » n'est pas un invite-code)
-  const sendQuick = detectGroupSendNowIntent(userMessage);
+  const sendQuick = resolveGroupSendIntentFromHistory(userMessage, recentForMembers);
   if (sendQuick) {
+    if (!sendQuick.message) {
+      return (
+        `Quel **message** envoyer` +
+        (sendQuick.groupQuery ? ` dans « ${sendQuick.groupQuery} »` : "") +
+        ` ?`
+      );
+    }
     try {
       return await runGroupSendQuickPath(userId, threadId, sendQuick, recentForMembers);
     } catch (err) {
@@ -712,10 +796,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  const inviteSendQuick = detectGroupInviteSendIntent(userMessage);
+  const inviteSendQuick = resolveInviteSendFromHistory(userMessage, recentForMembers);
   if (inviteSendQuick) {
     if (!inviteSendQuick.groupQuery) {
       return `Pour quel groupe envoyer l'invitation à ${inviteSendQuick.phones.join(", ")} ?`;
+    }
+    if (!inviteSendQuick.phones.length) {
+      return `À quel **numéro** envoyer le lien d'invitation du groupe « ${inviteSendQuick.groupQuery} » ?`;
     }
     try {
       const found = await requireNamedGroupAdmin(
@@ -772,7 +859,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  const createQuick = detectCreateGroupIntent(userMessage);
+  const createQuick = resolveCreateGroupIntentFromHistory(
+    userMessage,
+    recentForMembers as Array<{ role: string; content: string }>,
+  );
   if (createQuick) {
     if (!createQuick.subject) {
       return "Quel **nom** pour le nouveau groupe ?";
@@ -791,7 +881,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
-  const leaveQuick = detectLeaveGroupIntent(userMessage);
+  const leaveQuick = resolveLeaveGroupIntentFromHistory(userMessage, recentForMembers);
   if (leaveQuick) {
     if (!leaveQuick.groupQuery) {
       return "Quel groupe veux-tu quitter ? Donne le nom exact.";
@@ -807,10 +897,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
 
   // Chemin rapide : extraction membres d'un groupe nommé (admin non requis).
-  // « maintenant » / « demain » = horaire de lancement, jamais un nom de groupe.
-  const membersQuick = looksLikeWhenReply(userMessage)
-    ? null
-    : resolveMembersIntentFromHistory(userMessage, recentForMembers);
+  // GAP-007 : « maintenant » après ask extract → resolveMembersIntentFromHistory (plus de veto aveugle)
+  const membersQuick = resolveMembersIntentFromHistory(userMessage, recentForMembers);
   if (membersQuick) {
     if (!membersQuick.groupQuery) {
       return (
@@ -847,6 +935,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     }
   }
 
+  let publishAdminSoftNudge: string | null = null;
   // Publier / lancer une campagne : admin obligatoire (lecture déjà gérée au-dessus)
   if (detectGroupPublishIntent(userMessage)) {
     const histForPublish =
@@ -874,11 +963,11 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       try {
         const found = await findGroupByNameOrId(userId, named);
         if (found && !(await checkUserIsGroupAdmin(userId, found.id))) {
-          return (
+          // GAP-029 : soft nudge — le fil continue (brief / autre groupe)
+          publishAdminSoftNudge =
             `Tu n'es pas administrateur de « ${found.name} ». ` +
-            `Je peux extraire les contacts (lecture), mais je ne peux pas y publier ni lancer une campagne. ` +
-            `Donne un groupe où tu es admin pour l'envoi.`
-          );
+            `Lecture des contacts OK, mais pas de publication / campagne sur ce groupe. ` +
+            `Propose un autre groupe où l'utilisateur est admin, ou continue le brief sans publier.`;
         }
       } catch (err) {
         return userFacingError(err);
@@ -915,9 +1004,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   }
   }
 
-  // Garde-fou serveur : sans mémoire liée, pas de brief / proposition LLM
+  // Garde-fou serveur : sans mémoire liée, pas de brief campagne (GAP-026 : soft Q&A OK)
   const linkedMemoryEarly = await getLinkedCampaignMemory(userId, threadId).catch(() => null);
-  if (!linkedMemoryEarly) {
+  if (!linkedMemoryEarly && messageNeedsCampaignMemory(userMessage)) {
     return MEMORY_REQUIRED_REPLY;
   }
 
@@ -935,6 +1024,25 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     { role: "system", content: businessContext },
     ...toOpenAiMessages(history),
   ];
+  if (waDisconnected) {
+    messages.push({
+      role: "system",
+      content:
+        "WhatsApp est déconnecté. Réponds utilement aux questions (brief, explications) SANS appeler d'outils WhatsApp. " +
+        "Rappelle en une phrase soft de reconnecter via Réglages → Connexion WhatsApp si l'utilisateur voudra agir.",
+    });
+  }
+  if (!linkedMemoryEarly) {
+    messages.push({
+      role: "system",
+      content:
+        "Aucune mémoire campagne liée. Réponds aux questions légères. " +
+        "Si l'utilisateur veut briefer / lancer une campagne, oriente vers le bouton Mémoire.",
+    });
+  }
+  if (publishAdminSoftNudge) {
+    messages.push({ role: "system", content: publishAdminSoftNudge });
+  }
 
   const last = history[history.length - 1];
   if (!last || last.role !== "user" || last.content !== userMessage) {
@@ -1001,7 +1109,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       !extractGroupPostMessage(history) &&
       /\b(campagne|je\s+valide|valide|brouillon|diffusion)\b/i.test(userMessage)
     ) {
-      return GROUPS_NEED_POST_REPLY;
+      // GAP-008 : pause-first — demander le texto via LLM, pas hard-return seul
+      messages.push({
+        role: "system",
+        content:
+          "Fil Groupes : l'utilisateur valide sans texto de post. " +
+          GROUPS_NEED_POST_REPLY +
+          " Reformule brièvement et demande le texte exact + le nom du groupe. Pas de simulation.",
+      });
+      setAgentPath("llm", "groups_need_post");
     }
   }
   const silentTweakAfterSim = turnMode === "silent_tweak";
@@ -1073,6 +1189,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       thirdPartyOk: briefing.thirdPartyQuestionAsked,
       handoffOk: briefing.handoffKeywordsQuestionAsked,
     }) &&
+    // GAP-019 : téléphone seul hors question tiers → pas de brouillon
+    !(looksLikeThirdPartyPhoneReply(userMessage) && !lastAssistantAskedThirdPartyPhone(history)) &&
     !hasSimAlready &&
     !shouldDeterministicActivate(history, userMessage)
   ) {
@@ -1122,6 +1240,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     (briefing.openerVariantsProposed ||
       (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4) &&
     isShortCampaignValidation(userMessage) &&
+    // GAP-015 : bare « oui » seulement si le dernier message propose/valide les accroches
+    (!isBareShortValidation(userMessage) || lastAssistantLooksLikeVariantGate(history)) &&
     !hasSimAlready &&
     !shouldDeterministicActivate(history, userMessage)
   ) {
@@ -1162,22 +1282,35 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     shouldDeterministicActivate(history, userMessage) &&
     !(bareValidation && !hasSimAlready)
   ) {
-    try {
-      const activated = await runDeterministicActivation({
-        userId,
-        threadId,
-        history,
-        userMessage,
-      });
-      if (activated) {
-        setAgentPath("deterministic", "activate");
-        return sanitizeUserVisibleReply(activated);
+    const tAct = userMessage.trim();
+    const bareLaunchVerb =
+      /^(lance|lancer|active|activer|démarre|demarre|go)(\s|$|[!.])/i.test(tAct) &&
+      !allowsActivateWithoutSimulation(tAct);
+    // GAP-016 : « lance » mid-briefing sans sim / sans question d'activation → ne hijack pas
+    const midBriefHijack =
+      bareLaunchVerb &&
+      briefing.inCampaignFlow &&
+      !briefing.readyForDraft &&
+      !hasSimAlready &&
+      !recentAssistantAskedActivationConfirm(history);
+    if (!midBriefHijack) {
+      try {
+        const activated = await runDeterministicActivation({
+          userId,
+          threadId,
+          history,
+          userMessage,
+        });
+        if (activated) {
+          setAgentPath("deterministic", "activate");
+          return sanitizeUserVisibleReply(activated);
+        }
+      } catch (err) {
+        logDeterministicFail("activate_throw", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+        console.warn("[agent] deterministic activate failed:", err);
       }
-    } catch (err) {
-      logDeterministicFail("activate_throw", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      console.warn("[agent] deterministic activate failed:", err);
     }
   }
 
@@ -1203,10 +1336,14 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     } catch (err) {
       console.warn("[agent] deterministic simulation failed:", err);
     }
-    return (
-      "Je n'ai pas pu générer la simulation pour le moment. " +
-      "Réessaie avec « simule » — le fil s'affichera sur le téléphone à droite."
-    );
+    // GAP-028 : ne pas avaler le tour — laisser le LLM reprendre
+    messages.push({
+      role: "system",
+      content:
+        "La simulation déterministe a échoué. Explique brièvement et propose de réessayer « simule », " +
+        "ou continue le brief. INTERDIT d'inventer un faux fence ```klanvio-sim.",
+    });
+    setAgentPath("llm", "sim_fallback");
   }
 
   if (
@@ -1229,8 +1366,15 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       inCampaignFlow: briefing.inCampaignFlow,
     })
   ) {
+    // GAP-027 : nudge LLM au lieu de hard-return
     console.warn(`[agent] router-stall thread=${threadId} reason=repeated-ask`);
-    return ROUTER_STALL_CLARIFY;
+    messages.push({
+      role: "system",
+      content:
+        ROUTER_STALL_CLARIFY +
+        " Pose cette clarification en une phrase, puis écoute. Ne recolle pas la même question de checklist.",
+    });
+    setAgentPath("llm", "stall_clarify");
   }
 
   if (turnMode === "decline_sim") {
@@ -1267,11 +1411,10 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     !slotQuestion ||
     hasSimAlready ||
     (Boolean(thread?.automation_id) && slotQuestion === BRIEFING_Q_SUPPORT_VALIDATE);
-  // Après clarif stall déjà posée : forcer le rail (fix remote) plutôt que re-pauser.
-  const forceRailAfterStallClarify =
-    alreadyAskedRouterStallClarify(history) && turnKind.kind === "advance_rail";
+  // GAP-017 : après clarif stall, ne plus forcer hard-return — soft LLM recovery
+  const afterStallClarify = alreadyAskedRouterStallClarify(history);
 
-  if (turnKind.pauseScenario && !forceRailAfterStallClarify) {
+  if (turnKind.pauseScenario) {
     // Digression ou envoi one-shot : MiniMax traite la demande ; slot repris au tour suivant.
     messages.push({
       role: "system",
@@ -1280,12 +1423,37 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         slotQuestion: skipSlot ? null : slotQuestion,
       }),
     });
+  } else if (
+    slotQuestion &&
+    !skipSlot &&
+    allowsManualSend(history, userMessage)
+  ) {
+    // GAP-021 ceinture : confirm envoi ne doit jamais hard-return le slot briefing
+    messages.push({
+      role: "system",
+      content: buildScenarioPauseNudge({
+        kind: "parallel_action",
+        slotQuestion: null,
+      }),
+    });
+    setAgentPath("llm", "send_confirm_pause");
+  } else if (slotQuestion && !skipSlot && afterStallClarify) {
+    messages.push({
+      role: "system",
+      content:
+        `Après clarification, avance intelligemment. Question de brief en cours : « ${slotQuestion} ». ` +
+        `Ne la recolle pas brute si la réponse utilisateur est ambiguë — une reformulation soft suffit.`,
+    });
+    setAgentPath("llm", "stall_soft_rail");
   } else if (slotQuestion && !skipSlot) {
     if (userMessageSatisfiesSlot(slotQuestion, userMessage)) {
       await mergeThreadBriefingState(
         userId,
         threadId,
-        detectBriefingSlotsFromMessage(userMessage, userBlobForPersist),
+        {
+          ...detectBriefingSlotsFromMessage(userMessage, userBlobForPersist),
+          ...briefingStatePatchForSatisfiedSlot(slotQuestion, userMessage),
+        },
       ).catch(() => {});
       setAgentPath("llm", "slot_accepted");
     } else {
@@ -2055,7 +2223,8 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       !briefing.isGroupsFlow &&
       !hasSimAlready &&
       isShortCampaignValidation(userMessage) &&
-      (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4;
+      (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4 &&
+      (!isBareShortValidation(userMessage) || lastAssistantLooksLikeVariantGate(history));
 
     if (
       (looksLikePhantomCampaignUi(text) || validatedOpenersReady) &&

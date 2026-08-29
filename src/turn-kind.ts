@@ -13,7 +13,12 @@ import {
   detectQuickGroupMembersIntent,
   isExplicitGroupOperation,
 } from "./group-list-intent.js";
-import { isExplicitSendNow } from "./high-stakes-intent.js";
+import {
+  allowsManualSend,
+  isExplicitSendNow,
+  isFuzzySendAsk,
+  isSendConfirmReply,
+} from "./high-stakes-intent.js";
 
 export type BriefingTurnKind = "advance_rail" | "digression" | "parallel_action";
 
@@ -90,6 +95,15 @@ function isParallelGroupOp(userMessage: string): boolean {
 
 function isPhoneOnly(msg: string): boolean {
   return /^[\d+\s.\-()]{8,}$/.test(msg.trim());
+}
+
+/** Dernier assistant a demandé un numéro / cible / tiers (GAP-013). */
+export function recentAssistantAskedForPhoneOrTarget(history: AgentMessage[]): boolean {
+  const last = [...history].reverse().find((m) => m.role === "assistant");
+  if (!last?.content) return false;
+  return /num[eé]ro|t[eé]l[eé]phone|\+229|quel\s+\*{0,2}num|tiers|livreur|cible|contacter|prospects?\s+[àa]\s+contacter/i.test(
+    last.content,
+  );
 }
 
 function isNumberedOpenerList(msg: string): boolean {
@@ -202,7 +216,7 @@ export function buildScenarioPauseNudge(opts: {
 
 /**
  * Classifie le tour AVANT tout hard-return de slot.
- * Ordre pause-first : parallèle → digression / !railAdvance → rail.
+ * Ordre pause-first : send-confirm (history) → parallèle → digression / !railAdvance → rail.
  */
 export function classifyBriefingTurn(opts: {
   userMessage: string;
@@ -212,6 +226,21 @@ export function classifyBriefingTurn(opts: {
   const msg = opts.userMessage.trim();
   if (!opts.inCampaignFlow || !msg) {
     return { kind: "advance_rail", pauseScenario: false, parallelAction: null };
+  }
+
+  const hist = opts.history ?? [];
+
+  // GAP-021 / GAP-011 : « oui » après « Je lui envoie … ? » → pause parallèle, pas hard-return briefing
+  if (
+    allowsManualSend(hist, msg) &&
+    isSendConfirmReply(msg) &&
+    !isExplicitSendNow(msg)
+  ) {
+    return {
+      kind: "parallel_action",
+      pauseScenario: true,
+      parallelAction: "one_shot_send",
+    };
   }
 
   if (isParallelOneShotSend(msg)) {
@@ -228,6 +257,21 @@ export function classifyBriefingTurn(opts: {
       pauseScenario: true,
       parallelAction: "group_extract",
     };
+  }
+
+  // Soft greeting mid-campagne : digression (ne vole pas le slot)
+  if (isSoftGreeting(msg)) {
+    return { kind: "digression", pauseScenario: true, parallelAction: null };
+  }
+
+  // GAP-022 : envoi flou → pause (nudge confirm), pas hard-return briefing
+  if (isFuzzySendAsk(msg)) {
+    return { kind: "digression", pauseScenario: true, parallelAction: null };
+  }
+
+  // GAP-013 : numéro seul n'avance le rail que si l'assistant vient de le demander
+  if (isPhoneOnly(msg) && !recentAssistantAskedForPhoneOrTarget(hist)) {
+    return { kind: "digression", pauseScenario: true, parallelAction: null };
   }
 
   if (isLocalDigression(msg) || !looksLikeRailAdvance(msg)) {

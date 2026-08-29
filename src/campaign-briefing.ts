@@ -463,6 +463,44 @@ export function hasStickersQuestionAsked(history: AgentMessage[]): boolean {
   return history.some((m) => m.role === "assistant" && STICKERS_ASK_RE.test(m.content));
 }
 
+/** Oui/non (ou équivalent) après une question assistant matchant `askRe`. */
+function yesNoReply(text: string): boolean {
+  const t = text.trim();
+  if (!t || t.length > 80) return false;
+  // Pas « ok » seul : trop ambigu (reprise rail / autre slot) — stickers/tiers exigent oui|non
+  return /^(oui|non|ouais|nan|pas(\s+vraiment)?)([!.\s:]|$)/i.test(t);
+}
+
+function answeredYesNoAfterAsk(
+  history: AgentMessage[],
+  userMessage: string,
+  askRe: RegExp,
+): boolean {
+  const askIdx = lastAssistantMatchIndex(history, askRe);
+  if (askIdx < 0) return false;
+  for (let i = askIdx + 1; i < history.length; i++) {
+    const m = history[i];
+    if (m?.role === "user" && yesNoReply(m.content)) return true;
+  }
+  return yesNoReply(userMessage);
+}
+
+/** Handoff : « non » ou liste de mots après la question. */
+function answeredHandoffAfterAsk(
+  history: AgentMessage[],
+  userMessage: string,
+): boolean {
+  const askIdx = lastAssistantMatchIndex(history, HANDOFF_KEYWORDS_ASK_RE);
+  if (askIdx < 0) return false;
+  const ok = (t: string) =>
+    yesNoReply(t) || isSubstantiveUserReply(t) || (t.trim().length >= 4 && !/^\?+$/.test(t));
+  for (let i = askIdx + 1; i < history.length; i++) {
+    const m = history[i];
+    if (m?.role === "user" && ok(m.content)) return true;
+  }
+  return ok(userMessage);
+}
+
 export function hasThirdPartyQuestionAsked(history: AgentMessage[]): boolean {
   return history.some((m) => m.role === "assistant" && THIRD_PARTY_ASK_RE.test(m.content));
 }
@@ -709,10 +747,10 @@ export function assessCampaignBriefing(
         missing.push("jour/heure de lancement de la campagne");
       }
     } else {
-      const hasSchedule =
+  const hasSchedule =
         hasLaunch || /\b(cr[eé]neau|horaire|fen[eê]tre)\b/i.test(userBlob);
-      if (!hasSchedule) {
-        missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
+  if (!hasSchedule) {
+    missing.push("horaires d'envoi (fenêtre) et jour/heure de lancement de la campagne");
       }
     }
   }
@@ -747,12 +785,17 @@ export function assessCampaignBriefing(
       m.includes("présentation")
   );
   const readyForDraft = applyPersistedBriefingState(criticalMissing, persisted).length === 0;
+  // GAP-010 : « asked » = réellement répondu (oui/non), pas seulement question collée en hard-return
   const stickersQuestionAsked =
     Boolean(persisted?.stickersAnswered) ||
     /\b(stickers?|autocollants?)\s*:\s*(oui|non)/i.test(memText) ||
-    hasStickersQuestionAsked(history);
-  const thirdPartyQuestionAsked = hasThirdPartyQuestionAsked(history);
-  const handoffKeywordsQuestionAsked = hasHandoffKeywordsQuestionAsked(history);
+    answeredYesNoAfterAsk(history, userMessage, STICKERS_ASK_RE);
+  const thirdPartyQuestionAsked = answeredYesNoAfterAsk(
+    history,
+    userMessage,
+    THIRD_PARTY_ASK_RE,
+  );
+  const handoffKeywordsQuestionAsked = answeredHandoffAfterAsk(history, userMessage);
   const openerVariantsProposed = inbound ? true : hasProposedOpenerVariants(history);
   const openerSingleValidated = inbound
     ? true

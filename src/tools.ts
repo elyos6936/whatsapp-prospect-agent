@@ -2693,7 +2693,7 @@ export async function executeTool(
       const groupId = await resolveGroupId(userId, String(args.group_id ?? ""));
       const trialGate = await tryConsumeTrialGroupExtract(userId, groupId);
       if (!trialGate.ok) {
-        return JSON.stringify({
+      return JSON.stringify({
           error: trialGate.reason,
           code: "trial_group_extract_limit",
           limit: trialGate.limit,
@@ -4136,9 +4136,9 @@ export async function executeTool(
       const before = await getAppSettings(userId);
       const guarded = filterInventedProfileFields(
         {
-          ownerName: args.owner_name !== undefined ? String(args.owner_name) : undefined,
-          offer: args.offer !== undefined ? String(args.offer) : undefined,
-          price: args.price !== undefined ? String(args.price) : undefined,
+        ownerName: args.owner_name !== undefined ? String(args.owner_name) : undefined,
+        offer: args.offer !== undefined ? String(args.offer) : undefined,
+        price: args.price !== undefined ? String(args.price) : undefined,
         },
         blob
       );
@@ -5167,10 +5167,10 @@ export async function executeTool(
           return JSON.stringify({ error: msg });
         }
         try {
-          const groupId = await resolveGroupId(userId, String(args.group_id));
+        const groupId = await resolveGroupId(userId, String(args.group_id));
           const groups = await listWhatsAppGroups(userId);
           const matched = groups.find((g) => g.id === groupId);
-          config.groupId = groupId;
+        config.groupId = groupId;
           config.groupName = matched?.name ?? String(args.group_id);
         } catch (err) {
           return JSON.stringify({
@@ -5497,7 +5497,7 @@ export async function executeTool(
         ...(merged.abVariants ?? []).map((v) => ({ label: `ab_variants.${v.id}`, value: v.message })),
       ]);
       if (badFields.length) {
-        return JSON.stringify({
+          return JSON.stringify({
           error: userFacingError(
             `Texte avec crochets interdit (${badFields.join(", ")}). Demande les vraies valeurs et réessaie sans […].`,
           ),

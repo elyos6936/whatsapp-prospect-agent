@@ -119,31 +119,86 @@ export function applyPersistedBriefingState(
   });
 }
 
+/** Soft ack générique — ne remplit PAS un slot libre (GAP-014). */
+function isSoftSlotAck(text: string): boolean {
+  return /^(d['’]accord|dac|parfait|nickel|ok|okay|merci|super|top|impeccable|entendu|compris)([!.\s:]*)$/i.test(
+    text.trim(),
+  );
+}
+
 /** Le message courant répond-il à la question canonique posée ? */
 export function userMessageSatisfiesSlot(slotQuestion: string, userMessage: string): boolean {
   const t = userMessage.trim();
-  if (!t || t.length < 4) return false;
-  if (slotQuestion.includes("prix") || slotQuestion.includes("FCFA")) {
+  if (!t) return false;
+
+  const q = slotQuestion.toLowerCase();
+  const shortYn = /^(oui|non|ouais|nan|ok|pas)([!.\s:]|$)/i.test(t);
+
+  // Stickers / tiers (oui/non) — « oui » / « non » font 3 chars (GAP-009 / GAP-018)
+  if (q.includes("stickers") || q.includes("autocollant")) {
+    return /\b(oui|non|pas|ouais)\b/i.test(t);
+  }
+  if (
+    q.includes("tiers") ||
+    q.includes("livreur") ||
+    (q.includes("prévenir") && q.includes("automatiquement")) ||
+    (q.includes("prevenir") && q.includes("automatiquement"))
+  ) {
+    return /\b(oui|non|pas|ouais)\b/i.test(t);
+  }
+  if (
+    q.includes("passer la main") ||
+    q.includes("mots ou phrases") ||
+    q.includes("arrêter") ||
+    q.includes("arreter") ||
+    q.includes("remboursement")
+  ) {
+    if (shortYn || /^(non|oui)\b/i.test(t)) return true;
+    return t.length >= 4 && !isSoftSlotAck(t);
+  }
+
+  if (t.length < 4 && !shortYn) return false;
+
+  if (q.includes("prix") || q.includes("fcfa")) {
     return /\d[\d\s.,]{2,}/.test(t);
   }
-  if (slotQuestion.includes("lance") || slotQuestion.includes("moment")) {
+  if (q.includes("lance") || q.includes("moment")) {
     return /\b(maintenant|demain|\d{1,2}\s*h|lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/i.test(
       t,
     );
   }
-  if (slotQuestion.includes("aborder") || slotQuestion.includes("accroche")) {
-    return t.length >= 6 && !/^(oui|non|ok)$/i.test(t);
+  if (q.includes("aborder") || q.includes("accroche")) {
+    return t.length >= 6 && !/^(oui|non|ok)$/i.test(t) && !isSoftSlotAck(t);
   }
-  if (slotQuestion.includes("stickers")) {
-    return /\b(oui|non|pas)\b/i.test(t);
+  if (q.includes("offre") || q.includes("produit")) {
+    return t.length >= 12 && !isSoftSlotAck(t);
   }
-  if (slotQuestion.includes("offre") || slotQuestion.includes("produit")) {
-    return t.length >= 12;
+  if (q.includes("cible") || q.includes("contacter")) {
+    return t.length >= 8 && !isSoftSlotAck(t);
   }
-  if (slotQuestion.includes("cible") || slotQuestion.includes("contacter")) {
-    return t.length >= 8;
+  // Support validate
+  if (q.includes("je valide") || q.includes("brouillon")) {
+    return /\b(je\s+valide|valide|ok|oui)\b/i.test(t);
   }
+  // GAP-014 : « d'accord » / « parfait » seuls ≠ remplissage générique (length≥6 trop lâche)
+  if (isSoftSlotAck(t)) return false;
   return t.length >= 6;
+}
+
+/** Patch slots quand le message satisfait une question oui/non (ex. stickers). */
+export function briefingStatePatchForSatisfiedSlot(
+  slotQuestion: string,
+  userMessage: string,
+): ThreadBriefingState {
+  const patch = detectBriefingSlotsFromMessage(userMessage, userMessage);
+  const q = slotQuestion.toLowerCase();
+  if (
+    (q.includes("stickers") || q.includes("autocollant")) &&
+    /\b(oui|non|pas|ouais)\b/i.test(userMessage)
+  ) {
+    patch.stickersAnswered = true;
+  }
+  return patch;
 }
 
 export async function markThreadSimulationShown(userId: number, threadId: number): Promise<void> {

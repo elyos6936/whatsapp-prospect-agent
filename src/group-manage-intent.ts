@@ -173,6 +173,57 @@ export function detectCreateGroupIntent(
   return { subject, phones };
 }
 
+/** Assistant a demandé un participant pour finaliser create_whatsapp_group. */
+const CREATE_GROUP_ASK_PHONE_RE =
+  /(?:quel\s+\*{0,2}num[eé]ro\*{0,2}\s+ajouter|au\s+moins\s+1\s+participant|exige\s+au\s+moins\s+1\s+participant)[\s\S]{0,80}[«"']\s*(.+?)\s*[»"']/i;
+
+/**
+ * Suite multi-tour : « Crée un groupe X » → ask numéro → « +229… ».
+ * Sans ça, un numéro seul sur un fil Prospection hard-return le slot horaire.
+ */
+export function resolveCreateGroupIntentFromHistory(
+  userMessage: string,
+  history: Array<{ role: string; content: string }>
+): { subject: string; phones: string[] } | null {
+  const current = detectCreateGroupIntent(userMessage);
+  if (current?.subject && current.phones.length) return current;
+
+  const phones =
+    current?.phones?.length ? current.phones : extractPhonesFromText(userMessage);
+  if (!phones.length) return current;
+
+  const prior = [...history];
+  const last = prior.at(-1);
+  if (last?.role === "user" && last.content === userMessage) {
+    prior.pop();
+  }
+
+  if (current?.subject) {
+    return { subject: current.subject, phones };
+  }
+
+  // Dernier message assistant : « Quel numéro ajouter dans « Nom » ? »
+  for (let i = prior.length - 1; i >= 0; i--) {
+    const m = prior[i];
+    if (m.role !== "assistant") continue;
+    const ask = m.content.match(CREATE_GROUP_ASK_PHONE_RE);
+    if (ask?.[1]) {
+      const subject = tidyGroupName(ask[1]);
+      if (subject) return { subject, phones };
+    }
+    break;
+  }
+
+  // Fallback : dernière demande user « crée un groupe … »
+  const named = [...prior]
+    .reverse()
+    .map((m) => (m.role === "user" ? detectCreateGroupIntent(m.content) : null))
+    .find((x) => x && (x.subject || x.phones.length));
+  if (named?.subject) return { subject: named.subject, phones };
+
+  return current;
+}
+
 export function detectLeaveGroupIntent(msg: string): { groupQuery: string } | null {
   const t = msg.trim();
   if (!t || t.length > 160) return null;
@@ -224,8 +275,50 @@ export function resolveManageIntentFromHistory(
     if (lastManage) return lastManage;
   }
 
+  // GAP-001 : numéro seul après « Quel numéro ajouter dans « X » ? »
+  const phones = extractPhonesFromText(userMessage);
+  const phoneOnly =
+    phones.length > 0 &&
+    !current &&
+    !/\bgroupes?\b/i.test(userMessage) &&
+    userMessage.trim().length < 40;
+
+  if (phoneOnly) {
+    const MANAGE_ASK_PHONE_RE =
+      /quel\s+\*{0,2}num[eé]ro\*{0,2}\s+(ajouter|retirer|promouvoir\s+admin|r[eé]trograder)(?:\s+dans\s+[«"']\s*(.+?)\s*[»"'])?/i;
+    const actionFromLabel = (label: string): GroupManageAction | null => {
+      const l = label.toLowerCase();
+      if (l.startsWith("ajouter")) return "add";
+      if (l.startsWith("retirer")) return "remove";
+      if (l.startsWith("promouvoir")) return "promote";
+      if (l.startsWith("rétrograder") || l.startsWith("retrograder")) return "demote";
+      return null;
+    };
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const m = prior[i];
+      if (m.role !== "assistant") continue;
+      const ask = m.content.match(MANAGE_ASK_PHONE_RE);
+      if (ask) {
+        const action = actionFromLabel(ask[1] ?? "");
+        const groupQuery = tidyGroupName(ask[2] ?? "");
+        if (action && groupQuery) return { action, phones, groupQuery };
+      }
+      break;
+    }
+    const named = [...prior]
+      .reverse()
+      .map((m) => (m.role === "user" ? detectGroupManageIntent(m.content) : null))
+      .find((x) => x?.groupQuery);
+    if (named?.groupQuery) {
+      return { action: named.action, phones, groupQuery: named.groupQuery };
+    }
+  }
+
   return current;
 }
+
+const INVITE_LINK_ASK_RE =
+  /de quel groupe veux-tu le lien|quel groupe.{0,60}lien d['’]invitation|lien d['’]invitation.{0,40}quel groupe/i;
 
 export function resolveInviteLinkFromHistory(
   userMessage: string,
@@ -254,6 +347,157 @@ export function resolveInviteLinkFromHistory(
       .map((m) => (m.role === "user" ? detectGroupInviteLinkIntent(m.content) : null))
       .find((x) => x?.groupQuery);
     if (lastInvite) return lastInvite;
+  }
+
+  // GAP-003 : nom seul après « De quel groupe veux-tu le lien… ? »
+  const bare = userMessage.trim();
+  const bareOk =
+    bare.length >= 2 &&
+    bare.length <= 80 &&
+    !/\n|\?/.test(bare) &&
+    !/^[\d+\s.\-()]{6,}$/.test(bare) &&
+    /[A-Za-zÀ-ÿ]/.test(bare) &&
+    !/\b(oui|non|ok|ajoute|envoie|quitte)\b/i.test(bare);
+
+  if (bareOk && !current) {
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const m = prior[i];
+      if (m.role !== "assistant") continue;
+      if (INVITE_LINK_ASK_RE.test(m.content)) {
+        const priorIntent = [...prior]
+          .reverse()
+          .map((x) => (x.role === "user" ? detectGroupInviteLinkIntent(x.content) : null))
+          .find((x) => x);
+        return {
+          action: priorIntent?.action ?? "get_code",
+          groupQuery: bare,
+        };
+      }
+      break;
+    }
+  }
+
+  return current;
+}
+
+const INVITE_SEND_ASK_GROUP_RE =
+  /pour quel groupe envoyer l['’]invitation à\s+(.+?)\s*\?/i;
+
+/**
+ * GAP-002 : suite « envoie le lien … » → numéro / nom de groupe manquant.
+ */
+export function resolveInviteSendFromHistory(
+  userMessage: string,
+  history: Array<{ role: string; content: string }>
+): { phones: string[]; groupQuery: string } | null {
+  const current = detectGroupInviteSendIntent(userMessage);
+  if (current?.phones.length && current.groupQuery) return current;
+
+  const prior = [...history];
+  const last = prior.at(-1);
+  if (last?.role === "user" && last.content === userMessage) {
+    prior.pop();
+  }
+
+  const phonesNow = extractPhonesFromText(userMessage);
+  const bare = userMessage.trim();
+  const bareOk =
+    bare.length >= 2 &&
+    bare.length <= 80 &&
+    !phonesNow.length &&
+    !/\n|\?/.test(bare) &&
+    /[A-Za-zÀ-ÿ]/.test(bare);
+
+  // Nom de groupe après « Pour quel groupe envoyer l'invitation à +229… ? »
+  if (bareOk) {
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const m = prior[i];
+      if (m.role !== "assistant") continue;
+      const ask = m.content.match(INVITE_SEND_ASK_GROUP_RE);
+      if (ask?.[1]) {
+        const phones = extractPhonesFromText(ask[1]);
+        if (phones.length) return { phones, groupQuery: bare };
+      }
+      break;
+    }
+  }
+
+  // Numéro seul / message avec phones : compléter depuis intent user précédent
+  const phones = current?.phones?.length ? current.phones : phonesNow;
+  if (phones.length) {
+    if (current?.groupQuery) return current;
+    const named = [...prior]
+      .reverse()
+      .map((m) => {
+        if (m.role !== "user") return null;
+        const full = detectGroupInviteSendIntent(m.content);
+        if (full?.groupQuery) return full;
+        // « envoie le lien du groupe X » sans numéro
+        const t = m.content;
+        if (
+          /\b(lien|invitation)\b/i.test(t) &&
+          /\b(envoie|envoyer|partage)\b/i.test(t) &&
+          /\bgroupes?\b/i.test(t)
+        ) {
+          const gq = extractGroupAfterKeyword(t);
+          if (gq) return { phones: [], groupQuery: gq };
+        }
+        return null;
+      })
+      .find((x) => x?.groupQuery);
+    if (named?.groupQuery) return { phones, groupQuery: named.groupQuery };
+  }
+
+  // Partial current with group, waiting phones — not enough alone
+  if (current?.groupQuery && !current.phones.length) return current;
+
+  return current;
+}
+
+const LEAVE_ASK_RE = /quel groupe veux-tu quitter/i;
+
+/** GAP-004 : « Quitte le groupe » → ask nom → « Automax ». */
+export function resolveLeaveGroupIntentFromHistory(
+  userMessage: string,
+  history: Array<{ role: string; content: string }>
+): { groupQuery: string } | null {
+  const current = detectLeaveGroupIntent(userMessage);
+  if (current?.groupQuery) return current;
+
+  const prior = [...history];
+  const last = prior.at(-1);
+  if (last?.role === "user" && last.content === userMessage) {
+    prior.pop();
+  }
+
+  const bare = userMessage.trim();
+  const bareOk =
+    bare.length >= 2 &&
+    bare.length <= 80 &&
+    !/\n|\?/.test(bare) &&
+    !/^[\d+\s.\-()]{6,}$/.test(bare) &&
+    /[A-Za-zÀ-ÿ]/.test(bare) &&
+    !/\b(quitte|groupe|oui|non)\b/i.test(bare);
+
+  if (bareOk) {
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const m = prior[i];
+      if (m.role !== "assistant") continue;
+      if (LEAVE_ASK_RE.test(m.content)) return { groupQuery: bare };
+      break;
+    }
+    const hadLeave = prior.some(
+      (m) => m.role === "user" && Boolean(detectLeaveGroupIntent(m.content)),
+    );
+    if (hadLeave) {
+      for (let i = prior.length - 1; i >= 0; i--) {
+        if (prior[i].role !== "assistant") continue;
+        if (LEAVE_ASK_RE.test(prior[i].content) || /groupe/i.test(prior[i].content)) {
+          return { groupQuery: bare };
+        }
+        break;
+      }
+    }
   }
 
   return current;

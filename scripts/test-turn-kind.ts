@@ -114,12 +114,43 @@ console.log("\n=== Vague 1 : flou toujours bloqué ===\n");
   assert(k.kind === "digression", "question floue = digression, pas parallèle");
 }
 
-console.log("\n=== Florent #246–#250 : continue/oui/bonjour restent rail ===\n");
+console.log("\n=== Florent #246–#250 : continue/oui restent rail (sans history send) ===\n");
 {
-  for (const msg of ["continue", "oui", "Bonsoir", "prospescts"]) {
+  for (const msg of ["continue", "oui", "prospescts"]) {
     const k = classifyBriefingTurn({ userMessage: msg, inCampaignFlow: true });
     assert(k.kind === "advance_rail", `« ${msg} » reste sur le rail (slot launch OK)`);
   }
+  // Soft greeting → digression (GAP soft) — ne hard-return pas le slot
+  const greet = classifyBriefingTurn({ userMessage: "Bonsoir", inCampaignFlow: true });
+  assert(greet.pauseScenario === true, "Bonsoir → pause digression");
+}
+
+console.log("\n=== P0 GAP-021 : oui après confirm envoi → pause parallèle ===\n");
+{
+  const hist = [
+    {
+      id: 1,
+      user_id: 1,
+      thread_id: 1,
+      role: "assistant" as const,
+      content: "Je lui envoie « Salut » à +22968227403 ?",
+      created_at: new Date().toISOString(),
+    },
+  ];
+  const k = classifyBriefingTurn({
+    userMessage: "oui",
+    history: hist,
+    inCampaignFlow: true,
+  });
+  assert(k.kind === "parallel_action", "oui après confirm → parallel_action");
+  assert(k.pauseScenario === true, "oui après confirm → pause");
+  assert(allowsManualSend(hist, "oui"), "allowsManualSend oui");
+}
+
+console.log("\n=== P0 GAP-011 : history utilisée (send confirm) ===\n");
+{
+  const kBare = classifyBriefingTurn({ userMessage: "oui", inCampaignFlow: true });
+  assert(kBare.kind === "advance_rail", "oui sans history → rail (briefing stickers/valide)");
 }
 
 console.log("\n=== Screenshot GIT3 : extrait contacts = parallel group_extract ===\n");

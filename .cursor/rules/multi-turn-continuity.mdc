@@ -1,0 +1,24 @@
+---
+description: Continuité multi-tour agent — inventaire gaps, règles anti-hijack
+alwaysApply: true
+---
+
+# Continuité multi-tour (anti-hijack)
+
+Inventaire vivant : `docs/MULTI-TURN-GAP-INVENTORY.md` + canvas `multi-turn-gap-inventory`.
+
+## Pattern à chercher / éviter
+
+Un message court (`oui`, `non`, `+229…`, nom de groupe, `salut`) **ne doit jamais** hard-return une question de briefing si le dernier tour assistant était une **suite d’action** (crée groupe, manage, invite, confirm envoi, ask nom/numéro).
+
+## Règles pour tout fix
+
+1. Si un `detect*Intent` pose une question puis attend une réponse → ajouter `resolve*FromHistory` (miroir : create-group, members, manage).
+2. Avant hard-return de `nextCanonicalBriefingQuestion` : si pending ask parallèle / `allowsManualSend` → `pauseScenario`, pas coller le slot.
+3. `classifyBriefingTurn` doit utiliser `history` (dernière question assistant) — ne pas traiter `oui`/`phone` en aveugle.
+4. Distinguer **question asked** vs **slot answered** (GAP-010).
+5. Chaque GAP fermé = test dans `scripts/test-*.ts` avec entry + mid-turn.
+
+## Zone gelée
+
+Ne pas « tout laisser à MiniMax » ni réécrire `deterministic-campaign` / seed mémoire sans demande explicite. Fixes ciblés : history-resolve, turn-kind, pause-first, slot satisfy.

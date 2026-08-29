@@ -319,7 +319,8 @@ export function selectToolsForAgentTurn(opts: {
 }): OpenAI.Chat.Completions.ChatCompletionTool[] {
   const blob = [
     opts.userMessage,
-    ...opts.recentHistory.slice(-8).map((m) => m.content),
+    // GAP-024 : fenêtre élargie pour OAuth / intégrations multi-tour
+    ...opts.recentHistory.slice(-18).map((m) => m.content),
   ]
     .join("\n")
     .toLowerCase();
@@ -354,7 +355,7 @@ export function selectToolsForAgentTurn(opts: {
   }
 
   if (
-    /\b(calendly|tally|rendez[- ]?vous|\brdv\b|booking|formulaire|soumissions?|event types?|invitees?)\b/i.test(
+    /\b(calendly|tally|rendez[- ]?vous|\brdv\b|booking|formulaire|soumissions?|event types?|invitees?|google\s*(sheet|sheets|contacts?)|connecte|connexion|oauth|typeform)\b/i.test(
       blob
     )
   ) {

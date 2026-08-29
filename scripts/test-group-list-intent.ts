@@ -292,12 +292,20 @@ console.log("\n=== allowGroupQuickPaths (Support isolé) ===\n");
     "Prospection + nom après introuvable → extract OK"
   );
   assert(
-    !allowGroupQuickPaths({
+    allowGroupQuickPaths({
       purpose: "support",
       userMessage: "GIT3 Information 25-26",
       history: afterMissing,
     }),
-    "Support + nom nu → pas d'extract historique"
+    "GAP-006 Support + nom après introuvable → extract OK"
+  );
+  assert(
+    !allowGroupQuickPaths({
+      purpose: "support",
+      userMessage: "Team Marketing 2026",
+      history: [msg("assistant", "Tu veux des stickers ? (oui/non)")],
+    }),
+    "Support + nom nu hors ask groupe → isolé"
   );
 }
 

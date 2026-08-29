@@ -9,6 +9,11 @@ import {
   detectGroupManageIntent,
   detectJoinGroupInviteIntent,
   detectLeaveGroupIntent,
+  resolveCreateGroupIntentFromHistory,
+  resolveInviteLinkFromHistory,
+  resolveInviteSendFromHistory,
+  resolveLeaveGroupIntentFromHistory,
+  resolveManageIntentFromHistory,
 } from "./group-manage-intent.js";
 
 const FR_NUM: Record<string, number> = {
@@ -305,7 +310,7 @@ export function lastGroupQueryFromHistory(
 }
 
 /**
- * Relie « 3 contacts du groupe » / un nom seul au groupe déjà cité dans le fil.
+ * Relie « 3 contacts du groupe » / un nom seul / « maintenant » au groupe déjà cité.
  * Préfère le nom le plus récent (correction « RADAR » → « GIT3 … »).
  */
 export function resolveMembersIntentFromHistory(
@@ -320,6 +325,26 @@ export function resolveMembersIntentFromHistory(
     Boolean(current) ||
     prior.some((m) => m.role === "user" && Boolean(detectQuickGroupMembersIntent(m.content)));
   if (!hadMembersAsk) return null;
+
+  // GAP-007 : « maintenant » = exécute l'extract en cours (pas un nom de groupe / pas launch)
+  if (looksLikeWhenReply(userMessage)) {
+    const lastAsst = [...prior].reverse().find((m) => m.role === "assistant");
+    const aboutExtract =
+      lastAsst &&
+      /extrait|membres|contacts|groupe introuvable|dans quel groupe|copier-coller depuis whatsapp/i.test(
+        lastAsst.content,
+      );
+    if (!aboutExtract) return null;
+    const last = lastGroupQueryFromHistory(prior);
+    if (last?.query) {
+      return { groupQuery: last.query, limit: current?.limit ?? last.limit };
+    }
+    // Ask nom sans query encore → laisser le chemin « dans quel groupe »
+    if (lastAssistantAskedForGroupName(prior)) {
+      return { groupQuery: "", limit: current?.limit ?? last?.limit };
+    }
+    return null;
+  }
 
   if (looksLikeBareGroupName(userMessage)) {
     if (!lastAssistantAskedForGroupName(prior)) return null;
@@ -433,10 +458,93 @@ export function detectGroupSendNowIntent(msg: string): GroupSendNowIntent | null
     return null;
   }
   const message = extractSendMessageFromPublish(t);
-  if (!message) return null;
   const groupQuery = extractGroupNameFromPublishMessage(t) ?? "";
   const sendAtLocal = extractSendAtLocal(t);
+  // GAP-005 : envoi+groupe sans texto → pending (agent demande le message)
+  if (!message) {
+    if (/\b(message|texto|texte|annonce)\b/i.test(t) || groupQuery) {
+      return { groupQuery, message: "", sendAtLocal };
+    }
+    return null;
+  }
   return { groupQuery, message, sendAtLocal };
+}
+
+/**
+ * GAP-005 : suite multi-tour — message quoté seul, ou nom de groupe seul.
+ */
+export function resolveGroupSendIntentFromHistory(
+  userMessage: string,
+  history: Array<{ role: string; content: string }>
+): GroupSendNowIntent | null {
+  const current = detectGroupSendNowIntent(userMessage);
+  if (current?.message && current.groupQuery) return current;
+
+  const prior = historyWithoutCurrent(history, userMessage);
+
+  const quotedOnly =
+    extractSendMessageFromPublish(userMessage) ||
+    userMessage.trim().match(/^[«"']([\s\S]{1,900})[»"']\s*$/u)?.[1]?.trim() ||
+    null;
+
+  if (quotedOnly) {
+    const pending = [...prior]
+      .reverse()
+      .map((m) => (m.role === "user" ? detectGroupSendNowIntent(m.content) : null))
+      .find((x) => x && (x.groupQuery || x.message === ""));
+    if (pending?.groupQuery) {
+      return {
+        groupQuery: pending.groupQuery,
+        message: quotedOnly,
+        sendAtLocal: pending.sendAtLocal ?? extractSendAtLocal(userMessage),
+      };
+    }
+    // Assistant : « Quel message envoyer dans « X » ? »
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const m = prior[i];
+      if (m.role !== "assistant") continue;
+      const ask = m.content.match(
+        /quel\s+\*{0,2}message\*{0,2}\s+envoyer(?:\s+dans\s+[«"']\s*(.+?)\s*[»"'])?/i,
+      );
+      if (ask) {
+        return {
+          groupQuery: (ask[1] ? ask[1].trim() : "") || pending?.groupQuery || "",
+          message: quotedOnly,
+          sendAtLocal: extractSendAtLocal(userMessage),
+        };
+      }
+      break;
+    }
+  }
+
+  if (current?.message && !current.groupQuery) {
+    return current; // runGroupSendQuickPath fills group from history
+  }
+
+  // Nom seul après « Dans quel groupe envoyer ce message ? »
+  if (looksLikeBareGroupName(userMessage)) {
+    for (let i = prior.length - 1; i >= 0; i--) {
+      const m = prior[i];
+      if (m.role !== "assistant") continue;
+      if (/dans quel groupe envoyer/i.test(m.content)) {
+        const withMsg = [...prior]
+          .reverse()
+          .map((x) => (x.role === "user" ? detectGroupSendNowIntent(x.content) : null))
+          .find((x) => x?.message);
+        if (withMsg?.message) {
+          return {
+            groupQuery: userMessage.trim(),
+            message: withMsg.message,
+            sendAtLocal: withMsg.sendAtLocal,
+          };
+        }
+      }
+      break;
+    }
+  }
+
+  if (current && !current.message) return current;
+  return current;
 }
 
 /** Publier / lancer une campagne / envoyer dans un groupe — admin requis. */
@@ -524,8 +632,8 @@ export function isExplicitGroupOperation(msg: string): boolean {
 }
 
 /**
- * Chemins rapides groupes : fil Groupes, ou verbe explicite, ou nom seul
- * seulement si l'agent vient de demander le groupe — jamais sur Support.
+ * Chemins rapides groupes : fil Groupes, verbe explicite, suites history-resolve,
+ * ou bare name après ask / introuvable (y compris Support — GAP-006).
  */
 export function allowGroupQuickPaths(opts: {
   purpose: string | null | undefined;
@@ -534,7 +642,25 @@ export function allowGroupQuickPaths(opts: {
 }): boolean {
   if (opts.purpose === "groupes") return true;
   if (isExplicitGroupOperation(opts.userMessage)) return true;
-  if (opts.purpose === "support") return false;
+  // Suites multi-tour (sinon le rail prospection vole le tour)
+  if (resolveCreateGroupIntentFromHistory(opts.userMessage, opts.history)?.phones.length) {
+    return true;
+  }
+  const manage = resolveManageIntentFromHistory(opts.userMessage, opts.history);
+  if (manage?.phones.length && manage.groupQuery) return true;
+  if (resolveInviteSendFromHistory(opts.userMessage, opts.history)?.phones.length) {
+    return true;
+  }
+  if (resolveInviteLinkFromHistory(opts.userMessage, opts.history)?.groupQuery) {
+    return true;
+  }
+  if (resolveLeaveGroupIntentFromHistory(opts.userMessage, opts.history)?.groupQuery) {
+    return true;
+  }
+  const send = resolveGroupSendIntentFromHistory(opts.userMessage, opts.history);
+  if (send && (send.message || send.groupQuery)) return true;
+
+  // GAP-006 : bare name après ask / introuvable — aussi sur Support (isolation sinon)
   const prior = historyWithoutCurrent(opts.history, opts.userMessage);
   return lastAssistantAskedForGroupName(prior) && looksLikeBareGroupName(opts.userMessage);
 }
