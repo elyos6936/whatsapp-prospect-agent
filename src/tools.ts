@@ -2643,6 +2643,13 @@ export async function executeTool(
     }
 
     case "create_whatsapp_group": {
+      const threadForCreate = await getAgentThread(userId, threadId);
+      if (threadForCreate?.purpose !== "groupes") {
+        return JSON.stringify({
+          error:
+            "Création de groupe réservée au fil Groupes WhatsApp. Ouvre Nouvelle automatisation → Groupes WhatsApp.",
+        });
+      }
       const subject = String(args.subject ?? "").trim();
       if (!subject) {
         return JSON.stringify({ error: "Le nom du groupe (subject) est requis." });

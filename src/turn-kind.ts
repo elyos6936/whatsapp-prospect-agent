@@ -55,9 +55,12 @@ const LAUNCH_ANSWER_RE =
 const EXPLICIT_RESUME_RE =
   /^(continue|continues|on\s+continue|reprends?|on\s+reprend|reprenons|vas[- ]?y|go)\b/i;
 
-/** Digressions élargies (turn-kind only — ne touche pas campaign-briefing gates). */
-const EXTRA_DIGRESSION_RE =
-  /\b(merci|plus\s+tard|stats?|statistiques?|roi|chiffres?|rapport|pause|arr[eê]te|arr[eê]ter|stop|laisse\s+tomber|je\s+reviens|autre\s+chose|hors\s+sujet|aide[- ]?moi|comment\s+faire|c['’]est\s+combien|combien\s+(?:ça|ca)\s+co[uû]te|ce\s+n['’]est\s+pas|pas\s+(une\s+)?prospection|pas\s+(de\s+)?campagne|hors\s+prospection|je\s+ne\s+veux\s+pas|pas\s+(encore|maintenant)|\brelance\b)\b/i;
+/**
+ * Tokens courts qui AVANCENT le rail (whitelist).
+ * Tout le reste → LLM (pause-first). Pas de liste de digressions à maintenir.
+ */
+const RAIL_SHORT_TOKEN_RE =
+  /^(oui|ouais|ouai|yes|yep|non|nan|no|nop|ok|okay|dac|d['’]?accord|valide|parfait|nickel|top|bonne?|imp[eé]ccable|exact|exactement|carr[eé]|impec)$/i;
 
 /**
  * Envoi one-shot autonome : verbe + destinataire + contenu (ou Vague 1 explicite).
@@ -119,19 +122,19 @@ function isSoftGreeting(msg: string): boolean {
 }
 
 /**
- * Digression locale (élargie) — sans modifier campaign-briefing.ts.
+ * Digression locale — délégué à isBriefingSideTalk (? / apartés déjà connus).
+ * Le gros du pause-first est dans looksLikeRailAdvance (défaut = pas rail).
  */
 export function isLocalDigression(userMessage: string): boolean {
   const t = userMessage.trim();
   if (!t) return false;
   if (looksLikeSlotConfirmation(t)) return false;
-  if (isBriefingSideTalk(t)) return true;
   if (isShortCampaignValidation(t)) return false;
   if (LAUNCH_ANSWER_RE.test(t)) return false;
   if (EXPLICIT_RESUME_RE.test(t)) return false;
   if (isSoftGreeting(t)) return false;
-  if (EXTRA_DIGRESSION_RE.test(t)) return true;
-  return false;
+  if (RAIL_SHORT_TOKEN_RE.test(t)) return false;
+  return isBriefingSideTalk(t);
 }
 
 function looksLikeSlotConfirmation(msg: string): boolean {
@@ -142,8 +145,8 @@ function looksLikeSlotConfirmation(msg: string): boolean {
 }
 
 /**
- * Avance clairement le rail → hard-return OK.
- * Sinon on préfère digression / parallèle (pause-first).
+ * Hard-return OK seulement si le message est une réponse checklist nette.
+ * Sinon digression / parallèle → LLM décide (comme Cursor).
  */
 export function looksLikeRailAdvance(userMessage: string): boolean {
   const t = userMessage.trim();
@@ -161,26 +164,12 @@ export function looksLikeRailAdvance(userMessage: string): boolean {
   if (isNumberedOpenerList(t)) return true;
   if (isQuotedOpenerOnly(t)) return true;
   if (isSoftGreeting(t)) return true;
+  if (RAIL_SHORT_TOKEN_RE.test(t)) return true;
 
-  // Typos / monotoken de reprise (ex. « prospescts », « oui »)
-  if (/^[a-zàâäéèêëïîôùûüç0-9]{2,20}$/i.test(t) && !EXTRA_DIGRESSION_RE.test(t)) {
-    return true;
-  }
-
-  // Questions à l'agent → digression sauf confirmation de slot (prix/heure + ?)
+  // Questions → digression sauf confirmation prix/heure
   if (/\?/.test(t)) return looksLikeSlotConfirmation(t);
 
-  // Remplissage de slot libre : substantiel, pas action parallèle, pas digression
-  if (
-    t.length >= 12 &&
-    !SEND_VERB_RE.test(t) &&
-    !GROUP_EXTRACT_ACTION_RE.test(t) &&
-    !GROUP_ACTION_VERB_RE.test(t) &&
-    !EXTRA_DIGRESSION_RE.test(t)
-  ) {
-    return true;
-  }
-
+  // Phrase libre / n'importe quoi → LLM (pas de liste de mots à maintenir)
   return false;
 }
 

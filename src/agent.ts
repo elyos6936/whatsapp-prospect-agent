@@ -152,6 +152,7 @@ import {
 import {
   buildScenarioPauseNudge,
   classifyBriefingTurn,
+  looksLikeRailAdvance,
 } from "./turn-kind.js";
 
 /** Tours LLM+outils par message utilisateur. 5 était trop bas (Sheet → vérifs → envois). */
@@ -210,8 +211,8 @@ export function messageNeedsCampaignMemory(userMessage: string): boolean {
 const CHAT_MAX_TOKENS = 1100;
 
 /**
- * Soft-pause (style Cursor) : hors-scénario / intent parallèle → pas de hard-return checklist.
- * Hard-return réservé aux réponses courtes qui ratent le slot (oui trop vague hors confirm, etc.).
+ * Soft-pause : par défaut le LLM décide.
+ * Hard-return seulement si looksLikeRailAdvance (whitelist checklist courte).
  */
 export function shouldSoftPauseInsteadOfHardReturn(
   userMessage: string,
@@ -219,20 +220,9 @@ export function shouldSoftPauseInsteadOfHardReturn(
 ): boolean {
   const t = userMessage.trim();
   if (!t) return false;
-  if (isExplicitGroupOperation(t)) return true;
-  if (detectCreateGroupIntent(t)) return true;
-  if (detectQuickGroupMembersIntent(t)) return true;
+  // Suite « nom de groupe » après ask extract — même si monotoken-ish
   if (looksLikeBareGroupName(t) && lastAssistantAskedForGroupName(history)) return true;
-  if (t.length > 48) return true;
-  if (/\?/.test(t)) return true;
-  if (
-    /\b(cr[eé]e[rz]?|cr[eé]er|groupe|contacts?|membres?|liste|lister|envoie|envoyer|invite|quitte|aide|comment|pourquoi|explique)\b/i.test(
-      t,
-    )
-  ) {
-    return true;
-  }
-  return false;
+  return !looksLikeRailAdvance(t);
 }
 
 /**
@@ -460,7 +450,9 @@ async function buildBusinessContext(
           `- Suivre le brief sortant : offre, cible, planning, premier message souhaité, **UNE accroche** à valider, puis **5 variantes** (rotation).\n` +
           `- INTERDIT de demander notif tiers / mots-clés handoff (remboursement, plainte…) — réservé au **Support**.\n` +
           `- **INTERDIT ABSOLU** de prétendre « basculer » ce fil en Support. Pour du support entrant → ` +
-          `**Nouvelle automatisation** → **Support client**.`
+          `**Nouvelle automatisation** → **Support client**.\n` +
+          `- **INTERDIT** create_whatsapp_group / publier dans un @g.us : pour créer ou gérer un groupe → ` +
+          `**Nouvelle automatisation** → **Groupes WhatsApp**. Ici : extract membres + prospection DM.`
       );
     } else if (thread?.purpose === "groupes") {
       lines.push(
@@ -896,6 +888,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
     recentForMembers as Array<{ role: string; content: string }>,
   );
   if (createQuick) {
+    // Création de groupe = fil Groupes uniquement (isolation purpose)
+    if (threadEarly?.purpose !== "groupes") {
+      return (
+        "Pour **créer** un groupe WhatsApp, ouvre **Nouvelle automatisation** → **Groupes WhatsApp**.\n" +
+        "Ici tu peux lister / extraire des contacts et prospecter en DM — pas créer un groupe."
+      );
+    }
     if (!createQuick.subject) {
       return "Quel **nom** pour le nouveau groupe ?";
     }
@@ -2066,9 +2065,9 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
               planDisplay?: string;
             };
             if (parsed.success && parsed.planDisplay?.trim()) {
-              messages.push({
-                role: "tool",
-                tool_call_id: toolCall.id,
+        messages.push({
+          role: "tool",
+          tool_call_id: toolCall.id,
                 content: slimToolResultForLlm(toolCall.function.name, result),
               });
               return parsed.planDisplay.trim();

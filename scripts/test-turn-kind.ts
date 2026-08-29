@@ -72,11 +72,16 @@ console.log("\n=== Rail nominal intact ===\n");
     "oui",
     "je valide",
     "lundi 9h",
-    "Les membres du groupe Automax",
   ]) {
     const k = classifyBriefingTurn({ userMessage: msg, inCampaignFlow: true });
     assert(k.kind === "advance_rail" && !k.pauseScenario, `rail: « ${msg} »`);
   }
+  // Audience libre → LLM (whitelist courte seulement pour hard-return)
+  const audience = classifyBriefingTurn({
+    userMessage: "Les membres du groupe Automax",
+    inCampaignFlow: true,
+  });
+  assert(audience.pauseScenario === true, "audience libre → pause LLM");
   assert(!isBriefingSideTalk("maintenant"), "maintenant ≠ side-talk");
   assert(!isBriefingSideTalk("je valide"), "je valide ≠ side-talk");
   assert(
@@ -116,10 +121,13 @@ console.log("\n=== Vague 1 : flou toujours bloqué ===\n");
 
 console.log("\n=== Florent #246–#250 : continue/oui restent rail (sans history send) ===\n");
 {
-  for (const msg of ["continue", "oui", "prospescts"]) {
+  for (const msg of ["continue", "oui"]) {
     const k = classifyBriefingTurn({ userMessage: msg, inCampaignFlow: true });
     assert(k.kind === "advance_rail", `« ${msg} » reste sur le rail (slot launch OK)`);
   }
+  // Typo / mot hors whitelist → LLM (plus de monotoken « tout est rail »)
+  const typo = classifyBriefingTurn({ userMessage: "prospescts", inCampaignFlow: true });
+  assert(typo.pauseScenario === true, "typo hors whitelist → pause LLM");
   // Soft greeting → digression (GAP soft) — ne hard-return pas le slot
   const greet = classifyBriefingTurn({ userMessage: "Bonsoir", inCampaignFlow: true });
   assert(greet.pauseScenario === true, "Bonsoir → pause digression");
@@ -161,11 +169,11 @@ console.log("\n=== Screenshot GIT3 : extrait contacts = parallel group_extract =
   assert(k.kind === "parallel_action", "GIT3: kind=parallel_action");
   assert(k.parallelAction === "group_extract", "GIT3: parallelAction=group_extract");
   assert(k.pauseScenario === true, "GIT3: pauseScenario");
-  const rail = classifyBriefingTurn({
+  const audience = classifyBriefingTurn({
     userMessage: "Les membres du groupe Automax",
     inCampaignFlow: true,
   });
-  assert(rail.kind === "advance_rail", "« Les membres du groupe Automax » reste rail");
+  assert(audience.pauseScenario === true, "audience sans verbe → pause LLM");
   assert(
     !isParallelGroupExtract("Les membres du groupe Automax"),
     "sans verbe extract ≠ parallèle"
@@ -190,12 +198,19 @@ console.log("\n=== Vague 4.2 pause-first : digressions / apartés ===\n");
   }
 }
 
-console.log("\n=== Vague 4.2 : offre libre / accroches restent rail ===\n");
+console.log("\n=== Pause-first : phrase libre → LLM (pas hard-return) ===\n");
 {
   const offer = "je vends du coaching business pour freelances";
-  assert(looksLikeRailAdvance(offer), "offre libre = rail advance");
+  assert(!looksLikeRailAdvance(offer), "offre libre ≠ rail (LLM capture)");
   const k = classifyBriefingTurn({ userMessage: offer, inCampaignFlow: true });
-  assert(k.kind === "advance_rail" && !k.pauseScenario, "offre libre → hard-return OK");
+  assert(k.kind === "digression" && k.pauseScenario, "offre libre → pause LLM");
+
+  const aside = "Bon faut laisser je veux plutot chier un coup";
+  assert(!looksLikeRailAdvance(aside), "aparté n'importe quoi ≠ rail");
+  assert(
+    classifyBriefingTurn({ userMessage: aside, inCampaignFlow: true }).pauseScenario,
+    "aparté → pause LLM",
+  );
 
   const openers =
     "1. Salut tu as 2 min ?\n2. Hey petit message\n3. Coucou\n4. Hello\n5. Salut";

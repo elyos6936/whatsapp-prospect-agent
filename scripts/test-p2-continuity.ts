@@ -162,6 +162,14 @@ console.log("\n=== Soft-pause Cursor : crée groupe / nom après ask LLM ===\n")
     shouldSoftPauseInsteadOfHardReturn("Le labo du nocode", askLlm),
     "soft-pause nom après ask",
   );
+  assert(
+    shouldSoftPauseInsteadOfHardReturn("Bon faut laisser je veux plutot autre chose", []),
+    "aparté hors whitelist → soft-pause LLM",
+  );
+  assert(
+    !shouldSoftPauseInsteadOfHardReturn("maintenant", []),
+    "maintenant = rail (hard-return OK si slot)",
+  );
 }
 
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);
