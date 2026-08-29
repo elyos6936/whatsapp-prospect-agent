@@ -44,7 +44,7 @@ Même projet Google Cloud, **deux** OAuth Clients Web.
 5. **Authorized redirect URIs** — exact :
 
 ```
-https://klanvio-api.srv1820011.hstgr.cloud/api/integrations/google/callback
+https://klanvio-api.srv1937804.hstgr.cloud/api/integrations/google/callback
 ```
 
 (dev éventuel : `http://localhost:3001/api/integrations/google/callback`)
@@ -73,9 +73,9 @@ Le client Login existant (`GOOGLE_CLIENT_ID`) reste inchangé.
 GOOGLE_INTEGRATIONS_CLIENT_ID=...
 GOOGLE_INTEGRATIONS_CLIENT_SECRET=...
 # Optionnel :
-# GOOGLE_INTEGRATIONS_REDIRECT_URI=https://klanvio-api.srv1820011.hstgr.cloud/api/integrations/google/callback
+# GOOGLE_INTEGRATIONS_REDIRECT_URI=https://klanvio-api.srv1937804.hstgr.cloud/api/integrations/google/callback
 APP_URL=https://www.klanvio.com
-PUBLIC_URL=https://klanvio-api.srv1820011.hstgr.cloud
+PUBLIC_URL=https://klanvio-api.srv1937804.hstgr.cloud
 TOKENS_ENCRYPTION_KEY=...   # déjà présent
 ```
 

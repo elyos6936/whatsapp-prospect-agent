@@ -13,7 +13,7 @@
    - **Redirect URI** (exact, sans slash final) :
 
 ```
-https://klanvio-api.srv1820011.hstgr.cloud/api/integrations/calendly/callback
+https://klanvio-api.srv1937804.hstgr.cloud/api/integrations/calendly/callback
 ```
 
    - Sandbox local OK : `http://localhost:3000/api/integrations/calendly/callback`
@@ -33,7 +33,7 @@ Dans le panel **Environment** Hostinger **et** dans `docker-compose.yml` → `en
 ```env
 CALENDLY_CLIENT_ID=...
 CALENDLY_CLIENT_SECRET=...
-PUBLIC_URL=https://klanvio-api.srv1820011.hstgr.cloud
+PUBLIC_URL=https://klanvio-api.srv1937804.hstgr.cloud
 APP_URL=https://www.klanvio.com
 TOKENS_ENCRYPTION_KEY=...   # déjà présent pour Typeform
 ```

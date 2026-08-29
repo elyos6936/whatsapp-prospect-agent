@@ -179,7 +179,7 @@ function isInfraAppUrl(url: string): boolean {
     const host = new URL(url).hostname.toLowerCase();
     return (
       host.includes("hstgr.cloud") ||
-      host.includes("srv1820011") ||
+      host.includes("srv1937804") ||
       host === "localhost" ||
       host === "127.0.0.1"
     );

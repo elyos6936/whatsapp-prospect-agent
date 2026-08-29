@@ -1,4 +1,4 @@
 window.KLANVIO_CONFIG = {
-  apiUrl: "https://klanvio-api.srv1820011.hstgr.cloud",
+  apiUrl: "https://api.klanvio.com",
   appName: "Klanvio",
 };

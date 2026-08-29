@@ -18,7 +18,7 @@
 5. Dans **Redirect URI(s)**, ajoute **exactement** (copier-coller) :
 
 ```
-https://klanvio-api.srv1820011.hstgr.cloud/api/integrations/typeform/callback
+https://klanvio-api.srv1937804.hstgr.cloud/api/integrations/typeform/callback
 ```
 
 6. Enregistre. Copie **Client ID** et **Client Secret**.
@@ -32,7 +32,7 @@ APP_URL=https://www.klanvio.com
 TYPEFORM_CLIENT_ID=...   # depuis Typeform
 TYPEFORM_CLIENT_SECRET=...
 TOKENS_ENCRYPTION_KEY=... # fournie une seule fois — ne jamais changer ensuite
-PUBLIC_URL=https://klanvio-api.srv1820011.hstgr.cloud
+PUBLIC_URL=https://klanvio-api.srv1937804.hstgr.cloud
 ```
 
 Puis :
@@ -59,7 +59,7 @@ Appliquer la migration `supabase/migrations/20260719120000_user_integrations.sql
 ### Si erreur « HTTP 400 » après acceptation
 
 1. Dans Typeform → Developer Apps → ton app Klanvio, le Redirect URI doit être **exactement** :
-   `https://klanvio-api.srv1820011.hstgr.cloud/api/integrations/typeform/callback`
+   `https://klanvio-api.srv1937804.hstgr.cloud/api/integrations/typeform/callback`
 2. Vérifie `TYPEFORM_CLIENT_ID` / `TYPEFORM_CLIENT_SECRET` dans le `.env` Hostinger (secret sans espace / guillemets).
 3. Rebuild Docker après toute modif `.env`, puis réessaie **Connecter**.
 

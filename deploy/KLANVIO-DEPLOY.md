@@ -3,10 +3,11 @@
 Architecture :
 
 ```
-https://www.klanvio.com             →  frontend (Netlify, domaine custom)
-https://klanvio-api.srv1820011.hstgr.cloud  →  API Node (Hostinger VPS)
-Supabase omquaouhfifynvrpqilv        →  PostgreSQL
-Evolution API (même VPS)             →  WhatsApp
+https://www.klanvio.com             →  frontend (Netlify)
+https://api.klanvio.com              →  API Node (VPS Hostinger srv1937804 / 2.57.90.113)
+https://klanvio-api.srv1937804.hstgr.cloud  →  alias Traefik du même backend
+https://evolution-api-hwmj.srv1937804.hstgr.cloud  →  Evolution API (même VPS)
+Supabase                              →  PostgreSQL
 ```
 
 ---
@@ -60,7 +61,7 @@ Réponse attendue : `Remote database is up to date.`
 
 ## ÉTAPE 2 — Déployer l’API sur Hostinger (VPS)
 
-> **Prérequis** : accès SSH au VPS `srv1820011.hstgr.cloud`.  
+> **Prérequis** : accès SSH au VPS `srv1937804.hstgr.cloud`.  
 > Sur Windows : installez **OpenSSH Client** (Paramètres → Applications → Fonctionnalités optionnelles → Client OpenSSH), ou utilisez le **terminal web Hostinger** (hPanel → VPS → Terminal).
 
 ### 2.1 Depuis votre PC (si SSH installé)
@@ -69,7 +70,7 @@ Réponse attendue : `Remote database is up to date.`
 cd C:\Projets\whatsapp-prospect-agent
 
 # Clé SSH Hostinger (remplacez par votre user si différent de root)
-$env:HOSTINGER_SSH = "root@srv1820011.hstgr.cloud"
+$env:HOSTINGER_SSH = "root@srv1937804.hstgr.cloud"
 
 # Avec Git Bash ou WSL :
 bash deploy/hostinger/deploy.sh
@@ -102,7 +103,7 @@ PORT=3001
 NODE_ENV=production
 DATABASE_URL=postgresql://postgres.[PROJECT_REF]:[MOT_DE_PASSE]@aws-0-eu-central-1.pooler.supabase.com:6543/postgres
 SUPABASE_URL=https://[PROJECT_REF].supabase.co
-EVOLUTION_API_BASE_URL=https://evolution-api-kxse.srv1820011.hstgr.cloud
+EVOLUTION_API_BASE_URL=https://evolution-api-hwmj.srv1937804.hstgr.cloud
 EVOLUTION_API_KEY=[VOTRE_CLE_EVOLUTION]
 EVOLUTION_INSTANCE_NAME=automax-prospection
 MONEYFUSION_WEBHOOK_SECRET=[SECRET_WEBHOOK_MONEYFUSION]
@@ -141,7 +142,7 @@ Pour redéployer plus tard : `cd /opt/klanvio && git pull && npm install --omit=
 sudo cp /opt/klanvio/deploy/hostinger/nginx-klanvio.conf /etc/nginx/sites-available/klanvio-api
 sudo ln -sf /etc/nginx/sites-available/klanvio-api /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d klanvio-api.srv1820011.hstgr.cloud
+sudo certbot --nginx -d klanvio-api.srv1937804.hstgr.cloud
 ```
 
 ### 2.4 Webhook Evolution API
@@ -149,7 +150,7 @@ sudo certbot --nginx -d klanvio-api.srv1820011.hstgr.cloud
 Dans l’interface Klanvio (Connexions) ou Evolution :
 
 ```
-https://klanvio-api.srv1820011.hstgr.cloud/api/evolution/webhook
+https://klanvio-api.srv1937804.hstgr.cloud/api/evolution/webhook
 ```
 
 ---
@@ -202,7 +203,7 @@ docker compose up -d klanvio-api
 | Test | URL / commande |
 |------|----------------|
 | Frontend | https://www.klanvio.com |
-| API health | https://klanvio-api.srv1820011.hstgr.cloud/api/health |
+| API health | https://klanvio-api.srv1937804.hstgr.cloud/api/health |
 | Connexions | Klanvio → Paramètres → WhatsApp QR |
 
 ---
@@ -243,7 +244,7 @@ Vérifiez `CORS_ORIGINS` dans le `.env` du VPS (doit inclure `https://www.klanvi
 
 ## Panneau ops (Hostinger uniquement)
 
-UI privée : **`https://api.klanvio.com/ops`** (ou `https://klanvio-api.srv1820011.hstgr.cloud/ops`).
+UI privée : **`https://api.klanvio.com/ops`** (ou `https://klanvio-api.srv1937804.hstgr.cloud/ops`).
 
 - **Pas** sur `www.klanvio.com` / Vercel
 - Auth via **Docker Hostinger** : vars `ADMIN_EMAIL` / `ADMIN_PASSWORD` dans le panel **Environment**, **et** mappées dans `docker-compose.yml` → `environment:` (sinon le conteneur ne les reçoit pas)

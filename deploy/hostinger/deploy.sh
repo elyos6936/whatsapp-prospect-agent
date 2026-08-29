@@ -5,11 +5,11 @@ set -euo pipefail
 # Prérequis: ssh, rsync, accès root/sudo sur le VPS
 #
 # Usage:
-#   export HOSTINGER_SSH=root@srv1820011.hstgr.cloud
+#   export HOSTINGER_SSH=root@srv1937804.hstgr.cloud
 #   export HOSTINGER_APP_DIR=/opt/klanvio
 #   npm run deploy:hostinger
 
-SSH="${HOSTINGER_SSH:-root@srv1820011.hstgr.cloud}"
+SSH="${HOSTINGER_SSH:-root@srv1937804.hstgr.cloud}"
 APP_DIR="${HOSTINGER_APP_DIR:-/opt/klanvio}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
