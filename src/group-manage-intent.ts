@@ -167,8 +167,10 @@ export function detectCreateGroupIntent(
   const named =
     t.match(/\bgroupes?\s+(?:appel[eé]|nomm[eé]|nom)\s+(.+?)(?:\s+avec|\s*$)/i) ||
     t.match(/\bcr[eé]e[rz]?(?:-moi)?\s+(?:un\s+|le\s+)?groupe\s+(.+?)(?:\s+avec|\s*$)/i);
-  const subject = tidyGroupName(named?.[1] ?? "");
-  if (!subject && !phones.length) return null;
+  let subject = tidyGroupName(named?.[1] ?? "");
+  // « Je veux créer un groupe » / « crée un groupe » sans nom → ask nom (pas null)
+  if (/^(?:un|le|la|les|mon|ma|mes|whatsapp|wa)$/i.test(subject)) subject = "";
+  if (!subject && !phones.length) return { subject: "", phones: [] };
   if (/^(whatsapp|wa)$/i.test(subject)) return { subject: "", phones };
   return { subject, phones };
 }

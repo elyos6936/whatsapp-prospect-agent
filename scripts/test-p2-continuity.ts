@@ -10,9 +10,12 @@ import { alreadyAskedRouterStallClarify } from "../src/agent-stall.js";
 import type { AgentMessage } from "../src/db.js";
 import {
   allowGroupQuickPaths,
+  lastAssistantAskedForGroupName,
   resolveMembersIntentFromHistory,
 } from "../src/group-list-intent.js";
+import { detectCreateGroupIntent } from "../src/group-manage-intent.js";
 import { classifyBriefingTurn } from "../src/turn-kind.js";
+import { shouldSoftPauseInsteadOfHardReturn } from "../src/agent.js";
 
 let passed = 0;
 let failed = 0;
@@ -106,6 +109,59 @@ console.log("\n=== GAP-017/027 : stall mark détecté ===\n");
     ),
   ];
   assert(alreadyAskedRouterStallClarify(hist), "stall mark détecté");
+}
+
+console.log("\n=== Soft-pause Cursor : crée groupe / nom après ask LLM ===\n");
+{
+  assert(
+    Boolean(detectCreateGroupIntent("Je veux créer un groupe")),
+    "je veux créer un groupe → intent",
+  );
+  assert(
+    detectCreateGroupIntent("Je veux créer un groupe")?.subject === "",
+    "sans nom → subject vide (ask)",
+  );
+  assert(
+    allowGroupQuickPaths({
+      purpose: "prospection",
+      userMessage: "Je veux créer un groupe",
+      history: [],
+    }),
+    "crée groupe → quick paths ouverts",
+  );
+
+  const askLlm = [
+    msg("user", "Donne les contacts de mon groupe"),
+    msg(
+      "assistant",
+      "Tu veux lister les membres d'un groupe en particulier ? Si oui, donne-moi son nom ou son lien.",
+    ),
+  ];
+  assert(
+    lastAssistantAskedForGroupName(askLlm),
+    "phrasing LLM nom/lien → askedForGroupName",
+  );
+  assert(
+    resolveMembersIntentFromHistory("Le labo du nocode", askLlm)?.groupQuery ===
+      "Le labo du nocode",
+    "nom après ask LLM → extract",
+  );
+  assert(
+    allowGroupQuickPaths({
+      purpose: "prospection",
+      userMessage: "Le labo du nocode",
+      history: askLlm,
+    }),
+    "bare name après ask LLM → quick paths",
+  );
+  assert(
+    shouldSoftPauseInsteadOfHardReturn("Je veux créer un groupe", []),
+    "soft-pause crée groupe",
+  );
+  assert(
+    shouldSoftPauseInsteadOfHardReturn("Le labo du nocode", askLlm),
+    "soft-pause nom après ask",
+  );
 }
 
 console.log(`\n=== ${passed} passed, ${failed} failed ===\n`);

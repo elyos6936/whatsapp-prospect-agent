@@ -37,7 +37,7 @@ const GROUP_EXTRACT_ACTION_RE =
 
 /** Verbes d'action groupe (hors simple mention « membres du groupe »). */
 const GROUP_ACTION_VERB_RE =
-  /\b(extrait|extraire|liste|lister|envoie|envoyer|poste|publie|programme|ajoute|retire|crée|creer|quitte|quitter|invite|rejoins|rejoindre|lien)\b/i;
+  /\b(extrait|extraire|liste|lister|envoie|envoyer|poste|publie|programme|ajoute|retire|cr[eé]e[rz]?|cr[eé]er|quitte|quitter|invite|rejoins|rejoindre|lien)\b/i;
 
 /** Verbe OU nom d'envoi (ex. menu « Envoi d'un message direct… »). */
 const SEND_VERB_RE =

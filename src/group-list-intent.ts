@@ -235,14 +235,14 @@ export function looksLikeWhenReply(msg: string): boolean {
   return false;
 }
 
-/** L'assistant vient de demander un nom de groupe (extract / introuvable). */
+/** L'assistant vient de demander un nom de groupe (extract / introuvable / phrasing LLM). */
 export function lastAssistantAskedForGroupName(
   history: Array<{ role: string; content: string }>
 ): boolean {
   for (let i = history.length - 1; i >= 0; i--) {
     const m = history[i];
     if (m.role !== "assistant") continue;
-    return /groupe introuvable|dans quel groupe|de quel groupe|quel groupe veux-tu|nom exact \(copier-coller|copier-coller depuis whatsapp/i.test(
+    return /groupe introuvable|dans quel groupe|de quel groupe|quel groupe veux-tu|nom exact \(copier-coller|copier-coller depuis whatsapp|donne[- ]?moi (?:son |le )?nom|son nom ou (?:son )?lien|nom (?:du|de ton|de votre) groupe|groupe en particulier|lister les membres|contacts? (?:de |du |d['’])?(?:ton |votre |mon )?groupe/i.test(
       m.content
     );
   }
@@ -643,7 +643,7 @@ export function allowGroupQuickPaths(opts: {
   if (opts.purpose === "groupes") return true;
   if (isExplicitGroupOperation(opts.userMessage)) return true;
   // Suites multi-tour (sinon le rail prospection vole le tour)
-  if (resolveCreateGroupIntentFromHistory(opts.userMessage, opts.history)?.phones.length) {
+  if (resolveCreateGroupIntentFromHistory(opts.userMessage, opts.history)) {
     return true;
   }
   const manage = resolveManageIntentFromHistory(opts.userMessage, opts.history);

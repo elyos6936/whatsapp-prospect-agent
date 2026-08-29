@@ -15,13 +15,14 @@ import {
 import { testEvolutionConnection, listWhatsAppGroups, listPersonalContacts, chatIdToDisplay, findGroupByNameOrId, getGroupMembers, checkUserIsGroupAdmin } from "./evolutionapi.js";
 import { executeTool } from "./tools.js";
 import {
-  detectJoinGroupInviteIntent,
-  isGroupNonPublishAction,
+  detectCreateGroupIntent,
   resolveCreateGroupIntentFromHistory,
   resolveInviteLinkFromHistory,
   resolveInviteSendFromHistory,
   resolveLeaveGroupIntentFromHistory,
   resolveManageIntentFromHistory,
+  detectJoinGroupInviteIntent,
+  isGroupNonPublishAction,
   type GroupManageIntent,
 } from "./group-manage-intent.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
@@ -112,7 +113,9 @@ import {
   extractGroupNameFromPublishMessage,
   isExplicitGroupOperation,
   isGroupActionNotCatalogRequest,
+  lastAssistantAskedForGroupName,
   lastGroupQueryFromHistory,
+  looksLikeBareGroupName,
   allowGroupQuickPaths,
   resolveGroupSendIntentFromHistory,
   resolveMembersIntentFromHistory,
@@ -207,8 +210,34 @@ export function messageNeedsCampaignMemory(userMessage: string): boolean {
 const CHAT_MAX_TOKENS = 1100;
 
 /**
+ * Soft-pause (style Cursor) : hors-scénario / intent parallèle → pas de hard-return checklist.
+ * Hard-return réservé aux réponses courtes qui ratent le slot (oui trop vague hors confirm, etc.).
+ */
+export function shouldSoftPauseInsteadOfHardReturn(
+  userMessage: string,
+  history: AgentMessage[],
+): boolean {
+  const t = userMessage.trim();
+  if (!t) return false;
+  if (isExplicitGroupOperation(t)) return true;
+  if (detectCreateGroupIntent(t)) return true;
+  if (detectQuickGroupMembersIntent(t)) return true;
+  if (looksLikeBareGroupName(t) && lastAssistantAskedForGroupName(history)) return true;
+  if (t.length > 48) return true;
+  if (/\?/.test(t)) return true;
+  if (
+    /\b(cr[eé]e[rz]?|cr[eé]er|groupe|contacts?|membres?|liste|lister|envoie|envoyer|invite|quitte|aide|comment|pourquoi|explique)\b/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Détecte une réponse « amorce vide » : le modèle annonce un contenu
- * (phrase se terminant par «\u00A0:\u00A0») puis s'arrête sans le fournir.
+ * (phrase se terminant par « : ») puis s'arrête sans le fournir.
  */
 function isDanglingAnnouncement(text: string): boolean {
   const t = text.replace(/\s+$/u, "");
@@ -1458,6 +1487,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         },
       ).catch(() => {});
       setAgentPath("llm", "slot_accepted");
+    } else if (shouldSoftPauseInsteadOfHardReturn(userMessage, history)) {
+      // Style Cursor : hors-scénario / intent parallèle → LLM intelligent, pas recolle slot
+      messages.push({
+        role: "system",
+        content: buildScenarioPauseNudge({
+          kind: "digression",
+          slotQuestion,
+        }),
+      });
+      setAgentPath("llm", "soft_pause_unsatisfied");
     } else {
       const greet = /^(salut|hello|bonjour|hey|coucou)\s*[!.]?$/i.test(userMessage.trim());
       setAgentPath("hard-return", slotQuestion);
