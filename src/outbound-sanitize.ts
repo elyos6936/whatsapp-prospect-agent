@@ -174,7 +174,7 @@ export function stripOutboundMessageDecorations(text: string): string {
       .trim();
     if (t === prev) break;
   }
-  return t;
+  return t.replace(/^["«""'\s]+|["»""'\s]+$/g, "").trim();
 }
 
 /** Majuscule en tête + retire artefacts (!, #…) — qualité WhatsApp. */

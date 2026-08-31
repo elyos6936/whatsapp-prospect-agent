@@ -36,6 +36,7 @@ import {
   generateSupportSimulationDirect,
 } from "./support-flow.js";
 import { userFacingError } from "./user-facing.js";
+import { stripOutboundMessageDecorations } from "./outbound-sanitize.js";
 
 export {
   runDeterministicGroupsDraft,
@@ -67,6 +68,91 @@ function parseToolJson(raw: string): {
     if (/error|échec|impossible/i.test(raw)) return { ok: false, error: raw.slice(0, 240) };
     return { ok: /success|activ|lanc/i.test(raw), message: raw.slice(0, 400) };
   }
+}
+
+function openerSetFingerprint(messages: string[]): string {
+  return messages
+    .map((m) =>
+      stripOutboundMessageDecorations(m)
+        .toLowerCase()
+        .replace(/\s+/g, " ")
+        .replace(/[?.!…,:;«»"'*]/g, "")
+        .trim()
+    )
+    .filter(Boolean)
+    .join("\x1f");
+}
+
+/** Les 5 accroches du fil diffèrent de la config campagne (brouillon pas resynchronisé). */
+export function chatOpenerVariantsDifferFromStored(
+  chatVariants: Array<{ id: string; message: string }> | null,
+  storedOpener: string | null,
+  storedVariants: string[]
+): boolean {
+  if (!chatVariants || chatVariants.length !== 5) return false;
+  const chat = chatVariants.map((v) => stripOutboundMessageDecorations(v.message));
+  const stored = storedVariants.length
+    ? storedVariants.map((m) => stripOutboundMessageDecorations(m))
+    : storedOpener
+      ? [stripOutboundMessageDecorations(storedOpener)]
+      : [];
+  if (!stored.length) return true;
+  return openerSetFingerprint(chat) !== openerSetFingerprint(stored);
+}
+
+async function syncOpenerVariantsFromChatIfNewer(opts: {
+  userId: number;
+  automationId: number;
+  history: AgentMessage[];
+  storedOpener: string | null;
+  storedVariants: string[];
+}): Promise<{ approvedOpener: string | null; abVariantMessages: string[] }> {
+  const chatVariants = extractOpenerVariantsFromHistory(opts.history);
+  if (!chatVariants?.length) {
+    return {
+      approvedOpener: opts.storedOpener,
+      abVariantMessages: opts.storedVariants,
+    };
+  }
+  const chatMessages = chatVariants.map((v) => stripOutboundMessageDecorations(v.message));
+  if (
+    !chatOpenerVariantsDifferFromStored(
+      chatVariants,
+      opts.storedOpener,
+      opts.storedVariants
+    )
+  ) {
+    return {
+      approvedOpener: opts.storedOpener || chatMessages[0] || null,
+      abVariantMessages: opts.storedVariants.length ? opts.storedVariants : chatMessages,
+    };
+  }
+
+  const cleanedVariants = chatVariants.map((v, i) => ({
+    id: v.id || `v${i + 1}`,
+    message: stripOutboundMessageDecorations(v.message),
+  }));
+  const approvedOpener = cleanedVariants[0]!.message;
+  const abVariantMessages = cleanedVariants.map((v) => v.message);
+
+  try {
+    const auto = await getAutomation(opts.userId, opts.automationId);
+    if (auto) {
+      const { updateAutomationConfig } = await import("./db.js");
+      await updateAutomationConfig(opts.userId, opts.automationId, {
+        ...auto.config,
+        initialMessage: approvedOpener,
+        abVariants: cleanedVariants,
+      });
+      console.info(
+        `[deterministic] synced ${cleanedVariants.length} opener variants from chat before sim`
+      );
+    }
+  } catch (err) {
+    console.warn("[deterministic] sync opener from chat:", err);
+  }
+
+  return { approvedOpener, abVariantMessages };
 }
 
 async function resolveThreadAutomationId(
@@ -614,11 +700,21 @@ export async function runDeterministicSimulation(opts: {
     );
   }
 
-  if (!approvedOpener && !isSupportCampaign) {
-    const variants = extractOpenerVariantsFromHistory(history);
-    approvedOpener = variants?.[0]?.message ?? null;
-    if (!abVariantMessages.length && variants?.length) {
-      abVariantMessages = variants.map((v) => v.message);
+  if (!isSupportCampaign) {
+    const chatOnly = extractOpenerVariantsFromHistory(history);
+    if (automationId) {
+      const refreshed = await syncOpenerVariantsFromChatIfNewer({
+        userId,
+        automationId,
+        history,
+        storedOpener: approvedOpener,
+        storedVariants: abVariantMessages,
+      });
+      approvedOpener = refreshed.approvedOpener;
+      abVariantMessages = refreshed.abVariantMessages;
+    } else if (chatOnly?.length) {
+      approvedOpener = stripOutboundMessageDecorations(chatOnly[0]!.message);
+      abVariantMessages = chatOnly.map((v) => stripOutboundMessageDecorations(v.message));
     }
   }
 

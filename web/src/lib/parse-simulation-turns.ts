@@ -25,7 +25,7 @@ function stripMessageDecorations(text: string): string {
       .trim();
     if (t === prev) break;
   }
-  return t;
+  return t.replace(/^["«""'\s]+|["»""'\s]+$/g, '').trim();
 }
 
 const SIM_FENCE_RE = /```klanvio-sim\s*\n([\s\S]*?)```/gi;

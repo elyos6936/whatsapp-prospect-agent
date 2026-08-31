@@ -4,6 +4,7 @@
  */
 import { clampSimulationOpenerTurn, formatCampaignSimulationDisplay } from "../src/campaign-simulation.js";
 import { stripOutboundMessageDecorations } from "../src/outbound-sanitize.js";
+import { chatOpenerVariantsDifferFromStored } from "../src/deterministic-campaign.js";
 
 let passed = 0;
 let failed = 0;
@@ -73,6 +74,31 @@ console.log("\n=== strip decorated opener in sim display ===\n");
   ]);
   assert(!display.includes("*«"), "fence sans markdown");
   assert(display.includes(clean), "texte net dans fence");
+}
+
+console.log("\n=== resim: accroches chat vs config ===\n");
+{
+  const oldStored = [
+    "Bonjour, je me permets de vous écrire rapidement. J'aide les entrepreneurs comme vous à automatiser leurs processus sans code.",
+  ];
+  const chatVariants = [
+    { id: "v1", message: "Bonjour, je suis Will Wanvoesso, expert en automatisation no-code pour les entrepreneurs. »" },
+    { id: "v2", message: "Bonjour, je suis Will Wanvoesso, spécialiste des solutions no-code pour les pros comme vous. »" },
+    { id: "v3", message: "Bonjour, je m'appelle Will Wanvoesso. Je suis expert en automatisation no-code pour les entrepreneurs. »" },
+    { id: "v4", message: "Bonjour, je suis Will Wanvoesso, expert en automatisation no-code pour booster votre productivité. »" },
+    { id: "v5", message: "Bonjour, Will Wanvoesso à l'appareil, expert en automatisation no-code pour les entrepreneurs. »" },
+  ];
+  assert(
+    chatOpenerVariantsDifferFromStored(chatVariants, oldStored[0]!, oldStored),
+    "detecte nouvelles variantes Will"
+  );
+  assert(
+    !chatOpenerVariantsDifferFromStored(chatVariants, chatVariants[0]!.message, chatVariants.map((v) => v.message)),
+    "identiques = pas de resync"
+  );
+  const stripped = stripOutboundMessageDecorations(chatVariants[0]!.message);
+  assert(!stripped.endsWith("»"), "guillemet orphelin retiré");
+  assert(stripped.includes("Will Wanvoesso"), "contenu conservé");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
