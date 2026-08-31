@@ -6,6 +6,11 @@ import type { AgentMessage } from "../src/db.js";
 import {
   assessCampaignBriefing,
   buildBriefingNudge,
+  nextCanonicalBriefingQuestion,
+  BRIEFING_Q_THIRD_PARTY,
+  BRIEFING_Q_THIRD_PHONE,
+  BRIEFING_Q_HANDOFF,
+  isThirdPartyEnableAsk,
 } from "../src/campaign-briefing.js";
 import {
   extractSupportTriggerPhrases,
@@ -18,6 +23,7 @@ import {
 } from "../src/support-flow.js";
 import { allowGroupQuickPaths } from "../src/group-list-intent.js";
 import { ensureLeadingCapital } from "../src/outbound-sanitize.js";
+import { userMessageSatisfiesSlot } from "../src/thread-briefing-state.js";
 
 let passed = 0;
 let failed = 0;
@@ -169,6 +175,63 @@ console.log("\n=== Notif tiers / livreur ===\n");
     "je valide"
   );
   assert(/22955556666/.test(briefPhone.phone || ""), "numéro déjà dans le brief + oui");
+}
+
+console.log("\n=== GAP-031 : oui → numéro → pas de re-ask tiers ===\n");
+{
+  assert(
+    !isThirdPartyEnableAsk(
+      "À quel **numéro WhatsApp** prévenir ce tiers (ex. +229…) et quel rôle (livreur, associé…) ?",
+    ),
+    "question numéro ≠ enable ask",
+  );
+  assert(
+    isThirdPartyEnableAsk(
+      "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial) sur WhatsApp ? (oui/non)",
+    ),
+    "question oui/non = enable ask",
+  );
+
+  const afterOui = [
+    msg("user", "Support baskets, déclencheur je suis intéressé, prix 15000 FCFA, livraison"),
+    msg("assistant", "Tu veux des stickers dans les réponses aux clients ? (oui/non)"),
+    msg("user", "non"),
+    msg(
+      "assistant",
+      "Quand un client convertit, tu veux qu'on prévienne automatiquement un tiers (livreur, associé, commercial) sur WhatsApp ? (oui/non)",
+    ),
+    msg("user", "Oui"),
+  ];
+  const aOui = assessCampaignBriefing(afterOui, "Oui", "support");
+  assert(aOui.thirdPartyQuestionAsked, "après Oui → thirdPartyQuestionAsked");
+  const slotOui = nextCanonicalBriefingQuestion(aOui, afterOui, "Oui");
+  assert(slotOui === BRIEFING_Q_THIRD_PHONE, `après Oui → slot numéro (got: ${slotOui})`);
+  const nudgeOui = buildSupportBriefingNudge(aOui, afterOui, "Oui") || "";
+  assert(/num[eé]ro/i.test(nudgeOui), "nudge demande numéro");
+  assert(
+    !/passer la main|remboursement|mots\/phrases pour lesquels/i.test(nudgeOui),
+    "nudge ≠ question handoff après Oui",
+  );
+
+  const afterPhone = [
+    ...afterOui,
+    msg("assistant", BRIEFING_Q_THIRD_PHONE),
+    msg("user", "+229 55033190"),
+  ];
+  const aPhone = assessCampaignBriefing(afterPhone, "+229 55033190", "support");
+  assert(aPhone.thirdPartyQuestionAsked, "après numéro → thirdPartyQuestionAsked reste true");
+  const tpPhone = extractSupportThirdParty(afterPhone, "+229 55033190");
+  assert(tpPhone.accepted && /55033190/.test(tpPhone.phone || ""), "numéro conservé malgré ask phone");
+  const slotPhone = nextCanonicalBriefingQuestion(aPhone, afterPhone, "+229 55033190");
+  assert(slotPhone !== BRIEFING_Q_THIRD_PARTY, "pas de re-ask oui/non après numéro");
+  assert(
+    slotPhone === BRIEFING_Q_HANDOFF || /passer la main|mots/i.test(slotPhone || ""),
+    `après numéro → handoff (got: ${slotPhone})`,
+  );
+  assert(
+    userMessageSatisfiesSlot(BRIEFING_Q_THIRD_PHONE, "+229 55033190"),
+    "slot numéro satisfait par +229",
+  );
 }
 
 console.log("\n=== Handoff keywords ===\n");

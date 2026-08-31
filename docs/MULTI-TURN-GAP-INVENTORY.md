@@ -6,9 +6,9 @@ Audit code-backed du routeur agent. Pattern dominant : message court (oui, numé
 
 | | |
 |--|--|
-| Total cas | 31 |
+| Total cas | 32 |
 | Ouverts | 0 |
-| Corrigés | 31 |
+| Corrigés | 32 |
 | P0 / P1 / P2 | 0 ouverts |
 
 ## P1 + P2 — CORRIGÉS (2026-08-29, vague finale)
@@ -28,8 +28,9 @@ Audit code-backed du routeur agent. Pattern dominant : message court (oui, numé
 | GAP-028 | Sim fail → fallback LLM |
 | GAP-029 | Publish non-admin → soft system nudge, fil continue |
 | GAP-030 | Low-risk join/catalog — documenté / current-only OK |
+| GAP-031 | Support tiers : enable ask ≠ numéro ; nudge téléphone avant handoff |
 
-Tests : `scripts/test-p2-continuity.ts`, `scripts/test-group-list-intent.ts`
+Tests : `scripts/test-p2-continuity.ts`, `scripts/test-group-list-intent.ts`, `scripts/test-support-flow.ts`
 
 ## P1 continuity guards — CORRIGÉS
 

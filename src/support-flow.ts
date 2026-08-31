@@ -241,6 +241,13 @@ export function extractSupportHandoffKeywords(history: AgentMessage[]): string[]
 const SUPPORT_THIRD_PARTY_ASK_RE =
   /\b(pr[eé]venir|notifier|pr[eé]vienne|notifie).{0,80}\b(tiers|quelqu.?un d.?autre|livreur|associ[eé]|commercial)\b|\b(tiers|livreur|associ[eé]|commercial).{0,80}\b(pr[eé]venir|notifier|automatiquement)\b|\bthird.party\b/i;
 
+/** GAP-031 : ignore la question numéro (évite de vider le « oui » précédent). */
+function isSupportThirdPartyEnableAsk(content: string): boolean {
+  if (!SUPPORT_THIRD_PARTY_ASK_RE.test(content)) return false;
+  if (/\bnum[eé]ro\b/i.test(content) && !/\boui\s*\/\s*non\b/i.test(content)) return false;
+  return true;
+}
+
 const SUPPORT_HANDOFF_ASK_RE =
   /\b(passer\s+la\s+main|handoff|mots?\s*cl[eé]|humain)\b/i;
 
@@ -297,9 +304,13 @@ export function extractSupportThirdParty(
   let asked = false;
   const afterAsk: string[] = [];
   for (const m of msgs) {
-    if (m.role === "assistant" && SUPPORT_THIRD_PARTY_ASK_RE.test(m.content)) {
+    if (m.role === "assistant" && isSupportThirdPartyEnableAsk(m.content)) {
       asked = true;
       afterAsk.length = 0;
+      continue;
+    }
+    // Question numéro : ne reset pas le « oui », continue à collecter la réponse
+    if (asked && m.role === "assistant" && SUPPORT_THIRD_PARTY_ASK_RE.test(m.content)) {
       continue;
     }
     if (asked && m.role === "assistant" && SUPPORT_HANDOFF_ASK_RE.test(m.content)) {
@@ -343,8 +354,8 @@ export function extractSupportThirdParty(
  */
 export function buildSupportBriefingNudge(
   assessment: BriefingAssessment,
-  _history: AgentMessage[],
-  _userMessage: string
+  history: AgentMessage[],
+  userMessage: string
 ): string | null {
   if (!assessment.inCampaignFlow || !assessment.isInboundClosing) return null;
 
@@ -360,6 +371,15 @@ export function buildSupportBriefingNudge(
       return (
         "Briefing SUPPORT : pose UNE question — « Quand un client convertit / objectif atteint, tu veux qu'on prévienne automatiquement un tiers (livreur, associé…) sur WhatsApp ? (oui/non) ». " +
         "Si oui : numéro + rôle (une question à la fois). INTERDIT create_automation tant que ce n'est pas couvert."
+      );
+    }
+    // GAP-031 : après oui → numéro AVANT handoff (nudge ne doit pas sauter l'étape)
+    const tp = extractSupportThirdParty(history, userMessage);
+    if (tp.asked && !tp.declined && tp.accepted && !tp.phone) {
+      return (
+        "Briefing SUPPORT : l'utilisateur a accepté la notif tiers. " +
+        "Pose UNE question — « À quel numéro WhatsApp prévenir ce tiers (ex. +229…) et quel rôle (livreur, associé…) ? » — puis ARRÊTE-TOI. " +
+        "INTERDIT de poser handoff / create_automation tant que le numéro manque."
       );
     }
     if (!assessment.handoffKeywordsQuestionAsked) {

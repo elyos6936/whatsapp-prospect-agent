@@ -480,6 +480,37 @@ const STICKERS_ASK_RE =
 const THIRD_PARTY_ASK_RE =
   /\b(pr[eé]venir|notifier|pr[eé]vienne|notifie).{0,80}\b(tiers|quelqu.?un d.?autre|livreur|associ[eé]|commercial)\b|\b(tiers|livreur|associ[eé]|commercial).{0,80}\b(pr[eé]venir|notifier|automatiquement)\b|\bthird.party\b/i;
 
+/**
+ * GAP-031 : question « numéro du tiers » ≠ question oui/non.
+ * Sinon lastAssistantMatchIndex tombe sur le numéro → flag reset → re-ask oui/non.
+ */
+export function isThirdPartyEnableAsk(content: string): boolean {
+  if (!THIRD_PARTY_ASK_RE.test(content)) return false;
+  if (/\bnum[eé]ro\b/i.test(content) && !/\boui\s*\/\s*non\b/i.test(content)) return false;
+  return true;
+}
+
+function lastThirdPartyEnableAskIndex(history: AgentMessage[]): number {
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m?.role === "assistant" && isThirdPartyEnableAsk(m.content)) return i;
+  }
+  return -1;
+}
+
+function answeredThirdPartyEnableYesNo(
+  history: AgentMessage[],
+  userMessage: string,
+): boolean {
+  const askIdx = lastThirdPartyEnableAskIndex(history);
+  if (askIdx < 0) return false;
+  for (let i = askIdx + 1; i < history.length; i++) {
+    const m = history[i];
+    if (m?.role === "user" && yesNoReply(m.content)) return true;
+  }
+  return yesNoReply(userMessage);
+}
+
 /** Question mots-clés → passer la main à l'humain (assistant uniquement). */
 const HANDOFF_KEYWORDS_ASK_RE =
   /\b(passer\s+la\s+main|intervenir?\s+(en\s+)?humain|handoff|mots?\s*cl[eé]s?.{0,60}(stop|arr[eê]t|humain|passer)|arr[eê]ter?.{0,40}(conversation|r[eé]pondre).{0,40}humain|humain.{0,40}(mots?\s*cl[eé]|phrases?))\b/i;
@@ -531,7 +562,7 @@ function answeredHandoffAfterAsk(
 }
 
 export function hasThirdPartyQuestionAsked(history: AgentMessage[]): boolean {
-  return history.some((m) => m.role === "assistant" && THIRD_PARTY_ASK_RE.test(m.content));
+  return history.some((m) => m.role === "assistant" && isThirdPartyEnableAsk(m.content));
 }
 
 export function hasHandoffKeywordsQuestionAsked(history: AgentMessage[]): boolean {
@@ -825,11 +856,12 @@ export function assessCampaignBriefing(
     Boolean(persisted?.stickersAnswered) ||
     memoryCoversStickers ||
     answeredYesNoAfterAsk(history, userMessage, STICKERS_ASK_RE);
-  const thirdPartyQuestionAsked = answeredYesNoAfterAsk(
-    history,
-    userMessage,
-    THIRD_PARTY_ASK_RE,
-  );
+  // GAP-031 : oui/non sur enable seulement ; numéro déjà fourni = slot couvert
+  const thirdPartyExtract = extractSupportThirdParty(history, userMessage);
+  const thirdPartyQuestionAsked =
+    answeredThirdPartyEnableYesNo(history, userMessage) ||
+    (thirdPartyExtract.asked &&
+      (thirdPartyExtract.declined || thirdPartyExtract.accepted));
   const handoffKeywordsQuestionAsked = answeredHandoffAfterAsk(history, userMessage);
   const openerVariantsProposed = inbound ? true : hasProposedOpenerVariants(history);
   const openerSingleValidated = inbound

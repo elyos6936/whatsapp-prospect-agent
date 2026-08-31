@@ -138,6 +138,17 @@ export function userMessageSatisfiesSlot(slotQuestion: string, userMessage: stri
   if (q.includes("stickers") || q.includes("autocollant")) {
     return /\b(oui|non|pas|ouais)\b/i.test(t);
   }
+  // GAP-031 : slot numéro tiers — un +229… satisfait (pas un oui/non)
+  if (
+    (q.includes("numéro") || q.includes("numero")) &&
+    (q.includes("tiers") ||
+      q.includes("whatsapp") ||
+      q.includes("prévenir") ||
+      q.includes("prevenir") ||
+      q.includes("livreur"))
+  ) {
+    return /(?:\+|00)?(?:229)?[\s.\-]*\d(?:[\s.\-]*\d){6,}/.test(t);
+  }
   if (
     q.includes("tiers") ||
     q.includes("livreur") ||
