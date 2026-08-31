@@ -100,6 +100,31 @@ console.log("\n=== Objectifs: livreur ===\n");
     ),
     "le livreur vous recontacte = livré"
   );
+
+  // Screenshot support : formulations LLM « passera / confirmera » + ack → STOP
+  const histPassera = [
+    {
+      direction: "sortant",
+      body: "Merci. Un livreur passera par Abomey Calavi pour finaliser la livraison des baskets Nike taille 41.",
+    },
+  ];
+  assert(outboundDeliveredAction(histPassera[0].body), "passera pour finaliser = livré");
+  assert(
+    isCampaignObjectiveReached("Okay", histPassera, { closingGoal: "delivery" }),
+    "Okay après « passera » → objectif (anti-boucle)"
+  );
+
+  const histConfirmera = [
+    {
+      direction: "sortant",
+      body: "Merci. Un livreur confirmera avec vous le créneau pour la livraison à Abomey Calavi.",
+    },
+  ];
+  assert(outboundDeliveredAction(histConfirmera[0].body), "confirmera le créneau = livré");
+  assert(
+    isCampaignObjectiveReached("Super", histConfirmera, { closingGoal: "delivery" }),
+    "Super après « confirmera » → objectif"
+  );
 }
 
 console.log("\n=== Objectifs: ok après adieu ≠ conversion ===\n");

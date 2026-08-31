@@ -30,9 +30,11 @@ const URL_DELIVERED =
 
 /**
  * Handoff livraison déjà fait (pas une simple proposition « le livreur peut… ? »).
+ * Couvre aussi les formulations opérationnelles courantes du LLM :
+ * « Un livreur passera par… », « Un livreur confirmera le créneau… ».
  */
 const DELIVERY_HANDOFF_DONE =
-  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé]).{0,50}livreur|le livreur (vous |t['']|te )?(appelle|contactera|recontacte|recontactera)|(un (de nos )?|nos |le |un )livreurs? (va |vont )(vous |te )?(re)?contacter|livreurs? (vous |te )?(re)?contacte|adresse (not[eé]e|re[cç]ue)|c['']est (not[eé]|confirm[eé]).{0,40}(livraison|livreur)/i;
+  /je (lui |vous |te )?(ai )?(transmets|transmis|envoy[eé]).{0,50}livreur|le livreur (vous |t['']|te )?(appelle|contactera|recontacte|recontactera)|(un (de nos )?|nos |le |un )livreurs? (va |vont )(vous |te )?(re)?contacter|livreurs? (vous |te )?(re)?contacte|(un |le |nos |un de nos )?livreurs? (passera|viendra|confirm(e|era)|va (passer|venir|confirmer)).{0,120}(livraison|finalis|cr[eé]neau)|adresse (not[eé]e|re[cç]ue)|c['']est (not[eé]|confirm[eé]).{0,40}(livraison|livreur)/i;
 
 /**
  * L'agent a PROPOSÉ d'envoyer un lien / d'agir, sans l'avoir encore livré
