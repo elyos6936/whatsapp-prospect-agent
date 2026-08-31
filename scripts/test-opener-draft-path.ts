@@ -93,6 +93,21 @@ console.log("\n=== Test 1 Will — SGBD member list + maintenant ===\n");
   assert(!hasProposedOpenerVariants(history), "openerVariantsProposed false before real variants");
 }
 
+console.log("\n=== markdown/guillemets sur accroches ===\n");
+{
+  const history = [
+    msg(
+      "assistant",
+      "Voici les 5 variantes :\n1. *« Bonjour, je me permets de vous écrire rapidement. Une minute ? »*\n2. *« Coucou, une minute ? »*\n3. *« Hello, tu as 30 secondes ? »*\n4. *« Hey, je te dérange ? »*\n5. *« Bonjour, une minute à m'accorder ? »*",
+    ),
+  ];
+  const v = extractOpenerVariantsFromHistory(history);
+  assert(v?.length === 5, "extract 5 decorated");
+  assert(!v?.[0]?.message.includes("«"), "v1 sans guillemets");
+  assert(!v?.[0]?.message.startsWith("*"), "v1 sans astérisques");
+  assert(v?.[0]?.message.startsWith("Bonjour"), "v1 texte brut");
+}
+
 console.log("\n=== validation courte ===\n");
 {
   assert(isShortCampaignValidation("oui, c'est bon"), "oui, c'est bon");

@@ -14,6 +14,7 @@ import {
   extractGroupNamesFromHistory,
   extractGroupPostMessage,
 } from "./groups-flow.js";
+import { stripOutboundMessageDecorations } from "./outbound-sanitize.js";
 
 const CAMPAIGN_INTENT_RE =
   /\b(prospect|prospection|prospecter|campagne|closer|closing|support\s*client|g[eè]re[rz]?\s*(mon\s+)?support|g[eè]re[rz]?\s+tout|tous\s+(mes\s+)?messages|compte\s+whatsapp|automatis(er|ation)\s+(mes\s+)?(r[eé]ponses|ventes)|keyword_sales|group_prospect|contact_prospect)\b/i;
@@ -253,9 +254,7 @@ function isOpenerVariantsSourceMessage(content: string): boolean {
 }
 
 function cleanExtractedOpener(raw: string | undefined): string | null {
-  let text = raw
-    ?.replace(/^["«“"'\s]+|["»”"'\s]+$/g, "")
-    .replace(/\*\*/g, "")
+  let text = stripOutboundMessageDecorations(String(raw ?? ""))
     .replace(/\s+/g, " ")
     .trim();
   if (!text || text.length < 8) return null;

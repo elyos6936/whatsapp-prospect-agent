@@ -155,9 +155,31 @@ export function sanitizeInventedCampaignUrls(
   return "Parfait. Dites-moi comment vous préférez finaliser, et j'avance avec vous.";
 }
 
+const WRAP_QUOTE_RE = /^[«""„]([\s\S]*?)[»""]$/u;
+const WRAP_ASTERISK_RE = /^\*+([\s\S]*?)\*+$/;
+const WRAP_UNDERSCORE_RE = /^_([\s\S]*?)_$/;
+
+/** Retire guillemets / markdown décoratif collés par l'agent (pas le corps du message). */
+export function stripOutboundMessageDecorations(text: string): string {
+  let t = String(text ?? "").trim();
+  if (!t) return "";
+  for (let i = 0; i < 4; i++) {
+    const prev = t;
+    t = t
+      .replace(/^\*\*([\s\S]*?)\*\*$/, "$1")
+      .replace(WRAP_ASTERISK_RE, "$1")
+      .replace(WRAP_UNDERSCORE_RE, "$1")
+      .replace(WRAP_QUOTE_RE, "$1")
+      .replace(/\*\*/g, "")
+      .trim();
+    if (t === prev) break;
+  }
+  return t;
+}
+
 /** Majuscule en tête + retire artefacts (!, #…) — qualité WhatsApp. */
 export function ensureLeadingCapital(text: string): string {
-  let t = String(text ?? "")
+  let t = stripOutboundMessageDecorations(String(text ?? ""))
     .replace(/^[\s!*#>\-–—]+/, "")
     .trim();
   if (!t) return "";

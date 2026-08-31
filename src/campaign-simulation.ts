@@ -4,7 +4,10 @@
 import type OpenAI from "openai";
 import { config } from "./config.js";
 import { callOpenAiWithRetry } from "./openai-retry.js";
-import { hasTemplatePlaceholders } from "./outbound-sanitize.js";
+import {
+  hasTemplatePlaceholders,
+  stripOutboundMessageDecorations,
+} from "./outbound-sanitize.js";
 import {
   extractAssistantContent,
   llmExtrasForProvider,
@@ -43,7 +46,7 @@ export function formatCampaignSimulationDisplay(
   }
   const lines: string[] = [];
   for (const turn of limited) {
-    const text = String(turn.text ?? "").trim();
+    const text = stripOutboundMessageDecorations(String(turn.text ?? ""));
     if (!text) throw new Error("Un message de la simulation est vide.");
     if (hasTemplatePlaceholders(text)) {
       throw new Error("Crochets [ ] interdits dans la simulation.");
@@ -66,7 +69,7 @@ function normalizeTurns(raw: unknown[]): SimulationTurn[] | null {
     if (!item || typeof item !== "object") return null;
     const t = item as { speaker?: string; name?: string; text?: string };
     const speaker = String(t.speaker ?? "").toLowerCase();
-    const text = String(t.text ?? "").trim();
+    const text = stripOutboundMessageDecorations(String(t.text ?? ""));
     if (!text) return null;
     if (speaker === "toi" || speaker === "moi" || speaker === "you") {
       out.push({ speaker: "toi", text });
@@ -118,10 +121,7 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
     const m = turnRe.exec(line);
     if (!m) continue;
     const who = m[1].trim();
-    const text = m[2]
-      .replace(/^[«"“]\s*/, "")
-      .replace(/\s*[»"”]$/, "")
-      .trim();
+    const text = stripOutboundMessageDecorations(m[2]);
     if (text.length < 2) continue;
     if (/^(toi|moi|vous|you)$/i.test(who)) {
       turns.push({ speaker: "toi", text });

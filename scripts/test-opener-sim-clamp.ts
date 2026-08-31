@@ -2,7 +2,8 @@
  * Clamp tour 1 simulation sur accroche validée (pas pitch collé).
  * Run: npx tsx scripts/test-opener-sim-clamp.ts
  */
-import { clampSimulationOpenerTurn } from "../src/campaign-simulation.js";
+import { clampSimulationOpenerTurn, formatCampaignSimulationDisplay } from "../src/campaign-simulation.js";
+import { stripOutboundMessageDecorations } from "../src/outbound-sanitize.js";
 
 let passed = 0;
 let failed = 0;
@@ -56,6 +57,22 @@ console.log("\n=== preserve exact variant match ===\n");
     variants
   );
   assert(turns[0]?.text === variants[1], "match variante v2");
+}
+
+console.log("\n=== strip decorated opener in sim display ===\n");
+{
+  const decorated =
+    "*« Bonjour, je me permets de vous écrire rapidement. Ça vous parle un peu? »*";
+  const clean = stripOutboundMessageDecorations(decorated);
+  assert(!clean.includes("«"), "sans guillemets");
+  assert(!clean.includes("*"), "sans astérisques");
+  const display = formatCampaignSimulationDisplay([
+    { speaker: "toi", text: decorated },
+    { speaker: "prospect", name: "Prospect", text: "Bonjour" },
+    { speaker: "toi", text: "Merci — je vous propose un échange rapide." },
+  ]);
+  assert(!display.includes("*«"), "fence sans markdown");
+  assert(display.includes(clean), "texte net dans fence");
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

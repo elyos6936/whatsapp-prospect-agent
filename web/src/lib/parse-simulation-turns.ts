@@ -7,6 +7,27 @@ export type PhoneBubble = {
   name?: string;
 };
 
+/** Retire guillemets / markdown décoratif (miroir backend outbound-sanitize). */
+function stripMessageDecorations(text: string): string {
+  let t = String(text ?? '').trim();
+  if (!t) return '';
+  const wrapQuote = /^[«""„]([\s\S]*?)[»""]$/u;
+  const wrapAsterisk = /^\*+([\s\S]*?)\*+$/;
+  const wrapUnderscore = /^_([\s\S]*?)_$/;
+  for (let i = 0; i < 4; i++) {
+    const prev = t;
+    t = t
+      .replace(/^\*\*([\s\S]*?)\*\*$/, '$1')
+      .replace(wrapAsterisk, '$1')
+      .replace(wrapUnderscore, '$1')
+      .replace(wrapQuote, '$1')
+      .replace(/\*\*/g, '')
+      .trim();
+    if (t === prev) break;
+  }
+  return t;
+}
+
 const SIM_FENCE_RE = /```klanvio-sim\s*\n([\s\S]*?)```/gi;
 
 /**
@@ -31,7 +52,7 @@ function parseTurnLines(block: string): PhoneBubble[] {
 
     const you = YOU_LINE_RE.exec(line);
     if (you) {
-      const t = you[1].trim();
+      const t = stripMessageDecorations(you[1].trim());
       if (t) bubbles.push({ id: `sim-${idx++}`, role: 'you', text: t });
       continue;
     }
@@ -39,7 +60,7 @@ function parseTurnLines(block: string): PhoneBubble[] {
     const prospect = PROSPECT_LINE_RE.exec(line);
     if (prospect) {
       const name = prospect[1].trim();
-      const t = prospect[2].trim();
+      const t = stripMessageDecorations(prospect[2].trim());
       if (t) {
         bubbles.push({
           id: `sim-${idx++}`,

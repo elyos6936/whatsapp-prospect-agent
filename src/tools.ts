@@ -128,6 +128,7 @@ import {
 import {
   findPlaceholderFields,
   hasTemplatePlaceholders,
+  stripOutboundMessageDecorations,
   stripProspectNamePlaceholders,
 } from "./outbound-sanitize.js";
 import { formatCampaignSimulationDisplay, type SimulationTurn } from "./campaign-simulation.js";
@@ -4830,12 +4831,16 @@ export async function executeTool(
       }
 
       if (config.initialMessage) {
-        config.initialMessage = stripProspectNamePlaceholders(config.initialMessage);
+        config.initialMessage = stripProspectNamePlaceholders(
+          stripOutboundMessageDecorations(config.initialMessage)
+        );
       }
       if (config.abVariants?.length) {
         config.abVariants = config.abVariants.map((v) => ({
           ...v,
-          message: stripProspectNamePlaceholders(v.message),
+          message: stripProspectNamePlaceholders(
+            stripOutboundMessageDecorations(v.message)
+          ),
         }));
       }
 
