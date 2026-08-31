@@ -155,6 +155,37 @@ console.log("\n=== P0 GAP-021 : oui après confirm envoi → pause parallèle ==
   assert(allowsManualSend(hist, "oui"), "allowsManualSend oui");
 }
 
+console.log("\n=== P0 GAP-028 : oui après « vérifier conversation ? » ===\n");
+{
+  const hist = [
+    {
+      id: 1,
+      user_id: 1,
+      thread_id: 1,
+      role: "user" as const,
+      content: "Envoie un 'Salut bro' à +22996158855",
+      created_at: new Date().toISOString(),
+    },
+    {
+      id: 2,
+      user_id: 1,
+      thread_id: 1,
+      role: "assistant" as const,
+      content:
+        "Je ne peux pas envoyer ce message à +22996158855 : contact déjà en campagne. Tu veux que je vérifie sa conversation en cours ?",
+      created_at: new Date().toISOString(),
+    },
+  ];
+  const k = classifyBriefingTurn({
+    userMessage: "Oui",
+    history: hist,
+    inCampaignFlow: true,
+  });
+  assert(k.kind === "digression", "oui après vérif conv → digression");
+  assert(k.pauseScenario === true, "oui après vérif conv → pause");
+  assert(!looksLikeRailAdvance("Oui", hist), "oui ne avance pas le rail lancement");
+}
+
 console.log("\n=== P0 GAP-011 : history utilisée (send confirm) ===\n");
 {
   const kBare = classifyBriefingTurn({ userMessage: "oui", inCampaignFlow: true });

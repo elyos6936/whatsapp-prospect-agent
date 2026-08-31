@@ -18,6 +18,8 @@ import {
   isExplicitSendNow,
   isFuzzySendAsk,
   isSendConfirmReply,
+  recentAssistantAskedConversationCheck,
+  resolveConversationCheckFromHistory,
 } from "./high-stakes-intent.js";
 
 export type BriefingTurnKind = "advance_rail" | "digression" | "parallel_action";
@@ -148,9 +150,13 @@ function looksLikeSlotConfirmation(msg: string): boolean {
  * Hard-return OK seulement si le message est une réponse checklist nette.
  * Sinon digression / parallèle → LLM décide (comme Cursor).
  */
-export function looksLikeRailAdvance(userMessage: string): boolean {
+export function looksLikeRailAdvance(userMessage: string, history: AgentMessage[] = []): boolean {
   const t = userMessage.trim();
   if (!t) return false;
+
+  if (history.length && resolveConversationCheckFromHistory(userMessage, history)) {
+    return false;
+  }
 
   if (isParallelOneShotSend(t) || isParallelGroupExtract(t) || isParallelGroupOp(t)) {
     return false;
@@ -223,13 +229,23 @@ export function classifyBriefingTurn(opts: {
   if (
     allowsManualSend(hist, msg) &&
     isSendConfirmReply(msg) &&
-    !isExplicitSendNow(msg)
+    !isExplicitSendNow(msg) &&
+    !recentAssistantAskedConversationCheck(hist)
   ) {
     return {
       kind: "parallel_action",
       pauseScenario: true,
       parallelAction: "one_shot_send",
     };
+  }
+
+  // GAP-028 : « oui » après « vérifier sa conversation ? » → pas le slot lancement
+  if (
+    recentAssistantAskedConversationCheck(hist) &&
+    isSendConfirmReply(msg) &&
+    !isExplicitSendNow(msg)
+  ) {
+    return { kind: "digression", pauseScenario: true, parallelAction: null };
   }
 
   if (isParallelOneShotSend(msg)) {
@@ -263,7 +279,7 @@ export function classifyBriefingTurn(opts: {
     return { kind: "digression", pauseScenario: true, parallelAction: null };
   }
 
-  if (isLocalDigression(msg) || !looksLikeRailAdvance(msg)) {
+  if (isLocalDigression(msg) || !looksLikeRailAdvance(msg, hist)) {
     return { kind: "digression", pauseScenario: true, parallelAction: null };
   }
 

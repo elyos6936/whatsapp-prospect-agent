@@ -114,6 +114,41 @@ export function allowsManualSend(history: AgentMessage[], userMessage: string): 
   return false;
 }
 
+/** Dernier assistant a proposé de consulter l'historique d'un contact. */
+export function recentAssistantAskedConversationCheck(history: AgentMessage[]): boolean {
+  const last = [...history].reverse().find((m) => m.role === "assistant");
+  if (!last?.content || !/[?？]/.test(last.content)) return false;
+  return (
+    /\b(v[eé]rifie|consulter|regarder|lire|voir).{0,48}conversation\b/i.test(last.content) ||
+    /\bconversation en cours\b/i.test(last.content)
+  );
+}
+
+/** Numéro le plus récent dans les derniers messages (user + assistant). */
+export function extractPhoneFromRecentHistory(history: AgentMessage[], limit = 10): string | null {
+  const chunk = history
+    .slice(-limit)
+    .map((m) => m.content)
+    .join("\n");
+  const match = /\+?\d[\d\s.\-()]{7,}\d/.exec(chunk);
+  if (!match) return null;
+  const digits = match[0].replace(/\D/g, "");
+  if (digits.length < 8) return null;
+  return `${digits}@c.us`;
+}
+
+/** « Oui » après « vérifier sa conversation ? » → lire get_contact_conversation. */
+export function resolveConversationCheckFromHistory(
+  userMessage: string,
+  history: AgentMessage[],
+): { phone: string } | null {
+  if (!recentAssistantAskedConversationCheck(history)) return null;
+  if (!isSendConfirmReply(userMessage) || isExplicitSendNow(userMessage)) return null;
+  const phone = extractPhoneFromRecentHistory(history);
+  if (!phone) return null;
+  return { phone };
+}
+
 export function isExplicitStatusChange(text: string): boolean {
   const t = text.trim();
   if (!t || HEDGE_RE.test(t)) return false;

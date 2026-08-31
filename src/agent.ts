@@ -141,6 +141,7 @@ import {
   highStakesConfirmNudge,
   isHighStakesTool,
   resolveAllowedHighStakesTools,
+  resolveConversationCheckFromHistory,
 } from "./high-stakes-intent.js";
 import {
   ROUTER_STALL_CLARIFY,
@@ -222,7 +223,8 @@ export function shouldSoftPauseInsteadOfHardReturn(
   if (!t) return false;
   // Suite « nom de groupe » après ask extract — même si monotoken-ish
   if (looksLikeBareGroupName(t) && lastAssistantAskedForGroupName(history)) return true;
-  return !looksLikeRailAdvance(t);
+  if (resolveConversationCheckFromHistory(userMessage, history)) return true;
+  return !looksLikeRailAdvance(t, history);
 }
 
 /**
@@ -626,6 +628,45 @@ async function runGroupSendQuickPath(
   return replyFromGroupSendTool(raw, { groupName: found.name, preview: intent.message });
 }
 
+async function runConversationCheckQuickPath(
+  userId: number,
+  threadId: number,
+  phone: string,
+): Promise<string> {
+  const raw = await executeTool(userId, threadId, "get_contact_conversation", {
+    phone,
+    limit: 30,
+  });
+  try {
+    const parsed = JSON.parse(raw) as {
+      error?: string;
+      display?: string;
+      name?: string | null;
+      status?: string | null;
+      count?: number;
+      messages?: Array<{ direction: string; body: string; at: string; sender?: string }>;
+    };
+    if (parsed.error) return userFacingError(parsed.error);
+    const label = parsed.display ?? phone;
+    const name = parsed.name ? ` (${parsed.name})` : "";
+    const msgs = parsed.messages ?? [];
+    if (!msgs.length) {
+      return `Aucun message enregistré avec **${label}**${name} dans cette automatisation.`;
+    }
+    const lines = msgs.slice(-8).map((m) => {
+      const who = m.direction === "entrant" ? (m.sender ?? label) : "Toi";
+      const body = m.body.length > 220 ? `${m.body.slice(0, 217)}…` : m.body;
+      return `- **${who}** (${m.at}) : ${body}`;
+    });
+    return (
+      `Historique avec **${label}**${name} (${parsed.count ?? msgs.length} message(s) sur cette auto) :\n\n` +
+      lines.join("\n")
+    );
+  } catch {
+    return userFacingError(raw);
+  }
+}
+
 function replyFromToolJson(raw: string): string {
   try {
     const parsed = JSON.parse(raw) as {
@@ -746,6 +787,16 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       WA_DISCONNECT_REPLY +
       `\n\nÉtat actuel : ${connection.message || connection.state}`
     );
+  }
+
+  const convCheck = resolveConversationCheckFromHistory(userMessage, recentForMembers);
+  if (convCheck) {
+    try {
+      setAgentPath("hard-return", "conversation_check");
+      return await runConversationCheckQuickPath(userId, threadId, convCheck.phone);
+    } catch (err) {
+      return userFacingError(err);
+    }
   }
 
   const runGroupQuick =
