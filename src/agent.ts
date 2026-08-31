@@ -7,7 +7,6 @@ import {
   getAutomation,
   getOutreachQuotaSnapshot,
   getRecentAgentMessages,
-  listAutomations,
   tryConsumeTrialGroupExtract,
   type AgentMessage,
   type AppSettings,
@@ -477,37 +476,7 @@ async function buildBusinessContext(
       lines.push(GROUPS_FIL_SYSTEM_ADDENDUM);
     }
 
-    // Liste compte (noms) — pour orienter, PAS pour modifier depuis un autre fil
-    try {
-      const allAutos = await listAutomations(userId, { limit: 30 });
-      if (allAutos.length > 0) {
-        const typeLabel: Record<string, string> = {
-          group_prospect: "prospection groupe",
-          contact_prospect: "prospection contacts",
-          keyword_sales: "support / closing entrant",
-          custom_followup: "suivi",
-          group_broadcast: "diffusion groupes",
-        };
-        const linesAuto = allAutos.slice(0, 12).map((a) => {
-          const linkedHere = thread?.automation_id === a.id ? " ← CE FIL" : "";
-          return `- « ${a.name} » [${a.status}] ${typeLabel[a.type] ?? a.type}${linkedHere}`;
-        });
-        const more =
-          allAutos.length > 12 ? `\n(+${allAutos.length - 12} autres — list_automations si besoin)` : "";
-        lines.push(
-          `## Campagnes (compte)\n` +
-            `${linesAuto.join("\n")}${more}\n` +
-            `Modifier/activer = seulement « CE FIL ». Autre fil → barre latérale. Pas d'id numérique à l'utilisateur.`
-        );
-      } else {
-        lines.push(
-          `## Campagnes existantes (compte)\nAucune campagne sur ce compte pour l'instant.`
-        );
-      }
-    } catch {
-      /* ignore */
-    }
-
+    // Contexte campagne : uniquement CE fil (pas de liste globale compte)
     if (thread?.description?.trim()) {
       lines.push(
         `## Objectif de cette automatisation\n${thread.description.trim()}\n\n` +
@@ -547,9 +516,7 @@ async function buildBusinessContext(
         `## Fil vide\n` +
           `Aucune campagne liée à ce fil.\n` +
           `- « Lancer une campagne » / « nouvelle » → briefing puis create_automation (type compatible avec le purpose du fil).\n` +
-          `- « Une existante » / « modifier » → si des campagnes apparaissent ci-dessus : liste-les par **nom**, ` +
-          `explique qu'elles vivent dans **leur fil** de la barre latérale, et invite à ouvrir le bon fil. ` +
-          `Ne propose PAS de les modifier ici. Ne dis PAS « donne-moi son numéro ».\n` +
+          `- **INTERDIT** de mentionner, lister ou supposer l'existence de campagnes sur d'autres fils (« tu as déjà une campagne X en pause »).\n` +
           `- **INTERDIT** de prétendre changer le mode Support ↔ Prospection de ce fil.`
       );
     }

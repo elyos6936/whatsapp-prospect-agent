@@ -379,15 +379,18 @@ export async function touchAgentThread(userId: number, threadId: number): Promis
 export async function deleteAgentThread(userId: number, threadId: number): Promise<boolean> {
   const thread = await getAgentThread(userId, threadId);
   if (!thread) return false;
-  const automationId = thread.automation_id;
-  // Délier avant suppression cascade / FK
-  await sql`
-    UPDATE automations SET agent_thread_id = NULL
+
+  const linkedRows = await sql<{ id: number }[]>`
+    SELECT id FROM automations
     WHERE user_id = ${userId} AND agent_thread_id = ${threadId}
   `;
+  const automationIds = new Set<number>();
+  if (thread.automation_id) automationIds.add(thread.automation_id);
+  for (const row of linkedRows) automationIds.add(Number(row.id));
+
   await sql`DELETE FROM agent_threads WHERE user_id = ${userId} AND id = ${threadId}`;
-  if (automationId) {
-    await deleteAutomation(userId, automationId);
+  for (const id of automationIds) {
+    await deleteAutomation(userId, id);
   }
   return true;
 }
