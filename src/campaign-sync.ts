@@ -241,7 +241,19 @@ export async function persistLivePlaybookForThread(
   const now = new Date().toISOString();
   const prev = auto.config.livePlaybook;
   const firstToi = safeTurns.find((t) => t.speaker === "toi")?.text?.trim() || "";
-  const syncOpener = opts.syncOpener !== false;
+  const abMessages = (auto.config.abVariants ?? [])
+    .map((v) => v.message?.trim())
+    .filter(Boolean) as string[];
+  const hasAbRotation = abMessages.length >= 5;
+  const syncOpener = opts.syncOpener !== false && !hasAbRotation;
+
+  if (hasAbRotation && safeTurns[0]?.speaker === "toi") {
+    const anchor =
+      auto.config.initialMessage?.trim() ||
+      abMessages[0] ||
+      safeTurns[0]!.text.trim();
+    safeTurns[0] = { ...safeTurns[0]!, text: anchor };
+  }
 
   const playbook: LivePlaybook = {
     updatedAt: now,
@@ -249,18 +261,20 @@ export async function persistLivePlaybookForThread(
     turns: safeTurns,
     openerSnapshot:
       (syncOpener && firstToi
-        ? firstToi
+        ? safeTurns.find((t) => t.speaker === "toi")?.text?.trim() || firstToi
         : auto.config.initialMessage || prev?.openerSnapshot || firstToi) || undefined,
     guideSnapshot: auto.config.conversationGuide || prev?.guideSnapshot,
     memoryName: mem?.name || prev?.memoryName,
     memoryFingerprint: mem ? fingerprint(mem.instructions) : prev?.memoryFingerprint,
   };
 
-  // Ancre le 1er message campagne sur la simu (source de vérité live).
+  // Ancre le 1er message campagne sur la simu — sauf rotation 5 accroches (ab_variants = source de vérité).
   const nextInitial =
-    syncOpener && firstToi
-      ? firstToi
-      : auto.config.initialMessage;
+    hasAbRotation
+      ? auto.config.initialMessage
+      : syncOpener && firstToi
+        ? safeTurns.find((t) => t.speaker === "toi")?.text?.trim() || firstToi
+        : auto.config.initialMessage;
 
   // Section fidélité dans le guide — remplace une précédente section Klanvio playbook.
   const fidelityBlock =

@@ -119,6 +119,14 @@ function buildSimCampaignContext(
     outbound && cfg.initialMessage
       ? `Premier message (opener sortant) : « ${cfg.initialMessage} »`
       : "",
+    outbound && (cfg.abVariants?.length ?? 0) >= 2
+      ? `Rotation A/B (5 accroches — le 1er envoi = UNE de ces phrases, sans pitch collé) :\n` +
+        (cfg.abVariants ?? [])
+          .slice(0, 5)
+          .map((v, i) => `${i + 1}. « ${String(v.message ?? "").trim()} »`)
+          .filter((l) => !l.endsWith("«  »"))
+          .join("\n")
+      : "",
     !outbound && cfg.initialMessage
       ? `Réponse type / ton de référence (PAS un opener à coller) : « ${cfg.initialMessage} »`
       : "",
@@ -149,7 +157,7 @@ function buildSimCampaignContext(
     `Tu es en SIMULATION téléphone — 0 envoi réel — mais tes réponses doivent être`,
     `IDENTIQUES à ce que tu écrirais à un vrai ${outbound ? "prospect" : "client"} (même playbook, même ton).`,
     outbound
-      ? `IMPORTANT SORTANT : TU as initié. Si le prospect répond « salut / hello / ok », INTERDIT de te présenter (nom + bio). Enchaîne 1 question concrète liée à la mission.`
+      ? `IMPORTANT SORTANT : TU as initié. Le 1er message = UNE accroche validée (liste ci-dessus), sans présentation ni pitch. Si le prospect répond « salut / hello / ok », INTERDIT de te re-présenter (nom + bio) — enchaîne l'étape mémoire suivante.`
       : [
           `IMPORTANT ENTRANT (support) : LE CLIENT a écrit en premier. Tu gères le compte / la boutique.`,
           `La mémoire liée peut parler de prospection — IGNORE toute consigne de cold outreach / accroche / qualification « secteur » / « type de tâche ».`,

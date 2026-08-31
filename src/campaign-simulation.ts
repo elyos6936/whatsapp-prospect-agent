@@ -133,6 +133,48 @@ function parseTurnsFromModelText(content: string): SimulationTurn[] | null {
   return turns.length >= 3 && turns.length <= 4 ? turns : null;
 }
 
+function normalizeOpenerCompare(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/[?.!…,:;«»"'"]/g, "")
+    .trim();
+}
+
+/** Le modèle colle souvent présentation/pitch au tour 1 — on ancre sur l'accroche validée. */
+export function clampSimulationOpenerTurn(
+  turns: SimulationTurn[],
+  approvedOpener: string | null | undefined,
+  abVariantMessages?: string[]
+): SimulationTurn[] {
+  if (!turns.length || turns[0]?.speaker !== "toi") return turns;
+  const candidates = [
+    approvedOpener?.trim(),
+    ...(abVariantMessages ?? []).map((m) => m.trim()),
+  ].filter(Boolean) as string[];
+  if (!candidates.length) return turns;
+
+  const first = turns[0]!.text.trim();
+  const firstNorm = normalizeOpenerCompare(first);
+
+  for (const candidate of candidates) {
+    const candNorm = normalizeOpenerCompare(candidate);
+    if (!candNorm) continue;
+    if (firstNorm === candNorm || firstNorm.startsWith(candNorm) || candNorm.startsWith(firstNorm)) {
+      return [{ ...turns[0]!, text: candidate }, ...turns.slice(1)];
+    }
+  }
+
+  // Opener court validé + pitch collé (« Bonjour… » + « Je suis Will… »)
+  const anchor = candidates[0]!;
+  const anchorNorm = normalizeOpenerCompare(anchor);
+  if (anchorNorm && firstNorm.startsWith(anchorNorm.slice(0, Math.min(24, anchorNorm.length)))) {
+    return [{ ...turns[0]!, text: anchor }, ...turns.slice(1)];
+  }
+
+  return [{ ...turns[0]!, text: anchor }, ...turns.slice(1)];
+}
+
 /**
  * Génère la simulation sans outils (JSON direct).
  */
@@ -143,6 +185,8 @@ export async function generateCampaignSimulationDirect(
     recentTranscript: string;
     /** Accroche validée — le 1er tour « toi » doit coller à ce texte (légère reformulation OK). */
     approvedOpener?: string | null;
+    /** Les 5 accroches enregistrées (rotation) — tour 1 = l'une d'elles, jamais un pitch. */
+    abVariantMessages?: string[];
     /** Guide / prix / lien config (secondaire). */
     campaignBrief?: string | null;
     /** Instructions mémoire brutes — process à exécuter, non tronquées. */
@@ -158,8 +202,12 @@ export async function generateCampaignSimulationDirect(
     campaignTexts: [opts.campaignBrief, opts.businessContext, opts.memoryInstructions],
   });
   const toneLbl = toneLabel(tone);
+  const variantHint =
+    (opts.abVariantMessages ?? []).filter(Boolean).slice(0, 5).join(" » | « ") || null;
   const openerRule = opts.approvedOpener?.trim()
-    ? `- Le 1er message « toi » DOIT reprendre (presque mot pour mot) cette accroche validée : « ${opts.approvedOpener.trim().slice(0, 400)} » — micro-variation OK, PAS de nouvel angle.\n`
+    ? `- Tour 1 « toi » = UNIQUEMENT l'accroche Attention validée (1 phrase, ${toneLbl}) : « ${opts.approvedOpener.trim().slice(0, 400)} »` +
+      (variantHint ? ` (rotation parmi : « ${variantHint} »)` : "") +
+      `. INTERDIT sur ce tour : prénom/nom, « je suis », bio, offre, prix, lien, pitch. Présentation = tour 3+ après réponse prospect.\n`
     : `- Le 1er message « toi » = accroche courte (format Attention recommandé, ${toneLbl}, sans prénom du prospect).\n`;
 
   const memoryBody = (opts.memoryInstructions ?? "").trim();
@@ -211,7 +259,11 @@ export async function generateCampaignSimulationDirect(
         turnLooksVagueAfterYes(t.text)
     );
 
-  let finalTurns = turns;
+  let finalTurns = clampSimulationOpenerTurn(
+    turns,
+    opts.approvedOpener,
+    opts.abVariantMessages
+  );
   if (needsRepair) {
     console.warn("[simulation] sanitizing / repairing dump or vague-after-yes");
     const repaired = await runSimCompletion(
@@ -223,9 +275,17 @@ export async function generateCampaignSimulationDirect(
       0.25
     );
     if (repaired && !turnsContainPhoneDump(repaired)) {
-      finalTurns = repaired;
+      finalTurns = clampSimulationOpenerTurn(
+        repaired,
+        opts.approvedOpener,
+        opts.abVariantMessages
+      );
     } else {
-      finalTurns = turns.filter((t) => !turnsContainPhoneDump([t]));
+      finalTurns = clampSimulationOpenerTurn(
+        turns.filter((t) => !turnsContainPhoneDump([t])),
+        opts.approvedOpener,
+        opts.abVariantMessages
+      );
       if (finalTurns.length < 3) return null;
     }
   }

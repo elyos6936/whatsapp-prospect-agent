@@ -294,6 +294,7 @@ export async function runDeterministicDraftAndSim(opts: {
   let campaignBrief: string | null = null;
   let memoryInstructions: string | null = null;
   let memoryName: string | null = null;
+  let memoryFormality: "tu" | "vous" | null = null;
   if (freshThread?.automation_id) {
     const auto = await getAutomation(userId, freshThread.automation_id);
     approvedOpener = auto?.config.initialMessage?.trim() || approvedOpener;
@@ -308,6 +309,7 @@ export async function runDeterministicDraftAndSim(opts: {
         const mem = await getLinkedMemoryForAutomation(userId, auto.id);
         memoryInstructions = mem?.instructions?.trim() || null;
         memoryName = mem?.name ?? null;
+        memoryFormality = mem?.formality ?? null;
         if (!memoryInstructions && auto.config.conversationGuide) {
           bits.unshift(`Guide :\n${auto.config.conversationGuide}`);
         }
@@ -333,9 +335,11 @@ export async function runDeterministicDraftAndSim(opts: {
       businessContext,
       recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
       approvedOpener,
+      abVariantMessages: variants.map((v) => v.message),
       campaignBrief,
       memoryInstructions,
       memoryName,
+      memoryFormality,
     });
 
     if (sim?.display?.trim() && /```klanvio-sim\b/i.test(sim.display)) {
@@ -546,6 +550,8 @@ export async function runDeterministicSimulation(opts: {
   let campaignBrief: string | null = null;
   let memoryInstructions: string | null = null;
   let memoryName: string | null = null;
+  let memoryFormality: "tu" | "vous" | null = null;
+  let abVariantMessages: string[] = [];
   let isSupportCampaign = false;
   let supportTriggers: string[] = [];
   let supportCatchAll = false;
@@ -553,6 +559,9 @@ export async function runDeterministicSimulation(opts: {
   if (automationId) {
     const auto = await getAutomation(userId, automationId);
     approvedOpener = auto?.config.initialMessage?.trim() || null;
+    abVariantMessages = (auto?.config.abVariants ?? [])
+      .map((v) => v.message?.trim())
+      .filter(Boolean) as string[];
     isSupportCampaign =
       auto?.type === "keyword_sales" || auto?.config.mode === "inbound_closing";
     // Groupes : pas de simulation téléphone
@@ -581,6 +590,7 @@ export async function runDeterministicSimulation(opts: {
         const mem = await getLinkedMemoryForAutomation(userId, auto.id);
         memoryInstructions = mem?.instructions?.trim() || null;
         memoryName = mem?.name ?? null;
+        memoryFormality = mem?.formality ?? null;
         if (!memoryInstructions && auto.config.conversationGuide) {
           bits.unshift(`Guide :\n${auto.config.conversationGuide}`);
         }
@@ -607,6 +617,9 @@ export async function runDeterministicSimulation(opts: {
   if (!approvedOpener && !isSupportCampaign) {
     const variants = extractOpenerVariantsFromHistory(history);
     approvedOpener = variants?.[0]?.message ?? null;
+    if (!abVariantMessages.length && variants?.length) {
+      abVariantMessages = variants.map((v) => v.message);
+    }
   }
 
   if (!approvedOpener && !automationId && !isSupportCampaign) {
@@ -665,9 +678,11 @@ export async function runDeterministicSimulation(opts: {
     businessContext,
     recentTranscript: `${recentTranscript}\n\nUser: ${userMessage}`,
     approvedOpener,
+    abVariantMessages,
     campaignBrief,
     memoryInstructions,
     memoryName,
+    memoryFormality,
   });
   if (!sim?.display?.trim()) return null;
 
