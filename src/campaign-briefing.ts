@@ -226,6 +226,32 @@ export function hasNumberedOpenerList(content: string): boolean {
   return countOpenerListMarks(content) >= 4;
 }
 
+/** Texte plausible comme accroche WhatsApp (≠ membres, groupes, sim, numéros). */
+function looksLikeOpenerVariantText(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 8) return false;
+  if (/(?:\+|00)\d[\d\s.\-]{7,}\d/.test(t) || /\b\d{10,15}\b/.test(t)) return false;
+  if (/^\+?\d[\d\s.\-]{7,}\d(?:\s*[·•\-–]|\s+admin\b)/i.test(t)) return false;
+  if (/\bmembres?\s+(du\s+)?groupe\b/i.test(t)) return false;
+  if (/\bvoici\s+(vos\s+)?groupes?\b/i.test(t)) return false;
+  if (/\bvoici\s+les\s+membres\b/i.test(t)) return false;
+  if (/```klanvio-sim/i.test(t)) return false;
+  if (/^(toi|prospect)\s*[→:]/i.test(t)) return false;
+  if (/^parfait\s*[—–-]\s*les\s+5\s+accroches/i.test(t)) return false;
+  if (!/[a-zàâäéèêëïîôùûüç]{4,}/i.test(t)) return false;
+  return true;
+}
+
+/** Message assistant qui peut contenir des variantes d'accroche (pas un dump outil). */
+function isOpenerVariantsSourceMessage(content: string): boolean {
+  if (/\bvoici\s+(vos\s+)?groupes?\s+whats?app\b/i.test(content)) return false;
+  if (/\bvoici\s+les\s+membres\s+(du\s+groupe|«)/i.test(content)) return false;
+  if (/\bextrait(?:er)?\s+(?:les\s+)?contacts?\b/i.test(content)) return false;
+  if (/```klanvio-sim/i.test(content)) return false;
+  if (/^\s*parfait\s*[—–-]\s*les\s+5\s+accroches/i.test(content)) return false;
+  return true;
+}
+
 function cleanExtractedOpener(raw: string | undefined): string | null {
   let text = raw
     ?.replace(/^["«“"'\s]+|["»”"'\s]+$/g, "")
@@ -233,10 +259,7 @@ function cleanExtractedOpener(raw: string | undefined): string | null {
     .replace(/\s+/g, " ")
     .trim();
   if (!text || text.length < 8) return null;
-  // Liste de membres (nom + téléphone) ≠ accroches
-  if (/(?:\+|00)\d[\d\s.\-]{7,}\d/.test(text) || /\b\d{10,15}\b/.test(text)) {
-    return null;
-  }
+  if (!looksLikeOpenerVariantText(text)) return null;
   return text.slice(0, 1200);
 }
 
@@ -273,11 +296,12 @@ function extractOpenerItemsFromText(
   const bulletLines = content
     .split(/\n/)
     .map((l) => l.replace(/^[\s•\-–*]+/, "").trim())
-    .filter((l) => l.length >= 8);
+    .map((l) => cleanExtractedOpener(l))
+    .filter((l): l is string => Boolean(l));
   if (bulletLines.length >= 4) {
     return bulletLines.slice(0, 5).map((message, i) => ({
       id: `v${i + 1}`,
-      message: message.slice(0, 1200),
+      message,
     }));
   }
 
@@ -287,6 +311,8 @@ function extractOpenerItemsFromText(
 function padOpenerVariants(
   variants: Array<{ id: string; message: string }>
 ): Array<{ id: string; message: string }> | null {
+  const valid = variants.filter((v) => looksLikeOpenerVariantText(v.message));
+  variants = valid;
   if (variants.length < 4) return null;
   while (variants.length < 5) {
     const last = variants[variants.length - 1]!;
@@ -305,6 +331,7 @@ export function extractOpenerVariantsFromHistory(
   for (let i = history.length - 1; i >= 0 && i >= history.length - 24; i--) {
     const m = history[i];
     if (m?.role !== "assistant") continue;
+    if (!isOpenerVariantsSourceMessage(m.content)) continue;
     if (!hasNumberedOpenerList(m.content) && !OPENER_VARIANTS_PROPOSED_RE.test(m.content)) {
       continue;
     }
@@ -312,6 +339,12 @@ export function extractOpenerVariantsFromHistory(
     if (padded) return padded;
   }
   return null;
+}
+
+/** 5 accroches réelles extraites du fil (pas listes membres / groupes). */
+export function hasValidProspectOpenerVariants(history: AgentMessage[]): boolean {
+  const v = extractOpenerVariantsFromHistory(history);
+  return v != null && v.length === 5;
 }
 
 export function isOpenerDelegation(text: string): boolean {
@@ -382,10 +415,7 @@ export function hasUserProvidedOpenerDirection(
 
 /** Les 5 variantes ont déjà été listées dans le fil. */
 export function hasProposedOpenerVariants(history: AgentMessage[]): boolean {
-  // « puis les 5 variantes » dans la question d'angle ≠ proposition réelle.
-  return history
-    .slice(-24)
-    .some((m) => m.role === "assistant" && hasNumberedOpenerList(m.content));
+  return hasValidProspectOpenerVariants(history);
 }
 
 function lastSingleOpenerAssistantIndex(history: AgentMessage[]): number {

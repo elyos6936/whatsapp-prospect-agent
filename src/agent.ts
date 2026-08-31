@@ -68,6 +68,7 @@ import {
   assessCampaignBriefing,
   buildBriefingNudge,
   extractOpenerVariantsFromHistory,
+  hasValidProspectOpenerVariants,
   hasNumberedOpenerList,
   buildMissingMemoryNudge,
   buildThreadCampaignBlockNudge,
@@ -240,7 +241,6 @@ function lastAssistantLooksLikeVariantGate(history: AgentMessage[]): boolean {
   if (!last?.content) return false;
   const c = last.content;
   if ((extractOpenerVariantsFromHistory([last])?.length ?? 0) >= 4) return true;
-  if (/(?:^|\n)\s*1\s*[.)]/.test(c) && /(?:^|\n)\s*5\s*[.)]/.test(c)) return true;
   return /tu valides|valider\s+(ces|les)|je\s+valide|l['’]ensemble|ces\s+(5\s+)?accroches|les\s+5\s+accroches/i.test(
     c,
   );
@@ -1267,8 +1267,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   if (
     !briefing.isInboundClosing &&
     !briefing.isGroupsFlow &&
-    (briefing.openerVariantsProposed ||
-      (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4) &&
+    hasValidProspectOpenerVariants(history) &&
     isShortCampaignValidation(userMessage) &&
     // GAP-015 : bare « oui » seulement si le dernier message propose/valide les accroches
     (!isBareShortValidation(userMessage) || lastAssistantLooksLikeVariantGate(history)) &&
@@ -1701,6 +1700,19 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
                 existingAutomationId: thread?.automation_id ?? null,
               });
               if (drafted) return sanitizeUserVisibleReply(drafted);
+            } else if (!hasValidProspectOpenerVariants(history)) {
+              messages.push({
+                role: "tool",
+                tool_call_id: toolCall.id,
+                content: JSON.stringify({
+                  error:
+                    "INTERDIT de créer le brouillon sans 5 accroches réelles dans le fil. " +
+                    "Propose d'abord UNE accroche, valide-la, puis liste 5 variantes numérotées.",
+                }),
+              });
+              const nudge = buildBriefingNudge(briefing, history, userMessage);
+              if (nudge) messages.push({ role: "system", content: nudge });
+              continue;
             } else {
               const drafted = await runDeterministicDraftAndSim({
                 userId,
@@ -2095,7 +2107,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
         if (
           !briefing.isInboundClosing &&
           !briefing.isGroupsFlow &&
-          (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4
+          hasValidProspectOpenerVariants(history)
         ) {
           try {
             const drafted = await runDeterministicDraftAndSim({
@@ -2263,7 +2275,7 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
       !briefing.isGroupsFlow &&
       !hasSimAlready &&
       isShortCampaignValidation(userMessage) &&
-      (extractOpenerVariantsFromHistory(history)?.length ?? 0) >= 4 &&
+      hasValidProspectOpenerVariants(history) &&
       (!isBareShortValidation(userMessage) || lastAssistantLooksLikeVariantGate(history));
 
     if (

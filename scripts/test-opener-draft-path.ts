@@ -6,6 +6,8 @@ import type { AgentMessage } from "../src/db.js";
 import {
   extractOpenerVariantsFromHistory,
   hasNumberedOpenerList,
+  hasProposedOpenerVariants,
+  hasValidProspectOpenerVariants,
   isShortCampaignValidation,
 } from "../src/campaign-briefing.js";
 import { extractProspectGroupQueryFromHistory } from "../src/deterministic-campaign.js";
@@ -68,6 +70,27 @@ console.log("\n=== skip member dump as variants ===\n");
   ];
   const v = extractOpenerVariantsFromHistory(history);
   assert(v == null, "member phones are not openers");
+  assert(!hasProposedOpenerVariants(history), "hasProposedOpenerVariants false on member dump");
+}
+
+console.log("\n=== Test 1 Will — SGBD member list + maintenant ===\n");
+{
+  const history = [
+    msg(
+      "assistant",
+      'Voici vos groupes WhatsApp (122) :\n1. "Institut de Coiffure"\n2. (Agent) IA V2\n3. EEIA-SAP\n4. JEEP eFoot\n5. More groups…',
+    ),
+    msg(
+      "assistant",
+      "Voici les membres du groupe « SGBD & PL-EDL » (7) :\n\n1. +22997365155\n2. +22959593540 · admin\n3. +22952353484\n4. +22951781761\n5. +22945631585\n6. +22945584212\n7. +22942695820",
+    ),
+    msg("assistant", "Tu veux que je lance la prospection à quel moment exactement ? (maintenant, demain matin, lundi 9h…)"),
+    msg("user", "maintenant"),
+  ];
+  assert(hasNumberedOpenerList(history[1]!.content), "member list still numbered");
+  assert(extractOpenerVariantsFromHistory(history) == null, "no fake openers from member list");
+  assert(!hasValidProspectOpenerVariants(history), "maintenant must not unlock draft");
+  assert(!hasProposedOpenerVariants(history), "openerVariantsProposed false before real variants");
 }
 
 console.log("\n=== validation courte ===\n");
