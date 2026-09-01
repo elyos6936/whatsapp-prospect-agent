@@ -73,6 +73,11 @@ console.log("\n=== detectGroupManageIntent ===\n");
 
   const invAdd = detectGroupManageIntent("invite +22966082161 dans le groupe Le Labo du No code");
   assert(invAdd?.action === "add", "invite + numéro = add");
+
+  const byName = detectGroupManageIntent("Retire Eusebe du groupe Le Labo du no code");
+  assert(byName?.action === "remove", "remove by name");
+  assert(byName?.contactName === "Eusebe", `contact Eusebe (got ${byName?.contactName})`);
+  assert(/labo du no code/i.test(byName?.groupQuery ?? ""), "groupe Labo by name");
 }
 
 console.log("\n=== admin confirm + history ===\n");
@@ -92,6 +97,15 @@ console.log("\n=== admin confirm + history ===\n");
   assert(retry?.action === "add", "retry add");
   assert(/labo/i.test(retry?.groupQuery ?? ""), "retry garde le groupe");
   assert(retry?.phones.length === 1, "retry garde le numéro");
+
+  const rmHist = [
+    msg("user", "Retire Eusebe du groupe Le Labo du no code"),
+    msg("assistant", "Quel **numéro** retirer dans « Le Labo du no code » ?"),
+  ];
+  const rmPhone = resolveManageIntentFromHistory("+229 66 08 21 61", rmHist);
+  assert(rmPhone?.action === "remove", "numéro suite remove");
+  assert(/labo du no code/i.test(rmPhone?.groupQuery ?? ""), "groupe conservé après numéro");
+  assert(rmPhone?.phones.some((p) => /66082161/.test(p)), "numéro parsé");
 }
 
 console.log("\n=== invite / leave / non-publish ===\n");

@@ -119,6 +119,7 @@ import {
   allowGroupQuickPaths,
   resolveGroupSendIntentFromHistory,
   resolveMembersIntentFromHistory,
+  stripScheduleFromGroupName,
   wantsExplicitGroupCatalog,
   type GroupSendNowIntent,
 } from "./group-list-intent.js";
@@ -551,33 +552,110 @@ const MANAGE_ACTION_LABEL: Record<GroupManageIntent["action"], string> = {
   demote: "rétrograder",
 };
 
+function replyFromGroupManageTool(
+  raw: string,
+  opts: { groupName: string; count: number; action: GroupManageIntent["action"] }
+): string {
+  const labels = { add: "ajoutés", remove: "retirés", promote: "promus admin", demote: "rétrogradés" };
+  try {
+    const parsed = JSON.parse(raw) as {
+      success?: boolean;
+      message?: string;
+      error?: string;
+      count?: number;
+      groupName?: string;
+    };
+    if (parsed.error) return userFacingError(parsed.error);
+    const name = (opts.groupName || parsed.groupName || "").trim();
+    if (parsed.success) {
+      const n = parsed.count ?? opts.count;
+      if (parsed.message && name && !/dans\s+[«"']\s*[»"']/.test(parsed.message)) {
+        return parsed.message;
+      }
+      return `${n} participant(s) ${labels[opts.action]} dans « ${name || "le groupe"} ».`;
+    }
+    if (parsed.message) return parsed.message;
+  } catch {
+    /* raw */
+  }
+  return userFacingError(raw);
+}
+
+async function resolveGroupMemberPhonesByName(
+  userId: number,
+  groupQuery: string,
+  contactName: string
+): Promise<string[] | null> {
+  const found = await findGroupByNameOrId(userId, groupQuery);
+  if (!found) return null;
+  const data = await getGroupMembers(userId, found.id);
+  const key = contactName
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .trim();
+  if (!key) return null;
+  const hits: string[] = [];
+  for (const p of data.participants) {
+    const label = (p.name ?? "")
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/\p{M}/gu, "");
+    if (!label) continue;
+    if (label.includes(key) || key.includes(label)) {
+      hits.push(chatIdToDisplay(p.id));
+    }
+  }
+  return hits.length ? hits : null;
+}
+
 async function runGroupManageQuickPath(
   userId: number,
   threadId: number,
   intent: GroupManageIntent
 ): Promise<string> {
-  if (!intent.phones.length) {
+  let phones = [...intent.phones];
+  const groupQueryRaw = intent.groupQuery
+    ? stripScheduleFromGroupName(intent.groupQuery).name
+    : "";
+
+  if (!phones.length && intent.contactName && groupQueryRaw) {
+    const resolved = await resolveGroupMemberPhonesByName(
+      userId,
+      groupQueryRaw,
+      intent.contactName
+    );
+    if (resolved?.length) phones = resolved;
+  }
+
+  if (!phones.length) {
+    const groupLabel = groupQueryRaw;
+    const who = intent.contactName ? ` **${intent.contactName}**` : "";
     return (
-      `Quel **numéro** ${MANAGE_ACTION_LABEL[intent.action]}` +
-      (intent.groupQuery ? ` dans « ${intent.groupQuery} »` : "") +
+      `Quel **numéro**${who} ${MANAGE_ACTION_LABEL[intent.action]}` +
+      (groupLabel ? ` dans « ${groupLabel} »` : "") +
       ` ?`
     );
   }
-  if (!intent.groupQuery) {
-    return `Dans quel groupe ${MANAGE_ACTION_LABEL[intent.action]} ${intent.phones.join(", ")} ?`;
+  if (!groupQueryRaw) {
+    return `Dans quel groupe ${MANAGE_ACTION_LABEL[intent.action]} ${phones.join(", ")} ?`;
   }
   const found = await requireNamedGroupAdmin(
     userId,
-    intent.groupQuery,
+    groupQueryRaw,
     `${MANAGE_ACTION_LABEL[intent.action]} un membre`
   );
   if (typeof found === "string") return found;
   const raw = await executeTool(userId, threadId, "manage_group_participants", {
     group_id: found.id,
     action: intent.action,
-    participants: intent.phones,
+    participants: phones,
   });
-  return replyFromToolJson(raw);
+  return replyFromGroupManageTool(raw, {
+    groupName: found.name || groupQueryRaw,
+    count: phones.length,
+    action: intent.action,
+  });
 }
 
 async function runGroupSendQuickPath(
@@ -607,6 +685,7 @@ async function runGroupSendQuickPath(
   if (!groupQuery) {
     return "Dans quel groupe envoyer ce message ? Donne le nom exact.";
   }
+  groupQuery = stripScheduleFromGroupName(groupQuery).name;
   const found = await requireNamedGroupAdmin(userId, groupQuery, "y publier");
   if (typeof found === "string") return found;
   if (intent.sendAtLocal) {
@@ -704,14 +783,15 @@ function replyFromGroupSendTool(
     if (parsed.error) return userFacingError(parsed.error);
     if (parsed.confirmation?.trim()) return parsed.confirmation.trim();
     const when = parsed.sendAt || opts.sendAtLocal;
+    const name = opts.groupName.trim() || "le groupe";
     if (when) {
-      return `Message programmé dans « ${opts.groupName} » à ${when} : « ${opts.preview} ».`;
+      return `Message programmé dans « ${name} » à ${when} : « ${opts.preview} ».`;
     }
     if (parsed.success && parsed.message && parsed.message !== opts.preview) {
-      return parsed.message;
+      if (/programm[eé]/i.test(parsed.message) || when) return parsed.message;
     }
     if (parsed.success) {
-      return `Message envoyé dans « ${opts.groupName} » : « ${opts.preview} ».`;
+      return `Message envoyé dans « ${name} » : « ${opts.preview} ».`;
     }
   } catch {
     /* raw */
@@ -825,9 +905,13 @@ export async function chatWithAgent(userId: number, userMessage: string, threadI
   const sendQuick = resolveGroupSendIntentFromHistory(userMessage, recentForMembers);
   if (sendQuick) {
     if (!sendQuick.message) {
+      const groupLabel = sendQuick.groupQuery
+        ? stripScheduleFromGroupName(sendQuick.groupQuery).name
+        : "";
       return (
         `Quel **message** envoyer` +
-        (sendQuick.groupQuery ? ` dans « ${sendQuick.groupQuery} »` : "") +
+        (groupLabel ? ` dans « ${groupLabel} »` : "") +
+        (sendQuick.sendAtLocal ? ` (programmé à ${sendQuick.sendAtLocal})` : "") +
         ` ?`
       );
     }

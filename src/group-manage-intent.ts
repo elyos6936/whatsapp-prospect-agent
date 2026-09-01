@@ -1,6 +1,6 @@
 /**
  * Intents groupes hors publication : ajouter / retirer / admin / lien / quitter.
- * Symbolique (regex) — l'IA ne doit pas les détourner vers « quel texte poster ».
+ * Symbolique (regex + history-resolve) — l'IA ne doit pas les détourner vers « quel texte poster ».
  */
 
 export type GroupManageAction = "add" | "remove" | "promote" | "demote";
@@ -9,6 +9,8 @@ export type GroupManageIntent = {
   action: GroupManageAction;
   phones: string[];
   groupQuery: string;
+  /** Prénom / nom cité (« Retire Eusebe du groupe X ») — résolu via membres du groupe. */
+  contactName?: string;
 };
 
 const PHONE_RE = /(?:\+|00)?(?:229)?[\s.\-]*(?:01[\s.\-]*)?\d(?:[\s.\-]*\d){6,13}/g;
@@ -37,9 +39,34 @@ function tidyGroupName(raw: string): string {
     .replace(/^[«"']+/, "")
     .replace(/[»"'?.!]+$/u, "")
     .replace(/\s+(?:à|a|au)\s+(?:\+|00)?\d[\d\s.\-]{6,}$/i, "")
+    .replace(/\s+(?:à|a)\s+\d{1,2}\s*h\d{0,2}\s*$/i, "")
     .replace(/(?:\+|00)?(?:229)?[\s.\-]*(?:01[\s.\-]*)?\d(?:[\s.\-]*\d){6,13}\s*$/g, "")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** « Retire Eusebe du groupe X » → Eusebe (pas un numéro). */
+function extractContactNameFromManage(t: string): string {
+  const m =
+    t.match(
+      /\b(?:retire[rz]?|retirer|enl[eè]ve[rz]?|enlever|ajoute[rz]?|ajouter|invite[rz]?|inviter)\s+([A-Za-zÀ-ÿ][\wÀ-ÿ' -]{1,40}?)\s+du\s+(?:le\s+|mon\s+|mes\s+)?groupes?\b/i
+    ) ||
+    t.match(
+      /\b(?:fais|faire|mets?|promouvoir|promou[a-z]*|nomme)\s+([A-Za-zÀ-ÿ][\wÀ-ÿ' -]{1,40}?)\s+(?:admin\s+)?du\s+(?:le\s+|mon\s+|mes\s+)?groupes?\b/i
+    );
+  const name = m?.[1]?.trim() ?? "";
+  if (!name || name.length < 2) return "";
+  if (/^\+?\d[\d\s.\-]{6,}$/.test(name)) return "";
+  if (/^(le|la|les|mon|ma|mes|un|une)$/i.test(name)) return "";
+  return name;
+}
+
+/** Nom de groupe dans une question assistant (« retirer dans « X » »). */
+function extractGroupFromAssistantAsk(content: string): string | null {
+  const m = content.match(/dans\s+[«"']\s*(.+?)\s*[»"']/i);
+  if (!m?.[1]) return null;
+  const name = tidyGroupName(m[1].trim());
+  return name.length >= 2 ? name : null;
 }
 
 export function extractGroupAfterKeyword(t: string): string {
@@ -84,8 +111,9 @@ export function detectGroupManageIntent(msg: string): GroupManageIntent | null {
   }
 
   const groupQuery = extractGroupAfterKeyword(t);
-  if (!phones.length && !groupQuery) return null;
-  return { action, phones, groupQuery };
+  const contactName = phones.length ? "" : extractContactNameFromManage(t);
+  if (!phones.length && !groupQuery && !contactName) return null;
+  return { action, phones, groupQuery, ...(contactName ? { contactName } : {}) };
 }
 
 export function looksLikeAdminConfirmation(msg: string): boolean {
@@ -300,10 +328,22 @@ export function resolveManageIntentFromHistory(
       const m = prior[i];
       if (m.role !== "assistant") continue;
       const ask = m.content.match(MANAGE_ASK_PHONE_RE);
-      if (ask) {
-        const action = actionFromLabel(ask[1] ?? "");
-        const groupQuery = tidyGroupName(ask[2] ?? "");
-        if (action && groupQuery) return { action, phones, groupQuery };
+      const groupFromAsk = extractGroupFromAssistantAsk(m.content);
+      if (ask || groupFromAsk) {
+        const action = ask ? actionFromLabel(ask[1] ?? "") : null;
+        const groupQuery = tidyGroupName(
+          groupFromAsk || ask?.[2]?.trim() || ""
+        );
+        const resolvedAction =
+          action ??
+          [...prior]
+            .reverse()
+            .map((x) => (x.role === "user" ? detectGroupManageIntent(x.content) : null))
+            .find((x) => x?.action)?.action ??
+          "remove";
+        if (groupQuery) {
+          return { action: resolvedAction, phones, groupQuery };
+        }
       }
       break;
     }

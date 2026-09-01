@@ -13,6 +13,7 @@ import {
   lastGroupQueryFromHistory,
   looksLikeBareGroupName,
   looksLikeWhenReply,
+  resolveGroupSendIntentFromHistory,
   resolveMembersIntentFromHistory,
 } from "../src/group-list-intent.js";
 import { shouldDeterministicGroupsDraft } from "../src/groups-flow.js";
@@ -184,6 +185,21 @@ console.log("\n=== detectGroupSendNowIntent (pas campagne, pas lien) ===\n");
   const c = detectGroupSendNowIntent("Non envoie juste 'Salut Klanvio 1' dans ce groupe");
   assert(c?.message === "Salut Klanvio 1", "ce groupe + message");
   assert(!c?.groupQuery, "ce groupe → nom via historique");
+
+  const d = detectGroupSendNowIntent(
+    "Envoie 'Parfait, c'est cool dans le groupe Le labo du no code à 10h50"
+  );
+  assert(d?.message === "Parfait, c'est cool", `screenshot: message (got ${d?.message})`);
+  assert(/labo du no code/i.test(d?.groupQuery ?? ""), `screenshot: groupe (got ${d?.groupQuery})`);
+  assert(d?.sendAtLocal === "10:50", `screenshot: 10h50 (got ${d?.sendAtLocal})`);
+
+  const histSend = [
+    msg("user", "Envoie 'Parfait, c'est cool dans le groupe Le labo du no code à 10h50"),
+    msg("assistant", "Quel **message** envoyer dans « Le labo du no code » ?"),
+  ];
+  const follow = resolveGroupSendIntentFromHistory("'Parfait, c'est cool'", histSend);
+  assert(follow?.message === "Parfait, c'est cool", "suite guillemets + c'est");
+  assert(follow?.sendAtLocal === "10:50", `suite conserve 10h50 (got ${follow?.sendAtLocal})`);
 }
 
 console.log("\n=== extractGroupNameFromPublishMessage (pas l'historique) ===\n");

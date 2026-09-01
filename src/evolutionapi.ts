@@ -1915,7 +1915,12 @@ export async function findGroupByNameOrId(
   nameOrId: string
 ): Promise<{ id: string; name: string } | null> {
   const raw = nameOrId.trim();
-  if (raw.endsWith("@g.us")) return { id: raw, name: raw };
+  if (raw.endsWith("@g.us")) {
+    const groups = await listWhatsAppGroups(userId);
+    const hit = groups.find((g) => g.id === raw);
+    if (hit?.name?.trim()) return { id: hit.id, name: hit.name.trim() };
+    return { id: raw, name: raw };
+  }
 
   const groups = await listWhatsAppGroups(userId);
   const target = normalizeGroupSearchKey(raw);

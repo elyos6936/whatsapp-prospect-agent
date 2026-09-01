@@ -364,6 +364,111 @@ export function resolveMembersIntentFromHistory(
   return null;
 }
 
+/** Retire un créneau « à 10h50 » / « a 14h » du nom de groupe. */
+export function stripScheduleFromGroupName(name: string): {
+  name: string;
+  sendAtLocal?: string;
+} {
+  const sendAtLocal = extractSendAtLocal(name);
+  const cleaned = name
+    .replace(/\s+(?:à|a)\s+\d{1,2}\s*h\d{0,2}\s*$/i, "")
+    .replace(/[»"']+$/u, "")
+    .trim();
+  return { name: cleaned, sendAtLocal };
+}
+
+/**
+ * Nom de groupe cité dans une question assistant (« dans « X » », « retirer dans « X » »).
+ * History-resolve — tolère **gras** Markdown et créneau « à 10h50 » dans le nom.
+ */
+export function extractGroupFromAssistantAsk(content: string): string | null {
+  const m = content.match(/dans\s+[«"']\s*(.+?)\s*[»"']/i);
+  if (!m?.[1]) return null;
+  const { name } = stripScheduleFromGroupName(m[1].trim());
+  return name.length >= 2 ? name : null;
+}
+
+/**
+ * Guillemets ouvrants seuls (pas de fermeture) — ex. apostrophe dans « c'est » :
+ * Envoie 'Parfait, c'est cool dans le groupe X à 10h50
+ */
+export function extractSendPayloadAfterVerb(msg: string): string | null {
+  const m = msg.trim().match(
+    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+(.+)$/is
+  );
+  if (!m?.[1]) return null;
+  let payload = m[1].trim();
+  if (/^['"«]/.test(payload)) payload = payload.slice(1);
+  if (/['"»]$/.test(payload)) payload = payload.slice(0, -1);
+  return payload.trim() || null;
+}
+
+/** Message seul entre guillemets — « 'Parfait, c'est cool' » (apostrophe interne OK). */
+export function extractStandaloneQuotedText(msg: string): string | null {
+  const t = msg.trim();
+  const pairs: Array<[string, string]> = [
+    ["'", "'"],
+    ['"', '"'],
+    ["«", "»"],
+  ];
+  for (const [open, close] of pairs) {
+    if (!t.startsWith(open) || !t.endsWith(close) || t.length < open.length + close.length + 1) {
+      continue;
+    }
+    const inner = t.slice(open.length, -close.length).trim();
+    if (inner.length >= 1) return inner;
+  }
+  return null;
+}
+
+/**
+ * Message + groupe + heure dans une seule citation :
+ * « Parfait, c'est cool dans le groupe Le labo du no code à 10h50 »
+ */
+export function splitMessageAndGroupFromInner(
+  inner: string
+): { message: string; groupQuery: string; sendAtLocal?: string } | null {
+  const m = inner.match(/^(.+?)\s+dans\s+(?:le\s+|mon\s+|mes\s+)?groupe\s+(.+)$/is);
+  if (!m?.[1] || !m[2]) return null;
+  const message = m[1].trim();
+  const { name: groupQuery, sendAtLocal } = stripScheduleFromGroupName(m[2].trim());
+  if (message.length < 1 || groupQuery.length < 2) return null;
+  return {
+    message,
+    groupQuery,
+    sendAtLocal: sendAtLocal ?? extractSendAtLocal(inner),
+  };
+}
+
+/** Post-traitement : sépare message/groupe/heure même si tout était dans les guillemets. */
+export function normalizeGroupSendIntent(intent: GroupSendNowIntent): GroupSendNowIntent {
+  let { message, groupQuery, sendAtLocal } = intent;
+
+  if (message && /\bdans\s+(?:le\s+|mon\s+|mes\s+)?groupes?\b/i.test(message)) {
+    const split = splitMessageAndGroupFromInner(message);
+    if (split) {
+      message = split.message;
+      groupQuery = groupQuery || split.groupQuery;
+      sendAtLocal = sendAtLocal ?? split.sendAtLocal;
+    }
+  } else if (message && !groupQuery) {
+    const split = splitMessageAndGroupFromInner(message);
+    if (split) {
+      message = split.message;
+      groupQuery = split.groupQuery;
+      sendAtLocal = sendAtLocal ?? split.sendAtLocal;
+    }
+  }
+
+  if (groupQuery) {
+    const stripped = stripScheduleFromGroupName(groupQuery);
+    groupQuery = stripped.name;
+    sendAtLocal = sendAtLocal ?? stripped.sendAtLocal;
+  }
+
+  return { message, groupQuery, sendAtLocal };
+}
+
 /**
  * Groupe cible du message d'envoi courant — pas l'historique.
  * « Envoie 'Salut' dans le groupe Le labo du no code à 14h »
@@ -388,21 +493,21 @@ export function extractGroupNameFromPublishMessage(msg: string): string | null {
 
   const quoted = t.match(/\bgroupes?\s+[«"']([^»"']{2,80})[»"']/i);
   if (quoted?.[1]) {
-    const q = tidy(quoted[1]);
+    const q = tidy(stripScheduleFromGroupName(quoted[1]).name);
     if (q) return q;
   }
 
-  const m = t.match(
-    /\bgroupes?\s+(.+?)(?:\s+à\s+\d{1,2}\s*h(?:\d{0,2})?|\s+a\s+\d{1,2}\s*h(?:\d{0,2})?|\s*$)/i
-  );
+  const m = t.match(/\b(?:dans\s+(?:le\s+|mon\s+|mes\s+)?)?groupes?\s+(.+)$/i);
   if (m?.[1]) {
-    return tidy(
-      m[1]
-        .replace(/^[«"']+/, "")
-        .replace(/[»"']+$/, "")
-        .replace(/\s+à\s+\d{1,2}.*$/i, "")
-        .trim()
+    const q = tidy(
+      stripScheduleFromGroupName(
+        m[1]
+          .replace(/^[«"']+/, "")
+          .replace(/[»"']+$/, "")
+          .trim()
+      ).name
     );
+    if (q) return q;
   }
   return null;
 }
@@ -417,22 +522,53 @@ export type GroupSendNowIntent = {
 export function extractSendMessageFromPublish(msg: string): string | null {
   const t = msg.trim();
   const labeled = t.match(
-    /\b(?:le\s+)?(?:message|texte|annonce)\s+[''](.+)[''](?:\s+à\s+\d|\s*$)/i
+    /\b(?:le\s+)?(?:message|texte|annonce)\s+[''](.+)[''](?:\s+(?:à|a)\s+\d|\s*$)/i
   );
   if (labeled?.[1]?.trim()) return labeled[1].trim().slice(0, 900);
+
+  const beforeGroup = t.match(
+    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+['"](.+?)['"]\s+dans\s+(?:le\s+|mon\s+|mes\s+)?groupe\b/i
+  );
+  if (beforeGroup?.[1]?.trim()) return beforeGroup[1].trim().slice(0, 900);
+
+  const around = t.match(
+    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+['"](.+?)['"](?:\s+dans|\s+(?:à|a)\s+\d|\s*$)/i
+  );
+  if (around?.[1]?.trim()) return around[1].trim().slice(0, 900);
+
+  const envelope = t.match(
+    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+['"](.+)['"]\s*$/i
+  );
+  if (envelope?.[1]?.trim()) return envelope[1].trim().slice(0, 900);
+
+  // Guillemet simple ouvrant sans fermeture (apostrophe dans c'est OK)
+  const verbTail = t.match(
+    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+(.+)$/is
+  )?.[1]?.trim();
+  if (verbTail?.startsWith("'")) {
+    const payload = extractSendPayloadAfterVerb(t);
+    if (payload) {
+      const split = splitMessageAndGroupFromInner(payload);
+      if (split?.message) return split.message.slice(0, 900);
+      return payload.slice(0, 900);
+    }
+  }
+
+  const standalone = extractStandaloneQuotedText(t);
+  if (standalone) {
+    const split = splitMessageAndGroupFromInner(standalone);
+    if (split?.message) return split.message.slice(0, 900);
+    return standalone.slice(0, 900);
+  }
 
   const fancy = t.match(/[«"]([^»"]{1,800})[»"]/);
   if (fancy?.[1]?.trim()) return fancy[1].trim().slice(0, 900);
 
-  const around = t.match(
-    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+[''](.+)[''](?:\s+dans|\s+à\s+\d|\s*$)/i
-  );
-  if (around?.[1]?.trim()) return around[1].trim().slice(0, 900);
   return null;
 }
 
 export function extractSendAtLocal(msg: string): string | undefined {
-  const m = msg.match(/à\s+(\d{1,2})\s*h\s*(\d{0,2})\b/i);
+  const m = msg.match(/(?:à|a)\s+(\d{1,2})\s*h\s*(\d{0,2})\b/i);
   if (!m) return undefined;
   const hh = String(Math.min(23, Math.max(0, Number(m[1])))).padStart(2, "0");
   const mm = m[2] ? String(Math.min(59, Number(m[2]))).padStart(2, "0") : "00";
@@ -457,17 +593,34 @@ export function detectGroupSendNowIntent(msg: string): GroupSendNowIntent | null
   if (/\blien\b/i.test(t) && !/\b(message|texte|annonce)\b/i.test(t) && !/[«"']/.test(t)) {
     return null;
   }
+  const verbTail = t.match(
+    /\b(?:envoie[rz]?|envoyer|poste[rz]?|publie[rz]?|programme[rz]?)(?:\s+juste)?\s+(.+)$/is
+  )?.[1]?.trim();
+  if (verbTail?.startsWith("'")) {
+    const payload = extractSendPayloadAfterVerb(t);
+    if (payload) {
+      const split = splitMessageAndGroupFromInner(payload);
+      if (split) {
+        return normalizeGroupSendIntent({
+          message: split.message,
+          groupQuery: split.groupQuery,
+          sendAtLocal: split.sendAtLocal ?? extractSendAtLocal(t),
+        });
+      }
+    }
+  }
+
   const message = extractSendMessageFromPublish(t);
   const groupQuery = extractGroupNameFromPublishMessage(t) ?? "";
   const sendAtLocal = extractSendAtLocal(t);
   // GAP-005 : envoi+groupe sans texto → pending (agent demande le message)
   if (!message) {
     if (/\b(message|texto|texte|annonce)\b/i.test(t) || groupQuery) {
-      return { groupQuery, message: "", sendAtLocal };
+      return normalizeGroupSendIntent({ groupQuery, message: "", sendAtLocal });
     }
     return null;
   }
-  return { groupQuery, message, sendAtLocal };
+  return normalizeGroupSendIntent({ groupQuery, message, sendAtLocal });
 }
 
 /**
@@ -484,7 +637,7 @@ export function resolveGroupSendIntentFromHistory(
 
   const quotedOnly =
     extractSendMessageFromPublish(userMessage) ||
-    userMessage.trim().match(/^[«"']([\s\S]{1,900})[»"']\s*$/u)?.[1]?.trim() ||
+    extractStandaloneQuotedText(userMessage) ||
     null;
 
   if (quotedOnly) {
@@ -493,25 +646,30 @@ export function resolveGroupSendIntentFromHistory(
       .map((m) => (m.role === "user" ? detectGroupSendNowIntent(m.content) : null))
       .find((x) => x && (x.groupQuery || x.message === ""));
     if (pending?.groupQuery) {
-      return {
+      return normalizeGroupSendIntent({
         groupQuery: pending.groupQuery,
         message: quotedOnly,
         sendAtLocal: pending.sendAtLocal ?? extractSendAtLocal(userMessage),
-      };
+      });
     }
     // Assistant : « Quel message envoyer dans « X » ? »
     for (let i = prior.length - 1; i >= 0; i--) {
       const m = prior[i];
       if (m.role !== "assistant") continue;
-      const ask = m.content.match(
-        /quel\s+\*{0,2}message\*{0,2}\s+envoyer(?:\s+dans\s+[«"']\s*(.+?)\s*[»"'])?/i,
-      );
-      if (ask) {
-        return {
-          groupQuery: (ask[1] ? ask[1].trim() : "") || pending?.groupQuery || "",
+      const fromAsk = extractGroupFromAssistantAsk(m.content);
+      const ask = /quel\s+\*{0,2}message\*{0,2}\s+envoyer/i.test(m.content);
+      if (ask || fromAsk) {
+        const rawGroup = fromAsk || pending?.groupQuery || "";
+        const { name: groupQuery, sendAtLocal: groupTime } =
+          stripScheduleFromGroupName(rawGroup);
+        return normalizeGroupSendIntent({
+          groupQuery,
           message: quotedOnly,
-          sendAtLocal: extractSendAtLocal(userMessage),
-        };
+          sendAtLocal:
+            extractSendAtLocal(userMessage) ??
+            groupTime ??
+            pending?.sendAtLocal,
+        });
       }
       break;
     }
